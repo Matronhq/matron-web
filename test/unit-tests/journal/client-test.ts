@@ -1906,13 +1906,13 @@ describe("MatronJournalClient attachment send state machine", () => {
         const state = internals(client);
         state.state = signedInState(client);
         let rejectFirst!: (reason: Error) => void;
-        const firstAttempt = new Promise<void>((_resolve, reject) => {
+        const firstAttempt = new Promise<"sent">((_resolve, reject) => {
             rejectFirst = reject;
         });
         const sendAttachment = jest
             .spyOn(client, "sendAttachment")
             .mockImplementationOnce(() => firstAttempt)
-            .mockResolvedValueOnce(undefined);
+            .mockResolvedValueOnce("sent");
         const first = fileFixture("first.bin", "application/octet-stream", [1]);
         const second = fileFixture("second.bin", "application/octet-stream", [2]);
 
