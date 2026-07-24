@@ -18,6 +18,7 @@ import React, {
 } from "react";
 
 import matronLogo from "../../res/matron-logo-simple.svg";
+import { INITIAL_SGR_STATE, parseAnsi, stripLeadingSgrFragment } from "./ansi";
 import {
     BROWSER_MEMORY_SAFETY_MAX_BYTES,
     errorMessage,
@@ -2080,7 +2081,13 @@ function MsgAvatar(): React.ReactElement {
     return <span className="mj_MsgAvatar" style={{ WebkitMaskImage: mask, maskImage: mask }} aria-hidden />;
 }
 
-function ToolStream({ stream }: { stream: ToolStreamState }): React.ReactElement {
+export function ToolStream({ stream }: { stream: ToolStreamState }): React.ReactElement {
+    const nodes = useMemo(() => {
+        const cleaned = stream.headTruncated ? stripLeadingSgrFragment(stream.content) : stream.content;
+        const text = stream.headTruncated ? `… earlier output omitted …\n${cleaned}` : stream.content;
+        return parseAnsi(text, INITIAL_SGR_STATE, "", 0).nodes;
+    }, [stream.content, stream.headTruncated]);
+
     return (
         <li className="mx_EventTile mx_EventTile_lastInSection" tabIndex={-1} data-layout="bubble" data-self="false">
             <span className="mx_DisambiguatedProfile">
@@ -2094,9 +2101,7 @@ function ToolStream({ stream }: { stream: ToolStreamState }): React.ReactElement
                             <span className="mj_LiveDot" /> Running{" "}
                             <code>{stream.command || stream.tool || "tool"}</code>
                         </div>
-                        <pre>
-                            {stream.headTruncated ? `… earlier output omitted …\n${stream.content}` : stream.content}
-                        </pre>
+                        <pre>{nodes}</pre>
                     </div>
                 </div>
             </div>
