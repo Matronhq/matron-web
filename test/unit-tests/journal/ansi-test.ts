@@ -143,6 +143,15 @@ describe("parseAnsi", () => {
 
         expect(styledElement(result.nodes[0]).props.style).toEqual({ color });
     });
+
+    it("falls back to one plain-text node when dense styling exceeds the node budget", () => {
+        const input = `${"\x1b[31mx\x1b[32my".repeat(1001)}\x1b[1mend\x1b[3`;
+        const result = parseAnsi(input, INITIAL_SGR_STATE, "", 0);
+
+        expect(result.nodes).toEqual([`${"xy".repeat(1001)}end`]);
+        expect(result.state).toEqual({ fg: "#98c379", bold: true });
+        expect(result.tail).toBe("\x1b[3");
+    });
 });
 
 describe("stripLeadingSgrFragment", () => {

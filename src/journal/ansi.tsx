@@ -24,6 +24,7 @@ export const INITIAL_SGR_STATE: SgrState = {
 };
 
 const ESC = "\x1b";
+const MAX_NODES = 2000;
 
 // 16-color foreground palette tuned for the dark terminal background.
 const PALETTE: Record<number, string> = {
@@ -99,6 +100,8 @@ export function parseAnsi(input: string, prevState: SgrState, prevTail: string, 
     const buffer = prevTail + input;
     const state: SgrState = { ...prevState };
     const nodes: ReactNode[] = [];
+    const plainText: string[] = [];
+    let usePlainText = false;
     let textStart = 0;
     let i = 0;
     let key = startKey;
@@ -106,6 +109,11 @@ export function parseAnsi(input: string, prevState: SgrState, prevTail: string, 
     const flushText = (end: number): void => {
         if (end <= textStart) return;
         const text = buffer.slice(textStart, end);
+        plainText.push(text);
+        if (nodes.length >= MAX_NODES) {
+            usePlainText = true;
+            return;
+        }
         if (isStyled(state)) {
             nodes.push(
                 <span key={key++} style={spanStyle(state)}>
@@ -153,7 +161,7 @@ export function parseAnsi(input: string, prevState: SgrState, prevTail: string, 
     }
 
     flushText(i);
-    return { nodes, state, tail: buffer.slice(i) };
+    return { nodes: usePlainText ? [plainText.join("")] : nodes, state, tail: buffer.slice(i) };
 }
 
 // A head-truncated stream can begin after ESC while retaining the rest of SGR.
