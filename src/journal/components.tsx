@@ -47,11 +47,13 @@ import {
     SearchIcon,
     SendIcon,
     SettingsIcon,
+    StopIcon,
     SystemThemeIcon,
     LightThemeIcon,
     DarkThemeIcon,
     StarFilledIcon,
     StarIcon,
+    TrashIcon,
     UnarchiveIcon,
 } from "./icons";
 import { createLongPressController, type LongPressController } from "./longPress";
@@ -2933,6 +2935,16 @@ function Composer({
         );
     }, [setVoiceState, startRecording]);
 
+    const commitVoiceStop = useCallback(
+        (disposition: "send" | "discard"): void => {
+            stopRecorder(disposition);
+            composerRef.current?.querySelectorAll<HTMLButtonElement>(".mj_VoiceRecording_action").forEach((button) => {
+                button.disabled = stopInFlightRef.current;
+            });
+        },
+        [stopRecorder],
+    );
+
     const teardownVoice = useCallback((): void => {
         ++genRef.current;
         if (acquireTimer.current !== null) {
@@ -3119,6 +3131,23 @@ function Composer({
                         </button>
                     </div>
                 )}
+                {voiceState === "error" && errorMsg.current && (
+                    <div className="mj_ConnectionError mj_VoiceError">
+                        <span role="status">{errorMsg.current}</span>
+                        <button
+                            className="mj_ConnectionError_dismiss"
+                            type="button"
+                            aria-label="Dismiss recording error"
+                            title="Dismiss recording error"
+                            onClick={() => {
+                                errorMsg.current = null;
+                                setVoiceState("idle");
+                            }}
+                        >
+                            <CloseIcon />
+                        </button>
+                    </div>
+                )}
                 {nonDurable && (
                     <div className="mj_DraftNonDurable" role="status">
                         Draft won't be saved — storage full
@@ -3134,142 +3163,185 @@ function Composer({
                         onSelectFolder={selectFolder}
                     />
                 )}
-                <div className="mx_MessageComposer_row">
-                    <div className="mx_SendMessageComposer" onClick={() => textarea.current?.focus()}>
-                        <div className="mx_BasicMessageComposer">
-                            <textarea
-                                className="mx_BasicMessageComposer_input"
-                                ref={textarea}
-                                rows={1}
-                                value={body}
-                                onBlur={flushDraft}
+                {voiceState === "recording" ? (
+                    <div className="mj_VoiceRecording">
+                        <span className="mj_VoiceRecording_dot" aria-hidden="true" />
+                        <canvas className="mj_VoiceRecording_waveform" ref={waveformCanvasRef} aria-hidden="true" />
+                        <span className="mj_VoiceRecording_time" aria-hidden="true">
+                            {elapsedLabel}
+                        </span>
+                        <span className="mj_ScreenReaderOnly" aria-live="polite">
+                            Recording, {elapsedLabel}
+                        </span>
+                        <button
+                            className="mj_VoiceRecording_action"
+                            type="button"
+                            aria-label="Discard recording"
+                            title="Discard recording"
+                            disabled={stopInFlightRef.current}
+                            onClick={() => commitVoiceStop("discard")}
+                        >
+                            <TrashIcon />
+                        </button>
+                        <button
+                            ref={stopButtonRef}
+                            className="mj_VoiceRecording_action mj_VoiceRecording_stop"
+                            type="button"
+                            aria-label="Stop and send voice message"
+                            title="Stop and send voice message"
+                            disabled={stopInFlightRef.current}
+                            onClick={() => commitVoiceStop("send")}
+                        >
+                            <StopIcon />
+                        </button>
+                    </div>
+                ) : (
+                    <div className="mx_MessageComposer_row">
+                        <div className="mx_SendMessageComposer" onClick={() => textarea.current?.focus()}>
+                            <div className="mx_BasicMessageComposer">
+                                <textarea
+                                    className="mx_BasicMessageComposer_input"
+                                    ref={textarea}
+                                    rows={1}
+                                    value={body}
+                                    onBlur={flushDraft}
+                                    onChange={(event) => {
+                                        const nextBody = event.target.value;
+                                        setBodyDraft(nextBody);
+                                        setHighlighted(null);
+                                        if (dismissed !== null && nextBody !== dismissed) setDismissed(null);
+                                        event.target.style.height = "auto";
+                                        event.target.style.height = `${Math.min(event.target.scrollHeight, 160)}px`;
+                                    }}
+                                    onKeyDown={(event) => {
+                                        if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+                                        if (open) {
+                                            const count = folders.length || commands.length;
+                                            if (event.key === "ArrowDown") {
+                                                event.preventDefault();
+                                                setHighlighted((current) =>
+                                                    current === null ? 0 : (current + 1) % count,
+                                                );
+                                                return;
+                                            }
+                                            if (event.key === "ArrowUp") {
+                                                event.preventDefault();
+                                                setHighlighted((current) =>
+                                                    current === null ? count - 1 : (current - 1 + count) % count,
+                                                );
+                                                return;
+                                            }
+                                            if (event.key === "Tab") {
+                                                event.preventDefault();
+                                                const index = highlighted ?? 0;
+                                                if (folders.length > 0) selectFolder(folders[index]);
+                                                else selectCommand(commands[index]);
+                                                return;
+                                            }
+                                            if (event.key === "Escape") {
+                                                event.preventDefault();
+                                                setDismissed(body);
+                                                setHighlighted(null);
+                                                return;
+                                            }
+                                            if (event.key === "Enter" && !event.shiftKey && highlighted !== null) {
+                                                event.preventDefault();
+                                                if (folders.length > 0) selectFolder(folders[highlighted]);
+                                                else selectCommand(commands[highlighted]);
+                                                return;
+                                            }
+                                        }
+                                        if (event.key === "Enter" && !event.shiftKey) {
+                                            event.preventDefault();
+                                            void send();
+                                        }
+                                    }}
+                                    onPaste={(event) => {
+                                        if (state.stagedUploads) return;
+                                        const files = [...event.clipboardData.files];
+                                        if (files.length > 0) {
+                                            event.preventDefault();
+                                            client.stageFiles(files);
+                                        }
+                                    }}
+                                    placeholder={
+                                        state.connection === "online"
+                                            ? "Send a message…"
+                                            : "Messages will send when reconnected"
+                                    }
+                                    aria-label="Message your agent"
+                                    aria-describedby="mj-composer-hint"
+                                    role="combobox"
+                                    aria-expanded={open}
+                                    aria-controls={SLASH_LISTBOX_ID}
+                                    aria-activedescendant={highlighted !== null ? slashRowId(highlighted) : undefined}
+                                />
+                            </div>
+                        </div>
+                        <div className="mx_MessageComposer_actions">
+                            <button
+                                className="mx_MessageComposer_button mx_EmojiButton"
+                                title="Emoji"
+                                aria-label="Emoji"
+                            >
+                                <ReactionIcon />
+                            </button>
+                            <button
+                                className="mx_MessageComposer_button"
+                                title="Attach a file"
+                                aria-label="Attach a file"
+                                onClick={() => fileInput.current?.click()}
+                            >
+                                <AttachmentIcon />
+                            </button>
+                            <input
+                                ref={fileInput}
+                                type="file"
+                                multiple
+                                hidden
                                 onChange={(event) => {
-                                    const nextBody = event.target.value;
-                                    setBodyDraft(nextBody);
-                                    setHighlighted(null);
-                                    if (dismissed !== null && nextBody !== dismissed) setDismissed(null);
-                                    event.target.style.height = "auto";
-                                    event.target.style.height = `${Math.min(event.target.scrollHeight, 160)}px`;
+                                    if (event.target.files) client.stageFiles([...event.target.files]);
+                                    event.target.value = "";
                                 }}
-                                onKeyDown={(event) => {
-                                    if (event.nativeEvent.isComposing || event.keyCode === 229) return;
-                                    if (open) {
-                                        const count = folders.length || commands.length;
-                                        if (event.key === "ArrowDown") {
-                                            event.preventDefault();
-                                            setHighlighted((current) => (current === null ? 0 : (current + 1) % count));
-                                            return;
-                                        }
-                                        if (event.key === "ArrowUp") {
-                                            event.preventDefault();
-                                            setHighlighted((current) =>
-                                                current === null ? count - 1 : (current - 1 + count) % count,
-                                            );
-                                            return;
-                                        }
-                                        if (event.key === "Tab") {
-                                            event.preventDefault();
-                                            const index = highlighted ?? 0;
-                                            if (folders.length > 0) selectFolder(folders[index]);
-                                            else selectCommand(commands[index]);
-                                            return;
-                                        }
-                                        if (event.key === "Escape") {
-                                            event.preventDefault();
-                                            setDismissed(body);
-                                            setHighlighted(null);
-                                            return;
-                                        }
-                                        if (event.key === "Enter" && !event.shiftKey && highlighted !== null) {
-                                            event.preventDefault();
-                                            if (folders.length > 0) selectFolder(folders[highlighted]);
-                                            else selectCommand(commands[highlighted]);
-                                            return;
-                                        }
-                                    }
-                                    if (event.key === "Enter" && !event.shiftKey) {
-                                        event.preventDefault();
-                                        void send();
-                                    }
-                                }}
-                                onPaste={(event) => {
-                                    if (state.stagedUploads) return;
-                                    const files = [...event.clipboardData.files];
-                                    if (files.length > 0) {
-                                        event.preventDefault();
-                                        client.stageFiles(files);
-                                    }
-                                }}
-                                placeholder={
-                                    state.connection === "online"
-                                        ? "Send a message…"
-                                        : "Messages will send when reconnected"
-                                }
-                                aria-label="Message your agent"
-                                aria-describedby="mj-composer-hint"
-                                role="combobox"
-                                aria-expanded={open}
-                                aria-controls={SLASH_LISTBOX_ID}
-                                aria-activedescendant={highlighted !== null ? slashRowId(highlighted) : undefined}
                             />
+                            <button
+                                ref={micButtonRef}
+                                className="mx_MessageComposer_button"
+                                title={
+                                    voiceSupported
+                                        ? voiceState === "requesting"
+                                            ? "Requesting microphone access…"
+                                            : "Record voice message"
+                                        : "Voice recording isn't supported in this browser."
+                                }
+                                aria-label={
+                                    voiceState === "requesting"
+                                        ? "Requesting microphone access"
+                                        : "Record voice message"
+                                }
+                                aria-busy={voiceState === "requesting"}
+                                aria-disabled={!voiceSupported || voiceState === "requesting"}
+                                disabled={!voiceSupported || voiceState === "requesting"}
+                                onClick={acquireVoice}
+                            >
+                                {voiceState === "requesting" ? (
+                                    <span className="mj_Spinner" aria-hidden="true" />
+                                ) : (
+                                    <MicOnIcon />
+                                )}
+                            </button>
+                            {body.trim() && (
+                                <button
+                                    className="mx_MessageComposer_sendMessage"
+                                    onClick={() => void send()}
+                                    aria-label="Send message"
+                                >
+                                    <SendIcon />
+                                </button>
+                            )}
                         </div>
                     </div>
-                    <div className="mx_MessageComposer_actions">
-                        <button className="mx_MessageComposer_button mx_EmojiButton" title="Emoji" aria-label="Emoji">
-                            <ReactionIcon />
-                        </button>
-                        <button
-                            className="mx_MessageComposer_button"
-                            title="Attach a file"
-                            aria-label="Attach a file"
-                            onClick={() => fileInput.current?.click()}
-                        >
-                            <AttachmentIcon />
-                        </button>
-                        <input
-                            ref={fileInput}
-                            type="file"
-                            multiple
-                            hidden
-                            onChange={(event) => {
-                                if (event.target.files) client.stageFiles([...event.target.files]);
-                                event.target.value = "";
-                            }}
-                        />
-                        <button
-                            ref={micButtonRef}
-                            className="mx_MessageComposer_button"
-                            title={
-                                voiceSupported
-                                    ? voiceState === "recording"
-                                        ? `Recording, ${elapsedLabel}`
-                                        : "Record voice message"
-                                    : "Voice recording isn't supported in this browser."
-                            }
-                            aria-label={
-                                voiceState === "requesting"
-                                    ? "Requesting microphone…"
-                                    : voiceState === "recording"
-                                      ? `Recording, ${elapsedLabel}`
-                                      : "Voice message"
-                            }
-                            aria-disabled="true"
-                            disabled
-                            onClick={acquireVoice}
-                        >
-                            <MicOnIcon />
-                        </button>
-                        {body.trim() && (
-                            <button
-                                className="mx_MessageComposer_sendMessage"
-                                onClick={() => void send()}
-                                aria-label="Send message"
-                            >
-                                <SendIcon />
-                            </button>
-                        )}
-                    </div>
-                </div>
+                )}
                 <span id="mj-composer-hint" className="mj_ComposerHint">
                     / commands · shift+enter for newline
                 </span>

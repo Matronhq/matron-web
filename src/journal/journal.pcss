@@ -1600,6 +1600,104 @@ button.mj_File {
     cursor: default;
 }
 
+.mj_VoiceRecording {
+    display: flex;
+    width: 100%;
+    min-height: 55px;
+    align-items: center;
+    gap: var(--cpd-space-3x);
+    box-sizing: border-box;
+    border: 1px solid var(--cpd-color-border-strong);
+    border-radius: var(--cpd-radius-pill);
+    background: var(--cpd-color-bg-subtle-secondary);
+    color: var(--cpd-color-text-primary);
+    padding: var(--cpd-space-2x) var(--cpd-space-3x);
+}
+
+.mj_VoiceRecording_dot {
+    width: 8px;
+    height: 8px;
+    flex: 0 0 auto;
+    border-radius: var(--cpd-radius-pill);
+    background: var(--cpd-color-text-critical-primary);
+    animation: mj-pulse 1.2s ease-in-out infinite;
+}
+
+.mj_VoiceRecording_waveform {
+    width: min(240px, 40vw);
+    height: 32px;
+    min-width: 48px;
+    flex: 1 1 auto;
+    color: var(--cpd-color-icon-accent-primary);
+}
+
+.mj_VoiceRecording_time {
+    min-width: 3rem;
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-body-sm-regular);
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+}
+
+.mj_VoiceRecording_action {
+    display: inline-flex;
+    width: 32px;
+    height: 32px;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 0;
+    border-radius: var(--cpd-radius-pill);
+    background: transparent;
+    color: var(--cpd-color-icon-secondary);
+    cursor: pointer;
+}
+
+.mj_VoiceRecording_action:hover:not(:disabled) {
+    background: var(--cpd-color-bg-subtle-primary);
+}
+
+.mj_VoiceRecording_action:focus-visible {
+    outline: 2px solid var(--cpd-color-icon-accent-primary);
+    outline-offset: 2px;
+}
+
+.mj_VoiceRecording_action:disabled {
+    color: var(--cpd-color-icon-tertiary);
+    cursor: default;
+    opacity: 0.5;
+}
+
+.mj_VoiceRecording_action svg {
+    width: 19px;
+    height: 19px;
+}
+
+.mj_VoiceRecording_stop {
+    background: var(--cpd-color-bg-accent-emphasis);
+    color: var(--cpd-color-text-on-accent);
+}
+
+.mj_VoiceRecording_stop:hover:not(:disabled) {
+    background: var(--cpd-color-bg-accent);
+    color: var(--cpd-color-text-on-accent);
+}
+
+.mj_VoiceError {
+    margin-inline: var(--cpd-space-1x);
+}
+
+.mj_ScreenReaderOnly {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+}
+
 .mj_ReadOnlyHint {
     display: flex;
     min-height: 56px;
@@ -1708,7 +1806,8 @@ button.mj_File {
 
 @media (prefers-reduced-motion: reduce) {
     .mj_AttachmentChip_spinner,
-    .mj_Spinner {
+    .mj_Spinner,
+    .mj_VoiceRecording_dot {
         animation: none;
     }
 }
