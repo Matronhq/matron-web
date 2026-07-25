@@ -67,6 +67,29 @@ const conversations: Conversation[] = [
         created_at: 1,
         read_up_to_seq: 2,
     },
+    // Subagents of the selected conversation (c1) — drive the header SUBAGENTS strip.
+    {
+        id: "s1",
+        title: "test triage",
+        session_state: "running",
+        last_seq: 4,
+        unread_count: 0,
+        snippet: "32 tests fixed, 1 quarantined",
+        created_at: 1,
+        parent_convo_id: "c1",
+        read_up_to_seq: 4,
+    },
+    {
+        id: "s2",
+        title: "docs sweep",
+        session_state: "done",
+        last_seq: 2,
+        unread_count: 0,
+        snippet: "swept 14 files",
+        created_at: 1,
+        parent_convo_id: "c1",
+        read_up_to_seq: 2,
+    },
 ];
 
 // A representative thread that exercises EVERY content renderer so the harness shows the
