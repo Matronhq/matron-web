@@ -1,0 +1,299 @@
+{
+  "$schema": "matron-component-map/1",
+  "generated": "2026-07-25T18:37Z",
+  "repo": {
+    "name": "easelyte/matron-web",
+    "branch": "main",
+    "tree": "eb6e7d6f3c4b",
+    "read": [
+      "src/journal/journal.pcss",
+      "src/journal/shell.pcss",
+      "src/journal/components.tsx",
+      "src/journal/status.ts"
+    ]
+  },
+  "how": "data-spec (in the artifact and every static state) → the selector in src/journal that implements it. status: implemented = the class exists at the tree above; new = no counterpart yet, the suggested name is a proposal; devtool = handoff affordance, do not implement.",
+  "components": [
+    {
+      "spec": "sidebar",
+      "selector": ".mx_LeftPanel_outerWrapper > .mx_RoomListPanel",
+      "status": "implemented",
+      "notes": "width persisted via LEFT_PANEL_SIZE_KEY; drag clamp 240–420"
+    },
+    {
+      "spec": "sidebar.list",
+      "selector": ".mj_RoomList",
+      "status": "implemented",
+      "notes": "display:flex; flex-direction:column; gap:1px — the 1px row rhythm is load-bearing"
+    },
+    {
+      "spec": "sidebar.row",
+      "selector": ".mj_RoomListItem",
+      "status": "implemented"
+    },
+    {
+      "spec": "sidebar.row.selected",
+      "selector": ".mj_RoomListItem_selected",
+      "status": "implemented",
+      "notes": "3px accent bar via ::before, inset 8px"
+    },
+    {
+      "spec": "sidebar.row.status",
+      "selector": ".mj_RoomListStatus_running / .mj_RoomListStatus_idle",
+      "status": "implemented"
+    },
+    {
+      "spec": "sidebar.row.unread",
+      "selector": ".mj_UnreadBadge / .mj_UnreadDot",
+      "status": "implemented"
+    },
+    {
+      "spec": "sidebar.tabs",
+      "selector": ".mj_RoomListTabs > .mj_RoomListTab(.mj_RoomListTab_active)",
+      "status": "implemented",
+      "notes": "Favorites tab exists; count span is .mj_RoomListTab_count"
+    },
+    {
+      "spec": "sidebar.empty.*",
+      "selector": ".mj_RoomListEmpty",
+      "status": "implemented",
+      "notes": "seven distinct copy variants — see design-tokens.json → copy.emptyStates"
+    },
+    {
+      "spec": "sidebar.newSession",
+      "selector": "the New session button in .mj_RoomListHeaderActions → opens NewSessionSheet (.mj_UploadConfirm shell)",
+      "status": "implemented"
+    },
+    {
+      "spec": "sidebar.footer.connection",
+      "selector": ".mj_SidebarFooterStatus_{online|connecting|offline}",
+      "status": "implemented",
+      "notes": "must not be removed — it is the only chrome-level connection signal"
+    },
+    {
+      "spec": "sidebar.resizeHandle",
+      "selector": ".mx_ResizeHandle",
+      "status": "implemented"
+    },
+    {
+      "spec": "header",
+      "selector": ".mx_RoomHeader.mj_ChatHeader",
+      "status": "implemented"
+    },
+    {
+      "spec": "header.title",
+      "selector": ".mj_HeaderTitleCluster .mx_RoomHeader_heading",
+      "status": "implemented"
+    },
+    {
+      "spec": "header.titlePopover",
+      "selector": ".mj_HeaderTitleDisclosure + .mj_HeaderMenu",
+      "status": "implemented"
+    },
+    {
+      "spec": "header.usage",
+      "selector": ".mj_UsageCluster .mj_UsageBars > .mj_UsageRow",
+      "status": "implemented",
+      "notes": "2×2 column-first; ctx first and emphasised"
+    },
+    {
+      "spec": "header.usage.collapsed",
+      "selector": ".mj_UsageCluster_collapsed",
+      "status": "implemented"
+    },
+    {
+      "spec": "header.usagePopover",
+      "selector": ".mj_HeaderMenu.mj_UsagePopover",
+      "status": "implemented"
+    },
+    {
+      "spec": "header.compact",
+      "selector": ".mj_CompactButton",
+      "status": "implemented"
+    },
+    {
+      "spec": "subagentStrip",
+      "selector": ".mj_SubagentStrip > .mj_SubagentPill",
+      "status": "implemented"
+    },
+    {
+      "spec": "canvas",
+      "selector": ".mx_RoomView_messagePanel",
+      "status": "implemented"
+    },
+    {
+      "spec": "canvas.dateDivider",
+      "selector": "—",
+      "status": "new",
+      "suggested": ".mj_DayDivider",
+      "notes": "hairline + centred label, 500 11px/14px"
+    },
+    {
+      "spec": "canvas.agentGroup",
+      "selector": ".mx_EventTile[data-self=false] (+ .mx_DisambiguatedProfile)",
+      "status": "implemented",
+      "notes": "redesign renders agent turns as flat prose with a 32px indent, not bubbles"
+    },
+    {
+      "spec": "canvas.ownBubble",
+      "selector": ".mx_EventTile[data-self=true] .mx_EventTile_line",
+      "status": "implemented"
+    },
+    {
+      "spec": "event.text",
+      "selector": ".mj_Markdown",
+      "status": "implemented"
+    },
+    {
+      "spec": "event.prompt",
+      "selector": ".mj_PromptCard (label “Question”)",
+      "status": "implemented"
+    },
+    {
+      "spec": "event.permission_request",
+      "selector": ".mj_PromptCard with permission (label “Permission needed”)",
+      "status": "implemented",
+      "notes": "redesign adds the teal-tinted border + one filled affirmative; only difference from Question"
+    },
+    {
+      "spec": "event.prompt_reply",
+      "selector": ".mj_MessageText (+ .mj_Answered for the resolved line)",
+      "status": "implemented"
+    },
+    {
+      "spec": "event.tool_output",
+      "selector": "details.mj_ToolCard > summary + .mj_ToolCommand + pre",
+      "status": "implemented"
+    },
+    {
+      "spec": "event.toolOutput.failed",
+      "selector": ".mj_ToolCard_failed",
+      "status": "implemented"
+    },
+    {
+      "spec": "event.toolOutput.expired",
+      "selector": ".mj_Expired",
+      "status": "implemented",
+      "notes": "copy: “Output expired after 24 hours.”"
+    },
+    {
+      "spec": "event.diff",
+      "selector": ".mj_DiffCard (_header/_filename/_badge/_body/_link)",
+      "status": "implemented"
+    },
+    {
+      "spec": "event.image",
+      "selector": "figure.mj_Image > img + figcaption",
+      "status": "implemented"
+    },
+    {
+      "spec": "event.file",
+      "selector": "a.mj_File + .mj_FileSize + .mj_FileCaption",
+      "status": "implemented"
+    },
+    {
+      "spec": "event.file.loading",
+      "selector": "button.mj_File[disabled] / .mj_MediaLoading",
+      "status": "implemented"
+    },
+    {
+      "spec": "event.unknown",
+      "selector": "details.mj_Unknown",
+      "status": "implemented",
+      "notes": "redesign gives it a dashed border on --m-raised so it reads as diagnostic, not content"
+    },
+    {
+      "spec": "event.error",
+      "selector": ".mj_Error",
+      "status": "implemented"
+    },
+    {
+      "spec": "attachmentChip.sending",
+      "selector": "li.mj_AttachmentChip.mj_AttachmentChip_sending",
+      "status": "implemented"
+    },
+    {
+      "spec": "attachmentChip.error",
+      "selector": "li.mj_AttachmentChip_error (+ _actions buttons)",
+      "status": "implemented"
+    },
+    {
+      "spec": "activity",
+      "selector": ".mj_Activity",
+      "status": "implemented"
+    },
+    {
+      "spec": "jumpToBottom",
+      "selector": ".mj_JumpToBottom",
+      "status": "implemented"
+    },
+    {
+      "spec": "composer",
+      "selector": ".mx_MessageComposer .mx_BasicMessageComposer_input",
+      "status": "implemented"
+    },
+    {
+      "spec": "composer.hints",
+      "selector": "—",
+      "status": "new",
+      "suggested": ".mj_ComposerHints",
+      "notes": "'/ commands', 'shift+enter for newline', right-aligned live ctx readout (ctxHintPct already computed in components.tsx)"
+    },
+    {
+      "spec": "composer.slashPalette",
+      "selector": ".mx_SlashPalette > .mx_SlashPalette_row(_highlighted)",
+      "status": "implemented"
+    },
+    {
+      "spec": "composer.recording",
+      "selector": ".mj_VoiceRecording (+ _action, _stop)",
+      "status": "implemented"
+    },
+    {
+      "spec": "composer.offline",
+      "selector": "placeholder swap on the composer input",
+      "status": "implemented",
+      "notes": "copy: “Messages will send when reconnected” / online “Send a message…”"
+    },
+    {
+      "spec": "modal.upload",
+      "selector": ".mj_UploadConfirm_scrim > .mj_UploadConfirm.mj_UploadConfirm_queue",
+      "status": "implemented"
+    },
+    {
+      "spec": "modal.upload.caption",
+      "selector": ".mj_UploadConfirm_caption",
+      "status": "implemented",
+      "notes": "focus stays NEUTRAL here, never accent — the dialog autofocuses it"
+    },
+    {
+      "spec": "modal.upload.queue",
+      "selector": "—",
+      "status": "new",
+      "suggested": ".mj_UploadConfirm_queueStrip / _thumb / _thumb_active",
+      "notes": "'n of N' chip, 34px thumbnails, active = 2px accent ring, inactive = 1px --m-line2 on --m-raised (NOT --m-line: invisible in dark)"
+    },
+    {
+      "spec": "button.primary|secondary|ghostDanger|icon.*",
+      "selector": "per-component buttons; see design-tokens.json → states",
+      "status": "implemented"
+    },
+    {
+      "spec": "input.rest|focus|error|disabled",
+      "selector": "composer input, .mj_PromptText input, .mj_UploadConfirm_caption",
+      "status": "implemented"
+    },
+    {
+      "spec": "devtool.stateMatrix",
+      "selector": "—",
+      "status": "devtool",
+      "notes": "handoff affordance in the mock's sidebar footer. DO NOT IMPLEMENT."
+    },
+    {
+      "spec": "gallery",
+      "selector": "—",
+      "status": "devtool",
+      "notes": "the state matrix surface itself. DO NOT IMPLEMENT."
+    }
+  ]
+}
