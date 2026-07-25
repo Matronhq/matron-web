@@ -1180,7 +1180,9 @@ describe("attachment composer", () => {
         expect(clickInput).toHaveBeenCalledTimes(1);
         expect(input.multiple).toBe(true);
         expect(button(rendered.container, "Attach a file").getAttribute("aria-disabled")).toBeNull();
-        expect(button(rendered.container, "Voice message").getAttribute("aria-disabled")).toBe("true");
+        // Mic button renamed to "Record voice message" (#470); in jsdom (no MediaRecorder) the
+        // capability guard keeps it aria-disabled.
+        expect(button(rendered.container, "Record voice message").getAttribute("aria-disabled")).toBe("true");
 
         const file = new File(["same"], "same.txt", { type: "text/plain" });
         Object.defineProperty(input, "files", { configurable: true, value: [file] });

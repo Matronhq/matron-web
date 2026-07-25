@@ -18,6 +18,7 @@ import React, {
 } from "react";
 
 import matronLogo from "../../res/matron-logo-simple.svg";
+import { INITIAL_SGR_STATE, parseAnsi, stripLeadingSgrFragment } from "./ansi";
 import {
     BROWSER_MEMORY_SAFETY_MAX_BYTES,
     errorMessage,
@@ -46,11 +47,13 @@ import {
     SearchIcon,
     SendIcon,
     SettingsIcon,
+    StopIcon,
     SystemThemeIcon,
     LightThemeIcon,
     DarkThemeIcon,
     StarFilledIcon,
     StarIcon,
+    TrashIcon,
     UnarchiveIcon,
 } from "./icons";
 import { createLongPressController, type LongPressController } from "./longPress";
@@ -2080,7 +2083,13 @@ function MsgAvatar(): React.ReactElement {
     return <span className="mj_MsgAvatar" style={{ WebkitMaskImage: mask, maskImage: mask }} aria-hidden />;
 }
 
-function ToolStream({ stream }: { stream: ToolStreamState }): React.ReactElement {
+export function ToolStream({ stream }: { stream: ToolStreamState }): React.ReactElement {
+    const nodes = useMemo(() => {
+        const cleaned = stream.headTruncated ? stripLeadingSgrFragment(stream.content) : stream.content;
+        const text = stream.headTruncated ? `… earlier output omitted …\n${cleaned}` : stream.content;
+        return parseAnsi(text, INITIAL_SGR_STATE, "", 0).nodes;
+    }, [stream.content, stream.headTruncated]);
+
     return (
         <li className="mx_EventTile mx_EventTile_lastInSection" tabIndex={-1} data-layout="bubble" data-self="false">
             <span className="mx_DisambiguatedProfile">
@@ -2094,9 +2103,7 @@ function ToolStream({ stream }: { stream: ToolStreamState }): React.ReactElement
                             <span className="mj_LiveDot" /> Running{" "}
                             <code>{stream.command || stream.tool || "tool"}</code>
                         </div>
-                        <pre>
-                            {stream.headTruncated ? `… earlier output omitted …\n${stream.content}` : stream.content}
-                        </pre>
+                        <pre>{nodes}</pre>
                     </div>
                 </div>
             </div>
@@ -2616,9 +2623,392 @@ function Composer({
     const prevConvoIdRef = useRef(convoId);
     const draftTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
     const draftTimerConvoRef = useRef<string | undefined>(undefined);
+    const [voiceState, reactSetVoiceState] = useState<"idle" | "requesting" | "recording" | "error">("idle");
+    const [elapsedMs, setElapsedMs] = useState(0);
+    const [waveformActive, setWaveformActive] = useState(false);
+    const genRef = useRef(0);
+    const mediaRecorder = useRef<MediaRecorder | null>(null);
+    const mediaStream = useRef<MediaStream | null>(null);
+    const audioContext = useRef<AudioContext | null>(null);
+    const analyser = useRef<AnalyserNode | null>(null);
+    const rafId = useRef<number | null>(null);
+    const chunksRef = useRef<Blob[]>([]);
+    const recMimeRef = useRef<string | undefined>(undefined);
+    const recordingStartMs = useRef(0);
+    const deadlineTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const tickTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+    const watchdogTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const acquireTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const errorMsg = useRef<string | null>(null);
+    const mountedRef = useRef(false);
+    const voiceStateRef = useRef<"idle" | "requesting" | "recording" | "error">("idle");
+    const dispositionRef = useRef<"send" | "discard">("discard");
+    const sendInFlightRef = useRef(false);
+    const stopInFlightRef = useRef(false);
+    const finalizedRef = useRef(false);
+    const recordingIdRef = useRef(0);
+    const capConvoRef = useRef<string | undefined>(undefined);
+    const recordingSessionGenRef = useRef(0);
+    const visibilityHandlerRef = useRef<(() => void) | null>(null);
+    const voiceConvoRef = useRef(convoId);
+    const composerRef = useRef<HTMLDivElement>(null);
+    const micButtonRef = useRef<HTMLButtonElement>(null);
+    const stopButtonRef = useRef<HTMLButtonElement>(null);
+    const restoreVoiceFocusRef = useRef(false);
+    const waveformCanvasRef = useRef<HTMLCanvasElement>(null);
     const folders = folderSuggestions(body, store);
     const commands = filterCommands(CLAUDE_BRIDGE_COMMANDS, body);
     const open = body !== dismissed && (folders.length > 0 || (isCommandMode(body) && commands.length > 0));
+    const voiceSupported = Boolean(navigator.mediaDevices?.getUserMedia) && typeof window.MediaRecorder !== "undefined";
+    const elapsedMinutes = Math.floor(elapsedMs / 60_000);
+    const elapsedSeconds = Math.floor((elapsedMs % 60_000) / 1000);
+    const elapsedLabel = `${elapsedMinutes}:${String(elapsedSeconds).padStart(2, "0")}`;
+
+    const setVoiceState = useCallback((next: "idle" | "requesting" | "recording" | "error"): void => {
+        voiceStateRef.current = next;
+        reactSetVoiceState(next);
+    }, []);
+
+    const releaseMedia = useCallback((): void => {
+        if (deadlineTimer.current !== null) {
+            clearTimeout(deadlineTimer.current);
+            deadlineTimer.current = null;
+        }
+        if (tickTimer.current !== null) {
+            clearInterval(tickTimer.current);
+            tickTimer.current = null;
+        }
+        if (rafId.current !== null) {
+            cancelAnimationFrame(rafId.current);
+            rafId.current = null;
+        }
+        mediaStream.current?.getTracks().forEach((track) => track.stop());
+        mediaStream.current = null;
+        const context = audioContext.current;
+        audioContext.current = null;
+        analyser.current = null;
+        if (context && context.state !== "closed") void context.close().catch(() => undefined);
+        if (visibilityHandlerRef.current) {
+            document.removeEventListener("visibilitychange", visibilityHandlerRef.current);
+            visibilityHandlerRef.current = null;
+        }
+    }, []);
+
+    const releaseResources = useCallback((): void => {
+        releaseMedia();
+        if (watchdogTimer.current !== null) {
+            clearTimeout(watchdogTimer.current);
+            watchdogTimer.current = null;
+        }
+        mediaRecorder.current = null;
+    }, [releaseMedia]);
+
+    const finalizeVoice = useCallback(
+        (rid: number, localChunks: Blob[]): void => {
+            if (rid !== recordingIdRef.current) return;
+            if (finalizedRef.current) return;
+            finalizedRef.current = true;
+
+            const mime = recMimeRef.current || "audio/webm";
+            const blob = localChunks.length ? new Blob(localChunks, { type: mime }) : null;
+            const wantSend = dispositionRef.current === "send";
+            const capturedConvo = capConvoRef.current;
+            const capturedSessionGen = recordingSessionGenRef.current;
+            releaseResources();
+
+            if (wantSend && !blob) {
+                if (mountedRef.current) {
+                    errorMsg.current = "Recording failed to save.";
+                    setVoiceState("error");
+                }
+                console.warn("voice: committed recording contained no audio", {
+                    rid,
+                    disposition: dispositionRef.current,
+                    chunks: localChunks.length,
+                    elapsedMs: Date.now() - recordingStartMs.current,
+                });
+                sendInFlightRef.current = false;
+                stopInFlightRef.current = false;
+                return;
+            }
+
+            if (mountedRef.current && voiceStateRef.current !== "error") {
+                restoreVoiceFocusRef.current = Boolean(composerRef.current?.contains(document.activeElement));
+                setVoiceState("idle");
+                setElapsedMs(0);
+            }
+
+            if (wantSend && blob && capturedConvo && client.sessionGeneration !== capturedSessionGen) {
+                console.warn("voice: session changed before finalize — recording not sent", { rid });
+            }
+
+            if (wantSend && blob && capturedConvo && client.sessionGeneration === capturedSessionGen) {
+                const onFail = (): void => {
+                    if (mountedRef.current && voiceStateRef.current === "idle") {
+                        errorMsg.current = "Couldn't save the recording — try again.";
+                        setVoiceState("error");
+                    }
+                };
+                void client
+                    .sendVoiceNote(blob, capturedConvo, capturedSessionGen)
+                    .then((outcome) => {
+                        if (outcome !== "sent" && outcome !== "persisted-terminal") onFail();
+                    })
+                    .catch(onFail);
+            }
+            sendInFlightRef.current = false;
+            stopInFlightRef.current = false;
+        },
+        [client, releaseResources, setVoiceState],
+    );
+
+    const stopRecorder = useCallback(
+        (disposition: "send" | "discard"): void => {
+            const recorder = mediaRecorder.current;
+            if (!recorder || recorder.state === "inactive") return;
+            if (disposition === "send") {
+                dispositionRef.current = "send";
+                sendInFlightRef.current = true;
+            } else if (!sendInFlightRef.current) {
+                dispositionRef.current = "discard";
+            }
+            stopInFlightRef.current = true;
+            const rid = recordingIdRef.current;
+            const localChunks = chunksRef.current;
+            watchdogTimer.current = setTimeout(() => {
+                if (rid !== recordingIdRef.current || finalizedRef.current) return;
+                console.warn("voice: onstop absent — watchdog finalizing", {
+                    rid,
+                    chunks: localChunks.length,
+                    elapsedMs: Date.now() - recordingStartMs.current,
+                });
+                finalizeVoice(rid, localChunks);
+            }, 3000);
+            recorder.stop();
+        },
+        [finalizeVoice],
+    );
+
+    const startWaveform = useCallback((): void => {
+        const values = new Uint8Array(analyser.current?.frequencyBinCount ?? 0);
+        const reducedMotion =
+            typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        const draw = (): void => {
+            const canvas = waveformCanvasRef.current;
+            const currentAnalyser = analyser.current;
+            if (canvas && currentAnalyser) {
+                const context = canvas.getContext("2d");
+                if (context) {
+                    const width = Math.max(1, Math.floor(canvas.clientWidth * window.devicePixelRatio));
+                    const height = Math.max(1, Math.floor(canvas.clientHeight * window.devicePixelRatio));
+                    if (canvas.width !== width) canvas.width = width;
+                    if (canvas.height !== height) canvas.height = height;
+                    if (!reducedMotion) currentAnalyser.getByteTimeDomainData(values);
+                    context.clearRect(0, 0, width, height);
+                    const computed = getComputedStyle(canvas);
+                    context.strokeStyle =
+                        computed.getPropertyValue("--cpd-color-icon-accent-primary").trim() || computed.color;
+                    context.lineWidth = Math.max(1, window.devicePixelRatio);
+                    context.beginPath();
+                    for (let index = 0; index < values.length; index += 1) {
+                        const x = (index / Math.max(1, values.length - 1)) * width;
+                        const y = reducedMotion ? height / 2 : (values[index] / 255) * height;
+                        if (index === 0) context.moveTo(x, y);
+                        else context.lineTo(x, y);
+                    }
+                    context.stroke();
+                }
+            }
+            rafId.current = requestAnimationFrame(draw);
+        };
+        draw();
+    }, []);
+
+    const startRecording = useCallback(
+        (stream: MediaStream): void => {
+            const rid = ++recordingIdRef.current;
+            const localChunks: Blob[] = [];
+            chunksRef.current = localChunks;
+            recMimeRef.current = undefined;
+            mediaStream.current = stream;
+            recordingSessionGenRef.current = client.sessionGeneration;
+            setWaveformActive(false);
+            try {
+                const mimeType = ["audio/webm;codecs=opus", "audio/webm"].find((candidate) =>
+                    window.MediaRecorder.isTypeSupported(candidate),
+                );
+                const recorder = mimeType
+                    ? new window.MediaRecorder(stream, { mimeType })
+                    : new window.MediaRecorder(stream);
+                mediaRecorder.current = recorder;
+                recorder.onstart = () => {
+                    if (rid !== recordingIdRef.current || localChunks !== chunksRef.current) return;
+                    recMimeRef.current ||= recorder.mimeType || undefined;
+                };
+                recorder.ondataavailable = (event) => {
+                    if (rid !== recordingIdRef.current || localChunks !== chunksRef.current) return;
+                    recMimeRef.current ||= event.data.type || undefined;
+                    if (event.data.size) localChunks.push(event.data);
+                };
+                recorder.onstop = () => {
+                    if (rid !== recordingIdRef.current || localChunks !== chunksRef.current) return;
+                    finalizeVoice(rid, localChunks);
+                };
+                recorder.onerror = () => {
+                    if (rid !== recordingIdRef.current || localChunks !== chunksRef.current) return;
+                    releaseMedia();
+                    errorMsg.current = "Recording stopped unexpectedly.";
+                    setVoiceState("error");
+                    stopRecorder("discard");
+                };
+
+                try {
+                    const context = new window.AudioContext();
+                    audioContext.current = context;
+                    const currentAnalyser = context.createAnalyser();
+                    currentAnalyser.fftSize = 256;
+                    analyser.current = currentAnalyser;
+                    context.createMediaStreamSource(stream).connect(currentAnalyser);
+                    startWaveform();
+                    setWaveformActive(true);
+                } catch {
+                    if (rafId.current !== null) {
+                        cancelAnimationFrame(rafId.current);
+                        rafId.current = null;
+                    }
+                    const context = audioContext.current;
+                    audioContext.current = null;
+                    analyser.current = null;
+                    if (context && context.state !== "closed") void context.close().catch(() => undefined);
+                }
+
+                dispositionRef.current = "discard";
+                sendInFlightRef.current = false;
+                stopInFlightRef.current = false;
+                finalizedRef.current = false;
+                recordingStartMs.current = Date.now();
+                setElapsedMs(0);
+                tickTimer.current = setInterval(() => {
+                    setElapsedMs(Date.now() - recordingStartMs.current);
+                }, 500);
+                const capMs = 5 * 60 * 1000;
+                deadlineTimer.current = setTimeout(() => {
+                    if (Date.now() - recordingStartMs.current >= capMs) stopRecorder("send");
+                }, capMs);
+                const reconcileDurationCap = (): void => {
+                    if (document.visibilityState === "visible" && Date.now() - recordingStartMs.current >= capMs) {
+                        stopRecorder("send");
+                    }
+                };
+                visibilityHandlerRef.current = reconcileDurationCap;
+                document.addEventListener("visibilitychange", reconcileDurationCap);
+
+                recorder.start(1000);
+                setVoiceState("recording");
+            } catch {
+                stream.getTracks().forEach((track) => track.stop());
+                releaseResources();
+                errorMsg.current = "Couldn't start recording.";
+                setVoiceState("error");
+            }
+        },
+        [client, finalizeVoice, releaseMedia, releaseResources, setVoiceState, startWaveform, stopRecorder],
+    );
+
+    const acquireVoice = useCallback((): void => {
+        if (!navigator.mediaDevices?.getUserMedia || typeof window.MediaRecorder === "undefined") return;
+        const gen = ++genRef.current;
+        setVoiceState("requesting");
+        capConvoRef.current = convoIdRef.current;
+        errorMsg.current = null;
+        const localTimer = setTimeout(() => {
+            if (gen === genRef.current && voiceStateRef.current === "requesting") {
+                if (acquireTimer.current === localTimer) acquireTimer.current = null;
+                ++genRef.current;
+                errorMsg.current = "Microphone request timed out — try again.";
+                setVoiceState("error");
+            }
+        }, 20_000);
+        acquireTimer.current = localTimer;
+        void navigator.mediaDevices.getUserMedia({ audio: true }).then(
+            (stream) => {
+                clearTimeout(localTimer);
+                if (acquireTimer.current === localTimer) acquireTimer.current = null;
+                if (gen !== genRef.current || !mountedRef.current) {
+                    stream.getTracks().forEach((track) => track.stop());
+                    return;
+                }
+                startRecording(stream);
+            },
+            (error: unknown) => {
+                clearTimeout(localTimer);
+                if (acquireTimer.current === localTimer) acquireTimer.current = null;
+                if (gen !== genRef.current) return;
+                const name =
+                    typeof error === "object" && error !== null && "name" in error
+                        ? String((error as { name: unknown }).name)
+                        : "";
+                errorMsg.current =
+                    name === "NotAllowedError" || name === "SecurityError"
+                        ? "Microphone access denied."
+                        : name === "NotFoundError"
+                          ? "No microphone found."
+                          : "Couldn't access the microphone.";
+                setVoiceState("error");
+            },
+        );
+    }, [setVoiceState, startRecording]);
+
+    const commitVoiceStop = useCallback(
+        (disposition: "send" | "discard"): void => {
+            stopRecorder(disposition);
+            composerRef.current?.querySelectorAll<HTMLButtonElement>(".mj_VoiceRecording_action").forEach((button) => {
+                button.disabled = stopInFlightRef.current;
+            });
+        },
+        [stopRecorder],
+    );
+
+    const teardownVoice = useCallback((): void => {
+        ++genRef.current;
+        if (acquireTimer.current !== null) {
+            clearTimeout(acquireTimer.current);
+            acquireTimer.current = null;
+        }
+        if (voiceStateRef.current === "requesting") {
+            if (mountedRef.current) setVoiceState("idle");
+            return;
+        }
+        if (mediaRecorder.current && mediaRecorder.current.state !== "inactive") stopRecorder("discard");
+        releaseMedia();
+    }, [releaseMedia, setVoiceState, stopRecorder]);
+
+    useEffect(() => {
+        mountedRef.current = true;
+        return () => {
+            mountedRef.current = false;
+            teardownVoice();
+        };
+    }, [teardownVoice]);
+
+    useLayoutEffect(() => {
+        if (voiceConvoRef.current !== convoId) {
+            teardownVoice();
+            voiceConvoRef.current = convoId;
+        }
+    }, [convoId, teardownVoice]);
+
+    useLayoutEffect(() => {
+        if (voiceState === "recording") {
+            stopButtonRef.current?.focus();
+        } else if (voiceState === "idle") {
+            const shouldRestoreFocus = restoreVoiceFocusRef.current;
+            restoreVoiceFocusRef.current = false;
+            if (shouldRestoreFocus && capConvoRef.current === convoIdRef.current) {
+                micButtonRef.current?.focus();
+            }
+        }
+    }, [voiceState]);
 
     // Mirror the store's canonical per-convo durability flag into React state, but only for the
     // currently-selected conversation — a late async persist/clear for A must not clobber B's badge.
@@ -2749,7 +3139,7 @@ function Composer({
         }
     };
     return (
-        <div className="mx_MessageComposer" role="region" aria-label="Message composer">
+        <div className="mx_MessageComposer" role="region" aria-label="Message composer" ref={composerRef}>
             <div className="mx_MessageComposer_wrapper">
                 {state.connectionError && state.connectionErrorSeq !== dismissedSeq && (
                     <div className="mj_ConnectionError">
@@ -2760,6 +3150,23 @@ function Composer({
                             aria-label="Dismiss error"
                             title="Dismiss error"
                             onClick={() => setDismissedSeq(state.connectionErrorSeq)}
+                        >
+                            <CloseIcon />
+                        </button>
+                    </div>
+                )}
+                {voiceState === "error" && errorMsg.current && (
+                    <div className="mj_ConnectionError mj_VoiceError">
+                        <span role="status">{errorMsg.current}</span>
+                        <button
+                            className="mj_ConnectionError_dismiss"
+                            type="button"
+                            aria-label="Dismiss recording error"
+                            title="Dismiss recording error"
+                            onClick={() => {
+                                errorMsg.current = null;
+                                setVoiceState("idle");
+                            }}
                         >
                             <CloseIcon />
                         </button>
@@ -2780,127 +3187,189 @@ function Composer({
                         onSelectFolder={selectFolder}
                     />
                 )}
-                <div className="mx_MessageComposer_row">
-                    <div className="mx_SendMessageComposer" onClick={() => textarea.current?.focus()}>
-                        <div className="mx_BasicMessageComposer">
-                            <textarea
-                                className="mx_BasicMessageComposer_input"
-                                ref={textarea}
-                                rows={1}
-                                value={body}
-                                onBlur={flushDraft}
+                {voiceState === "recording" ? (
+                    <div className="mj_VoiceRecording">
+                        <span className="mj_VoiceRecording_dot" aria-hidden="true" />
+                        {waveformActive ? (
+                            <canvas className="mj_VoiceRecording_waveform" ref={waveformCanvasRef} aria-hidden="true" />
+                        ) : (
+                            <span className="mj_VoiceRecording_waveformFallback" aria-hidden="true" />
+                        )}
+                        <span className="mj_VoiceRecording_time" aria-hidden="true">
+                            {elapsedLabel}
+                        </span>
+                        <span className="mj_ScreenReaderOnly" aria-live="polite">
+                            Recording, {elapsedLabel}
+                        </span>
+                        <button
+                            className="mj_VoiceRecording_action"
+                            type="button"
+                            aria-label="Discard recording"
+                            title="Discard recording"
+                            disabled={stopInFlightRef.current}
+                            onClick={() => commitVoiceStop("discard")}
+                        >
+                            <TrashIcon />
+                        </button>
+                        <button
+                            ref={stopButtonRef}
+                            className="mj_VoiceRecording_action mj_VoiceRecording_stop"
+                            type="button"
+                            aria-label="Stop and send voice message"
+                            title="Stop and send voice message"
+                            disabled={stopInFlightRef.current}
+                            onClick={() => commitVoiceStop("send")}
+                        >
+                            <StopIcon />
+                        </button>
+                    </div>
+                ) : (
+                    <div className="mx_MessageComposer_row">
+                        <div className="mx_SendMessageComposer" onClick={() => textarea.current?.focus()}>
+                            <div className="mx_BasicMessageComposer">
+                                <textarea
+                                    className="mx_BasicMessageComposer_input"
+                                    ref={textarea}
+                                    rows={1}
+                                    value={body}
+                                    onBlur={flushDraft}
+                                    onChange={(event) => {
+                                        const nextBody = event.target.value;
+                                        setBodyDraft(nextBody);
+                                        setHighlighted(null);
+                                        if (dismissed !== null && nextBody !== dismissed) setDismissed(null);
+                                        event.target.style.height = "auto";
+                                        event.target.style.height = `${Math.min(event.target.scrollHeight, 160)}px`;
+                                    }}
+                                    onKeyDown={(event) => {
+                                        if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+                                        if (open) {
+                                            const count = folders.length || commands.length;
+                                            if (event.key === "ArrowDown") {
+                                                event.preventDefault();
+                                                setHighlighted((current) =>
+                                                    current === null ? 0 : (current + 1) % count,
+                                                );
+                                                return;
+                                            }
+                                            if (event.key === "ArrowUp") {
+                                                event.preventDefault();
+                                                setHighlighted((current) =>
+                                                    current === null ? count - 1 : (current - 1 + count) % count,
+                                                );
+                                                return;
+                                            }
+                                            if (event.key === "Tab") {
+                                                event.preventDefault();
+                                                const index = highlighted ?? 0;
+                                                if (folders.length > 0) selectFolder(folders[index]);
+                                                else selectCommand(commands[index]);
+                                                return;
+                                            }
+                                            if (event.key === "Escape") {
+                                                event.preventDefault();
+                                                setDismissed(body);
+                                                setHighlighted(null);
+                                                return;
+                                            }
+                                            if (event.key === "Enter" && !event.shiftKey && highlighted !== null) {
+                                                event.preventDefault();
+                                                if (folders.length > 0) selectFolder(folders[highlighted]);
+                                                else selectCommand(commands[highlighted]);
+                                                return;
+                                            }
+                                        }
+                                        if (event.key === "Enter" && !event.shiftKey) {
+                                            event.preventDefault();
+                                            void send();
+                                        }
+                                    }}
+                                    onPaste={(event) => {
+                                        if (state.stagedUploads) return;
+                                        const files = [...event.clipboardData.files];
+                                        if (files.length > 0) {
+                                            event.preventDefault();
+                                            client.stageFiles(files);
+                                        }
+                                    }}
+                                    placeholder={
+                                        state.connection === "online"
+                                            ? "Send a message…"
+                                            : "Messages will send when reconnected"
+                                    }
+                                    aria-label="Message your agent"
+                                    aria-describedby="mj-composer-hint"
+                                    role="combobox"
+                                    aria-expanded={open}
+                                    aria-controls={SLASH_LISTBOX_ID}
+                                    aria-activedescendant={highlighted !== null ? slashRowId(highlighted) : undefined}
+                                />
+                            </div>
+                        </div>
+                        <div className="mx_MessageComposer_actions">
+                            <button
+                                className="mx_MessageComposer_button mx_EmojiButton"
+                                title="Emoji"
+                                aria-label="Emoji"
+                            >
+                                <ReactionIcon />
+                            </button>
+                            <button
+                                className="mx_MessageComposer_button"
+                                title="Attach a file"
+                                aria-label="Attach a file"
+                                onClick={() => fileInput.current?.click()}
+                            >
+                                <AttachmentIcon />
+                            </button>
+                            <input
+                                ref={fileInput}
+                                type="file"
+                                multiple
+                                hidden
                                 onChange={(event) => {
-                                    const nextBody = event.target.value;
-                                    setBodyDraft(nextBody);
-                                    setHighlighted(null);
-                                    if (dismissed !== null && nextBody !== dismissed) setDismissed(null);
-                                    event.target.style.height = "auto";
-                                    event.target.style.height = `${Math.min(event.target.scrollHeight, 160)}px`;
+                                    if (event.target.files) client.stageFiles([...event.target.files]);
+                                    event.target.value = "";
                                 }}
-                                onKeyDown={(event) => {
-                                    if (event.nativeEvent.isComposing || event.keyCode === 229) return;
-                                    if (open) {
-                                        const count = folders.length || commands.length;
-                                        if (event.key === "ArrowDown") {
-                                            event.preventDefault();
-                                            setHighlighted((current) => (current === null ? 0 : (current + 1) % count));
-                                            return;
-                                        }
-                                        if (event.key === "ArrowUp") {
-                                            event.preventDefault();
-                                            setHighlighted((current) =>
-                                                current === null ? count - 1 : (current - 1 + count) % count,
-                                            );
-                                            return;
-                                        }
-                                        if (event.key === "Tab") {
-                                            event.preventDefault();
-                                            const index = highlighted ?? 0;
-                                            if (folders.length > 0) selectFolder(folders[index]);
-                                            else selectCommand(commands[index]);
-                                            return;
-                                        }
-                                        if (event.key === "Escape") {
-                                            event.preventDefault();
-                                            setDismissed(body);
-                                            setHighlighted(null);
-                                            return;
-                                        }
-                                        if (event.key === "Enter" && !event.shiftKey && highlighted !== null) {
-                                            event.preventDefault();
-                                            if (folders.length > 0) selectFolder(folders[highlighted]);
-                                            else selectCommand(commands[highlighted]);
-                                            return;
-                                        }
-                                    }
-                                    if (event.key === "Enter" && !event.shiftKey) {
-                                        event.preventDefault();
-                                        void send();
-                                    }
-                                }}
-                                onPaste={(event) => {
-                                    if (state.stagedUploads) return;
-                                    const files = [...event.clipboardData.files];
-                                    if (files.length > 0) {
-                                        event.preventDefault();
-                                        client.stageFiles(files);
-                                    }
-                                }}
-                                placeholder={
-                                    state.connection === "online"
-                                        ? "Send a message…"
-                                        : "Messages will send when reconnected"
-                                }
-                                aria-label="Message your agent"
-                                aria-describedby="mj-composer-hint"
-                                role="combobox"
-                                aria-expanded={open}
-                                aria-controls={SLASH_LISTBOX_ID}
-                                aria-activedescendant={highlighted !== null ? slashRowId(highlighted) : undefined}
                             />
+                            <button
+                                ref={micButtonRef}
+                                className="mx_MessageComposer_button"
+                                title={
+                                    voiceSupported
+                                        ? voiceState === "requesting"
+                                            ? "Requesting microphone access…"
+                                            : "Record voice message"
+                                        : "Voice recording isn't supported in this browser."
+                                }
+                                aria-label={
+                                    voiceState === "requesting"
+                                        ? "Requesting microphone access"
+                                        : "Record voice message"
+                                }
+                                aria-busy={voiceState === "requesting"}
+                                aria-disabled={!voiceSupported || voiceState === "requesting"}
+                                disabled={!voiceSupported || voiceState === "requesting"}
+                                onClick={acquireVoice}
+                            >
+                                {voiceState === "requesting" ? (
+                                    <span className="mj_Spinner" aria-hidden="true" />
+                                ) : (
+                                    <MicOnIcon />
+                                )}
+                            </button>
+                            {body.trim() && (
+                                <button
+                                    className="mx_MessageComposer_sendMessage"
+                                    onClick={() => void send()}
+                                    aria-label="Send message"
+                                >
+                                    <SendIcon />
+                                </button>
+                            )}
                         </div>
                     </div>
-                    <div className="mx_MessageComposer_actions">
-                        <button className="mx_MessageComposer_button mx_EmojiButton" title="Emoji" aria-label="Emoji">
-                            <ReactionIcon />
-                        </button>
-                        <button
-                            className="mx_MessageComposer_button"
-                            title="Attach a file"
-                            aria-label="Attach a file"
-                            onClick={() => fileInput.current?.click()}
-                        >
-                            <AttachmentIcon />
-                        </button>
-                        <input
-                            ref={fileInput}
-                            type="file"
-                            multiple
-                            hidden
-                            onChange={(event) => {
-                                if (event.target.files) client.stageFiles([...event.target.files]);
-                                event.target.value = "";
-                            }}
-                        />
-                        <button
-                            className="mx_MessageComposer_button"
-                            title="Voice messages are not supported by this journal server"
-                            aria-label="Voice message"
-                            aria-disabled="true"
-                        >
-                            <MicOnIcon />
-                        </button>
-                        {body.trim() && (
-                            <button
-                                className="mx_MessageComposer_sendMessage"
-                                onClick={() => void send()}
-                                aria-label="Send message"
-                            >
-                                <SendIcon />
-                            </button>
-                        )}
-                    </div>
-                </div>
+                )}
                 <span id="mj-composer-hint" className="mj_ComposerHint">
                     / commands · shift+enter for newline
                 </span>

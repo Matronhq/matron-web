@@ -1906,13 +1906,13 @@ describe("MatronJournalClient attachment send state machine", () => {
         const state = internals(client);
         state.state = signedInState(client);
         let rejectFirst!: (reason: Error) => void;
-        const firstAttempt = new Promise<void>((_resolve, reject) => {
+        const firstAttempt = new Promise<"sent">((_resolve, reject) => {
             rejectFirst = reject;
         });
         const sendAttachment = jest
             .spyOn(client, "sendAttachment")
             .mockImplementationOnce(() => firstAttempt)
-            .mockResolvedValueOnce(undefined);
+            .mockResolvedValueOnce("sent");
         const first = fileFixture("first.bin", "application/octet-stream", [1]);
         const second = fileFixture("second.bin", "application/octet-stream", [2]);
 
@@ -2484,6 +2484,141 @@ describe("MatronJournalClient attachment send state machine", () => {
 
         expect([...rows.values()][0]).toMatchObject({ attachState: "error", errorKind: "empty" });
         expect(state.pendingFiles.size).toBe(0);
+    });
+});
+
+describe("MatronJournalClient voice notes", () => {
+    beforeEach(() => {
+        localStorage.clear();
+        globalThis.TextDecoder = NodeTextDecoder as typeof TextDecoder;
+    });
+
+    afterEach(() => {
+        jest.restoreAllMocks();
+    });
+
+    it("routes an audio file to the explicit conversation without staging it", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        state.state = signedInState(client, "c2");
+        const sendAttachment = jest.spyOn(client, "sendAttachment").mockResolvedValue("sent");
+        const blob = new Blob(["voice"], { type: "audio/mp4" });
+
+        await expect(client.sendVoiceNote(blob, "c1")).resolves.toBe("sent");
+
+        expect(sendAttachment).toHaveBeenCalledTimes(1);
+        const [file, convoId] = sendAttachment.mock.calls[0];
+        expect(convoId).toBe("c1");
+        expect(file).toBeInstanceOf(File);
+        expect(file.name).toBe("voice-note.m4a");
+        expect(file.type).toBe("audio/mp4");
+        expect(file.type).toMatch(/^audio\//);
+        expect(client.getSnapshot().stagedUploads).toBeUndefined();
+    });
+
+    it("rejects a voice note captured by an earlier session before attachment dispatch", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        state.state = signedInState(client);
+        const capturedSessionGen = client.sessionGeneration;
+        state.sessionGen += 1;
+        const sendAttachment = jest.spyOn(client, "sendAttachment").mockResolvedValue("sent");
+
+        await expect(
+            client.sendVoiceNote(new Blob(["voice"], { type: "audio/webm" }), "c1", capturedSessionGen),
+        ).resolves.toBe("skipped");
+
+        expect(sendAttachment).not.toHaveBeenCalled();
+    });
+
+    it("skips empty, unselected, child, and archived voice notes before attachment dispatch", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const sendAttachment = jest.spyOn(client, "sendAttachment").mockResolvedValue("sent");
+        const audio = new Blob(["voice"], { type: "audio/webm" });
+
+        state.state = { ...signedInState(client), selectedConversationId: undefined };
+        await expect(client.sendVoiceNote(audio)).resolves.toBe("skipped");
+        await expect(client.sendVoiceNote(new Blob([], { type: "audio/webm" }), "c1")).resolves.toBe("skipped");
+
+        state.state = {
+            ...signedInState(client),
+            conversations: [
+                ...CONVERSATIONS,
+                {
+                    ...CONVERSATIONS[0],
+                    id: "child",
+                    parent_convo_id: "c1",
+                },
+            ],
+        };
+        await expect(client.sendVoiceNote(audio, "child")).resolves.toBe("skipped");
+
+        state.state = { ...signedInState(client), archivedIds: new Set(["c1"]) };
+        await expect(client.sendVoiceNote(audio, "c1")).resolves.toBe("skipped");
+
+        expect(sendAttachment).not.toHaveBeenCalled();
+    });
+
+    it.each(["sent", "persisted-terminal", "persist-failed"] as const)(
+        "forwards the %s attachment outcome",
+        async (outcome) => {
+            const client = new MatronJournalClient();
+            const state = internals(client);
+            state.state = signedInState(client);
+            jest.spyOn(client, "sendAttachment").mockResolvedValue(outcome);
+
+            await expect(client.sendVoiceNote(new Blob(["voice"], { type: "audio/ogg" }), "c1")).resolves.toBe(outcome);
+        },
+    );
+
+    it("returns persist-failed when the voice outbox write fails", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        state.state = signedInState(client);
+        state.database = fakeDatabase({ addToOutbox: jest.fn().mockRejectedValue(new Error("storage full")) });
+        state.api = { messages: jest.fn().mockResolvedValue({ events: [] }) };
+
+        await expect(client.sendVoiceNote(new Blob(["voice"], { type: "audio/webm" }), "c1")).resolves.toBe(
+            "persist-failed",
+        );
+        expect(client.getSnapshot().stagedUploads).toBeUndefined();
+    });
+
+    it("returns sent after persistence when upload fails and exposes a retryable outbox error", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const { database } = attachmentDatabase();
+        const arrayBufferDescriptor = Object.getOwnPropertyDescriptor(File.prototype, "arrayBuffer");
+        Object.defineProperty(File.prototype, "arrayBuffer", {
+            configurable: true,
+            value: jest.fn().mockResolvedValue(new Uint8Array([1, 2, 3]).buffer),
+        });
+        state.state = signedInState(client);
+        state.database = database;
+        state.api = {
+            messages: jest.fn().mockResolvedValue({ events: [] }),
+            uploadMedia: jest.fn().mockRejectedValue(new Error("offline")),
+        };
+        state.connection = { send: jest.fn().mockReturnValue(true) };
+
+        try {
+            await expect(client.sendVoiceNote(new Blob(["voice"], { type: "audio/webm" }), "c1")).resolves.toBe("sent");
+        } finally {
+            if (arrayBufferDescriptor) Object.defineProperty(File.prototype, "arrayBuffer", arrayBufferDescriptor);
+            else delete (File.prototype as Partial<File>).arrayBuffer;
+        }
+
+        expect(client.getSnapshot().pendingMessages).toEqual([
+            expect.objectContaining({
+                filename: "voice-note.webm",
+                contentType: "audio/webm",
+                attachState: "error",
+                errorKind: "upload_failed",
+                canRetry: true,
+            }),
+        ]);
+        expect(client.getSnapshot().stagedUploads).toBeUndefined();
     });
 });
 

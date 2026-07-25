@@ -205,6 +205,22 @@ export function MicOnIcon(props: IconProps): React.ReactElement {
     );
 }
 
+export function StopIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props} fill="currentColor" stroke="none">
+            <rect x="6" y="6" width="12" height="12" rx="1" />
+        </Icon>
+    );
+}
+
+export function TrashIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            <path d="M4 7h16M9 7V4h6v3M6 7l1 14h10l1-14M10 11v6M14 11v6" />
+        </Icon>
+    );
+}
+
 export function SendIcon(props: IconProps): React.ReactElement {
     return (
         <Icon {...props} fill="currentColor" stroke="none">

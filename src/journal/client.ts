@@ -250,6 +250,10 @@ export class MatronJournalClient {
     private storeHydrated = { archive: true, pinned: true, favorite: true, unread: true };
     private storeWritable = { archive: true, pinned: true, favorite: true, unread: true };
 
+    public get sessionGeneration(): number {
+        return this.sessionGen;
+    }
+
     private allStorageHealthy(): boolean {
         return Object.values(this.storeHydrated).every(Boolean) && Object.values(this.storeWritable).every(Boolean);
     }
@@ -709,18 +713,47 @@ export class MatronJournalClient {
         }
     }
 
-    public async sendAttachment(file: File, convoId: string, caption?: string): Promise<void> {
-        const gen = this.sessionGen;
+    /**
+     * `"sent"` means the attachment was durably persisted to the outbox and its upload was dispatched,
+     * not that delivery was confirmed. Later upload failures resolve here and surface through the
+     * standard retryable outbox error tile.
+     */
+    public async sendAttachment(
+        file: File,
+        convoId: string,
+        caption?: string,
+        sessionGen = this.sessionGen,
+    ): Promise<"sent" | "persisted-terminal" | "persist-failed" | "skipped"> {
+        if (sessionGen !== this.sessionGen) return "skipped";
+        const gen = sessionGen;
         const api = this.api;
         const db = this.database;
-        if (!api || !db) return;
-        if (this.isChildConvo(convoId)) return;
+        if (!api || !db) return "skipped";
+        if (this.isChildConvo(convoId)) return "skipped";
         const owner = { gen, api, db };
         const message = this.buildPendingAttachment(file, convoId, caption);
         const persistOutcome = await this.persistPendingAttachment(message, file, db, gen);
-        if (persistOutcome.kind !== "persisted-uploadable") return;
+        if (persistOutcome.kind === "persisted-terminal") return "persisted-terminal";
+        if (persistOutcome.kind === "persist-failed") return "persist-failed";
         const optimisticRefresh = this.refreshSelectedConversation(convoId, db, gen).catch(() => undefined);
         await Promise.all([optimisticRefresh, this.runPendingUpload(message, file, owner)]);
+        return "sent";
+    }
+
+    public async sendVoiceNote(
+        blob: Blob,
+        convoId?: string,
+        sessionGen = this.sessionGen,
+    ): Promise<"sent" | "persisted-terminal" | "persist-failed" | "skipped"> {
+        if (sessionGen !== this.sessionGen) return "skipped";
+        const cid = convoId ?? this.state.selectedConversationId;
+        if (!cid || this.isChildConvo(cid) || this.state.archivedIds.has(cid)) return "skipped";
+        if (blob.size === 0) return "skipped";
+
+        const type = blob.type || "audio/webm";
+        const ext = type.includes("mp4") ? "m4a" : type.includes("ogg") ? "ogg" : "webm";
+        const file = new File([blob], `voice-note.${ext}`, { type });
+        return await this.sendAttachment(file, cid, undefined, sessionGen);
     }
 
     public async retryAttachment(localId: string): Promise<void> {
