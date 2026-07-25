@@ -30,10 +30,25 @@ const MIME = {
 };
 
 function serve(dir) {
+    const root = path.resolve(dir);
     return new Promise((resolve) => {
         const server = http.createServer((req, res) => {
-            const urlPath = decodeURIComponent(req.url.split("?")[0]);
-            const file = path.join(dir, urlPath === "/" ? "index.html" : urlPath);
+            let urlPath;
+            try {
+                urlPath = decodeURIComponent(req.url.split("?")[0]);
+            } catch {
+                res.writeHead(400);
+                res.end("bad request");
+                return;
+            }
+            const rel = urlPath === "/" ? "index.html" : urlPath.replace(/^\/+/, "");
+            const file = path.resolve(root, rel);
+            // Never serve outside the fixture dir (path-traversal guard).
+            if (file !== root && !file.startsWith(root + path.sep)) {
+                res.writeHead(403);
+                res.end("forbidden");
+                return;
+            }
             fs.readFile(file, (err, data) => {
                 if (err) {
                     res.writeHead(404);

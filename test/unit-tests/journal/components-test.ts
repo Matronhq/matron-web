@@ -181,11 +181,35 @@ describe("usage limit accessibility", () => {
 
         const group = rendered.container.querySelector('[role="group"][aria-label="Usage limits"]');
         const progressbar = group?.querySelector('[role="progressbar"]');
-        // v5: bridge label "Session" is relabelled to the fixed short "5h" (usageShortLabel).
-        expect(progressbar?.getAttribute("aria-label")).toBe("5h");
+        // v5: the accessible name keeps the FULL server label; the visible tag is the
+        // relabelled short form ("5h").
+        expect(progressbar?.getAttribute("aria-label")).toBe("Session");
+        expect(group?.querySelector(".mj_UsageLabel")?.textContent).toBe("5h");
         expect(progressbar?.getAttribute("aria-valuenow")).toBe("39");
         expect(progressbar?.getAttribute("aria-valuetext")).toBe("39% used, resets in 2 hours");
         expect(progressbar?.parentElement?.hasAttribute("aria-label")).toBe(false);
+    });
+
+    it("fills only the semantic affirmative in a permission card, whatever the option order", async () => {
+        const client = signedInClient({
+            events: [
+                {
+                    seq: 1,
+                    convo_id: "c1",
+                    ts: 0,
+                    sender: "agent:claude",
+                    type: "permission_request",
+                    payload: { description: "Restart nginx on prod?", options: ["Always allow", "Deny", "Allow"] },
+                },
+            ],
+        });
+
+        rendered = await renderClient(client);
+
+        const card = rendered.container.querySelector(".mj_PromptCard_permission");
+        const filled = card?.querySelectorAll(".mj_PromptOption_affirmative");
+        expect(filled?.length).toBe(1);
+        expect(filled?.[0]?.textContent).toBe("Allow");
     });
 });
 

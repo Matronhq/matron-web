@@ -1676,14 +1676,14 @@ li.mj_AttachmentChip_error {
     letter-spacing: 0.07em;
 }
 
-.mj_PromptCard_permission .mj_PromptOptions button:first-child {
+.mj_PromptCard_permission .mj_PromptOptions button.mj_PromptOption_affirmative {
     border: 0;
     background: var(--cpd-color-bg-accent);
     color: var(--cpd-color-text-on-accent);
     font-weight: 600;
 }
 
-.mj_PromptCard_permission .mj_PromptOptions button:first-child:hover {
+.mj_PromptCard_permission .mj_PromptOptions button.mj_PromptOption_affirmative:hover {
     filter: brightness(1.08);
 }
 
@@ -2043,6 +2043,15 @@ button.mj_File {
     resize: none;
     color: var(--cpd-color-text-primary);
     overflow-y: auto;
+}
+
+/* The rule above sets outline:none at high specificity, which would swallow the
+   composer's keyboard-focus ring. Restore it here at matching specificity + the
+   pseudo-class so a keyboard user gets a 2px accent ring on the (borderless) input
+   inside the shell; pointer focus is still carried by the shell border recolor. */
+.mx_RoomView_body[data-layout="bubble"] .mx_BasicMessageComposer textarea.mx_BasicMessageComposer_input:focus-visible {
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: 1px;
 }
 
 .mx_MessageComposer_actions button {

@@ -1392,7 +1392,9 @@ function buildUsageMeters(
     limits: SessionStatus["limits"] | undefined,
 ): NonNullable<SessionStatus["limits"]> {
     const meters: NonNullable<SessionStatus["limits"]> = [];
-    if (status?.context) meters.push({ label: "ctx", percent: status.context.pct });
+    // Full label "context" (not "ctx") so the accessible name stays descriptive;
+    // usageShortLabel() renders the visible "ctx".
+    if (status?.context) meters.push({ label: "context", percent: status.context.pct });
     if (limits?.length) meters.push(...limits);
     // Normalise to the design's 2×2 grid order (ctx, session, model-weekly, week-all);
     // stable so any extra limits keep their relative order after the known ones.
@@ -1425,11 +1427,15 @@ export function UsageCluster({
                     const level = norm === null ? "unknown" : usageLevel(norm);
                     return (
                         <div className="mj_UsageRow" key={index} title={reset ? `resets ${reset}` : undefined}>
-                            <span className="mj_UsageLabel">{usageShortLabel(limit.label)}</span>
+                            {/* Visible label is the short tag; the accessible name keeps the
+                                full server-authored label so SR users know which limit it is. */}
+                            <span className="mj_UsageLabel" aria-hidden="true">
+                                {usageShortLabel(limit.label)}
+                            </span>
                             <span
                                 className="mj_UsageTrack"
                                 role="progressbar"
-                                aria-label={usageShortLabel(limit.label)}
+                                aria-label={limit.label}
                                 aria-valuemin={0}
                                 aria-valuemax={100}
                                 aria-valuenow={norm ?? undefined}
@@ -1830,11 +1836,20 @@ function PromptCard({
             <p>{question}</p>
             {!isReadOnly && !disabled && options.length > 0 && (
                 <div className="mj_PromptOptions">
-                    {options.map((option) => (
-                        <button key={`${option.label}:${option.value}`} onClick={() => answer(option.value)}>
-                            {option.label}
-                        </button>
-                    ))}
+                    {options.map((option) => {
+                        // The single filled affirmative is chosen by semantics ("Allow"), not
+                        // position — a reordered payload must not fill "Always allow" or "Deny".
+                        const affirmative = permission && option.label.trim().toLocaleLowerCase() === "allow";
+                        return (
+                            <button
+                                key={`${option.label}:${option.value}`}
+                                className={affirmative ? "mj_PromptOption_affirmative" : undefined}
+                                onClick={() => answer(option.value)}
+                            >
+                                {option.label}
+                            </button>
+                        );
+                    })}
                 </div>
             )}
             {!isReadOnly && !disabled && (event.payload.allows_free_text === true || options.length === 0) && (
