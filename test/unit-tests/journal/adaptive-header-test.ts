@@ -125,10 +125,9 @@ function headerProps(
         mode: "parent",
         onBack: jest.fn(),
         backLabel: "Back",
-        left: null,
-        hasLeft: false,
         title: "Conversation",
-        titleMeta: null,
+        subtitle: null,
+        hasSubtitle: false,
         collapse: { usageCollapsed: false, titleCollapsed: false },
         ...overrides,
     };
@@ -338,11 +337,12 @@ describe("useAdaptiveHeader", () => {
         await flushFrames();
         expect(onRender).toHaveBeenCalledTimes(1);
 
-        resize(observer, el, 560);
+        resize(observer, el, 700);
         await flushFrames();
         expect(onRender).toHaveBeenCalledTimes(2);
 
-        resize(observer, el, 550);
+        // Same band as 700 (usage collapsed, title full) → no flag flip, no re-render.
+        resize(observer, el, 650);
         await flushFrames();
         expect(onRender).toHaveBeenCalledTimes(2);
     });
@@ -397,7 +397,7 @@ describe("useAdaptiveHeader", () => {
 
         resize(observers[0], firstBody, 560);
         await flushFrames();
-        expect(container.querySelector(".mj_HeaderMiniUsage")).not.toBeNull();
+        expect(container.querySelector(".mj_UsageCluster_collapsed")).not.toBeNull();
 
         await act(async () => client.clearSelection());
         expect(container.querySelector(".mx_RoomView_body")).toBeNull();
@@ -411,14 +411,15 @@ describe("useAdaptiveHeader", () => {
 
         resize(observers[1], secondBody, 560);
         await flushFrames();
-        expect(container.querySelector(".mj_HeaderMiniUsage")).not.toBeNull();
+        expect(container.querySelector(".mj_UsageCluster_collapsed")).not.toBeNull();
     });
 });
 
 describe("HeaderShell", () => {
-    it("keeps one stable, flush-left level-one title heading at every width (no mini-title disclosure)", async () => {
-        // v3 mock: the title stays visible + flush-left at all widths and truncates;
-        // the old collapse-to-mini-title-popover path was removed (#518).
+    it("keeps exactly one level-one title heading at every width", async () => {
+        // v4: exactly one h1 title at all widths. At <560 the h1 is the disclosure's
+        // stable `before` slot (with a full-title tooltip) + a focusable details
+        // trigger; at full width it's the flush-left cluster heading.
         const mounted = await mountHeader({
             title: "Stable conversation title",
             collapse: { usageCollapsed: false, titleCollapsed: true },
@@ -428,8 +429,8 @@ describe("HeaderShell", () => {
         expect(headings).toHaveLength(1);
         expect(headings[0].textContent).toBe("Stable conversation title");
         expect(headings[0].closest(".mj_HeaderTitleCluster")).not.toBeNull();
-        expect(mounted.container.querySelector(".mj_HeaderMiniTitle")).toBeNull();
-        expect(mounted.container.querySelector(".mj_HeaderTitleCluster_hidden")).toBeNull();
+        expect(headings[0].getAttribute("title")).toBe("Stable conversation title");
+        expect(mounted.container.querySelector(".mj_HeaderTitleDisclosure")).not.toBeNull();
 
         await act(async () =>
             mounted.root.render(
@@ -445,64 +446,72 @@ describe("HeaderShell", () => {
 
         const expandedHeadings = mounted.container.querySelectorAll('[role="heading"][aria-level="1"]');
         expect(expandedHeadings).toHaveLength(1);
-        expect(expandedHeadings[0]).toBe(headings[0]);
-        expect(mounted.container.querySelector(".mj_HeaderMiniTitle")).toBeNull();
+        expect(expandedHeadings[0].textContent).toBe("Stable conversation title");
+        // Full width → no collapsed disclosure or tooltip.
+        expect(mounted.container.querySelector(".mj_HeaderTitleDisclosure")).toBeNull();
+        expect(expandedHeadings[0].getAttribute("title")).toBeNull();
     });
 
     it("refreshes the collapsed usage reset label on the minute clock", async () => {
         jest.useFakeTimers();
         jest.setSystemTime(new Date("2026-07-24T12:00:00Z"));
         const { container } = await mountHeader({
-            hasLeft: true,
-            left: React.createElement("span", null, "Model"),
-            limits: [{ label: "Session", percent: 72, resets_at: "2026-07-24T12:03:00Z" }],
+            limits: [{ label: "ctx", percent: 72, resets_at: "2026-07-24T12:03:00Z" }],
             collapse: { usageCollapsed: true, titleCollapsed: false },
         });
-        const miniUsage = container.querySelector(".mj_HeaderMiniUsage");
+        const collapsedUsage = container.querySelector(".mj_UsageCluster_collapsed");
 
-        expect(miniUsage?.getAttribute("aria-label")).toBe("Usage — worst limit 72%, resets 3m");
+        expect(collapsedUsage?.getAttribute("aria-label")).toBe("Usage — worst limit 72%, resets 3m");
 
         await act(async () => jest.advanceTimersByTime(60_000));
 
-        expect(miniUsage?.getAttribute("aria-label")).toBe("Usage — worst limit 72%, resets 2m");
+        expect(collapsedUsage?.getAttribute("aria-label")).toBe("Usage — worst limit 72%, resets 2m");
     });
 
-    it("renders the model/context meta only when there is content, and keeps it at narrow widths", async () => {
-        // No left content and no titleMeta → no meta row at all.
+    it("renders the full subtitle when expanded and swaps to the compact subtitle at <560", async () => {
+        // No subtitle content → no meta row.
         const empty = await mountHeader();
         expect(empty.container.querySelector(".mj_HeaderMeta")).toBeNull();
 
-        // With left content the meta renders — and STAYS rendered when the title
-        // "collapses" (narrow) so model/context/run-state remain reachable without a
-        // popover (the removed mini-title was the old narrow-width disclosure, #518).
-        const mounted = await mountHeader({
-            hasLeft: true,
-            left: React.createElement("span", { className: "mj_HeaderModel" }, "sonnet"),
-            collapse: { usageCollapsed: false, titleCollapsed: true },
+        // >=560: full subtitle in .mj_HeaderMeta.
+        const full = await mountHeader({
+            hasSubtitle: true,
+            subtitle: React.createElement("span", { className: "mj_HeaderModel" }, "claude-sonnet-4-5"),
+            subtitleCompact: React.createElement("span", { className: "mj_HeaderMetaCompact" }, "sonnet-4-5"),
+            collapse: { usageCollapsed: false, titleCollapsed: false },
         });
-        const meta = mounted.container.querySelector(".mj_HeaderMeta");
-        expect(meta).not.toBeNull();
-        expect(meta?.textContent).toContain("sonnet");
-        expect(mounted.container.querySelector(".mj_TitlePopover")).toBeNull();
-        expect(mounted.container.querySelector(".mj_ModelContextCluster")).toBeNull();
+        expect(full.container.querySelector(".mj_HeaderMeta")?.textContent).toContain("claude-sonnet-4-5");
+        expect(full.container.querySelector(".mj_HeaderMetaCompact")).toBeNull();
+
+        // <560: compact subtitle only.
+        const compact = await mountHeader({
+            hasSubtitle: true,
+            subtitle: React.createElement("span", { className: "mj_HeaderModel" }, "claude-sonnet-4-5"),
+            subtitleCompact: React.createElement("span", { className: "mj_HeaderMetaCompact" }, "sonnet-4-5"),
+            collapse: { usageCollapsed: true, titleCollapsed: true },
+        });
+        expect(compact.container.querySelector(".mj_HeaderMeta")).toBeNull();
+        expect(compact.container.querySelector(".mj_HeaderMetaCompact")?.textContent).toContain("sonnet-4-5");
     });
 
-    it("places rightControls (e.g. the Compact pill) in the header controls cluster", async () => {
-        const mounted = await mountHeader({
+    it("hides rightControls at <560 when hideControlsWhenCompact is set", async () => {
+        const props = {
             rightControls: React.createElement("button", { "aria-label": "Compact conversation" }, "Compact"),
-        });
-        const controls = mounted.container.querySelector(".mj_HeaderControls");
-        expect(controls).not.toBeNull();
-        expect(controls?.querySelector('[aria-label="Compact conversation"]')).not.toBeNull();
-        expect(mounted.container.querySelector(".mj_HeaderMiniTitle")).toBeNull();
+            hideControlsWhenCompact: true,
+        };
+        const wide = await mountHeader({ ...props, collapse: { usageCollapsed: false, titleCollapsed: false } });
+        expect(wide.container.querySelector('[aria-label="Compact conversation"]')).not.toBeNull();
+
+        const narrow = await mountHeader({ ...props, collapse: { usageCollapsed: true, titleCollapsed: true } });
+        expect(narrow.container.querySelector('[aria-label="Compact conversation"]')).toBeNull();
     });
 
     it("moves focus into a populated usage panel and restores it on expansion", async () => {
         const mounted = await mountHeader({
-            limits: [{ label: "Session", percent: 72 }],
+            limits: [{ label: "ctx", percent: 72 }],
             collapse: { usageCollapsed: true, titleCollapsed: false },
         });
-        const trigger = mounted.container.querySelector<HTMLButtonElement>(".mj_HeaderMiniUsage")!;
+        const trigger = mounted.container.querySelector<HTMLButtonElement>(".mj_UsageCluster_collapsed")!;
 
         await act(async () => trigger.click());
         const panel = mounted.container.querySelector<HTMLElement>(".mj_UsagePopover")!;
@@ -513,7 +522,7 @@ describe("HeaderShell", () => {
                 React.createElement(
                     HeaderShell,
                     headerProps({
-                        limits: [{ label: "Session", percent: 72 }],
+                        limits: [{ label: "ctx", percent: 72 }],
                         collapse: { usageCollapsed: false, titleCollapsed: false },
                     }),
                 ),
@@ -526,61 +535,18 @@ describe("HeaderShell", () => {
         expect(document.activeElement).not.toBe(document.body);
     });
 
-    it("does not restore stale focus after Escape and expansion consume ownership", async () => {
+    it("restores focus to the header when the collapsed usage trigger unmounts with focus held", async () => {
         const mounted = await mountHeader({
-            limits: [{ label: "Session", percent: 72 }],
-            collapse: { usageCollapsed: true, titleCollapsed: false },
-        });
-        const trigger = mounted.container.querySelector<HTMLButtonElement>(".mj_HeaderMiniUsage")!;
-
-        await act(async () => trigger.click());
-        await act(async () => document.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Escape" })));
-        expect(document.activeElement).toBe(trigger);
-
-        await act(async () =>
-            mounted.root.render(
-                React.createElement(
-                    HeaderShell,
-                    headerProps({
-                        limits: [{ label: "Session", percent: 72 }],
-                        collapse: { usageCollapsed: false, titleCollapsed: false },
-                    }),
-                ),
-            ),
-        );
-
-        const header = mounted.container.querySelector<HTMLElement>(".mj_ChatHeader")!;
-        const userFocusTarget = mounted.container.querySelector<HTMLButtonElement>(".mj_BackButton")!;
-        expect(document.activeElement).toBe(header);
-        userFocusTarget.focus();
-
-        await act(async () =>
-            mounted.root.render(
-                React.createElement(
-                    HeaderShell,
-                    headerProps({
-                        limits: [
-                            { label: "Session", percent: 72 },
-                            { label: "Weekly", percent: 35 },
-                        ],
-                        collapse: { usageCollapsed: false, titleCollapsed: false },
-                    }),
-                ),
-            ),
-        );
-
-        expect(document.activeElement).toBe(userFocusTarget);
-    });
-
-    it("restores focus when an open usage popover loses all limits", async () => {
-        const mounted = await mountHeader({
-            limits: [{ label: "Session", percent: 72 }],
+            limits: [{ label: "ctx", percent: 72 }],
             collapse: { usageCollapsed: true, titleCollapsed: false },
         });
 
-        await act(async () => mounted.container.querySelector<HTMLButtonElement>(".mj_HeaderMiniUsage")!.click());
+        await act(async () =>
+            mounted.container.querySelector<HTMLButtonElement>(".mj_UsageCluster_collapsed")!.click(),
+        );
         expect(document.activeElement).toBe(mounted.container.querySelector(".mj_UsagePopover"));
 
+        // Losing all limits unmounts the whole disclosure while focus was inside it.
         await act(async () =>
             mounted.root.render(
                 React.createElement(
@@ -597,5 +563,61 @@ describe("HeaderShell", () => {
         expect(header?.tabIndex).toBe(-1);
         expect(document.activeElement).toBe(header);
         expect(document.activeElement).not.toBe(document.body);
+    });
+
+    it("hover-opens the collapsed usage disclosure without stealing focus, and closes on mouse-leave", async () => {
+        const mounted = await mountHeader({
+            limits: [{ label: "ctx", percent: 72 }],
+            collapse: { usageCollapsed: true, titleCollapsed: false },
+        });
+        // Simulate focus living elsewhere (e.g. the composer).
+        const outside = document.createElement("input");
+        document.body.append(outside);
+        outside.focus();
+        expect(document.activeElement).toBe(outside);
+
+        const disclosure = mounted.container.querySelector<HTMLElement>(".mj_HeaderUsageDisclosure")!;
+        // React derives onMouseEnter/Leave from native mouseover/mouseout + relatedTarget.
+        await act(async () =>
+            disclosure.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: document.body })),
+        );
+        // Popover is open but focus stayed on the outside input (hover must not steal it).
+        expect(mounted.container.querySelector(".mj_UsagePopover")).not.toBeNull();
+        expect(document.activeElement).toBe(outside);
+
+        await act(async () =>
+            disclosure.dispatchEvent(new MouseEvent("mouseout", { bubbles: true, relatedTarget: document.body })),
+        );
+        expect(mounted.container.querySelector(".mj_UsagePopover")).toBeNull();
+        expect(document.activeElement).toBe(outside);
+        outside.remove();
+    });
+
+    it("exposes run-state to assistive tech and a focusable details disclosure when compact", async () => {
+        const mounted = await mountHeader({
+            title: "Deploy run",
+            hasSubtitle: true,
+            subtitle: React.createElement("span", { className: "mj_HeaderModel" }, "claude-sonnet-4-5"),
+            subtitleCompact: React.createElement(
+                "span",
+                { className: "mj_HeaderMetaCompact" },
+                React.createElement("span", { className: "mj_SrOnly" }, "running"),
+                React.createElement("span", { className: "mj_HeaderModelShort" }, "sonnet-4-5"),
+            ),
+            collapse: { usageCollapsed: true, titleCollapsed: true },
+        });
+        // Run-state is present as real (non-aria-hidden) text for screen readers.
+        const srStatus = mounted.container.querySelector(".mj_SrOnly");
+        expect(srStatus?.textContent).toBe("running");
+        expect(srStatus?.getAttribute("aria-hidden")).toBeNull();
+
+        // The details trigger is a real, focusable button; clicking it reveals the popover.
+        const trigger = mounted.container.querySelector<HTMLButtonElement>(".mj_HeaderTitleDisclosure")!;
+        expect(trigger.getAttribute("aria-expanded")).toBe("false");
+        await act(async () => trigger.click());
+        const popover = mounted.container.querySelector(".mj_TitlePopover");
+        expect(popover?.textContent).toContain("Deploy run");
+        expect(popover?.textContent).toContain("claude-sonnet-4-5");
+        expect(trigger.getAttribute("aria-expanded")).toBe("true");
     });
 });
