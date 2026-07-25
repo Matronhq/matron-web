@@ -2647,6 +2647,7 @@ function Composer({
     const finalizedRef = useRef(false);
     const recordingIdRef = useRef(0);
     const capConvoRef = useRef<string | undefined>(undefined);
+    const recordingSessionGenRef = useRef(0);
     const visibilityHandlerRef = useRef<(() => void) | null>(null);
     const voiceConvoRef = useRef(convoId);
     const composerRef = useRef<HTMLDivElement>(null);
@@ -2710,6 +2711,7 @@ function Composer({
             const blob = localChunks.length ? new Blob(localChunks, { type: mime }) : null;
             const wantSend = dispositionRef.current === "send";
             const capturedConvo = capConvoRef.current;
+            const capturedSessionGen = recordingSessionGenRef.current;
             releaseResources();
 
             if (wantSend && !blob) {
@@ -2733,7 +2735,7 @@ function Composer({
                 setElapsedMs(0);
             }
 
-            if (wantSend && blob && capturedConvo) {
+            if (wantSend && blob && capturedConvo && client.sessionGeneration === capturedSessionGen) {
                 const onFail = (): void => {
                     if (mountedRef.current && voiceStateRef.current === "idle") {
                         errorMsg.current = "Couldn't save the recording — try again.";
@@ -2741,7 +2743,7 @@ function Composer({
                     }
                 };
                 void client
-                    .sendVoiceNote(blob, capturedConvo)
+                    .sendVoiceNote(blob, capturedConvo, capturedSessionGen)
                     .then((outcome) => {
                         if (outcome !== "sent" && outcome !== "persisted-terminal") onFail();
                     })
@@ -2767,17 +2769,23 @@ function Composer({
             const rid = recordingIdRef.current;
             const localChunks = chunksRef.current;
             watchdogTimer.current = setTimeout(() => {
-                console.warn("voice: onstop absent — watchdog finalizing", {
+                if (rid !== recordingIdRef.current || finalizedRef.current) return;
+                finalizedRef.current = true;
+                console.warn("voice: onstop absent — recording failed", {
                     rid,
                     disposition: dispositionRef.current,
                     chunks: localChunks.length,
                     elapsedMs: Date.now() - recordingStartMs.current,
                 });
-                finalizeVoice(rid, localChunks);
+                releaseResources();
+                errorMsg.current = "Recording didn't finish — please try again.";
+                if (mountedRef.current) setVoiceState("error");
+                sendInFlightRef.current = false;
+                stopInFlightRef.current = false;
             }, 3000);
             recorder.stop();
         },
-        [finalizeVoice],
+        [releaseResources, setVoiceState],
     );
 
     const startWaveform = useCallback((): void => {
@@ -2822,6 +2830,7 @@ function Composer({
             chunksRef.current = localChunks;
             recMimeRef.current = undefined;
             mediaStream.current = stream;
+            recordingSessionGenRef.current = client.sessionGeneration;
             try {
                 const mimeType = ["audio/webm;codecs=opus", "audio/webm"].find((candidate) =>
                     window.MediaRecorder.isTypeSupported(candidate),
@@ -2845,17 +2854,30 @@ function Composer({
                 };
                 recorder.onerror = () => {
                     if (rid !== recordingIdRef.current || localChunks !== chunksRef.current) return;
+                    releaseMedia();
                     errorMsg.current = "Recording stopped unexpectedly.";
                     setVoiceState("error");
                     stopRecorder("discard");
                 };
 
-                const context = new window.AudioContext();
-                audioContext.current = context;
-                const currentAnalyser = context.createAnalyser();
-                currentAnalyser.fftSize = 256;
-                analyser.current = currentAnalyser;
-                context.createMediaStreamSource(stream).connect(currentAnalyser);
+                try {
+                    const context = new window.AudioContext();
+                    audioContext.current = context;
+                    const currentAnalyser = context.createAnalyser();
+                    currentAnalyser.fftSize = 256;
+                    analyser.current = currentAnalyser;
+                    context.createMediaStreamSource(stream).connect(currentAnalyser);
+                    startWaveform();
+                } catch {
+                    if (rafId.current !== null) {
+                        cancelAnimationFrame(rafId.current);
+                        rafId.current = null;
+                    }
+                    const context = audioContext.current;
+                    audioContext.current = null;
+                    analyser.current = null;
+                    if (context && context.state !== "closed") void context.close().catch(() => undefined);
+                }
 
                 dispositionRef.current = "discard";
                 sendInFlightRef.current = false;
@@ -2863,7 +2885,6 @@ function Composer({
                 finalizedRef.current = false;
                 recordingStartMs.current = Date.now();
                 setElapsedMs(0);
-                startWaveform();
                 tickTimer.current = setInterval(() => {
                     setElapsedMs(Date.now() - recordingStartMs.current);
                 }, 500);
@@ -2888,7 +2909,7 @@ function Composer({
                 setVoiceState("error");
             }
         },
-        [finalizeVoice, releaseResources, setVoiceState, startWaveform, stopRecorder],
+        [client, finalizeVoice, releaseMedia, releaseResources, setVoiceState, startWaveform, stopRecorder],
     );
 
     const acquireVoice = useCallback((): void => {

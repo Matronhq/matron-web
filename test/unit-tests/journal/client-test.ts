@@ -2516,6 +2516,21 @@ describe("MatronJournalClient voice notes", () => {
         expect(client.getSnapshot().stagedUploads).toBeUndefined();
     });
 
+    it("rejects a voice note captured by an earlier session before attachment dispatch", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        state.state = signedInState(client);
+        const capturedSessionGen = client.sessionGeneration;
+        state.sessionGen += 1;
+        const sendAttachment = jest.spyOn(client, "sendAttachment").mockResolvedValue("sent");
+
+        await expect(
+            client.sendVoiceNote(new Blob(["voice"], { type: "audio/webm" }), "c1", capturedSessionGen),
+        ).resolves.toBe("skipped");
+
+        expect(sendAttachment).not.toHaveBeenCalled();
+    });
+
     it("skips empty, unselected, child, and archived voice notes before attachment dispatch", async () => {
         const client = new MatronJournalClient();
         const state = internals(client);

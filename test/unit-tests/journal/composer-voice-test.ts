@@ -47,6 +47,7 @@ const CONVERSATIONS: Conversation[] = [
 
 interface ClientInternals {
     state: ClientState;
+    sessionGen: number;
     database?: {
         events: (conversationId: string) => Promise<[]>;
         outbox: (conversationId?: string) => Promise<PendingMessage[]>;
@@ -360,6 +361,24 @@ describe("Composer voice recording", () => {
         expect(recorder.startTimeslice).toBe(1000);
     });
 
+    it("continues recording without a waveform when AudioContext initialization fails", async () => {
+        Object.defineProperty(window, "AudioContext", {
+            configurable: true,
+            value: class {
+                public constructor() {
+                    throw new Error("Web Audio unavailable");
+                }
+            },
+        });
+        const { container } = await renderComposer();
+
+        const recorder = await startRecording(container);
+
+        expect(recorder.state).toBe("recording");
+        expect(harness.streams[0].track.stop).not.toHaveBeenCalled();
+        expect(voiceError(container)).toBeNull();
+    });
+
     it("maps microphone permission denial to an inline error", async () => {
         harness.getUserMedia.mockRejectedValueOnce(new DOMException("denied", "NotAllowedError"));
         const { container } = await renderComposer();
@@ -409,7 +428,7 @@ describe("Composer voice recording", () => {
         expect(blob.type).toBe("audio/webm");
     });
 
-    it("preserves the watchdog across unmount and sends available audio with a diagnostic", async () => {
+    it("surfaces a watchdog failure without sending partial audio", async () => {
         harness.queue({ autoStopEvents: false, finalChunk: "UNUSED" });
         const client = makeClient();
         const sendVoiceNote = jest.spyOn(client, "sendVoiceNote").mockResolvedValue("sent");
@@ -419,16 +438,29 @@ describe("Composer voice recording", () => {
         recorder.emitData("PARTIAL", "audio/webm");
 
         await click(container, "Stop and send voice message");
-        await unmount();
         await advance(3000);
 
-        expect(sendVoiceNote).toHaveBeenCalledTimes(1);
-        expect(sendVoiceNote.mock.calls[0][0].size).toBe("PARTIAL".length);
-        expect(sendVoiceNote.mock.calls[0][1]).toBe("A");
+        expect(sendVoiceNote).not.toHaveBeenCalled();
+        expect(voiceError(container)).toBe("Recording didn't finish — please try again.");
         expect(warn).toHaveBeenCalledWith(
-            "voice: onstop absent — watchdog finalizing",
+            "voice: onstop absent — recording failed",
             expect.objectContaining({ disposition: "send", chunks: 1 }),
         );
+    });
+
+    it("drops a completed recording if the client session changed before onstop", async () => {
+        harness.queue({ autoStopEvents: false, finalChunk: "FINAL-A" });
+        const client = makeClient();
+        const sendVoiceNote = jest.spyOn(client, "sendVoiceNote").mockResolvedValue("sent");
+        const { container } = await renderComposer(false, client);
+        const recorder = await startRecording(container);
+
+        await click(container, "Stop and send voice message");
+        internals(client).sessionGen += 1;
+        await act(async () => recorder.dispatchFinalEvents());
+
+        expect(sendVoiceNote).not.toHaveBeenCalled();
+        expect(harness.streams[0].track.stop).toHaveBeenCalledTimes(1);
     });
 
     it("keeps recorder errors visible after discard finalization", async () => {
@@ -436,6 +468,7 @@ describe("Composer voice recording", () => {
         const recorder = await startRecording(container);
 
         await act(async () => recorder.emitError());
+        expect(harness.streams[0].track.stop).toHaveBeenCalledTimes(1);
         expect(voiceError(container)).toBe("Recording stopped unexpectedly.");
         await advance(0);
 
@@ -618,7 +651,8 @@ describe("Composer voice recording", () => {
         recorderA.emitData("AAAA", "audio/webm");
         await click(container, "Stop and send voice message");
         await advance(3000);
-        expect(sendVoiceNote.mock.calls[0][0].size).toBe(4);
+        expect(sendVoiceNote).not.toHaveBeenCalled();
+        expect(voiceError(container)).toBe("Recording didn't finish — please try again.");
 
         const recorderB = await startRecording(container);
         recorderB.emitData("B", "audio/webm");
@@ -626,11 +660,11 @@ describe("Composer voice recording", () => {
         await click(container, "Stop and send voice message");
         await act(async () => recorderB.dispatchFinalEvents());
 
-        expect(sendVoiceNote).toHaveBeenCalledTimes(2);
-        expect(sendVoiceNote.mock.calls[1][0].size).toBe("B".length + "BB".length);
-        expect(sendVoiceNote.mock.calls[1][0].type).toBe("audio/webm");
+        expect(sendVoiceNote).toHaveBeenCalledTimes(1);
+        expect(sendVoiceNote.mock.calls[0][0].size).toBe("B".length + "BB".length);
+        expect(sendVoiceNote.mock.calls[0][0].type).toBe("audio/webm");
         expect(warn).toHaveBeenCalledWith(
-            "voice: onstop absent — watchdog finalizing",
+            "voice: onstop absent — recording failed",
             expect.objectContaining({ rid: 1 }),
         );
     });

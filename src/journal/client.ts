@@ -250,6 +250,10 @@ export class MatronJournalClient {
     private storeHydrated = { archive: true, pinned: true, favorite: true, unread: true };
     private storeWritable = { archive: true, pinned: true, favorite: true, unread: true };
 
+    public get sessionGeneration(): number {
+        return this.sessionGen;
+    }
+
     private allStorageHealthy(): boolean {
         return Object.values(this.storeHydrated).every(Boolean) && Object.values(this.storeWritable).every(Boolean);
     }
@@ -718,8 +722,10 @@ export class MatronJournalClient {
         file: File,
         convoId: string,
         caption?: string,
+        sessionGen = this.sessionGen,
     ): Promise<"sent" | "persisted-terminal" | "persist-failed" | "skipped"> {
-        const gen = this.sessionGen;
+        if (sessionGen !== this.sessionGen) return "skipped";
+        const gen = sessionGen;
         const api = this.api;
         const db = this.database;
         if (!api || !db) return "skipped";
@@ -737,7 +743,9 @@ export class MatronJournalClient {
     public async sendVoiceNote(
         blob: Blob,
         convoId?: string,
+        sessionGen = this.sessionGen,
     ): Promise<"sent" | "persisted-terminal" | "persist-failed" | "skipped"> {
+        if (sessionGen !== this.sessionGen) return "skipped";
         const cid = convoId ?? this.state.selectedConversationId;
         if (!cid || this.isChildConvo(cid) || this.state.archivedIds.has(cid)) return "skipped";
         if (blob.size === 0) return "skipped";
@@ -745,7 +753,7 @@ export class MatronJournalClient {
         const type = blob.type || "audio/webm";
         const ext = type.includes("mp4") ? "m4a" : type.includes("ogg") ? "ogg" : "webm";
         const file = new File([blob], `voice-note.${ext}`, { type });
-        return await this.sendAttachment(file, cid);
+        return await this.sendAttachment(file, cid, undefined, sessionGen);
     }
 
     public async retryAttachment(localId: string): Promise<void> {
