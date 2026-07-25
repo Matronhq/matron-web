@@ -69,25 +69,71 @@ const conversations: Conversation[] = [
     },
 ];
 
+// A representative thread that exercises EVERY content renderer so the harness shows the
+// real shapes/fonts/bubbles: fenced code, plain markdown, exec tool_output card, doc-edit
+// diff card, permission card, and own (user) bubbles. ts is epoch-seconds.
+const T = 1_782_000_000;
 const events: JournalEvent[] = [
-    { seq: 4, convo_id: "c1", ts: 4, sender: "user", type: "message", payload: { body: "and watch the error rate for 10 minutes after" } },
     {
-        seq: 5,
+        seq: 1,
         convo_id: "c1",
-        ts: 5,
+        ts: T,
         sender: "agent:claude",
-        type: "message",
+        type: "text",
         payload: {
-            body: "Restarted. Error rate steady at **0.02%** over the last 10 minutes — dashboards clean, websocket reconnects normal.",
+            body: "```nginx\nlocation /journal/ {\n    proxy_pass http://127.0.0.1:9810/;\n    proxy_read_timeout 3600s;  # websocket frames\n}\n```",
         },
     },
+    { seq: 2, convo_id: "c1", ts: T + 60, sender: "agent:claude", type: "text", payload: { body: "To swap prod I need to restart nginx." } },
+    {
+        seq: 3,
+        convo_id: "c1",
+        ts: T + 120,
+        sender: "agent:claude",
+        type: "permission_request",
+        payload: {
+            description: "Run `systemctl restart nginx` on prod?",
+            question: "Run `systemctl restart nginx` on prod?",
+            options: ["Allow", "Always allow", "Deny"],
+        },
+    },
+    { seq: 4, convo_id: "c1", ts: T + 180, sender: "user:operator", type: "text", payload: { body: "yes" } },
+    { seq: 5, convo_id: "c1", ts: T + 240, sender: "user:operator", type: "text", payload: { body: "and watch the error rate for 10 minutes after" } },
     {
         seq: 6,
         convo_id: "c1",
-        ts: 6,
+        ts: T + 300,
         sender: "agent:claude",
-        type: "prompt",
-        payload: { question: "Run `systemctl restart nginx` on prod?", options: ["Allow", "Always allow", "Deny"], allows_free_text: false },
+        type: "tool_output",
+        payload: {
+            command: "systemctl restart nginx && systemctl status nginx",
+            exit_code: 0,
+            snippet: "● nginx.service - A high performance web server\n     Active: active (running) since Fri 10:06:02 UTC\n     Process: 24518 ExecReload (code=exited, status=0/SUCCESS)",
+        },
+    },
+    {
+        seq: 7,
+        convo_id: "c1",
+        ts: T + 360,
+        sender: "agent:claude",
+        type: "diff",
+        payload: {
+            tool: "Edit",
+            file_path: "nginx/conf.d/journal.conf",
+            added: 2,
+            removed: 1,
+            diff: "@@ -1,3 +1,4 @@\n location /journal/ {\n     proxy_pass http://127.0.0.1:9810/;\n-    proxy_read_timeout 60s;\n+    proxy_read_timeout 3600s;\n+    proxy_buffering off;\n }",
+        },
+    },
+    {
+        seq: 8,
+        convo_id: "c1",
+        ts: T + 420,
+        sender: "agent:claude",
+        type: "text",
+        payload: {
+            body: "Restarted. Error rate steady at **0.02%** over the last 10 minutes — dashboards clean, websocket reconnects normal.\n\nBackups rotated: oldest three pruned, latest verified with a test restore. Kept [webapp.bak.20260724T100212Z](https://example.test/bak) as the rollback point.",
+        },
     },
 ];
 
