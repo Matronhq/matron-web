@@ -75,16 +75,17 @@ textarea {
 }
 
 .mj_ChatHeader {
-    --mj-header-side-min-width: 220px;
-
+    /* v3 mock: two zones — title flush-LEFT (over a muted model·context subtitle)
+       and a right controls cluster (usage bars + Compact pill). Replaces the old
+       3-column grid (model/context LEFT · title CENTER · usage RIGHT) the operator
+       flagged as wrong vs. the design (#518). */
     display: grid;
-    grid-template-columns:
-        minmax(var(--mj-header-side-min-width), 1fr) auto
-        minmax(var(--mj-header-side-min-width), 1fr);
+    grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
     border-bottom: 1px solid var(--cpd-color-border-subtle);
     background: var(--cpd-color-bg-canvas-default);
-    gap: var(--cpd-space-3x);
+    gap: var(--cpd-space-4x);
+    padding-inline: var(--cpd-space-4x);
 }
 
 .mj_HeaderCluster {
@@ -95,108 +96,186 @@ textarea {
     box-sizing: border-box;
     border: 0;
     background: transparent;
-    padding: var(--cpd-space-1x) var(--cpd-space-3x);
 }
 
 .mj_HeaderCluster_empty {
     visibility: hidden;
 }
 
-.mj_ModelContextCluster,
+/* LEFT zone: title flush-left (bold) stacked over the model·context subtitle. */
 .mj_HeaderTitleCluster {
     display: flex;
+    min-width: 0;
     min-height: 58px;
     flex-direction: column;
     justify-content: center;
-}
-
-.mj_ModelContextCluster {
+    align-items: flex-start;
     justify-self: start;
-}
-
-.mj_HeaderTitleCluster {
-    max-width: min(360px, 38vw);
-    align-items: center;
-    justify-self: center;
-    padding-inline: var(--cpd-space-3x);
+    gap: 2px;
 }
 
 .mj_HeaderTitleCluster .mx_RoomHeader_heading {
     display: block;
-    width: 100%;
-    font: var(--cpd-font-title);
-    text-align: center;
-}
-
-.mj_HeaderTitleCluster_hidden {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    min-height: 0;
-    padding: 0;
-    border: 0;
-    margin: -1px;
-    clip: rect(0 0 0 0);
+    max-width: 100%;
     overflow: hidden;
-    white-space: nowrap;
-}
-
-.mj_HeaderModel,
-.mj_HeaderContext,
-.mj_HeaderEmail {
-    display: block;
-    overflow: hidden;
-    color: var(--cpd-color-text-secondary);
+    /* v3 mock header title: 13px / 500 / 17px (measured from the design, #518). */
+    color: var(--cpd-color-text-primary);
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 17px;
+    text-align: left;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-.mj_HeaderModel,
-.mj_HeaderEmail {
-    font: var(--cpd-font-micro);
-}
-
-.mj_HeaderEmail {
-    color: var(--cpd-color-text-tertiary);
-}
-
-.mj_HeaderContext {
-    font: var(--cpd-font-micro);
-}
-
-.mj_HeaderContextRow {
+/* model · context (· subagent-state) inline subtitle with middot separators.
+   v3 mock subtitle: 11px / 400 / 14px, text-secondary (#518). */
+.mj_HeaderMeta {
     display: flex;
+    min-width: 0;
+    max-width: 100%;
     align-items: center;
-    gap: var(--cpd-space-2x);
+    overflow: hidden;
+    color: var(--cpd-color-text-secondary);
+    font-size: 11px;
+    font-weight: 400;
+    line-height: 14px;
+}
+
+.mj_HeaderMeta > * {
+    min-width: 0;
+    flex: 0 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_HeaderMeta > :not(:first-child)::before {
+    flex: none;
+    margin-inline: var(--cpd-space-1x);
+    color: var(--cpd-color-text-tertiary);
+    content: "·";
+}
+
+.mj_HeaderModel,
+.mj_HeaderContext {
+    display: block;
+    overflow: hidden;
+    color: inherit;
+    font: inherit;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* RIGHT zone: usage bars + Compact pill. */
+.mj_HeaderControls {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    justify-self: end;
+    gap: var(--cpd-space-3x);
 }
 
 .mj_CompactButton {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-width: 32px;
+    gap: var(--cpd-space-1x);
     min-height: 32px;
-    padding: 0;
-    border: none;
-    background: none;
-    color: var(--cpd-color-text-secondary);
-    font-size: var(--cpd-font-size-xs);
+    padding: 0 var(--cpd-space-3x);
+    border: 1px solid var(--cpd-color-border-interactive-secondary);
+    border-radius: var(--cpd-radius-pill);
+    background: var(--cpd-color-bg-canvas-default);
+    color: var(--cpd-color-text-primary);
+    font: var(--cpd-font-body-sm-regular);
     line-height: 1;
+    white-space: nowrap;
     cursor: pointer;
 }
 
 .mj_CompactButton svg {
-    width: 12px;
-    height: 12px;
+    width: 14px;
+    height: 14px;
 }
 
 .mj_CompactButton:hover {
+    background: var(--cpd-color-bg-subtle-secondary);
     color: var(--cpd-color-text-primary);
 }
 
-.mj_HeaderEmail {
-    width: 100%;
-    text-align: center;
+/* Session run-state in the subtitle — teal while running (v3 mock), muted otherwise. */
+.mj_HeaderState {
+    color: var(--cpd-color-text-secondary);
+}
+
+.mj_HeaderState_running {
+    color: var(--cpd-color-text-action-accent);
+}
+
+/* Persistent sidebar connection footer: avatar · operator id · connection status.
+   v3 mock bottom-left of the sidebar (#519). */
+.mx_LeftPanel_wrapper--user {
+    flex-direction: column;
+}
+
+.mj_SidebarFooter {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: var(--cpd-space-2x);
+    padding: var(--cpd-space-2x) var(--cpd-space-3x);
+    border-top: 1px solid var(--cpd-color-border-subtle);
+    background: var(--cpd-color-bg-canvas-default);
+}
+
+.mj_SidebarFooterAvatar {
+    display: inline-flex;
+    flex: none;
+    width: 24px;
+    height: 24px;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--cpd-radius-pill);
+    background: var(--cpd-color-bg-subtle-secondary);
+    color: var(--cpd-color-text-secondary);
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1;
+    text-transform: uppercase;
+}
+
+.mj_SidebarFooterId {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    color: var(--cpd-color-text-secondary);
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 16px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_SidebarFooterStatus {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    gap: var(--cpd-space-1x);
+    color: var(--cpd-color-text-tertiary);
+    font-size: 11px;
+    font-weight: 400;
+    line-height: 14px;
+}
+
+.mj_SidebarFooterDot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--cpd-color-text-tertiary);
+}
+
+.mj_SidebarFooterStatus_online .mj_SidebarFooterDot {
+    background: var(--cpd-color-text-action-accent);
 }
 
 .mj_SubChatState {
@@ -266,10 +345,10 @@ textarea {
        unambiguous available width even though the cluster is justify-self:end
        (review r5). min(300px, 100%-of-track): 2 columns at desktop, shrinks to
        1 when the header track is narrow — no horizontal overflow either way. */
-    width: min(300px, 100%);
-    min-width: var(--mj-header-side-min-width);
+    width: 300px;
+    max-width: 100%;
+    min-width: 0;
     height: 58px;
-    justify-self: end;
     padding-block: var(--cpd-space-1x);
 }
 
@@ -288,11 +367,21 @@ textarea {
        title at any width, the 700-720 band, mobile — never horizontally
        overflows; it's 2 columns only when there's genuine room. Limits can
        exceed 4 → bounded scrolling for vertical overflow (#518). */
-    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    /* v3 mock groups usage COLUMN-first: ctx/fbl stacked in the left column,
+       5h/wk stacked in the right (not row-first). Two fixed rows, column flow.
+       The inline cluster only renders >=700px room (usageCollapsed swaps to the
+       mini pill below that), so two columns always have room here (#518). */
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: auto auto;
+    grid-auto-flow: column;
     column-gap: var(--cpd-space-4x);
     row-gap: var(--cpd-space-1x);
+    /* >4 limits flow into further columns; keep them reachable via horizontal
+       scroll rather than clipping (the all-limits contract). The common ≤4 case
+       fits the 300px cluster with no scrollbar. */
     max-height: 100%;
-    overflow-y: auto;
+    overflow-x: auto;
+    overflow-y: hidden;
     overscroll-behavior: contain;
 }
 
@@ -301,12 +390,16 @@ textarea {
     grid-template-columns: min-content minmax(var(--cpd-space-10x), 1fr) min-content;
     align-items: center;
     column-gap: var(--cpd-space-2x);
-    font: var(--cpd-font-micro);
+    /* v3 mock renders usage labels/percents in Fira Code, 10.5px / 500 (#518). */
+    font-family: "Fira Code", monospace;
+    font-size: 10.5px;
+    font-weight: 500;
+    line-height: 13px;
 }
 
 .mj_UsageLabel {
     overflow: hidden;
-    color: var(--cpd-color-text-secondary);
+    color: var(--cpd-color-text-primary);
     text-overflow: ellipsis;
     white-space: nowrap;
 }
@@ -346,7 +439,7 @@ textarea {
 
 .mj_UsagePercent {
     min-width: var(--cpd-space-8x);
-    color: var(--cpd-color-text-secondary);
+    color: var(--cpd-color-text-primary);
     text-align: right;
 }
 
@@ -354,7 +447,7 @@ textarea {
     color: var(--cpd-color-text-secondary);
 }
 
-.mj_HeaderMiniTitle,
+/* Collapsed usage pill, in the right controls flex (no longer a grid child). */
 .mj_HeaderMiniUsage {
     display: inline-flex;
     min-width: 0;
@@ -374,23 +467,10 @@ textarea {
     white-space: nowrap;
 }
 
-.mj_HeaderMiniTitle {
-    grid-column: 2;
-    max-width: min(100%, 40vw);
-    justify-self: center;
-}
-
-.mj_HeaderMiniUsage {
-    grid-column: 3;
-    justify-self: end;
-}
-
-.mj_HeaderMiniTitle:hover,
 .mj_HeaderMiniUsage:hover {
     background: var(--cpd-color-bg-subtle-primary);
 }
 
-.mj_HeaderMiniTitle:focus-visible,
 .mj_HeaderMiniUsage:focus-visible {
     outline: 2px solid var(--cpd-color-icon-accent-primary);
     outline-offset: var(--cpd-space-0-5x);
@@ -420,14 +500,6 @@ textarea {
     color: var(--cpd-color-text-secondary);
 }
 
-.mj_TitlePopover {
-    top: calc(100% + var(--cpd-space-2x));
-    right: var(--cpd-space-2x);
-    left: var(--cpd-space-2x);
-    width: auto;
-    max-width: none;
-}
-
 .mj_UsagePopover {
     top: calc(100% + var(--cpd-space-2x));
     right: var(--cpd-space-2x);
@@ -435,21 +507,13 @@ textarea {
 
 /*
  * The resizable sidebar can make the room much narrower than the viewport.
- * At 720px the desktop header's two 152px side tracks, title, gaps, and room
- * padding still fit; below that, let the equal side tracks shrink and compact
- * usage rows without moving the title off the room's center line.
+ * Below 720px the right controls have collapsed usage (usageCollapsed at 700px),
+ * so just tighten the header gap/padding — the title stays flush-left.
  */
 @container mj-room (max-width: 720px) {
     .mj_ChatHeader {
-        --mj-header-side-min-width: 0px;
-
-        grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-        gap: var(--cpd-space-1x);
-    }
-
-    .mj_HeaderTitleCluster {
-        max-width: 40cqi;
-        padding-inline: var(--cpd-space-2x);
+        gap: var(--cpd-space-2x);
+        padding-inline: var(--cpd-space-3x);
     }
 }
 
@@ -1985,18 +2049,8 @@ button.mj_File {
     }
 
     .mj_ChatHeader {
-        --mj-header-side-min-width: 68px;
-
-        gap: var(--cpd-space-1x);
+        gap: var(--cpd-space-2x);
         padding-inline: 42px var(--cpd-space-2x);
-    }
-
-    .mj_HeaderCluster {
-        padding-inline: var(--cpd-space-1x);
-    }
-
-    .mj_HeaderTitleCluster {
-        max-width: 30vw;
     }
 
     .mx_RoomView_body[data-layout="bubble"] {

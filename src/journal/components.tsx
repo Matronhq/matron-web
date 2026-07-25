@@ -1092,6 +1092,22 @@ function ConversationList({
                             </nav>
                         </div>
                     </div>
+                    <div className="mj_SidebarFooter">
+                        <span className="mj_SidebarFooterAvatar" aria-hidden="true">
+                            {(state.session?.username ?? "?").slice(0, 1)}
+                        </span>
+                        <span className="mj_SidebarFooterId" title={state.session?.username}>
+                            {state.session?.username ?? "Signed out"}
+                        </span>
+                        <span className={`mj_SidebarFooterStatus mj_SidebarFooterStatus_${state.connection}`}>
+                            <span className="mj_SidebarFooterDot" aria-hidden="true" />
+                            {state.connection === "online"
+                                ? "connected"
+                                : state.connection === "connecting"
+                                  ? "connecting…"
+                                  : "offline"}
+                        </span>
+                    </div>
                 </div>
                 {accountOpen && (
                     <div className="mj_HeaderMenu mj_AccountMenu">
@@ -1406,6 +1422,7 @@ export function HeaderShell({
     title,
     titleMeta,
     limits,
+    rightControls,
     collapse,
 }: {
     mode: "parent" | "child";
@@ -1416,70 +1433,45 @@ export function HeaderShell({
     title: string;
     titleMeta: React.ReactNode;
     limits?: NonNullable<SessionStatus["limits"]>;
+    rightControls?: React.ReactNode;
     collapse: { usageCollapsed: boolean; titleCollapsed: boolean };
 }): React.ReactElement {
-    const { usageCollapsed, titleCollapsed } = collapse;
+    const { usageCollapsed } = collapse;
     const [usagePopoverOpen, setUsagePopoverOpen] = useState(false);
-    const [titlePopoverOpen, setTitlePopoverOpen] = useState(false);
     const headerRef = useRef<HTMLElement>(null);
     const usageOpenerRef = useRef<HTMLButtonElement>(null);
     const usagePanelRef = useRef<HTMLDivElement>(null);
-    const titleOpenerRef = useRef<HTMLButtonElement>(null);
-    const titlePanelRef = useRef<HTMLDivElement>(null);
     const focusHeldRef = useRef(false);
-    const expandedTitleFocusHeldRef = useRef(false);
-    const previousTitleCollapsedRef = useRef(titleCollapsed);
     const now = useMinuteClock();
     const titleHeadingId = useId();
     const usagePopoverId = useId();
-    const titlePopoverId = useId();
     const closeUsagePopover = useCallback(() => setUsagePopoverOpen(false), []);
-    const closeTitlePopover = useCallback(() => setTitlePopoverOpen(false), []);
 
     useDismissablePopover(usagePopoverOpen, closeUsagePopover, {
         openerRef: usageOpenerRef,
         panelRef: usagePanelRef,
     });
-    useDismissablePopover(titlePopoverOpen, closeTitlePopover, {
-        openerRef: titleOpenerRef,
-        panelRef: titlePanelRef,
-    });
 
     useLayoutEffect(() => {
         if (usagePopoverOpen) usagePanelRef.current?.focus();
     }, [usagePopoverOpen]);
-    useLayoutEffect(() => {
-        if (titlePopoverOpen) titlePanelRef.current?.focus();
-    }, [titlePopoverOpen]);
-    useLayoutEffect(() => {
-        const titleJustCollapsed = titleCollapsed && !previousTitleCollapsedRef.current;
-        previousTitleCollapsedRef.current = titleCollapsed;
-        if (titleJustCollapsed && expandedTitleFocusHeldRef.current) {
-            expandedTitleFocusHeldRef.current = false;
-            titleOpenerRef.current?.focus();
-        }
-    }, [titleCollapsed]);
 
+    // When the usage control goes away — un-collapsed (mini trigger + panel
+    // unmount) or its limits drop to [] — close any open popover and, if focus was
+    // inside that control, move it to the stable header before the browser drops it
+    // to <body>. Rely on focusHeldRef (ownership captured by the opener/panel
+    // focus/blur handlers), NOT post-teardown DOM containment: React unmounts the
+    // opener + panel before this passive effect runs, so their refs are already
+    // null and a `.contains()` check would miss.
     useEffect(() => {
-        let restoreFocus = false;
-        const activeElement = document.activeElement;
-        const titleHasFocus =
-            titleOpenerRef.current?.contains(activeElement) || titlePanelRef.current?.contains(activeElement);
-        const usageHasFocus =
-            usageOpenerRef.current?.contains(activeElement) || usagePanelRef.current?.contains(activeElement);
-        if (!usageCollapsed || !limits?.length) {
-            restoreFocus ||= focusHeldRef.current && (usagePopoverOpen || !titleHasFocus);
-            if (usagePopoverOpen) setUsagePopoverOpen(false);
-        }
-        if (!titleCollapsed) {
-            restoreFocus ||= focusHeldRef.current && (titlePopoverOpen || !usageHasFocus);
-            if (titlePopoverOpen) setTitlePopoverOpen(false);
-        }
-        if (restoreFocus) {
+        const usageControlGone = !usageCollapsed || !limits?.length;
+        if (!usageControlGone) return;
+        if (usagePopoverOpen) setUsagePopoverOpen(false);
+        if (focusHeldRef.current) {
             headerRef.current?.focus();
             focusHeldRef.current = false;
         }
-    }, [usageCollapsed, titleCollapsed, limits?.length]);
+    }, [usageCollapsed, limits?.length, usagePopoverOpen]);
 
     const onTriggerFocus = (): void => {
         focusHeldRef.current = true;
@@ -1493,14 +1485,6 @@ export function HeaderShell({
     const onPanelBlur = (event: React.FocusEvent<HTMLDivElement>): void => {
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) focusHeldRef.current = false;
     };
-    const onExpandedTitleFocus = (): void => {
-        expandedTitleFocusHeldRef.current = true;
-    };
-    const onExpandedTitleBlur = (event: React.FocusEvent<HTMLDivElement>): void => {
-        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-            expandedTitleFocusHeldRef.current = false;
-        }
-    };
 
     const worst = limits ? worstLimit(limits) : undefined;
     const unknownCount = limits?.filter((limit) => normalizePercent(limit.percent) === null).length ?? 0;
@@ -1512,6 +1496,10 @@ export function HeaderShell({
             : `Usage — worst limit ${Math.round(worstNormalized)}%${worstReset ? `, resets ${worstReset}` : ""}${
                   unknownCount ? `, ${unknownCount} ${unknownCount === 1 ? "metric" : "metrics"} unknown` : ""
               }`;
+    // Meta stays rendered at every width (it truncates when narrow) so model /
+    // context / run-state remain reachable — the removed title popover used to be
+    // the only narrow-width disclosure for them.
+    const showMeta = hasLeft || Boolean(titleMeta);
 
     return (
         <header
@@ -1522,114 +1510,58 @@ export function HeaderShell({
             <button type="button" className="mj_BackButton" onClick={onBack} aria-label={backLabel}>
                 <ChevronLeftIcon />
             </button>
-            {!titleCollapsed && (
-                <div
-                    className={`mj_HeaderCluster mj_ModelContextCluster${hasLeft ? "" : " mj_HeaderCluster_empty"}`}
-                    aria-hidden={!hasLeft}
-                    onFocusCapture={onExpandedTitleFocus}
-                    onBlur={onExpandedTitleBlur}
-                >
-                    {left}
-                </div>
-            )}
-            <div
-                className={`mj_HeaderCluster mj_HeaderTitleCluster${
-                    titleCollapsed ? " mj_HeaderTitleCluster_hidden" : ""
-                }`}
-                onFocusCapture={onExpandedTitleFocus}
-                onBlur={onExpandedTitleBlur}
-            >
+            <div className="mj_HeaderCluster mj_HeaderTitleCluster">
                 <div id={titleHeadingId} dir="auto" role="heading" aria-level={1} className="mx_RoomHeader_heading">
                     <span className="mx_RoomHeader_truncated mx_lineClamp">{title}</span>
                 </div>
-                {!titleCollapsed && titleMeta}
-            </div>
-            {titleCollapsed ? (
-                <button
-                    ref={titleOpenerRef}
-                    type="button"
-                    className="mj_HeaderMiniTitle"
-                    aria-labelledby={titleHeadingId}
-                    aria-expanded={titlePopoverOpen}
-                    aria-controls={titlePopoverId}
-                    onFocus={onTriggerFocus}
-                    onBlur={onTriggerBlur}
-                    onClick={() => {
-                        setUsagePopoverOpen(false);
-                        setTitlePopoverOpen((open) => !open);
-                    }}
-                >
-                    <span className="mx_RoomHeader_truncated mx_lineClamp">{title}</span>
-                    <span aria-hidden="true">▾</span>
-                </button>
-            ) : null}
-            {usageCollapsed && limits?.length ? (
-                <button
-                    ref={usageOpenerRef}
-                    type="button"
-                    className="mj_HeaderMiniUsage"
-                    aria-label={usageLabel}
-                    aria-expanded={usagePopoverOpen}
-                    aria-controls={usagePopoverId}
-                    onFocus={onTriggerFocus}
-                    onBlur={onTriggerBlur}
-                    onClick={() => {
-                        setTitlePopoverOpen(false);
-                        setUsagePopoverOpen((open) => !open);
-                    }}
-                >
-                    {worstNormalized === undefined ? (
-                        <span className="mj_HeaderMiniUsageUnknown">—</span>
-                    ) : (
-                        <>
-                            <span
-                                className={`mj_HeaderMiniUsageDot mj_HeaderMiniUsageDot_${usageLevel(worstNormalized)}`}
-                                aria-hidden="true"
-                            >
-                                ⬤
-                            </span>
-                            <span>{Math.round(worstNormalized)}%</span>
-                            {unknownCount > 0 && (
-                                <span className="mj_HeaderMiniUsageUnknown" aria-hidden="true">
-                                    ·—
-                                </span>
-                            )}
-                        </>
-                    )}
-                </button>
-            ) : (
-                <div
-                    className={`mj_HeaderCluster mj_UsageCluster${limits?.length ? "" : " mj_HeaderCluster_empty"}`}
-                    aria-hidden={!limits?.length}
-                >
-                    {!usageCollapsed && limits?.length ? <UsageCluster limits={limits} now={now} /> : null}
-                </div>
-            )}
-            {titlePopoverOpen && (
-                <div
-                    ref={titlePanelRef}
-                    id={titlePopoverId}
-                    className="mj_HeaderMenu mj_TitlePopover"
-                    role="group"
-                    aria-label="Conversation details"
-                    tabIndex={-1}
-                    onFocusCapture={onPanelFocus}
-                    onBlur={onPanelBlur}
-                >
-                    <div className="mj_HeaderCluster mj_HeaderTitleCluster">
-                        <div dir="auto" className="mx_RoomHeader_heading">
-                            <span className="mx_RoomHeader_truncated mx_lineClamp">{title}</span>
-                        </div>
+                {showMeta && (
+                    <div className="mj_HeaderMeta">
+                        {left}
                         {titleMeta}
                     </div>
-                    <div
-                        className={`mj_HeaderCluster mj_ModelContextCluster${hasLeft ? "" : " mj_HeaderCluster_empty"}`}
-                        aria-hidden={!hasLeft}
+                )}
+            </div>
+            <div className="mj_HeaderControls">
+                {usageCollapsed && limits?.length ? (
+                    <button
+                        ref={usageOpenerRef}
+                        type="button"
+                        className="mj_HeaderMiniUsage"
+                        aria-label={usageLabel}
+                        aria-expanded={usagePopoverOpen}
+                        aria-controls={usagePopoverId}
+                        onFocus={onTriggerFocus}
+                        onBlur={onTriggerBlur}
+                        onClick={() => setUsagePopoverOpen((open) => !open)}
                     >
-                        {left}
+                        {worstNormalized === undefined ? (
+                            <span className="mj_HeaderMiniUsageUnknown">—</span>
+                        ) : (
+                            <>
+                                <span
+                                    className={`mj_HeaderMiniUsageDot mj_HeaderMiniUsageDot_${usageLevel(
+                                        worstNormalized,
+                                    )}`}
+                                    aria-hidden="true"
+                                >
+                                    ⬤
+                                </span>
+                                <span>{Math.round(worstNormalized)}%</span>
+                                {unknownCount > 0 && (
+                                    <span className="mj_HeaderMiniUsageUnknown" aria-hidden="true">
+                                        ·—
+                                    </span>
+                                )}
+                            </>
+                        )}
+                    </button>
+                ) : limits?.length ? (
+                    <div className="mj_HeaderCluster mj_UsageCluster">
+                        <UsageCluster limits={limits} now={now} />
                     </div>
-                </div>
-            )}
+                ) : null}
+                {rightControls}
+            </div>
             {usagePopoverOpen && limits?.length && (
                 <div
                     ref={usagePanelRef}
@@ -1671,37 +1603,39 @@ function ChatHeader({
                 <>
                     {status?.model && <span className="mj_HeaderModel">{status.model}</span>}
                     {status?.context && (
-                        <span className="mj_HeaderContextRow">
-                            <span
-                                className="mj_HeaderContext"
-                                title={`${status.context.tokens.toLocaleString()} / ${status.context.window.toLocaleString()} tokens`}
-                            >
-                                Context: {compactTokens(status.context.tokens)}/{compactTokens(status.context.window)}
-                            </span>
-                            <button
-                                className="mj_CompactButton"
-                                type="button"
-                                aria-label="Compact conversation"
-                                title="Compact the conversation — sends /compact"
-                                onClick={() =>
-                                    void client
-                                        .sendMessage("/compact")
-                                        .catch((error) => console.warn("Compact command failed to send:", error))
-                                }
-                            >
-                                <CompactIcon />
-                            </button>
+                        <span
+                            className="mj_HeaderContext"
+                            title={`${status.context.tokens.toLocaleString()} / ${status.context.window.toLocaleString()} tokens`}
+                        >
+                            Context {compactTokens(status.context.tokens)}/{compactTokens(status.context.window)}
+                        </span>
+                    )}
+                    {conversation?.session_state && (
+                        <span className={`mj_HeaderState mj_HeaderState_${conversation.session_state}`}>
+                            {conversation.session_state}
                         </span>
                     )}
                 </>
             }
-            hasLeft={hasModelContext}
+            hasLeft={hasModelContext || Boolean(conversation?.session_state)}
             title={title}
-            titleMeta={
-                status?.email && (
-                    <span className="mj_HeaderEmail" title={status.email}>
-                        {status.email}
-                    </span>
+            titleMeta={null}
+            rightControls={
+                status?.context && (
+                    <button
+                        className="mj_CompactButton"
+                        type="button"
+                        aria-label="Compact conversation"
+                        title="Compact the conversation — sends /compact"
+                        onClick={() =>
+                            void client
+                                .sendMessage("/compact")
+                                .catch((error) => console.warn("Compact command failed to send:", error))
+                        }
+                    >
+                        <CompactIcon />
+                        <span>Compact</span>
+                    </button>
                 )
             }
             limits={limits}
@@ -1753,7 +1687,7 @@ function SubChatHeader({
                             className="mj_HeaderContext"
                             title={`${status.context.tokens.toLocaleString()} / ${status.context.window.toLocaleString()} tokens`}
                         >
-                            Context: {compactTokens(status.context.tokens)}/{compactTokens(status.context.window)}
+                            Context {compactTokens(status.context.tokens)}/{compactTokens(status.context.window)}
                         </span>
                     )}
                 </>
