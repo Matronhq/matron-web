@@ -151,6 +151,10 @@ export type ServerFrame = JournalEvent | JournalControlFrame | JournalEphemeralF
 
 export interface SessionStatus {
     model?: string;
+    // v5 header subtitle: `model · workdir · run-state`. The bridge does not yet
+    // include the session cwd in the status frame — the segment renders only when
+    // present, so it lights up the moment the bridge adds it (tracked follow-up).
+    workdir?: string;
     context?: {
         tokens: number;
         window: number;

@@ -46,6 +46,46 @@ export function usageBarLabel(label: string): string {
     return parenthesized.toLocaleLowerCase() === "all models" ? trimmed.slice(0, match.index).trim() : parenthesized;
 }
 
+// v5 usage relabel map (design-tokens components.usageMeter.labelMap): the bridge
+// sends long limit labels ("Session", "Week (all models)", "fable") that truncate in
+// the 24px meter column. Bake fixed short strings client-side; unknown labels fall
+// through to the usageBarLabel() heuristic so a new limit still renders a sensible tag.
+const USAGE_SHORT_LABELS: Record<string, string> = {
+    context: "ctx",
+    Session: "5h",
+    "Week (all models)": "wk",
+    Week: "wk",
+    fable: "fbl",
+};
+
+const WEEK_PER_MODEL = /^Week \((.+)\)$/i;
+
+export function usageShortLabel(label: string): string {
+    const trimmed = label.trim();
+    const mapped = USAGE_SHORT_LABELS[trimmed];
+    if (mapped) return mapped;
+    // Per-model weekly limits ("Week (Sonnet 5)", "Week (Opus 4.8)") occupy the design's
+    // model-weekly slot; abbreviate to a 3-char tag so they fit the 24px meter column
+    // instead of truncating ("Son…"). "all models" is the aggregate week (handled above).
+    const perModel = trimmed.match(WEEK_PER_MODEL);
+    if (perModel && perModel[1].trim().toLocaleLowerCase() !== "all models") {
+        return perModel[1].trim().slice(0, 3).toLocaleLowerCase();
+    }
+    return usageBarLabel(trimmed);
+}
+
+// Canonical 2×2 grid order (design static, column-first fill): ctx / session down the
+// left column, model-weekly / week-all down the right. The bridge sends limits in an
+// arbitrary order, so normalise before rendering.
+export function usageOrderRank(label: string): number {
+    const trimmed = label.trim();
+    if (trimmed === "ctx" || trimmed === "context") return 0;
+    if (trimmed === "Session") return 1;
+    if (trimmed === "Week" || /^Week \(all models\)$/i.test(trimmed)) return 3;
+    if (WEEK_PER_MODEL.test(trimmed)) return 2;
+    return 4;
+}
+
 export function usageLevel(percent: number): "low" | "medium" | "high" {
     // Redesign-v4 thresholds: <50 green, 50–84 amber, ≥85 red.
     if (percent < 50) return "low";
@@ -80,6 +120,7 @@ export function resetDisplay(resetsAt: string | undefined, fallback: string | un
 export function mergeSessionStatus(current: SessionStatus | undefined, update: SessionStatus): SessionStatus {
     return {
         model: update.model ?? current?.model,
+        workdir: update.workdir ?? current?.workdir,
         context: update.context ?? current?.context,
         limits: update.limits ?? current?.limits,
         email: update.email ?? current?.email,

@@ -181,7 +181,8 @@ describe("usage limit accessibility", () => {
 
         const group = rendered.container.querySelector('[role="group"][aria-label="Usage limits"]');
         const progressbar = group?.querySelector('[role="progressbar"]');
-        expect(progressbar?.getAttribute("aria-label")).toBe("Session");
+        // v5: bridge label "Session" is relabelled to the fixed short "5h" (usageShortLabel).
+        expect(progressbar?.getAttribute("aria-label")).toBe("5h");
         expect(progressbar?.getAttribute("aria-valuenow")).toBe("39");
         expect(progressbar?.getAttribute("aria-valuetext")).toBe("39% used, resets in 2 hours");
         expect(progressbar?.parentElement?.hasAttribute("aria-label")).toBe(false);

@@ -12,6 +12,8 @@ import {
     resetDisplay,
     usageBarLabel,
     usageLevel,
+    usageOrderRank,
+    usageShortLabel,
     worstLimit,
 } from "../../../src/journal/status";
 
@@ -26,6 +28,24 @@ describe("journal session status presentation", () => {
         expect(usageBarLabel("Session")).toBe("Session");
         expect(usageBarLabel("Week (all models)")).toBe("Week");
         expect(usageBarLabel("Week (Sonnet 5)")).toBe("Sonnet 5");
+    });
+
+    it("bakes fixed short usage labels (v5 relabel map) with a per-model fallback", () => {
+        expect(usageShortLabel("Session")).toBe("5h");
+        expect(usageShortLabel("Week (all models)")).toBe("wk");
+        expect(usageShortLabel("Week")).toBe("wk");
+        expect(usageShortLabel("fable")).toBe("fbl");
+        // per-model weekly → 3-char model tag, never truncated in the 24px column
+        expect(usageShortLabel("Week (Sonnet 5)")).toBe("son");
+        expect(usageShortLabel("Week (Opus 4.8)")).toBe("opu");
+        // unknown → heuristic fallback
+        expect(usageShortLabel("Custom limit")).toBe("Custom limit");
+    });
+
+    it("ranks usage meters into the design's 2×2 grid order", () => {
+        const labels = ["Week (all models)", "Week (Sonnet 5)", "Session", "context"];
+        const ordered = [...labels].sort((a, b) => usageOrderRank(a) - usageOrderRank(b));
+        expect(ordered).toEqual(["context", "Session", "Week (Sonnet 5)", "Week (all models)"]);
     });
 
     it("formats nearby reset times as compact countdowns", () => {

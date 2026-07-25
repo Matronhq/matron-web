@@ -257,6 +257,45 @@ button {
     gap: 8px;
 }
 
+/* v5 sidebar.newSession: full-width teal button in its own row below the wordmark.
+   34px, --m-selected fill, 1px rgb(13 148 136 / 25%) border, accent ink + 15px pencil,
+   label.md 500 13/16; hover deepens the tint to --m-active. */
+.mj_NewSessionRow {
+    flex: none;
+    padding: 0 12px 10px;
+}
+
+.mj_NewSessionButton {
+    display: flex;
+    width: 100%;
+    height: 34px;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    border: 1px solid rgb(13 148 136 / 25%);
+    border-radius: 8px;
+    background: var(--cpd-state-selected);
+    color: var(--cpd-color-text-action-accent);
+    cursor: pointer;
+    font:
+        500 13px/16px Inter,
+        sans-serif;
+}
+
+.mj_NewSessionButton svg {
+    width: 15px;
+    height: 15px;
+}
+
+.mj_NewSessionButton:hover {
+    background: var(--cpd-state-active);
+}
+
+.mj_NewSessionButton:focus-visible {
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: 2px;
+}
+
 .mj_IconButton {
     display: inline-flex;
     width: 32px;
@@ -692,7 +731,9 @@ button {
 .mx_MessageComposer {
     min-height: 56px;
     flex: 0 0 auto;
-    background: var(--cpd-color-bg-canvas-default);
+    /* v5 composer.footer: TRANSPARENT — the warm room-canvas (--m-paper) reading
+       surface shows through. The bordered --m-panel shell is the input row alone. */
+    background: transparent;
 }
 
 .mx_MessageComposer_wrapper {
@@ -762,13 +803,27 @@ button {
 .mx_MessageComposer_row {
     display: flex;
     align-items: flex-end;
-    /* v4 input row padding: 6px 8px 6px 6px (textarea carries no vertical margin). */
+    /* v5 composer.shell: the input row IS the bordered field — attach (left),
+       textarea (borderless, flex), mic + send (right) all sit inside one shell.
+       1px --m-line2, radius 12, --m-panel fill, --m-sh-sm; gap 6 between controls;
+       padding 6/8/6/6 (textarea carries no vertical margin). */
+    gap: 6px;
+    border: 1px solid var(--cpd-color-border-strong);
+    border-radius: var(--cpd-radius-lg);
+    background: var(--cpd-color-bg-canvas-default);
+    box-shadow: var(--cpd-shadow-sm);
     padding: 6px 8px 6px 6px;
+    transition: border-color var(--cpd-dur-fast) var(--cpd-ease);
+}
+
+/* v5: focus recolors the shell border to accent (pointer + keyboard). The
+   borderless textarea inside keeps its own :focus-visible ring for a11y. */
+.mx_MessageComposer_row:focus-within {
+    border-color: var(--cpd-color-text-action-accent);
 }
 
 .mx_SendMessageComposer {
     display: flex;
-    margin-right: 6px;
     justify-content: center;
 }
 
@@ -778,36 +833,30 @@ button {
 }
 
 .mx_BasicMessageComposer_input {
-    min-height: 40px;
+    /* v5 composer.input: borderless + transparent — the bordered --m-panel shell
+       (.mx_MessageComposer_row) is the visible field; the textarea just sits inside it.
+       body.md 400 14/22 (fixed, not inherited — root is 15px); padding 6/4. */
+    min-height: 28px;
     box-sizing: border-box;
     margin: 0;
-    padding: var(--cpd-space-2x) var(--cpd-space-3x);
-    border: 1px solid var(--cpd-color-border-strong);
-    /* Bounded radius, not pill: the textarea grows multi-line (max-height 160px);
-       a 999px pill curves into the text and clips the first/last line. v4 spec pins
-       the composer radius at 12px (--cpd-radius-lg); reads as a rounded rectangle at
-       single line and never clips when tall. (#517 → v4) */
-    border-radius: var(--cpd-radius-lg);
-    background: var(--cpd-color-bg-canvas-default);
-    /* v4 body.md: composer input is a fixed 14px/22px — not inherited (root is 15px). */
+    padding: 6px 4px;
+    border: 0;
+    background: transparent;
     font:
         400 14px/22px Inter,
         sans-serif;
-    transition: border-color var(--cpd-dur-fast) var(--cpd-ease);
 }
 
-/* v4: pointer focus = border-color → accent only (no glow, no ring). */
+/* v5 (DESIGN-SPEC §States): keyboard focus rings the inner textarea (a small inline
+   control → 1px offset) so it stays inside the shell; pointer focus is carried by the
+   shell border recolor (.mx_MessageComposer_row:focus-within). */
 .mx_BasicMessageComposer_input:focus {
-    border-color: var(--cpd-color-text-action-accent);
     outline: none;
 }
 
-/* v4 (DESIGN-SPEC §States): keyboard focus adds a 2px accent outline at 2px offset,
-   on top of the border recolor. Required for a11y — a 1px border shift alone is not a
-   sufficient keyboard-focus indicator. */
 .mx_BasicMessageComposer_input:focus-visible {
     outline: 2px solid var(--cpd-color-text-action-accent);
-    outline-offset: 2px;
+    outline-offset: 1px;
 }
 
 .mx_BasicMessageComposer_input::placeholder {
@@ -818,7 +867,8 @@ button {
     display: flex;
     flex: 0 0 auto;
     align-items: center;
-    gap: 4px;
+    /* v5: 6px to match the shell's uniform control gap (mic ↔ send). */
+    gap: 6px;
 }
 
 .mx_MessageComposer_button,

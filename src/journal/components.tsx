@@ -73,7 +73,7 @@ import {
     makeRecentFoldersStore,
     recentFolderArgument,
 } from "./slash-palette";
-import { normalizePercent, resetDisplay, usageBarLabel, usageLevel, worstLimit } from "./status";
+import { normalizePercent, resetDisplay, usageShortLabel, usageOrderRank, usageLevel, worstLimit } from "./status";
 import {
     asNumber,
     asString,
@@ -1000,20 +1000,26 @@ function ConversationList({
                                         >
                                             <SettingsIcon />
                                         </button>
-                                        <button
-                                            className="mj_IconButton"
-                                            type="button"
-                                            aria-label="New conversation"
-                                            onClick={() => {
-                                                setAccountOpen(false);
-                                                closeRoomMenu();
-                                                setNewSessionOpen(true);
-                                            }}
-                                        >
-                                            <ComposeIcon />
-                                        </button>
                                     </div>
                                 </header>
+                                {/* v5 sidebar.newSession: a full-width teal button in its own
+                                    row below the wordmark — not a bare icon in the header. */}
+                                <div className="mj_NewSessionRow">
+                                    <button
+                                        className="mj_NewSessionButton"
+                                        type="button"
+                                        aria-label="New conversation"
+                                        title="Start a new session — runs /start"
+                                        onClick={() => {
+                                            setAccountOpen(false);
+                                            closeRoomMenu();
+                                            setNewSessionOpen(true);
+                                        }}
+                                    >
+                                        <ComposeIcon />
+                                        <span>New session</span>
+                                    </button>
+                                </div>
                                 <div className="mj_RoomListTabs" role="group" aria-label="Filter conversations">
                                     {(
                                         [
@@ -1388,7 +1394,12 @@ function buildUsageMeters(
     const meters: NonNullable<SessionStatus["limits"]> = [];
     if (status?.context) meters.push({ label: "ctx", percent: status.context.pct });
     if (limits?.length) meters.push(...limits);
-    return meters;
+    // Normalise to the design's 2×2 grid order (ctx, session, model-weekly, week-all);
+    // stable so any extra limits keep their relative order after the known ones.
+    return meters
+        .map((meter, index) => ({ meter, index }))
+        .sort((a, b) => usageOrderRank(a.meter.label) - usageOrderRank(b.meter.label) || a.index - b.index)
+        .map((entry) => entry.meter);
 }
 
 // "claude-sonnet-4-5" → "sonnet-4-5" for the <560 compact subtitle.
@@ -1414,11 +1425,11 @@ export function UsageCluster({
                     const level = norm === null ? "unknown" : usageLevel(norm);
                     return (
                         <div className="mj_UsageRow" key={index} title={reset ? `resets ${reset}` : undefined}>
-                            <span className="mj_UsageLabel">{usageBarLabel(limit.label)}</span>
+                            <span className="mj_UsageLabel">{usageShortLabel(limit.label)}</span>
                             <span
                                 className="mj_UsageTrack"
                                 role="progressbar"
-                                aria-label={usageBarLabel(limit.label)}
+                                aria-label={usageShortLabel(limit.label)}
                                 aria-valuemin={0}
                                 aria-valuemax={100}
                                 aria-valuenow={norm ?? undefined}
@@ -1666,6 +1677,7 @@ function ChatHeader({
             subtitle={
                 <>
                     {status?.model && <span className="mj_HeaderModel">{status.model}</span>}
+                    {status?.workdir && <span className="mj_HeaderWorkdir">{status.workdir}</span>}
                     {runState && <span className={`mj_HeaderState mj_HeaderState_${runState}`}>{runState}</span>}
                 </>
             }
@@ -1813,7 +1825,7 @@ function PromptCard({
     };
 
     return (
-        <div className="mj_PromptCard">
+        <div className={permission ? "mj_PromptCard mj_PromptCard_permission" : "mj_PromptCard"}>
             <div className="mj_PromptLabel">{permission ? "Permission needed" : "Question"}</div>
             <p>{question}</p>
             {!isReadOnly && !disabled && options.length > 0 && (
@@ -3505,6 +3517,26 @@ function Composer({
                     </div>
                 ) : (
                     <div className="mx_MessageComposer_row">
+                        {/* v5 composer.shell: attach sits INSIDE the field on the left,
+                            before the textarea; mic + send stay on the right. */}
+                        <button
+                            className="mx_MessageComposer_button"
+                            title="Attach a file"
+                            aria-label="Attach a file"
+                            onClick={() => fileInput.current?.click()}
+                        >
+                            <AttachmentIcon />
+                        </button>
+                        <input
+                            ref={fileInput}
+                            type="file"
+                            multiple
+                            hidden
+                            onChange={(event) => {
+                                if (event.target.files) client.stageFiles([...event.target.files]);
+                                event.target.value = "";
+                            }}
+                        />
                         <div className="mx_SendMessageComposer" onClick={() => textarea.current?.focus()}>
                             <div className="mx_BasicMessageComposer">
                                 <textarea
@@ -3587,24 +3619,6 @@ function Composer({
                             </div>
                         </div>
                         <div className="mx_MessageComposer_actions">
-                            <button
-                                className="mx_MessageComposer_button"
-                                title="Attach a file"
-                                aria-label="Attach a file"
-                                onClick={() => fileInput.current?.click()}
-                            >
-                                <AttachmentIcon />
-                            </button>
-                            <input
-                                ref={fileInput}
-                                type="file"
-                                multiple
-                                hidden
-                                onChange={(event) => {
-                                    if (event.target.files) client.stageFiles([...event.target.files]);
-                                    event.target.value = "";
-                                }}
-                            />
                             <button
                                 ref={micButtonRef}
                                 className="mx_MessageComposer_button"
