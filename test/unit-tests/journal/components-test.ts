@@ -112,10 +112,8 @@ function menuItem(container: HTMLElement, text: string): Element | undefined {
     return [...container.querySelectorAll('[role="menuitem"]')].find((element) => element.textContent?.includes(text));
 }
 
-function tabButton(container: HTMLElement, text: "All" | "Favorites"): HTMLButtonElement {
-    return [...container.querySelectorAll<HTMLButtonElement>("button[aria-pressed]")].find(
-        (candidate) => candidate.textContent === text,
-    )!;
+function tabButton(container: HTMLElement, key: "active" | "favorites" | "archived"): HTMLButtonElement {
+    return container.querySelector<HTMLButtonElement>(`[data-tab="${key}"]`)!;
 }
 
 async function openMenu(container: HTMLElement): Promise<void> {
@@ -1984,8 +1982,7 @@ describe("conversation menu controls", () => {
     it("menu offers neither Mark-read nor Mark-unread for an archived row (read affordances are active-only)", async () => {
         archiveStore.write(SESSION, new Set([CONVERSATION.id]));
         rendered = await renderClient(signedInClient());
-        const toggle = rendered.container.querySelector<HTMLButtonElement>(".mj_RoomList_archivedToggle")!;
-        await act(async () => toggle.click());
+        await act(async () => tabButton(rendered!.container, "archived").click());
         await openMenu(rendered.container);
         expect(menuItem(rendered.container, "Mark as unread")).toBeFalsy();
         expect(menuItem(rendered.container, "Mark as read")).toBeFalsy();
@@ -1996,7 +1993,7 @@ describe("conversation menu controls", () => {
         favoriteStore.write(SESSION, new Set([CONVERSATION.id]));
         const client = signedInClient();
         rendered = await renderClient(client);
-        await act(async () => tabButton(rendered!.container, "Favorites").click());
+        await act(async () => tabButton(rendered!.container, "favorites").click());
         await openMenu(rendered.container);
         await act(async () => (menuItem(rendered!.container, "Remove from Favorites") as HTMLElement).click());
 
@@ -2089,12 +2086,117 @@ describe("conversation row affordances", () => {
         expect(names[1]).toBe("Room A");
     });
 
+    it("includes the visible last-activity timestamp in the row button's accessible name", async () => {
+        rendered = await renderClient(signedInClient());
+        const row = rendered.container.querySelector<HTMLButtonElement>('button[aria-label^="Open room"]');
+        const timestamp = rendered.container.querySelector(".mj_RoomListTime")?.textContent;
+        expect(timestamp).toBeTruthy();
+        expect(row?.getAttribute("aria-label")).toContain(`last activity ${timestamp}`);
+    });
+
     it("override-unread row announces marked-unread in the row button's accessible name and renders no numeric badge", async () => {
         unreadStore.write(SESSION, new Set([CONVERSATION.id]));
         rendered = await renderClient(signedInClient());
         const row = rendered.container.querySelector<HTMLButtonElement>('button[aria-label^="Open room"]');
         expect(row?.getAttribute("aria-label")).toContain("marked unread");
         expect(rendered.container.querySelector(".mj_UnreadBadge")).toBeNull();
+    });
+});
+
+describe("conversation timestamp midnight invalidation", () => {
+    let rendered: { container: HTMLDivElement; root: Root } | undefined;
+    let originalTZ: string | undefined;
+
+    beforeEach(() => {
+        originalTZ = process.env.TZ;
+        process.env.TZ = "UTC";
+        jest.useFakeTimers();
+        jest.setSystemTime(new Date(2026, 2, 20, 23, 59, 59, 500));
+    });
+
+    afterEach(async () => {
+        if (rendered) {
+            await act(async () => rendered?.root.unmount());
+            rendered.container.remove();
+            rendered = undefined;
+        }
+        jest.useRealTimers();
+        if (originalTZ === undefined) {
+            delete process.env.TZ;
+        } else {
+            process.env.TZ = originalTZ;
+        }
+    });
+
+    it("reclassifies at midnight, re-arms each day, and clears its timer on unmount", async () => {
+        const lastTimestamp = Date.now();
+        favoriteStore.write(SESSION, new Set([CONVERSATION.id]));
+        const client = signedInWithRooms([{ ...CONVERSATION, created_at: lastTimestamp, last_ts: lastTimestamp }]);
+        internals(client).state = { ...client.getSnapshot(), selectedConversationId: undefined };
+        rendered = await renderClient(client);
+        const timestamp = (): string | null =>
+            rendered!.container.querySelector(".mj_RoomListTime")?.textContent ?? null;
+        const expectedClock = new Intl.DateTimeFormat(undefined, {
+            hour: "numeric",
+            minute: "2-digit",
+        }).format(new Date(lastTimestamp));
+        const expectedWeekday = new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(
+            new Date(lastTimestamp),
+        );
+
+        expect(timestamp()).toBe(expectedClock);
+
+        await act(async () => {
+            jest.advanceTimersByTime(1_600);
+        });
+
+        expect(timestamp()).toBe(expectedWeekday);
+        expect(timestamp()).not.toBe(expectedClock);
+        expect(jest.getTimerCount()).toBeGreaterThanOrEqual(1);
+
+        await act(async () => {
+            jest.advanceTimersByTime(86_400_000);
+        });
+
+        expect(jest.getTimerCount()).toBeGreaterThanOrEqual(1);
+
+        // Isolate the effect from MatronApp's other timers, then use a tab rerender to re-arm it.
+        jest.clearAllTimers();
+        const baselineTimerCount = jest.getTimerCount();
+        await act(async () => tabButton(rendered!.container, "favorites").click());
+        expect(jest.getTimerCount()).toBeGreaterThanOrEqual(1);
+        await act(async () => rendered?.root.unmount());
+        rendered.container.remove();
+        rendered = undefined;
+        // Drain short app cleanup work; a leaked next-midnight timer would remain queued.
+        jest.advanceTimersByTime(1_000);
+        expect(jest.getTimerCount()).toBe(baselineTimerCount);
+    });
+
+    it("reclassifies when midnight passes between render and effect execution", async () => {
+        const lastTimestamp = Date.now();
+        const client = signedInWithRooms([{ ...CONVERSATION, created_at: lastTimestamp, last_ts: lastTimestamp }]);
+        internals(client).state = { ...client.getSnapshot(), selectedConversationId: undefined };
+        const afterMidnight = new Date(2026, 2, 21, 0, 0, 0, 500);
+        function CrossMidnightBeforeEffects(): React.ReactElement {
+            React.useLayoutEffect(() => {
+                jest.setSystemTime(afterMidnight);
+            }, []);
+            return React.createElement(MatronApp, { client });
+        }
+
+        const container = document.createElement("div");
+        document.body.append(container);
+        const root = createRoot(container);
+        rendered = { container, root };
+        await act(async () => {
+            root.render(React.createElement(CrossMidnightBeforeEffects));
+        });
+
+        const expectedWeekday = new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(
+            new Date(lastTimestamp),
+        );
+        expect(container.querySelector(".mj_RoomListTime")?.textContent).toBe(expectedWeekday);
     });
 });
 
@@ -2110,30 +2212,43 @@ describe("conversation list tabs", () => {
         jest.restoreAllMocks();
     });
 
-    it("renders All + Favorites buttons with aria-pressed tracking the active view", async () => {
-        rendered = await renderClient(signedInClient());
-        expect(tabButton(rendered.container, "All").getAttribute("aria-pressed")).toBe("true");
-        expect(tabButton(rendered.container, "Favorites").getAttribute("aria-pressed")).toBe("false");
-    });
-
-    it("clicking Favorites filters to favorited rows, sets aria-pressed, focuses the tab, hides archived section", async () => {
+    it("switches among Active, Favorites, and Archived with selection, focus, count, and row visibility", async () => {
         const fav = { ...CONVERSATION, id: "fav", title: "Fav Room" };
         const other = { ...CONVERSATION, id: "other", title: "Other Room" };
+        const archived = { ...CONVERSATION, id: "archived", title: "Archived Room" };
         favoriteStore.write(SESSION, new Set(["fav"]));
-        rendered = await renderClient(signedInWithRooms([fav, other]));
-        await act(async () => tabButton(rendered!.container, "Favorites").click());
-        expect(tabButton(rendered.container, "Favorites").getAttribute("aria-pressed")).toBe("true");
-        expect(document.activeElement).toBe(tabButton(rendered.container, "Favorites"));
-        const names = [...rendered.container.querySelectorAll('[data-testid="room-name"]')].map(
-            (element) => element.textContent,
-        );
-        expect(names).toEqual(["Fav Room"]);
-        expect(rendered.container.querySelector(".mj_RoomList_archivedToggle")).toBeNull();
+        archiveStore.write(SESSION, new Set(["archived"]));
+        rendered = await renderClient(signedInWithRooms([fav, other, archived]));
+        const names = (): Array<string | null> =>
+            [...rendered!.container.querySelectorAll('[data-testid="room-name"]')].map(
+                (element) => element.textContent,
+            );
+
+        expect(rendered.container.querySelector('[role="group"][aria-label="Filter conversations"]')).not.toBeNull();
+        expect(tabButton(rendered.container, "active").getAttribute("aria-pressed")).toBe("true");
+        expect(tabButton(rendered.container, "favorites").getAttribute("aria-pressed")).toBe("false");
+        expect(tabButton(rendered.container, "archived").getAttribute("aria-pressed")).toBe("false");
+        expect(tabButton(rendered.container, "archived").textContent).toBe("Archived (1)");
+        expect(names()).toEqual(["Fav Room", "Other Room"]);
+
+        await act(async () => tabButton(rendered!.container, "favorites").click());
+        expect(tabButton(rendered.container, "active").getAttribute("aria-pressed")).toBe("false");
+        expect(tabButton(rendered.container, "favorites").getAttribute("aria-pressed")).toBe("true");
+        expect(tabButton(rendered.container, "archived").getAttribute("aria-pressed")).toBe("false");
+        expect(document.activeElement).toBe(tabButton(rendered.container, "favorites"));
+        expect(names()).toEqual(["Fav Room"]);
+
+        await act(async () => tabButton(rendered!.container, "archived").click());
+        expect(tabButton(rendered.container, "active").getAttribute("aria-pressed")).toBe("false");
+        expect(tabButton(rendered.container, "favorites").getAttribute("aria-pressed")).toBe("false");
+        expect(tabButton(rendered.container, "archived").getAttribute("aria-pressed")).toBe("true");
+        expect(document.activeElement).toBe(tabButton(rendered.container, "archived"));
+        expect(names()).toEqual(["Archived Room"]);
     });
 
     it("shows the no-favorites-yet state when nothing is starred", async () => {
         rendered = await renderClient(signedInClient());
-        await act(async () => tabButton(rendered!.container, "Favorites").click());
+        await act(async () => tabButton(rendered!.container, "favorites").click());
         expect(rendered.container.textContent).toContain("No favorite conversations yet.");
     });
 
@@ -2141,7 +2256,7 @@ describe("conversation list tabs", () => {
         const fav = { ...CONVERSATION, id: "fav", title: "Alpha" };
         favoriteStore.write(SESSION, new Set(["fav"]));
         rendered = await renderClient(signedInWithRooms([fav]));
-        await act(async () => tabButton(rendered!.container, "Favorites").click());
+        await act(async () => tabButton(rendered!.container, "favorites").click());
         const search = rendered.container.querySelector<HTMLInputElement>("#room-list-search-input")!;
         await act(async () => {
             const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
@@ -2152,10 +2267,67 @@ describe("conversation list tabs", () => {
         expect(rendered.container.textContent).not.toContain("No favorite conversations yet.");
     });
 
+    it("shows the first-run state when there is no active population", async () => {
+        rendered = await renderClient(signedInWithRooms([]));
+        expect(rendered.container.textContent).toContain("Your agent conversations will appear here.");
+    });
+
+    it("uses the archived population to show the no-active state when every conversation is archived", async () => {
+        archiveStore.write(SESSION, new Set([CONVERSATION.id]));
+        rendered = await renderClient(signedInClient());
+        expect(rendered.container.textContent).toContain("No active conversations.");
+        expect(rendered.container.textContent).not.toContain("Your agent conversations will appear here.");
+    });
+
+    it("hides Mark all as read on Archived without clearing unread active conversations", async () => {
+        const unread = { ...CONVERSATION, unread_count: 1 };
+        const archived = { ...CONVERSATION, id: "archived", title: "Archived Room" };
+        archiveStore.write(SESSION, new Set([archived.id]));
+        const client = signedInWithRooms([unread, archived]);
+        rendered = await renderClient(client);
+
+        expect(rendered.container.querySelector('button[aria-label="Mark all as read"]')).not.toBeNull();
+        await act(async () => tabButton(rendered!.container, "archived").click());
+        expect(rendered.container.querySelector('button[aria-label="Mark all as read"]')).toBeNull();
+        expect(
+            client.getSnapshot().conversations.find((conversation) => conversation.id === unread.id)?.unread_count,
+        ).toBe(1);
+    });
+
+    it("shows the active search-empty state when active conversations are hidden by search", async () => {
+        rendered = await renderClient(signedInClient());
+        const search = rendered.container.querySelector<HTMLInputElement>("#room-list-search-input")!;
+        await act(async () => {
+            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+            setter?.call(search, "zzz-no-match");
+            search.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+        expect(rendered.container.textContent).toContain("No conversations match your search.");
+    });
+
+    it("shows the no-archived state when there is no archived population", async () => {
+        rendered = await renderClient(signedInClient());
+        await act(async () => tabButton(rendered!.container, "archived").click());
+        expect(rendered.container.textContent).toContain("No archived conversations.");
+    });
+
+    it("shows the archived search-empty state when archived conversations are hidden by search", async () => {
+        archiveStore.write(SESSION, new Set([CONVERSATION.id]));
+        rendered = await renderClient(signedInClient());
+        await act(async () => tabButton(rendered!.container, "archived").click());
+        const search = rendered.container.querySelector<HTMLInputElement>("#room-list-search-input")!;
+        await act(async () => {
+            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+            setter?.call(search, "zzz-no-match");
+            search.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+        expect(rendered.container.textContent).toContain("No archived conversations match your search.");
+    });
+
     it("switching tabs leaves selectedConversationId unchanged when the selected row is filtered out", async () => {
         const client = signedInClient();
         rendered = await renderClient(client);
-        await act(async () => tabButton(rendered!.container, "Favorites").click());
+        await act(async () => tabButton(rendered!.container, "favorites").click());
         expect(client.getSnapshot().selectedConversationId).toBe(CONVERSATION.id);
     });
 });

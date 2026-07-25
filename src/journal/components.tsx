@@ -12,6 +12,7 @@ import React, {
     useLayoutEffect,
     useMemo,
     useRef,
+    useReducer,
     useState,
     useSyncExternalStore,
 } from "react";
@@ -191,6 +192,28 @@ export function ThemeToggle(): React.ReactElement {
 
 function formatTime(timestamp: number): string {
     return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(timestamp));
+}
+
+// EXPORTED: the render callsite uses it, and unit tests import it directly to inject `now`.
+// `formatTime` stays private; only this helper needs the test seam.
+export function formatRelativeDay(timestamp: number, now: number = Date.now()): string {
+    if (!Number.isFinite(timestamp)) return ""; // Non-finite → no throw, empty string.
+    const then = new Date(timestamp);
+    if (Number.isNaN(then.getTime())) return ""; // Invalid Date → Intl.format would throw; bail.
+    const today = new Date(now);
+    const startOf = (d: Date): number => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    const dayMs = 86_400_000;
+    const daysAgo = Math.round((startOf(today) - startOf(then)) / dayMs);
+    if (daysAgo === 0) return formatTime(timestamp); // Today (including same-day minor-future skew) → clock.
+    if (daysAgo >= 1 && daysAgo <= 6) {
+        return new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(then);
+    }
+    // Older than six days or a genuinely future calendar day falls through to a dated label.
+    const sameYear = then.getFullYear() === today.getFullYear();
+    return new Intl.DateTimeFormat(
+        undefined,
+        sameYear ? { month: "short", day: "numeric" } : { month: "short", day: "numeric", year: "numeric" },
+    ).format(then);
 }
 
 function formatBytes(value: unknown): string | undefined {
@@ -621,10 +644,9 @@ function ConversationList({
     width: number;
 }): React.ReactElement {
     const [query, setQuery] = useState("");
-    const [tab, setTab] = useState<"all" | "favorites">("all");
+    const [tab, setTab] = useState<"active" | "favorites" | "archived">("active");
     const [accountOpen, setAccountOpen] = useState(false);
     const [newSessionOpen, setNewSessionOpen] = useState(false);
-    const [archivedExpanded, setArchivedExpanded] = useState(false);
     const [roomMenu, setRoomMenu] = useState<{ conversationId: string; left: number; top: number }>();
     const roomMenuRef = useRef(roomMenu);
     const roomMenuElementRef = useRef<HTMLDivElement>(null);
@@ -637,6 +659,22 @@ function ConversationList({
         () => undefined,
     );
     const longPressControllerRef = useRef<LongPressController | undefined>(undefined);
+    const [, forceDayTick] = useReducer((n) => n + 1, 0);
+
+    useEffect(() => {
+        const now = new Date();
+        const renderedAt = new Date(renderNow);
+        if (
+            renderedAt.getFullYear() !== now.getFullYear() ||
+            renderedAt.getMonth() !== now.getMonth() ||
+            renderedAt.getDate() !== now.getDate()
+        ) {
+            forceDayTick();
+        }
+        const nextMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime();
+        const timer = setTimeout(forceDayTick, nextMidnight - now.getTime() + 1000);
+        return () => clearTimeout(timer);
+    });
 
     roomMenuRef.current = roomMenu;
     openRoomMenuRef.current = (conversationId, left, top, opener): void => {
@@ -761,15 +799,26 @@ function ConversationList({
         ...activeAll.filter((conversation) => state.pinnedIds.has(conversation.id)),
         ...activeAll.filter((conversation) => !state.pinnedIds.has(conversation.id)),
     ];
-    const visibleActive =
-        tab === "favorites" ? active.filter((conversation) => state.favoriteIds.has(conversation.id)) : active;
+    const archived = conversations.filter((conversation) => state.archivedIds.has(conversation.id));
+    const visibleRows =
+        tab === "favorites"
+            ? active.filter((conversation) => state.favoriteIds.has(conversation.id))
+            : tab === "archived"
+              ? archived
+              : active;
+    const hasAnyActive = state.conversations.some(
+        (conversation) => !state.archivedIds.has(conversation.id) && !parentPresent(conversation, ids),
+    );
     const hasAnyFavorite = state.conversations.some(
         (conversation) =>
             state.favoriteIds.has(conversation.id) &&
             !state.archivedIds.has(conversation.id) &&
             !parentPresent(conversation, ids),
     );
-    const archived = conversations.filter((conversation) => state.archivedIds.has(conversation.id));
+    const archivedAll = state.conversations.filter(
+        (conversation) => state.archivedIds.has(conversation.id) && !parentPresent(conversation, ids),
+    );
+    const archivedTotal = archivedAll.length;
     // Visibility is computed from the UNFILTERED conversation set (minus archived), NOT the
     // search-filtered `active` — mark-all operates on the full active partition regardless of
     // the search box, so the button must not vanish just because the search hides the unread rows.
@@ -792,18 +841,20 @@ function ConversationList({
         openRoomMenuRef.current(conversationId, rect.right, rect.bottom, opener);
     };
 
+    const renderNow = Date.now();
     const renderConversation = (conversation: ClientState["conversations"][number]): React.ReactElement => {
         const selected = state.selectedConversationId === conversation.id;
         const overrideUnread = state.unreadOverrideIds.has(conversation.id) && conversation.unread_count === 0;
         const unread = effectiveUnread(conversation, state.unreadOverrideIds);
         const name = conversationTitle(conversation);
+        const relativeTimestamp = formatRelativeDay(conversation.last_ts ?? conversation.created_at, renderNow);
         return (
             <div className="mj_RoomListItem_wrapper" role="listitem" key={conversation.id}>
                 <button
                     className={`mj_RoomListItem${selected ? " mj_RoomListItem_selected" : ""}`}
                     type="button"
                     aria-current={selected ? "page" : undefined}
-                    aria-label={`Open room ${name}${overrideUnread ? ", marked unread" : ""}`}
+                    aria-label={`Open room ${name}, last activity ${relativeTimestamp}${overrideUnread ? ", marked unread" : ""}`}
                     onClick={(event) => {
                         if (longPressFiredRef.current) {
                             longPressFiredRef.current = false;
@@ -865,13 +916,16 @@ function ConversationList({
                             <StarFilledIcon aria-hidden />
                         </span>
                     )}
-                    {conversation.unread_count > 0 ? (
-                        <span className="mj_UnreadBadge" aria-label={`${conversation.unread_count} unread`}>
-                            {conversation.unread_count}
-                        </span>
-                    ) : overrideUnread ? (
-                        <span className="mj_UnreadDot" aria-hidden />
-                    ) : null}
+                    <span className="mj_RoomListMeta">
+                        <span className="mj_RoomListTime">{relativeTimestamp}</span>
+                        {conversation.unread_count > 0 ? (
+                            <span className="mj_UnreadBadge" aria-label={`${conversation.unread_count} unread`}>
+                                {conversation.unread_count}
+                            </span>
+                        ) : overrideUnread ? (
+                            <span className="mj_UnreadDot" aria-hidden />
+                        ) : null}
+                    </span>
                 </button>
                 <button
                     className="mj_RoomItemMenu_trigger"
@@ -912,7 +966,7 @@ function ConversationList({
                                     <h1 title="Home">Home</h1>
                                     <div className="mj_RoomListHeaderActions">
                                         <ThemeToggle />
-                                        {hasActiveUnread && (
+                                        {tab !== "archived" && hasActiveUnread && (
                                             <button
                                                 className="mj_IconButton mj_MarkAllReadButton"
                                                 type="button"
@@ -947,29 +1001,31 @@ function ConversationList({
                                         </button>
                                     </div>
                                 </header>
-                                <div className="mj_RoomListTabs" aria-label="Filter conversations">
-                                    <button
-                                        type="button"
-                                        className={`mj_RoomListTab${tab === "all" ? " mj_RoomListTab_active" : ""}`}
-                                        aria-pressed={tab === "all"}
-                                        onClick={(event) => {
-                                            setTab("all");
-                                            event.currentTarget.focus({ preventScroll: true });
-                                        }}
-                                    >
-                                        All
-                                    </button>
-                                    <button
-                                        type="button"
-                                        className={`mj_RoomListTab${tab === "favorites" ? " mj_RoomListTab_active" : ""}`}
-                                        aria-pressed={tab === "favorites"}
-                                        onClick={(event) => {
-                                            setTab("favorites");
-                                            event.currentTarget.focus({ preventScroll: true });
-                                        }}
-                                    >
-                                        Favorites
-                                    </button>
+                                <div className="mj_RoomListTabs" role="group" aria-label="Filter conversations">
+                                    {(
+                                        [
+                                            ["active", "Active"],
+                                            ["favorites", "Favorites"],
+                                            ["archived", "Archived"],
+                                        ] as const
+                                    ).map(([key, label]) => (
+                                        <button
+                                            key={key}
+                                            type="button"
+                                            data-tab={key}
+                                            className={`mj_RoomListTab${tab === key ? " mj_RoomListTab_active" : ""}`}
+                                            aria-pressed={tab === key}
+                                            onClick={(event) => {
+                                                setTab(key);
+                                                event.currentTarget.focus({ preventScroll: true });
+                                            }}
+                                        >
+                                            {label}
+                                            {key === "archived" && archivedTotal > 0 && (
+                                                <span className="mj_RoomListTab_count"> ({archivedTotal})</span>
+                                            )}
+                                        </button>
+                                    ))}
                                 </div>
                                 <div data-testid="room-list-search" className="mx_RoomListSearch" role="search">
                                     <label
@@ -1005,41 +1061,29 @@ function ConversationList({
                                     role="list"
                                     aria-label="Conversations"
                                 >
-                                    {visibleActive.map((conversation) => renderConversation(conversation))}
+                                    {visibleRows.map((conversation) => renderConversation(conversation))}
+                                    {tab === "active" && !hasAnyActive && archivedTotal === 0 && (
+                                        <p className="mj_RoomListEmpty">Your agent conversations will appear here.</p>
+                                    )}
+                                    {tab === "active" && !hasAnyActive && archivedTotal > 0 && (
+                                        <p className="mj_RoomListEmpty">No active conversations.</p>
+                                    )}
+                                    {tab === "active" && hasAnyActive && !visibleRows.length && (
+                                        <p className="mj_RoomListEmpty">No conversations match your search.</p>
+                                    )}
                                     {tab === "favorites" && !hasAnyFavorite && (
                                         <p className="mj_RoomListEmpty">No favorite conversations yet.</p>
                                     )}
-                                    {tab === "favorites" && hasAnyFavorite && !visibleActive.length && (
+                                    {tab === "favorites" && hasAnyFavorite && !visibleRows.length && (
                                         <p className="mj_RoomListEmpty">No favorites match your search.</p>
                                     )}
-                                    {tab === "all" && !active.length && !archived.length && (
-                                        <p className="mj_RoomListEmpty">Your agent conversations will appear here.</p>
+                                    {tab === "archived" && archivedTotal === 0 && (
+                                        <p className="mj_RoomListEmpty">No archived conversations.</p>
+                                    )}
+                                    {tab === "archived" && archivedTotal > 0 && !visibleRows.length && (
+                                        <p className="mj_RoomListEmpty">No archived conversations match your search.</p>
                                     )}
                                 </div>
-                                {tab === "all" && archived.length > 0 && (
-                                    <>
-                                        <button
-                                            className="mj_RoomList_archivedToggle"
-                                            type="button"
-                                            aria-expanded={archivedExpanded}
-                                            aria-controls="mj-room-list-archived"
-                                            onClick={() => setArchivedExpanded((expanded) => !expanded)}
-                                        >
-                                            Archived{" "}
-                                            <span className="mj_RoomList_archivedCount">({archived.length})</span>
-                                        </button>
-                                        {archivedExpanded && (
-                                            <div
-                                                id="mj-room-list-archived"
-                                                className="mj_RoomList_archivedSection"
-                                                role="list"
-                                                aria-label="Archived conversations"
-                                            >
-                                                {archived.map((conversation) => renderConversation(conversation))}
-                                            </div>
-                                        )}
-                                    </>
-                                )}
                             </nav>
                         </div>
                     </div>
