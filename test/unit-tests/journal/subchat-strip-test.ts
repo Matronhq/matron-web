@@ -9,7 +9,7 @@ import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
 import { MatronJournalClient } from "../../../src/journal/client";
-import { MatronApp } from "../../../src/journal/components";
+import { MatronApp, SubagentStrip } from "../../../src/journal/components";
 import type { ClientState, Conversation, Session } from "../../../src/journal/types";
 
 jest.mock("../../../res/matron-logo-simple.svg", () => "matron-logo.svg");
@@ -66,7 +66,20 @@ async function renderClient(client: MatronJournalClient): Promise<{ container: H
     return { container, root };
 }
 
-describe("running subagent strip", () => {
+async function renderStrip(
+    client: MatronJournalClient,
+    mode: "parent" | "child",
+): Promise<{ container: HTMLDivElement; root: Root }> {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    await act(async () =>
+        root.render(React.createElement(SubagentStrip, { client, state: client.getSnapshot(), mode })),
+    );
+    return { container, root };
+}
+
+describe("subagent strip", () => {
     let rendered: { container: HTMLDivElement; root: Root } | undefined;
 
     beforeAll(() => {
@@ -82,7 +95,82 @@ describe("running subagent strip", () => {
         jest.restoreAllMocks();
     });
 
-    it("renders one pill per running child and opens the clicked child", async () => {
+    it("shows every child in running-first order and treats unknown states as inactive", async () => {
+        const running = conversation("running", "Running", "running", "parent");
+        running.created_at = 2;
+        const finished = conversation("finished", "Finished", "done", "parent");
+        finished.created_at = 1;
+        const queued = conversation("queued", "Queued", "queued", "parent");
+        queued.created_at = 3;
+        const client = signedInClient(
+            [conversation("parent", "Parent", "running"), finished, running, queued],
+            "parent",
+        );
+        const selectConversation = jest.spyOn(client, "selectConversation").mockResolvedValue();
+
+        rendered = await renderStrip(client, "parent");
+
+        const list = rendered.container.querySelector('[role="list"]');
+        const wrappers = list?.querySelectorAll(':scope > [role="listitem"]');
+        const pills = list?.querySelectorAll<HTMLButtonElement>(".mj_SubagentPill");
+        expect(wrappers).toHaveLength(3);
+        expect(pills).toHaveLength(3);
+        expect([...pills!].map((pill) => pill.textContent)).toEqual(["Running", "○Finished", "○Queued"]);
+        expect(pills?.[0].querySelector(".mj_Spinner")).not.toBeNull();
+        expect(pills?.[1].classList.contains("mj_SubagentPill_finished")).toBe(true);
+        expect(pills?.[2].classList.contains("mj_SubagentPill_finished")).toBe(true);
+        expect([...pills!].some((pill) => pill.getAttribute("role") === "listitem")).toBe(false);
+
+        await act(async () => pills?.[2].click());
+        expect(selectConversation).toHaveBeenCalledWith("queued");
+    });
+
+    it("shows siblings and marks the selected child as current", async () => {
+        const client = signedInClient(
+            [
+                conversation("parent", "Parent", "running"),
+                conversation("current", "Current", "running", "parent"),
+                conversation("sibling", "Sibling", "done", "parent"),
+            ],
+            "current",
+        );
+
+        rendered = await renderStrip(client, "child");
+
+        const pills = rendered.container.querySelectorAll<HTMLButtonElement>(".mj_SubagentPill");
+        expect(pills).toHaveLength(2);
+        expect([...pills].map((pill) => pill.textContent)).toEqual(["✓Current", "○Sibling"]);
+        expect(pills[0].classList.contains("mj_SubagentPill_current")).toBe(true);
+        expect(pills[0].getAttribute("aria-current")).toBe("true");
+        expect(pills[0].disabled).toBe(true);
+    });
+
+    it("renders nothing when there are no children", async () => {
+        const client = signedInClient([conversation("parent", "Parent", "running")], "parent");
+
+        rendered = await renderStrip(client, "parent");
+
+        expect(rendered.container.querySelector(".mj_SubagentStrip")).toBeNull();
+    });
+});
+
+describe("subagent strip integration", () => {
+    let rendered: { container: HTMLDivElement; root: Root } | undefined;
+
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    afterEach(async () => {
+        if (rendered) {
+            await act(async () => rendered?.root.unmount());
+            rendered.container.remove();
+            rendered = undefined;
+        }
+        jest.restoreAllMocks();
+    });
+
+    it("renders every child in running-first order and opens the clicked child", async () => {
         const conversations = [
             conversation("parent", "Parent", "running"),
             conversation("running-a", "Research", "running", "parent"),
@@ -95,45 +183,39 @@ describe("running subagent strip", () => {
         rendered = await renderClient(client);
 
         const pills = rendered.container.querySelectorAll(".mj_SubagentPill");
-        expect(pills).toHaveLength(2);
-        expect([...pills].map((pill) => pill.textContent)).toEqual(["Research", "Draft"]);
+        expect(pills).toHaveLength(3);
+        expect([...pills].map((pill) => pill.textContent)).toEqual(["Research", "Draft", "○Finished"]);
+        expect(pills[2].classList.contains("mj_SubagentPill_finished")).toBe(true);
 
         await act(async () => (pills[1] as HTMLButtonElement).click());
         expect(selectConversation).toHaveBeenCalledWith("running-b");
     });
 
-    it("renders nothing when the selected conversation has no running children", async () => {
+    it("renders finished children when the selected conversation has no running children", async () => {
         const conversations = [
             conversation("parent", "Parent", "running"),
             conversation("finished", "Finished", "done", "parent"),
         ];
         rendered = await renderClient(signedInClient(conversations, "parent"));
 
-        expect(rendered.container.querySelector(".mj_SubagentStrip")).toBeNull();
+        const strip = rendered.container.querySelector(".mj_SubagentStrip");
+        const pill = strip?.querySelector(".mj_SubagentPill");
+        expect(strip).not.toBeNull();
+        expect(pill?.textContent).toBe("○Finished");
+        expect(pill?.classList.contains("mj_SubagentPill_finished")).toBe(true);
     });
 
-    it("lists a finished child in the parent header switcher and opens it", async () => {
+    it("does not render the removed parent header switcher", async () => {
         const conversations = [
             conversation("parent", "Parent", "running"),
             conversation("finished", "Finished", "done", "parent"),
         ];
         const client = signedInClient(conversations, "parent");
-        const selectConversation = jest.spyOn(client, "selectConversation").mockResolvedValue();
 
         rendered = await renderClient(client);
 
-        expect(rendered.container.querySelector(".mj_SubagentStrip")).toBeNull();
-        const switcher = [...rendered.container.querySelectorAll("button")].find(
-            (button) => button.textContent === "1 subagent ▾",
-        );
-        expect(switcher).toBeDefined();
-
-        await act(async () => switcher?.click());
-        const finishedChild = rendered.container.querySelector<HTMLButtonElement>('[role="menuitem"]');
-        expect(finishedChild?.textContent).toContain("Finished");
-
-        await act(async () => finishedChild?.click());
-        expect(selectConversation).toHaveBeenCalledWith("finished");
+        expect(rendered.container.querySelector(".mj_SubagentStrip")).not.toBeNull();
+        expect(rendered.container.querySelector(".mj_SubagentSwitcher")).toBeNull();
     });
 
     it("hides the parent header switcher when there are no children", async () => {
@@ -146,16 +228,18 @@ describe("running subagent strip", () => {
         ).toBe(false);
     });
 
-    it("shows running grandchildren when viewing a child", async () => {
+    it("shows only siblings when viewing a child", async () => {
         const conversations = [
             conversation("parent", "Parent", "running"),
             conversation("child", "Child", "running", "parent"),
-            conversation("grandchild", "Grandchild", "running", "child"),
+            conversation("sibling", "Sibling", "done", "parent"),
+            conversation("running-grandchild", "Running grandchild", "running", "child"),
+            conversation("finished-grandchild", "Finished grandchild", "done", "child"),
         ];
         rendered = await renderClient(signedInClient(conversations, "child"));
 
         const pills = rendered.container.querySelectorAll(".mj_SubagentPill");
-        expect(pills).toHaveLength(1);
-        expect(pills[0].textContent).toBe("Grandchild");
+        expect(pills).toHaveLength(2);
+        expect([...pills].map((pill) => pill.textContent)).toEqual(["✓Child", "○Sibling"]);
     });
 });

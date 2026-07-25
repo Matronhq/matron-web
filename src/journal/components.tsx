@@ -7,8 +7,10 @@ Please see LICENSE files in the repository root for full details.
 
 import React, {
     type FormEvent,
+    type RefObject,
     useCallback,
     useEffect,
+    useId,
     useLayoutEffect,
     useMemo,
     useRef,
@@ -70,12 +72,13 @@ import {
     makeRecentFoldersStore,
     recentFolderArgument,
 } from "./slash-palette";
-import { compactTokens, resetDisplay, usageBarLabel, usageLevel } from "./status";
+import { compactTokens, normalizePercent, resetDisplay, usageBarLabel, usageLevel, worstLimit } from "./status";
 import {
     asNumber,
     asString,
     childrenOf,
     type ClientState,
+    type Conversation,
     conversationTitle,
     type DeviceDTO,
     displaySender,
@@ -85,7 +88,6 @@ import {
     type PendingMessage,
     parentPresent,
     type RecentFolder,
-    runningChildrenOf,
     isSubChat,
     type SessionStatus,
     type StagedUploadItem,
@@ -1258,147 +1260,466 @@ function ConversationList({
     );
 }
 
-function useMinuteClock(): number {
-    const [now, setNow] = useState(Date.now);
+export function useDismissablePopover(
+    open: boolean,
+    close: () => void,
+    refs: { openerRef: RefObject<HTMLElement | null>; panelRef: RefObject<HTMLElement | null> },
+): void {
+    const { openerRef, panelRef } = refs;
     useEffect(() => {
-        const interval = window.setInterval(() => setNow(Date.now()), 60_000);
-        return () => window.clearInterval(interval);
-    }, []);
-    return now;
+        if (!open) return;
+        const onPointerDown = (event: PointerEvent): void => {
+            const target = event.target as Node;
+            if (!openerRef.current?.contains(target) && !panelRef.current?.contains(target)) close();
+        };
+        const onKeyDown = (event: KeyboardEvent): void => {
+            if (event.key !== "Escape") return;
+            close();
+            openerRef.current?.focus();
+        };
+        const onScroll = (event: Event): void => {
+            if (!panelRef.current?.contains(event.target as Node)) close();
+        };
+        document.addEventListener("pointerdown", onPointerDown);
+        document.addEventListener("keydown", onKeyDown);
+        document.addEventListener("scroll", onScroll, true);
+        return () => {
+            document.removeEventListener("pointerdown", onPointerDown);
+            document.removeEventListener("keydown", onKeyDown);
+            document.removeEventListener("scroll", onScroll, true);
+        };
+    }, [open, close, openerRef, panelRef]);
 }
 
-function UsageBars({ limits }: { limits: NonNullable<SessionStatus["limits"]> }): React.ReactElement {
-    const now = useMinuteClock();
+const USAGE_COLLAPSE_PX = 700;
+const TITLE_COLLAPSE_PX = 460;
+
+export function useAdaptiveHeader(bodyEl: HTMLElement | null): {
+    usageCollapsed: boolean;
+    titleCollapsed: boolean;
+} {
+    const [collapse, setCollapse] = useState({ usageCollapsed: false, titleCollapsed: false });
+    const collapseRef = useRef(collapse);
+
+    useEffect(() => {
+        if (bodyEl == null || typeof ResizeObserver === "undefined") {
+            if (collapseRef.current.usageCollapsed || collapseRef.current.titleCollapsed) {
+                const expanded = { usageCollapsed: false, titleCollapsed: false };
+                collapseRef.current = expanded;
+                setCollapse(expanded);
+            }
+            return;
+        }
+
+        let latestWidth = 0;
+        let frame: number | null = null;
+        const observer = new ResizeObserver((entries) => {
+            const entry = entries[0];
+            latestWidth = entry.borderBoxSize?.[0]?.inlineSize ?? entry.contentRect.width;
+            if (frame != null) return;
+            frame = requestAnimationFrame(() => {
+                frame = null;
+                const usageCollapsed = latestWidth < USAGE_COLLAPSE_PX;
+                const titleCollapsed = latestWidth < TITLE_COLLAPSE_PX;
+                if (
+                    collapseRef.current.usageCollapsed !== usageCollapsed ||
+                    collapseRef.current.titleCollapsed !== titleCollapsed
+                ) {
+                    const next = { usageCollapsed, titleCollapsed };
+                    collapseRef.current = next;
+                    setCollapse(next);
+                }
+            });
+        });
+        observer.observe(bodyEl);
+
+        return () => {
+            observer.disconnect();
+            if (frame != null) cancelAnimationFrame(frame);
+        };
+    }, [bodyEl]);
+
+    return collapse;
+}
+
+function useMinuteClock(now?: number): number {
+    const [clockNow, setClockNow] = useState(Date.now);
+    useEffect(() => {
+        if (now !== undefined) return;
+        const interval = window.setInterval(() => setClockNow(Date.now()), 60_000);
+        return () => window.clearInterval(interval);
+    }, [now]);
+    return now ?? clockNow;
+}
+
+export function UsageCluster({
+    limits,
+    now,
+}: {
+    limits: NonNullable<SessionStatus["limits"]>;
+    now?: number;
+}): React.ReactElement {
+    const displayNow = useMinuteClock(now);
     return (
         <div className="mj_UsageBars" role="group" aria-label="Usage limits">
-            {limits.slice(0, 3).map((limit) => {
-                const percent = Math.min(Math.max(limit.percent, 0), 100);
-                const reset = resetDisplay(limit.resets_at, limit.resets, now);
-                return (
-                    <div className="mj_UsageRow" key={limit.label} title={reset ? `resets ${reset}` : undefined}>
-                        <span className="mj_UsageLabel">{usageBarLabel(limit.label)}:</span>
-                        <span
-                            className="mj_UsageTrack"
-                            role="progressbar"
-                            aria-label={usageBarLabel(limit.label)}
-                            aria-valuemin={0}
-                            aria-valuemax={100}
-                            aria-valuenow={percent}
-                            aria-valuetext={`${percent}% used${reset ? `, resets ${reset}` : ""}`}
-                        >
+            {limits
+                .filter((limit) => limit.label.trim())
+                .map((limit, index) => {
+                    const norm = normalizePercent(limit.percent);
+                    const reset = resetDisplay(limit.resets_at, limit.resets, displayNow);
+                    const level = norm === null ? "unknown" : usageLevel(norm);
+                    return (
+                        <div className="mj_UsageRow" key={index} title={reset ? `resets ${reset}` : undefined}>
+                            <span className="mj_UsageLabel">{usageBarLabel(limit.label)}:</span>
                             <span
-                                className={`mj_UsageFill mj_UsageFill_${usageLevel(percent)}`}
-                                style={{ width: `${percent}%` }}
-                            />
-                        </span>
-                    </div>
-                );
-            })}
+                                className="mj_UsageTrack"
+                                role="progressbar"
+                                aria-label={usageBarLabel(limit.label)}
+                                aria-valuemin={0}
+                                aria-valuemax={100}
+                                aria-valuenow={norm ?? undefined}
+                                aria-valuetext={
+                                    norm === null ? "usage unknown" : `${norm}% used${reset ? `, resets ${reset}` : ""}`
+                                }
+                            >
+                                <span
+                                    className={`mj_UsageFill mj_UsageFill_${level}`}
+                                    style={{ width: norm === null ? "100%" : `${norm}%` }}
+                                />
+                            </span>
+                            <span className={`mj_UsagePercent mj_UsagePercent_${level}`}>
+                                {norm === null ? "—" : `${Math.round(norm)}%`}
+                            </span>
+                        </div>
+                    );
+                })}
         </div>
     );
 }
 
-function ChatHeader({ client, state }: { client: MatronJournalClient; state: ClientState }): React.ReactElement {
-    const conversation = client.selectedConversation();
-    const title = conversation ? conversationTitle(conversation) : "Conversation";
-    const children = childrenOf(state.conversations, conversation?.id);
-    const [subagentsOpen, setSubagentsOpen] = useState(false);
-    const status = state.sessionStatus;
-    const hasModelContext = Boolean(status?.model || status?.context);
-    const limits = status?.limits?.filter((limit) => limit.label.trim());
+export function HeaderShell({
+    mode,
+    onBack,
+    backLabel,
+    left,
+    hasLeft,
+    title,
+    titleMeta,
+    limits,
+    collapse,
+}: {
+    mode: "parent" | "child";
+    onBack: () => void;
+    backLabel: string;
+    left: React.ReactNode;
+    hasLeft: boolean;
+    title: string;
+    titleMeta: React.ReactNode;
+    limits?: NonNullable<SessionStatus["limits"]>;
+    collapse: { usageCollapsed: boolean; titleCollapsed: boolean };
+}): React.ReactElement {
+    const { usageCollapsed, titleCollapsed } = collapse;
+    const [usagePopoverOpen, setUsagePopoverOpen] = useState(false);
+    const [titlePopoverOpen, setTitlePopoverOpen] = useState(false);
+    const headerRef = useRef<HTMLElement>(null);
+    const usageOpenerRef = useRef<HTMLButtonElement>(null);
+    const usagePanelRef = useRef<HTMLDivElement>(null);
+    const titleOpenerRef = useRef<HTMLButtonElement>(null);
+    const titlePanelRef = useRef<HTMLDivElement>(null);
+    const focusHeldRef = useRef(false);
+    const expandedTitleFocusHeldRef = useRef(false);
+    const previousTitleCollapsedRef = useRef(titleCollapsed);
+    const now = useMinuteClock();
+    const titleHeadingId = useId();
+    const usagePopoverId = useId();
+    const titlePopoverId = useId();
+    const closeUsagePopover = useCallback(() => setUsagePopoverOpen(false), []);
+    const closeTitlePopover = useCallback(() => setTitlePopoverOpen(false), []);
+
+    useDismissablePopover(usagePopoverOpen, closeUsagePopover, {
+        openerRef: usageOpenerRef,
+        panelRef: usagePanelRef,
+    });
+    useDismissablePopover(titlePopoverOpen, closeTitlePopover, {
+        openerRef: titleOpenerRef,
+        panelRef: titlePanelRef,
+    });
+
+    useLayoutEffect(() => {
+        if (usagePopoverOpen) usagePanelRef.current?.focus();
+    }, [usagePopoverOpen]);
+    useLayoutEffect(() => {
+        if (titlePopoverOpen) titlePanelRef.current?.focus();
+    }, [titlePopoverOpen]);
+    useLayoutEffect(() => {
+        const titleJustCollapsed = titleCollapsed && !previousTitleCollapsedRef.current;
+        previousTitleCollapsedRef.current = titleCollapsed;
+        if (titleJustCollapsed && expandedTitleFocusHeldRef.current) {
+            expandedTitleFocusHeldRef.current = false;
+            titleOpenerRef.current?.focus();
+        }
+    }, [titleCollapsed]);
+
+    useEffect(() => {
+        let restoreFocus = false;
+        const activeElement = document.activeElement;
+        const titleHasFocus =
+            titleOpenerRef.current?.contains(activeElement) || titlePanelRef.current?.contains(activeElement);
+        const usageHasFocus =
+            usageOpenerRef.current?.contains(activeElement) || usagePanelRef.current?.contains(activeElement);
+        if (!usageCollapsed || !limits?.length) {
+            restoreFocus ||= focusHeldRef.current && (usagePopoverOpen || !titleHasFocus);
+            if (usagePopoverOpen) setUsagePopoverOpen(false);
+        }
+        if (!titleCollapsed) {
+            restoreFocus ||= focusHeldRef.current && (titlePopoverOpen || !usageHasFocus);
+            if (titlePopoverOpen) setTitlePopoverOpen(false);
+        }
+        if (restoreFocus) {
+            headerRef.current?.focus();
+            focusHeldRef.current = false;
+        }
+    }, [usageCollapsed, titleCollapsed, limits?.length]);
+
+    const onTriggerFocus = (): void => {
+        focusHeldRef.current = true;
+    };
+    const onTriggerBlur = (event: React.FocusEvent<HTMLButtonElement>): void => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) focusHeldRef.current = false;
+    };
+    const onPanelFocus = (): void => {
+        focusHeldRef.current = true;
+    };
+    const onPanelBlur = (event: React.FocusEvent<HTMLDivElement>): void => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) focusHeldRef.current = false;
+    };
+    const onExpandedTitleFocus = (): void => {
+        expandedTitleFocusHeldRef.current = true;
+    };
+    const onExpandedTitleBlur = (event: React.FocusEvent<HTMLDivElement>): void => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+            expandedTitleFocusHeldRef.current = false;
+        }
+    };
+
+    const worst = limits ? worstLimit(limits) : undefined;
+    const unknownCount = limits?.filter((limit) => normalizePercent(limit.percent) === null).length ?? 0;
+    const worstNormalized = worst ? (normalizePercent(worst.percent) ?? 0) : undefined;
+    const worstReset = worst ? resetDisplay(worst.resets_at, worst.resets, now) : "";
+    const usageLabel =
+        worstNormalized === undefined
+            ? `Usage — ${unknownCount} ${unknownCount === 1 ? "metric" : "metrics"} unknown`
+            : `Usage — worst limit ${Math.round(worstNormalized)}%${worstReset ? `, resets ${worstReset}` : ""}${
+                  unknownCount ? `, ${unknownCount} ${unknownCount === 1 ? "metric" : "metrics"} unknown` : ""
+              }`;
+
     return (
-        <header className="mx_RoomHeader light-panel mj_ChatHeader">
-            <button
-                className="mj_BackButton"
-                onClick={() => client.clearSelection()}
-                aria-label="Back to conversations"
-            >
+        <header
+            ref={headerRef}
+            className={`mx_RoomHeader light-panel mj_ChatHeader${mode === "child" ? " mj_SubChatHeader" : ""}`}
+            tabIndex={-1}
+        >
+            <button type="button" className="mj_BackButton" onClick={onBack} aria-label={backLabel}>
                 <ChevronLeftIcon />
             </button>
+            {!titleCollapsed && (
+                <div
+                    className={`mj_HeaderCluster mj_ModelContextCluster${hasLeft ? "" : " mj_HeaderCluster_empty"}`}
+                    aria-hidden={!hasLeft}
+                    onFocusCapture={onExpandedTitleFocus}
+                    onBlur={onExpandedTitleBlur}
+                >
+                    {left}
+                </div>
+            )}
             <div
-                className={`mj_HeaderCluster mj_ModelContextCluster${hasModelContext ? "" : " mj_HeaderCluster_empty"}`}
-                aria-hidden={!hasModelContext}
+                className={`mj_HeaderCluster mj_HeaderTitleCluster${
+                    titleCollapsed ? " mj_HeaderTitleCluster_hidden" : ""
+                }`}
+                onFocusCapture={onExpandedTitleFocus}
+                onBlur={onExpandedTitleBlur}
             >
-                {status?.model && <span className="mj_HeaderModel">{status.model}</span>}
-                {status?.context && (
-                    <span className="mj_HeaderContextRow">
-                        <span
-                            className="mj_HeaderContext"
-                            title={`${status.context.tokens.toLocaleString()} / ${status.context.window.toLocaleString()} tokens`}
-                        >
-                            Context: {compactTokens(status.context.tokens)}/{compactTokens(status.context.window)}
-                        </span>
-                        <button
-                            className="mj_CompactButton"
-                            type="button"
-                            aria-label="Compact conversation"
-                            title="Compact the conversation — sends /compact"
-                            onClick={() =>
-                                void client
-                                    .sendMessage("/compact")
-                                    .catch((error) => console.warn("Compact command failed to send:", error))
-                            }
-                        >
-                            <CompactIcon />
-                        </button>
-                    </span>
-                )}
-            </div>
-            <div className="mj_HeaderCluster mj_HeaderTitleCluster">
-                <div dir="auto" role="heading" aria-level={1} className="mx_RoomHeader_heading">
+                <div id={titleHeadingId} dir="auto" role="heading" aria-level={1} className="mx_RoomHeader_heading">
                     <span className="mx_RoomHeader_truncated mx_lineClamp">{title}</span>
                 </div>
-                {status?.email && (
-                    <span className="mj_HeaderEmail" title={status.email}>
-                        {status.email}
-                    </span>
-                )}
-                {children.length > 0 && (
-                    <div className="mj_SubagentSwitcher">
-                        <button
-                            type="button"
-                            className="mj_SubagentSwitcherButton"
-                            aria-haspopup="menu"
-                            aria-expanded={subagentsOpen}
-                            onClick={() => setSubagentsOpen((open) => !open)}
-                        >
-                            {children.length} {children.length === 1 ? "subagent" : "subagents"} ▾
-                        </button>
-                        {subagentsOpen && (
-                            <div className="mj_HeaderMenu mj_SubagentSwitcherMenu" role="menu">
-                                {children.map((child) => (
-                                    <button
-                                        key={child.id}
-                                        type="button"
-                                        role="menuitem"
-                                        onClick={() => {
-                                            setSubagentsOpen(false);
-                                            void client.selectConversation(child.id);
-                                        }}
-                                    >
-                                        <span aria-hidden="true">{child.session_state === "running" ? "●" : "○"}</span>{" "}
-                                        {conversationTitle(child)}
-                                    </button>
-                                ))}
-                            </div>
-                        )}
+                {!titleCollapsed && titleMeta}
+            </div>
+            {titleCollapsed ? (
+                <button
+                    ref={titleOpenerRef}
+                    type="button"
+                    className="mj_HeaderMiniTitle"
+                    aria-labelledby={titleHeadingId}
+                    aria-expanded={titlePopoverOpen}
+                    aria-controls={titlePopoverId}
+                    onFocus={onTriggerFocus}
+                    onBlur={onTriggerBlur}
+                    onClick={() => {
+                        setUsagePopoverOpen(false);
+                        setTitlePopoverOpen((open) => !open);
+                    }}
+                >
+                    <span className="mx_RoomHeader_truncated mx_lineClamp">{title}</span>
+                    <span aria-hidden="true">▾</span>
+                </button>
+            ) : null}
+            {usageCollapsed && limits?.length ? (
+                <button
+                    ref={usageOpenerRef}
+                    type="button"
+                    className="mj_HeaderMiniUsage"
+                    aria-label={usageLabel}
+                    aria-expanded={usagePopoverOpen}
+                    aria-controls={usagePopoverId}
+                    onFocus={onTriggerFocus}
+                    onBlur={onTriggerBlur}
+                    onClick={() => {
+                        setTitlePopoverOpen(false);
+                        setUsagePopoverOpen((open) => !open);
+                    }}
+                >
+                    {worstNormalized === undefined ? (
+                        <span className="mj_HeaderMiniUsageUnknown">—</span>
+                    ) : (
+                        <>
+                            <span
+                                className={`mj_HeaderMiniUsageDot mj_HeaderMiniUsageDot_${usageLevel(worstNormalized)}`}
+                                aria-hidden="true"
+                            >
+                                ⬤
+                            </span>
+                            <span>{Math.round(worstNormalized)}%</span>
+                            {unknownCount > 0 && (
+                                <span className="mj_HeaderMiniUsageUnknown" aria-hidden="true">
+                                    ·—
+                                </span>
+                            )}
+                        </>
+                    )}
+                </button>
+            ) : (
+                <div
+                    className={`mj_HeaderCluster mj_UsageCluster${limits?.length ? "" : " mj_HeaderCluster_empty"}`}
+                    aria-hidden={!limits?.length}
+                >
+                    {!usageCollapsed && limits?.length ? <UsageCluster limits={limits} now={now} /> : null}
+                </div>
+            )}
+            {titlePopoverOpen && (
+                <div
+                    ref={titlePanelRef}
+                    id={titlePopoverId}
+                    className="mj_HeaderMenu mj_TitlePopover"
+                    role="group"
+                    aria-label="Conversation details"
+                    tabIndex={-1}
+                    onFocusCapture={onPanelFocus}
+                    onBlur={onPanelBlur}
+                >
+                    <div className="mj_HeaderCluster mj_HeaderTitleCluster">
+                        <div dir="auto" className="mx_RoomHeader_heading">
+                            <span className="mx_RoomHeader_truncated mx_lineClamp">{title}</span>
+                        </div>
+                        {titleMeta}
                     </div>
-                )}
-            </div>
-            <div
-                className={`mj_HeaderCluster mj_UsageCluster${limits?.length ? "" : " mj_HeaderCluster_empty"}`}
-                aria-hidden={!limits?.length}
-            >
-                {limits?.length ? <UsageBars limits={limits} /> : null}
-            </div>
+                    <div
+                        className={`mj_HeaderCluster mj_ModelContextCluster${hasLeft ? "" : " mj_HeaderCluster_empty"}`}
+                        aria-hidden={!hasLeft}
+                    >
+                        {left}
+                    </div>
+                </div>
+            )}
+            {usagePopoverOpen && limits?.length && (
+                <div
+                    ref={usagePanelRef}
+                    id={usagePopoverId}
+                    className="mj_HeaderMenu mj_UsagePopover"
+                    role="group"
+                    aria-label="Usage details"
+                    tabIndex={-1}
+                    onFocusCapture={onPanelFocus}
+                    onBlur={onPanelBlur}
+                >
+                    <UsageCluster limits={limits} now={now} />
+                </div>
+            )}
         </header>
     );
 }
 
-function SubChatHeader({ client, state }: { client: MatronJournalClient; state: ClientState }): React.ReactElement {
+function ChatHeader({
+    client,
+    state,
+    collapse = { usageCollapsed: false, titleCollapsed: false },
+}: {
+    client: MatronJournalClient;
+    state: ClientState;
+    collapse?: { usageCollapsed: boolean; titleCollapsed: boolean };
+}): React.ReactElement {
+    const conversation = client.selectedConversation();
+    const title = conversation ? conversationTitle(conversation) : "Conversation";
+    const status = state.sessionStatus;
+    const hasModelContext = Boolean(status?.model || status?.context);
+    const limits = status?.limits?.filter((limit) => limit.label.trim());
+    return (
+        <HeaderShell
+            mode="parent"
+            onBack={() => client.clearSelection()}
+            backLabel="Back to conversations"
+            left={
+                <>
+                    {status?.model && <span className="mj_HeaderModel">{status.model}</span>}
+                    {status?.context && (
+                        <span className="mj_HeaderContextRow">
+                            <span
+                                className="mj_HeaderContext"
+                                title={`${status.context.tokens.toLocaleString()} / ${status.context.window.toLocaleString()} tokens`}
+                            >
+                                Context: {compactTokens(status.context.tokens)}/{compactTokens(status.context.window)}
+                            </span>
+                            <button
+                                className="mj_CompactButton"
+                                type="button"
+                                aria-label="Compact conversation"
+                                title="Compact the conversation — sends /compact"
+                                onClick={() =>
+                                    void client
+                                        .sendMessage("/compact")
+                                        .catch((error) => console.warn("Compact command failed to send:", error))
+                                }
+                            >
+                                <CompactIcon />
+                            </button>
+                        </span>
+                    )}
+                </>
+            }
+            hasLeft={hasModelContext}
+            title={title}
+            titleMeta={
+                status?.email && (
+                    <span className="mj_HeaderEmail" title={status.email}>
+                        {status.email}
+                    </span>
+                )
+            }
+            limits={limits}
+            collapse={collapse}
+        />
+    );
+}
+
+function SubChatHeader({
+    client,
+    state,
+    collapse = { usageCollapsed: false, titleCollapsed: false },
+}: {
+    client: MatronJournalClient;
+    state: ClientState;
+    collapse?: { usageCollapsed: boolean; titleCollapsed: boolean };
+}): React.ReactElement {
     const selected = client.selectedConversation();
-    const siblings = childrenOf(state.conversations, selected?.parent_convo_id);
-    const [siblingsOpen, setSiblingsOpen] = useState(false);
     const status = state.sessionStatus;
     const hasModelContext = Boolean(status?.model || status?.context);
     const limits = status?.limits?.filter((limit) => limit.label.trim());
@@ -1420,77 +1741,34 @@ function SubChatHeader({ client, state }: { client: MatronJournalClient; state: 
     };
 
     return (
-        <header className="mx_RoomHeader light-panel mj_ChatHeader mj_SubChatHeader">
-            <button type="button" className="mj_BackButton" onClick={goBack} aria-label="Back to parent">
-                <ChevronLeftIcon />
-            </button>
-            <div
-                className={`mj_HeaderCluster mj_ModelContextCluster${hasModelContext ? "" : " mj_HeaderCluster_empty"}`}
-                aria-hidden={!hasModelContext}
-            >
-                {status?.model && <span className="mj_HeaderModel">{status.model}</span>}
-                {status?.context && (
-                    <span
-                        className="mj_HeaderContext"
-                        title={`${status.context.tokens.toLocaleString()} / ${status.context.window.toLocaleString()} tokens`}
-                    >
-                        Context: {compactTokens(status.context.tokens)}/{compactTokens(status.context.window)}
-                    </span>
-                )}
-            </div>
-            <div className="mj_HeaderCluster mj_HeaderTitleCluster">
-                <div dir="auto" role="heading" aria-level={1} className="mx_RoomHeader_heading">
-                    <span className="mx_RoomHeader_truncated mx_lineClamp">
-                        {selected ? conversationTitle(selected) : "Subagent"}
-                    </span>
-                </div>
+        <HeaderShell
+            mode="child"
+            onBack={goBack}
+            backLabel="Back to parent"
+            left={
+                <>
+                    {status?.model && <span className="mj_HeaderModel">{status.model}</span>}
+                    {status?.context && (
+                        <span
+                            className="mj_HeaderContext"
+                            title={`${status.context.tokens.toLocaleString()} / ${status.context.window.toLocaleString()} tokens`}
+                        >
+                            Context: {compactTokens(status.context.tokens)}/{compactTokens(status.context.window)}
+                        </span>
+                    )}
+                </>
+            }
+            hasLeft={hasModelContext}
+            title={selected ? conversationTitle(selected) : "Subagent"}
+            titleMeta={
                 <span className="mj_SubChatState">
                     {selected?.session_state === "running" && <span className="mj_Spinner" aria-hidden="true" />}
                     {selected?.session_state === "running" ? "Running" : "Finished"}
                 </span>
-                {siblings.length > 1 && (
-                    <div className="mj_SubagentSwitcher">
-                        <button
-                            type="button"
-                            className="mj_SubagentSwitcherButton"
-                            aria-haspopup="menu"
-                            aria-expanded={siblingsOpen}
-                            onClick={() => setSiblingsOpen((open) => !open)}
-                        >
-                            {siblings.length} subagents ▾
-                        </button>
-                        {siblingsOpen && (
-                            <div className="mj_HeaderMenu mj_SubagentSwitcherMenu" role="menu">
-                                {siblings.map((sibling) => {
-                                    const isCurrent = sibling.id === selected?.id;
-                                    const glyph = isCurrent ? "✓" : sibling.session_state === "running" ? "●" : "○";
-                                    return (
-                                        <button
-                                            key={sibling.id}
-                                            type="button"
-                                            role="menuitem"
-                                            disabled={isCurrent}
-                                            onClick={() => {
-                                                setSiblingsOpen(false);
-                                                void client.selectConversation(sibling.id);
-                                            }}
-                                        >
-                                            <span aria-hidden="true">{glyph}</span> {conversationTitle(sibling)}
-                                        </button>
-                                    );
-                                })}
-                            </div>
-                        )}
-                    </div>
-                )}
-            </div>
-            <div
-                className={`mj_HeaderCluster mj_UsageCluster${limits?.length ? "" : " mj_HeaderCluster_empty"}`}
-                aria-hidden={!limits?.length}
-            >
-                {limits?.length ? <UsageBars limits={limits} /> : null}
-            </div>
-        </header>
+            }
+            limits={limits}
+            collapse={collapse}
+        />
     );
 }
 
@@ -3609,29 +3887,58 @@ function UploadConfirmPage({
     );
 }
 
-function RunningSubagentStrip({
+export function SubagentStrip({
     client,
     state,
+    mode,
 }: {
     client: MatronJournalClient;
     state: ClientState;
+    mode: "parent" | "child";
 }): React.ReactElement | null {
-    const running = runningChildrenOf(state.conversations, state.selectedConversationId);
-    if (running.length === 0) return null;
+    const selected = state.conversations.find((conversation) => conversation.id === state.selectedConversationId);
+    const siblingOrChildParentId = mode === "parent" ? state.selectedConversationId : selected?.parent_convo_id;
+    const siblingOrChildren = childrenOf(state.conversations, siblingOrChildParentId);
+    if (siblingOrChildren.length === 0) return null;
+
+    const runningFirst = (conversations: Conversation[]): Conversation[] => [
+        ...conversations.filter((conversation) => conversation.session_state === "running"),
+        ...conversations.filter((conversation) => conversation.session_state !== "running"),
+    ];
+    const ordered = runningFirst(siblingOrChildren);
     return (
         <div className="mj_SubagentStrip" role="list">
-            {running.map((child) => (
-                <button
-                    key={child.id}
-                    className="mj_SubagentPill"
-                    role="listitem"
-                    aria-label={`Open subagent ${conversationTitle(child)}`}
-                    onClick={() => void client.selectConversation(child.id)}
-                >
-                    <span className="mj_Spinner" aria-hidden="true" />
-                    {conversationTitle(child)}
-                </button>
-            ))}
+            {ordered.map((child) => {
+                const isCurrent = mode === "child" && child.id === state.selectedConversationId;
+                const isRunning = child.session_state === "running";
+                const className = [
+                    "mj_SubagentPill",
+                    !isRunning && "mj_SubagentPill_finished",
+                    isCurrent && "mj_SubagentPill_current",
+                ]
+                    .filter(Boolean)
+                    .join(" ");
+                return (
+                    <div key={child.id} role="listitem" className="mj_SubagentPill_wrapper">
+                        <button
+                            className={className}
+                            aria-label={`Open subagent ${conversationTitle(child)}`}
+                            aria-current={isCurrent ? "true" : undefined}
+                            disabled={isCurrent}
+                            onClick={() => void client.selectConversation(child.id)}
+                        >
+                            {isCurrent ? (
+                                <span aria-hidden="true">✓</span>
+                            ) : isRunning ? (
+                                <span className="mj_Spinner" aria-hidden="true" />
+                            ) : (
+                                <span aria-hidden="true">○</span>
+                            )}
+                            {conversationTitle(child)}
+                        </button>
+                    </div>
+                );
+            })}
         </div>
     );
 }
@@ -3640,6 +3947,8 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
     const leftPanel = useLeftPanelResize();
     const [dragActive, setDragActive] = useState(state.dragActive);
     const [draftReloadTicks, setDraftReloadTicks] = useState<Record<string, number>>({});
+    const [bodyEl, setBodyEl] = useState<HTMLElement | null>(null);
+    const collapse = useAdaptiveHeader(bodyEl);
     const appContent = useRef<HTMLDivElement>(null);
     const uploadDialogWasOpen = useRef(Boolean(state.stagedUploads));
     const drafts = useMemo(() => makeDraftStore(state.session), [state.session]);
@@ -3698,13 +4007,17 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                                     Drop files to attach
                                 </div>
                             )}
-                            <div className="mx_RoomView_body mx_MainSplit_timeline" data-layout="bubble">
+                            <div
+                                ref={setBodyEl}
+                                className="mx_RoomView_body mx_MainSplit_timeline"
+                                data-layout="bubble"
+                            >
                                 {childMode ? (
-                                    <SubChatHeader client={client} state={state} />
+                                    <SubChatHeader client={client} state={state} collapse={collapse} />
                                 ) : (
-                                    <ChatHeader client={client} state={state} />
+                                    <ChatHeader client={client} state={state} collapse={collapse} />
                                 )}
-                                <RunningSubagentStrip client={client} state={state} />
+                                <SubagentStrip client={client} state={state} mode={childMode ? "child" : "parent"} />
                                 <Timeline client={client} state={state} isReadOnly={childMode} />
                                 {childMode ? (
                                     <ReadOnlyHint />
