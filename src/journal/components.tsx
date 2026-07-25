@@ -2621,9 +2621,358 @@ function Composer({
     const prevConvoIdRef = useRef(convoId);
     const draftTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
     const draftTimerConvoRef = useRef<string | undefined>(undefined);
+    const [voiceState, reactSetVoiceState] = useState<"idle" | "requesting" | "recording" | "error">("idle");
+    const [elapsedMs, setElapsedMs] = useState(0);
+    const genRef = useRef(0);
+    const mediaRecorder = useRef<MediaRecorder | null>(null);
+    const mediaStream = useRef<MediaStream | null>(null);
+    const audioContext = useRef<AudioContext | null>(null);
+    const analyser = useRef<AnalyserNode | null>(null);
+    const rafId = useRef<number | null>(null);
+    const chunksRef = useRef<Blob[]>([]);
+    const recMimeRef = useRef<string | undefined>(undefined);
+    const recordingStartMs = useRef(0);
+    const deadlineTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const tickTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+    const watchdogTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const acquireTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const errorMsg = useRef<string | null>(null);
+    const mountedRef = useRef(false);
+    const voiceStateRef = useRef<"idle" | "requesting" | "recording" | "error">("idle");
+    const dispositionRef = useRef<"send" | "discard">("discard");
+    const sendInFlightRef = useRef(false);
+    const stopInFlightRef = useRef(false);
+    const finalizedRef = useRef(false);
+    const recordingIdRef = useRef(0);
+    const capConvoRef = useRef<string | undefined>(undefined);
+    const visibilityHandlerRef = useRef<(() => void) | null>(null);
+    const voiceConvoRef = useRef(convoId);
+    const composerRef = useRef<HTMLDivElement>(null);
+    const micButtonRef = useRef<HTMLButtonElement>(null);
+    const stopButtonRef = useRef<HTMLButtonElement>(null);
+    const waveformCanvasRef = useRef<HTMLCanvasElement>(null);
     const folders = folderSuggestions(body, store);
     const commands = filterCommands(CLAUDE_BRIDGE_COMMANDS, body);
     const open = body !== dismissed && (folders.length > 0 || (isCommandMode(body) && commands.length > 0));
+    const voiceSupported = Boolean(navigator.mediaDevices?.getUserMedia) && typeof window.MediaRecorder !== "undefined";
+    const elapsedMinutes = Math.floor(elapsedMs / 60_000);
+    const elapsedSeconds = Math.floor((elapsedMs % 60_000) / 1000);
+    const elapsedLabel = `${elapsedMinutes}:${String(elapsedSeconds).padStart(2, "0")}`;
+
+    const setVoiceState = useCallback((next: "idle" | "requesting" | "recording" | "error"): void => {
+        voiceStateRef.current = next;
+        reactSetVoiceState(next);
+    }, []);
+
+    const releaseMedia = useCallback((): void => {
+        if (deadlineTimer.current !== null) {
+            clearTimeout(deadlineTimer.current);
+            deadlineTimer.current = null;
+        }
+        if (tickTimer.current !== null) {
+            clearInterval(tickTimer.current);
+            tickTimer.current = null;
+        }
+        if (rafId.current !== null) {
+            cancelAnimationFrame(rafId.current);
+            rafId.current = null;
+        }
+        mediaStream.current?.getTracks().forEach((track) => track.stop());
+        mediaStream.current = null;
+        const context = audioContext.current;
+        audioContext.current = null;
+        analyser.current = null;
+        if (context && context.state !== "closed") void context.close().catch(() => undefined);
+        if (visibilityHandlerRef.current) {
+            document.removeEventListener("visibilitychange", visibilityHandlerRef.current);
+            visibilityHandlerRef.current = null;
+        }
+    }, []);
+
+    const releaseResources = useCallback((): void => {
+        releaseMedia();
+        if (watchdogTimer.current !== null) {
+            clearTimeout(watchdogTimer.current);
+            watchdogTimer.current = null;
+        }
+        mediaRecorder.current = null;
+    }, [releaseMedia]);
+
+    const finalizeVoice = useCallback(
+        (rid: number, localChunks: Blob[]): void => {
+            if (rid !== recordingIdRef.current) return;
+            if (finalizedRef.current) return;
+            finalizedRef.current = true;
+
+            const mime = recMimeRef.current || "audio/webm";
+            const blob = localChunks.length ? new Blob(localChunks, { type: mime }) : null;
+            const wantSend = dispositionRef.current === "send";
+            const capturedConvo = capConvoRef.current;
+            releaseResources();
+
+            if (wantSend && !blob) {
+                if (mountedRef.current) {
+                    errorMsg.current = "Recording failed to save.";
+                    setVoiceState("error");
+                }
+                console.warn("voice: committed recording contained no audio", {
+                    rid,
+                    disposition: dispositionRef.current,
+                    chunks: localChunks.length,
+                    elapsedMs: Date.now() - recordingStartMs.current,
+                });
+                sendInFlightRef.current = false;
+                stopInFlightRef.current = false;
+                return;
+            }
+
+            if (mountedRef.current && voiceStateRef.current !== "error") {
+                setVoiceState("idle");
+                setElapsedMs(0);
+            }
+
+            if (wantSend && blob && capturedConvo) {
+                const onFail = (): void => {
+                    if (mountedRef.current && voiceStateRef.current === "idle") {
+                        errorMsg.current = "Couldn't save the recording — try again.";
+                        setVoiceState("error");
+                    }
+                };
+                void client
+                    .sendVoiceNote(blob, capturedConvo)
+                    .then((outcome) => {
+                        if (outcome !== "sent" && outcome !== "persisted-terminal") onFail();
+                    })
+                    .catch(onFail);
+            }
+            sendInFlightRef.current = false;
+            stopInFlightRef.current = false;
+        },
+        [client, releaseResources, setVoiceState],
+    );
+
+    const stopRecorder = useCallback(
+        (disposition: "send" | "discard"): void => {
+            const recorder = mediaRecorder.current;
+            if (!recorder || recorder.state === "inactive") return;
+            if (disposition === "send") {
+                dispositionRef.current = "send";
+                sendInFlightRef.current = true;
+            } else if (!sendInFlightRef.current) {
+                dispositionRef.current = "discard";
+            }
+            stopInFlightRef.current = true;
+            const rid = recordingIdRef.current;
+            const localChunks = chunksRef.current;
+            watchdogTimer.current = setTimeout(() => {
+                console.warn("voice: onstop absent — watchdog finalizing", {
+                    rid,
+                    disposition: dispositionRef.current,
+                    chunks: localChunks.length,
+                    elapsedMs: Date.now() - recordingStartMs.current,
+                });
+                finalizeVoice(rid, localChunks);
+            }, 3000);
+            recorder.stop();
+        },
+        [finalizeVoice],
+    );
+
+    const startWaveform = useCallback((): void => {
+        const values = new Uint8Array(analyser.current?.frequencyBinCount ?? 0);
+        const reducedMotion =
+            typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        const draw = (): void => {
+            const canvas = waveformCanvasRef.current;
+            const currentAnalyser = analyser.current;
+            if (canvas && currentAnalyser) {
+                const context = canvas.getContext("2d");
+                if (context) {
+                    const width = Math.max(1, Math.floor(canvas.clientWidth * window.devicePixelRatio));
+                    const height = Math.max(1, Math.floor(canvas.clientHeight * window.devicePixelRatio));
+                    if (canvas.width !== width) canvas.width = width;
+                    if (canvas.height !== height) canvas.height = height;
+                    if (!reducedMotion) currentAnalyser.getByteTimeDomainData(values);
+                    context.clearRect(0, 0, width, height);
+                    const computed = getComputedStyle(canvas);
+                    context.strokeStyle =
+                        computed.getPropertyValue("--cpd-color-icon-accent-primary").trim() || computed.color;
+                    context.lineWidth = Math.max(1, window.devicePixelRatio);
+                    context.beginPath();
+                    for (let index = 0; index < values.length; index += 1) {
+                        const x = (index / Math.max(1, values.length - 1)) * width;
+                        const y = reducedMotion ? height / 2 : (values[index] / 255) * height;
+                        if (index === 0) context.moveTo(x, y);
+                        else context.lineTo(x, y);
+                    }
+                    context.stroke();
+                }
+            }
+            rafId.current = requestAnimationFrame(draw);
+        };
+        draw();
+    }, []);
+
+    const startRecording = useCallback(
+        (stream: MediaStream): void => {
+            const rid = ++recordingIdRef.current;
+            const localChunks: Blob[] = [];
+            chunksRef.current = localChunks;
+            recMimeRef.current = undefined;
+            mediaStream.current = stream;
+            try {
+                const mimeType = ["audio/webm;codecs=opus", "audio/webm"].find((candidate) =>
+                    window.MediaRecorder.isTypeSupported(candidate),
+                );
+                const recorder = mimeType
+                    ? new window.MediaRecorder(stream, { mimeType })
+                    : new window.MediaRecorder(stream);
+                mediaRecorder.current = recorder;
+                recorder.onstart = () => {
+                    if (rid !== recordingIdRef.current || localChunks !== chunksRef.current) return;
+                    recMimeRef.current ||= recorder.mimeType || undefined;
+                };
+                recorder.ondataavailable = (event) => {
+                    if (rid !== recordingIdRef.current || localChunks !== chunksRef.current) return;
+                    recMimeRef.current ||= event.data.type || undefined;
+                    if (event.data.size) localChunks.push(event.data);
+                };
+                recorder.onstop = () => {
+                    if (rid !== recordingIdRef.current || localChunks !== chunksRef.current) return;
+                    finalizeVoice(rid, localChunks);
+                };
+                recorder.onerror = () => {
+                    if (rid !== recordingIdRef.current || localChunks !== chunksRef.current) return;
+                    errorMsg.current = "Recording stopped unexpectedly.";
+                    setVoiceState("error");
+                    stopRecorder("discard");
+                };
+
+                const context = new window.AudioContext();
+                audioContext.current = context;
+                const currentAnalyser = context.createAnalyser();
+                currentAnalyser.fftSize = 256;
+                analyser.current = currentAnalyser;
+                context.createMediaStreamSource(stream).connect(currentAnalyser);
+
+                dispositionRef.current = "discard";
+                sendInFlightRef.current = false;
+                stopInFlightRef.current = false;
+                finalizedRef.current = false;
+                recordingStartMs.current = Date.now();
+                setElapsedMs(0);
+                startWaveform();
+                tickTimer.current = setInterval(() => {
+                    setElapsedMs(Date.now() - recordingStartMs.current);
+                }, 500);
+                const capMs = 5 * 60 * 1000;
+                deadlineTimer.current = setTimeout(() => {
+                    if (Date.now() - recordingStartMs.current >= capMs) stopRecorder("send");
+                }, capMs);
+                const reconcileDurationCap = (): void => {
+                    if (document.visibilityState === "visible" && Date.now() - recordingStartMs.current >= capMs) {
+                        stopRecorder("send");
+                    }
+                };
+                visibilityHandlerRef.current = reconcileDurationCap;
+                document.addEventListener("visibilitychange", reconcileDurationCap);
+
+                recorder.start(1000);
+                setVoiceState("recording");
+            } catch {
+                stream.getTracks().forEach((track) => track.stop());
+                releaseResources();
+                errorMsg.current = "Couldn't start recording.";
+                setVoiceState("error");
+            }
+        },
+        [finalizeVoice, releaseResources, setVoiceState, startWaveform, stopRecorder],
+    );
+
+    const acquireVoice = useCallback((): void => {
+        if (!navigator.mediaDevices?.getUserMedia || typeof window.MediaRecorder === "undefined") return;
+        const gen = ++genRef.current;
+        setVoiceState("requesting");
+        capConvoRef.current = convoIdRef.current;
+        errorMsg.current = null;
+        const localTimer = setTimeout(() => {
+            if (gen === genRef.current && voiceStateRef.current === "requesting") {
+                if (acquireTimer.current === localTimer) acquireTimer.current = null;
+                ++genRef.current;
+                errorMsg.current = "Microphone request timed out — try again.";
+                setVoiceState("error");
+            }
+        }, 20_000);
+        acquireTimer.current = localTimer;
+        void navigator.mediaDevices.getUserMedia({ audio: true }).then(
+            (stream) => {
+                clearTimeout(localTimer);
+                if (acquireTimer.current === localTimer) acquireTimer.current = null;
+                if (gen !== genRef.current || !mountedRef.current) {
+                    stream.getTracks().forEach((track) => track.stop());
+                    return;
+                }
+                startRecording(stream);
+            },
+            (error: unknown) => {
+                clearTimeout(localTimer);
+                if (acquireTimer.current === localTimer) acquireTimer.current = null;
+                if (gen !== genRef.current) return;
+                const name =
+                    typeof error === "object" && error !== null && "name" in error
+                        ? String((error as { name: unknown }).name)
+                        : "";
+                errorMsg.current =
+                    name === "NotAllowedError" || name === "SecurityError"
+                        ? "Microphone access denied."
+                        : name === "NotFoundError"
+                          ? "No microphone found."
+                          : "Couldn't access the microphone.";
+                setVoiceState("error");
+            },
+        );
+    }, [setVoiceState, startRecording]);
+
+    const teardownVoice = useCallback((): void => {
+        ++genRef.current;
+        if (acquireTimer.current !== null) {
+            clearTimeout(acquireTimer.current);
+            acquireTimer.current = null;
+        }
+        if (voiceStateRef.current === "requesting") {
+            if (mountedRef.current) setVoiceState("idle");
+            return;
+        }
+        if (mediaRecorder.current && mediaRecorder.current.state !== "inactive") stopRecorder("discard");
+        releaseMedia();
+    }, [releaseMedia, setVoiceState, stopRecorder]);
+
+    useEffect(() => {
+        mountedRef.current = true;
+        return () => {
+            mountedRef.current = false;
+            teardownVoice();
+        };
+    }, [teardownVoice]);
+
+    useLayoutEffect(() => {
+        if (voiceConvoRef.current !== convoId) {
+            teardownVoice();
+            voiceConvoRef.current = convoId;
+        }
+    }, [convoId, teardownVoice]);
+
+    useEffect(() => {
+        if (voiceState === "recording") {
+            stopButtonRef.current?.focus();
+        } else if (
+            voiceState === "idle" &&
+            capConvoRef.current === convoIdRef.current &&
+            composerRef.current?.contains(document.activeElement)
+        ) {
+            micButtonRef.current?.focus();
+        }
+    }, [voiceState]);
 
     // Mirror the store's canonical per-convo durability flag into React state, but only for the
     // currently-selected conversation — a late async persist/clear for A must not clobber B's badge.
@@ -2754,7 +3103,7 @@ function Composer({
         }
     };
     return (
-        <div className="mx_MessageComposer" role="region" aria-label="Message composer">
+        <div className="mx_MessageComposer" role="region" aria-label="Message composer" ref={composerRef}>
             <div className="mx_MessageComposer_wrapper">
                 {state.connectionError && state.connectionErrorSeq !== dismissedSeq && (
                     <div className="mj_ConnectionError">
@@ -2888,10 +3237,25 @@ function Composer({
                             }}
                         />
                         <button
+                            ref={micButtonRef}
                             className="mx_MessageComposer_button"
-                            title="Voice messages are not supported by this journal server"
-                            aria-label="Voice message"
+                            title={
+                                voiceSupported
+                                    ? voiceState === "recording"
+                                        ? `Recording, ${elapsedLabel}`
+                                        : "Record voice message"
+                                    : "Voice recording isn't supported in this browser."
+                            }
+                            aria-label={
+                                voiceState === "requesting"
+                                    ? "Requesting microphone…"
+                                    : voiceState === "recording"
+                                      ? `Recording, ${elapsedLabel}`
+                                      : "Voice message"
+                            }
                             aria-disabled="true"
+                            disabled
+                            onClick={acquireVoice}
                         >
                             <MicOnIcon />
                         </button>
