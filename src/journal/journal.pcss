@@ -1481,7 +1481,10 @@ textarea {
         sans-serif;
 }
 
-.mj_UploadConfirm_actions button:hover:not(:disabled) {
+/* Ghost hover applies only to the secondary buttons — the filled primary (Send) keeps
+   its accent background, or the generic rule (more specific than the primary's base
+   background) would flip it to near-white and leave white-on-white text on hover. */
+.mj_UploadConfirm_actions button:not(.mj_UploadConfirm_send):hover:not(:disabled) {
     background: var(--cpd-color-bg-subtle-primary);
     color: var(--cpd-color-text-primary);
 }
@@ -2057,12 +2060,11 @@ button.mj_File {
     cursor: pointer;
 }
 
-.mj_VoiceRecording_action:hover:not(:disabled) {
-    background: var(--cpd-color-bg-subtle-primary);
-}
-
-/* v4: discard is a ghost-danger control — hover reddens (the stop button overrides below). */
+/* Ghost hover (background + danger colour) applies only to the discard control — the
+   filled Stop button keeps its accent background on hover, or the generic rule (more
+   specific than Stop's base background) flips it to near-white and hides the white icon. */
 .mj_VoiceRecording_action:not(.mj_VoiceRecording_stop):hover:not(:disabled) {
+    background: var(--cpd-color-bg-subtle-primary);
     color: var(--cpd-color-text-critical-primary);
 }
 
