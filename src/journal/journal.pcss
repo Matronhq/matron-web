@@ -118,11 +118,11 @@ textarea {
     display: block;
     max-width: 100%;
     overflow: hidden;
-    /* v3 mock header title: 13px / 500 / 17px (measured from the design, #518). */
+    /* v5 title.lg (header conversation title): 600 15px/20px (measured from the design). */
     color: var(--cpd-color-text-primary);
-    font-size: 13px;
-    font-weight: 500;
-    line-height: 17px;
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 20px;
     text-align: left;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -158,13 +158,25 @@ textarea {
 }
 
 .mj_HeaderModel,
-.mj_HeaderContext {
+.mj_HeaderContext,
+.mj_HeaderWorkdir {
     display: block;
     overflow: hidden;
     color: inherit;
     font: inherit;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+/* v5 subtitle: workdir is the flexible, first-to-truncate segment so the short,
+   meaningful model + run-state stay legible when the pane narrows. */
+.mj_HeaderWorkdir {
+    flex: 1 1 auto;
+}
+
+.mj_HeaderModel,
+.mj_HeaderMeta .mj_HeaderState {
+    flex: 0 1 auto;
 }
 
 /* RIGHT zone: usage bars + Compact pill. */
@@ -1645,6 +1657,36 @@ li.mj_AttachmentChip_error {
     min-width: min(360px, 55vw);
 }
 
+/* v5 event.permission_request: the only differences from a Question card are the
+   teal-tinted border, the accent uppercase label, and exactly one filled affirmative
+   (the first option, Allow). The card carries its own chrome (border/radius/panel/pad)
+   because the shared base is unstyled. */
+.mj_PromptCard_permission {
+    border: 1px solid rgb(13 148 136 / 25%);
+    border-radius: 10px;
+    background: var(--cpd-color-bg-canvas-default);
+    padding: 12px 14px;
+}
+
+.mj_PromptCard_permission .mj_PromptLabel {
+    color: var(--cpd-color-text-action-accent);
+    font:
+        600 10px/14px Inter,
+        sans-serif;
+    letter-spacing: 0.07em;
+}
+
+.mj_PromptCard_permission .mj_PromptOptions button.mj_PromptOption_affirmative {
+    border: 0;
+    background: var(--cpd-color-bg-accent);
+    color: var(--cpd-color-text-on-accent);
+    font-weight: 600;
+}
+
+.mj_PromptCard_permission .mj_PromptOptions button.mj_PromptOption_affirmative:hover {
+    filter: brightness(1.08);
+}
+
 .mj_PromptCard p {
     margin: 0 0 var(--cpd-space-3x);
 }
@@ -1730,6 +1772,16 @@ li.mj_AttachmentChip_error {
     font: var(--cpd-font-body-sm-regular);
 }
 
+/* v5 event.unknown: dashed --m-line2 border on --m-raised so an unrecognised event
+   reads as diagnostic (collapsed, JSON on expand), never as content. */
+.mj_Unknown {
+    max-width: 680px;
+    border: 1px dashed var(--cpd-color-border-strong);
+    border-radius: 10px;
+    background: var(--cpd-color-bg-canvas-raised);
+    padding: 10px 12px;
+}
+
 .mj_ToolCommand,
 .mj_ToolCard pre,
 .mj_LiveTool pre,
@@ -1806,6 +1858,10 @@ li.mj_AttachmentChip_error {
     color: var(--cpd-color-text-secondary);
 }
 
+.mj_DiffCard_truncated {
+    padding: 2px var(--cpd-space-3x);
+}
+
 .mj_DiffCard_badge {
     border-radius: 999px;
     background: var(--cpd-color-bg-subtle-primary);
@@ -1813,8 +1869,8 @@ li.mj_AttachmentChip_error {
     font: var(--cpd-font-body-xs-semibold);
 }
 
-.mj_DiffCard_added,
-.mj_DiffLine_add {
+/* +n / −n header counts keep their coloured glyphs. */
+.mj_DiffCard_added {
     color: var(--cpd-color-icon-accent-primary);
 }
 
@@ -1823,19 +1879,25 @@ li.mj_AttachmentChip_error {
     color: var(--cpd-color-text-critical-primary);
 }
 
+/* v5 event.diff.addRow: an added line is signalled by a full-bleed row-background
+   tint with DEFAULT ink — not green text. Removed lines keep bg tint + critical ink. */
 .mj_DiffLine_add {
     background: var(--cpd-color-bg-diff-add);
+    color: var(--cpd-color-text-primary);
 }
 
 .mj_DiffLine_del {
     background: var(--cpd-color-bg-diff-del);
 }
 
+/* Rows carry the 2px/12px padding (the body's horizontal padding is dropped) so each
+   row's background tint bleeds edge-to-edge while the code text stays inset. */
 .mj_DiffLine_add,
 .mj_DiffLine_del,
 .mj_DiffLine_ctx,
 .mj_DiffLine_hunk {
     display: block;
+    padding: 2px var(--cpd-space-3x);
 }
 
 .mj_DiffCard_track {
@@ -1849,7 +1911,8 @@ li.mj_AttachmentChip_error {
     max-width: min(720px, 62vw);
     overflow-x: auto;
     box-sizing: border-box;
-    padding: 0 var(--cpd-space-3x) var(--cpd-space-3x);
+    /* No horizontal padding — the rows carry it so their bg tint reaches the edges. */
+    padding: 0 0 var(--cpd-space-2x);
     white-space: pre;
     font-family: "Fira Code", monospace;
     font-size: var(--cpd-font-size-xs);
@@ -1867,7 +1930,8 @@ li.mj_AttachmentChip_error {
     border: 0;
     background: transparent;
     cursor: pointer;
-    padding: 0;
+    /* Inset to match the row text now that the body carries no horizontal padding. */
+    padding: 2px var(--cpd-space-3x);
 }
 
 .mj_ToolCommand {
@@ -1979,6 +2043,15 @@ button.mj_File {
     resize: none;
     color: var(--cpd-color-text-primary);
     overflow-y: auto;
+}
+
+/* The rule above sets outline:none at high specificity, which would swallow the
+   composer's keyboard-focus ring. Restore it here at matching specificity + the
+   pseudo-class so a keyboard user gets a 2px accent ring on the (borderless) input
+   inside the shell; pointer focus is still carried by the shell border recolor. */
+.mx_RoomView_body[data-layout="bubble"] .mx_BasicMessageComposer textarea.mx_BasicMessageComposer_input:focus-visible {
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: 1px;
 }
 
 .mx_MessageComposer_actions button {

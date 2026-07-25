@@ -158,6 +158,15 @@ const events: JournalEvent[] = [
             body: "Restarted. Error rate steady at **0.02%** over the last 10 minutes — dashboards clean, websocket reconnects normal.\n\nBackups rotated: oldest three pruned, latest verified with a test restore. Kept [webapp.bak.20260724T100212Z](https://example.test/bak) as the rollback point.",
         },
     },
+    {
+        // Unrecognised event type → diagnostic .mj_Unknown card (dashed border on raised).
+        seq: 9,
+        convo_id: "c1",
+        ts: T + 480,
+        sender: "agent:claude",
+        type: "telemetry_snapshot",
+        payload: { cpu: 0.42, mem: "1.8GB", note: "unrecognised event → diagnostic card, never hidden" },
+    },
 ];
 
 const client = new MatronJournalClient();
