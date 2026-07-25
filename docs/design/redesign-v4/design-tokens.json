@@ -1,0 +1,488 @@
+{
+  "$schema": "matron-design-tokens/1",
+  "meta": {
+    "name": "Matron UI redesign",
+    "source": "Matron Redesign.dc.html",
+    "generated": "2026-07-25",
+    "derivation": "Colour tokens and font shorthands are PARSED from the rendering artifact, not hand-written. Regenerate after any change rather than editing this file. States, breakpoints, layering and intent (below) are hand-authored — they cannot be probed from a static render.",
+    "fontStacks": {
+      "ui": "Inter, 'Helvetica Neue', sans-serif",
+      "mono": "'Fira Code', monospace"
+    },
+    "rootFontSize": "html font-size is calc(16px - 1px) = 15px in matron-web; every value here is absolute px, so it is unaffected",
+    "weights": [
+      400,
+      500,
+      600
+    ],
+    "probing": {
+      "attribute": "data-spec",
+      "names": [
+        "sidebar",
+        "sidebar.list",
+        "header",
+        "subagentStrip",
+        "canvas",
+        "card.permission",
+        "composer",
+        "composer.slashPalette",
+        "composer.recording",
+        "modal.upload"
+      ],
+      "snippet": "[...document.querySelectorAll('[data-spec]')].map(el => ({ name: el.dataset.spec, cs: getComputedStyle(el) }))"
+    }
+  },
+  "color": {
+    "light": {
+      "--m-app": "#f4f2ee",
+      "--m-panel": "#ffffff",
+      "--m-paper": "#efece6",
+      "--m-raised": "#faf8f4",
+      "--m-overlay": "#ffffff",
+      "--m-ink": "#1b1815",
+      "--m-ink2": "#6b655c",
+      "--m-ink3": "#9a938a",
+      "--m-line": "#e7e2d9",
+      "--m-line2": "#d8d1c5",
+      "--m-accent": "#0d9488",
+      "--m-accent-deep": "#0f766e",
+      "--m-on-accent": "#ffffff",
+      "--m-self": "#e6f4ef",
+      "--m-subtle": "#f2efe9",
+      "--m-subtle2": "#eae5dd",
+      "--m-hover": "rgb(28 24 20 / 0.05)",
+      "--m-active": "rgb(28 24 20 / 0.09)",
+      "--m-selected": "rgb(13 148 136 / 0.10)",
+      "--m-track": "rgb(28 24 20 / 0.12)",
+      "--m-green": "#34c759",
+      "--m-amber": "#ff9500",
+      "--m-red": "#ff3b30",
+      "--m-crit": "#bd2020",
+      "--m-diff-add": "rgb(52 199 89 / 0.13)",
+      "--m-diff-del": "rgb(255 59 48 / 0.09)",
+      "--m-sh-sm": "0 1px 2px rgb(28 24 20 / 0.06)",
+      "--m-sh-md": "0 4px 12px rgb(28 24 20 / 0.10)",
+      "--m-sh-lg": "0 16px 48px rgb(28 24 20 / 0.16)"
+    },
+    "dark": {
+      "--m-app": "#121316",
+      "--m-panel": "#1a1c20",
+      "--m-paper": "#151619",
+      "--m-raised": "#212429",
+      "--m-overlay": "#282c32",
+      "--m-ink": "#e7e4df",
+      "--m-ink2": "#9a948b",
+      "--m-ink3": "#6d675f",
+      "--m-line": "#2a2d33",
+      "--m-line2": "#3a3f46",
+      "--m-accent": "#2dd4bf",
+      "--m-accent-deep": "#14b8a6",
+      "--m-on-accent": "#0b201c",
+      "--m-self": "#123530",
+      "--m-subtle": "#212429",
+      "--m-subtle2": "#282c32",
+      "--m-hover": "rgb(255 255 255 / 0.06)",
+      "--m-active": "rgb(255 255 255 / 0.10)",
+      "--m-selected": "rgb(45 212 191 / 0.14)",
+      "--m-track": "rgb(255 255 255 / 0.12)",
+      "--m-crit": "#ff6a6a",
+      "--m-diff-add": "rgb(52 199 89 / 0.12)",
+      "--m-diff-del": "rgb(255 107 107 / 0.10)",
+      "--m-sh-sm": "0 1px 2px rgb(0 0 0 / 0.3)",
+      "--m-sh-md": "0 4px 12px rgb(0 0 0 / 0.4)",
+      "--m-sh-lg": "0 16px 48px rgb(0 0 0 / 0.5)"
+    },
+    "surfaceLadder": {
+      "intent": "Dark is a lightness ladder, not an inverted light theme.",
+      "order": [
+        "--m-app",
+        "--m-paper",
+        "--m-panel",
+        "--m-raised",
+        "--m-overlay"
+      ],
+      "roles": {
+        "--m-app": "window background behind everything",
+        "--m-paper": "message canvas reading surface (recedes behind chrome)",
+        "--m-panel": "sidebar, header, composer, cards — raised chrome",
+        "--m-raised": "inset areas inside cards: tool output, diff body, upload preview",
+        "--m-overlay": "modals and popovers only"
+      }
+    },
+    "mapToRepoTokens": {
+      "note": "Suggested mapping onto the existing --cpd-* names in src/journal/shell.pcss",
+      "--m-app": "--cpd-color-bg-app",
+      "--m-panel": "--cpd-color-bg-canvas-default",
+      "--m-paper": "--cpd-color-bg-room-canvas",
+      "--m-raised": "--cpd-color-bg-canvas-raised",
+      "--m-overlay": "new (dark #282c32) — light reuses --cpd-color-bg-canvas-default",
+      "--m-ink": "--cpd-color-text-primary",
+      "--m-ink2": "--cpd-color-text-secondary",
+      "--m-ink3": "--cpd-color-text-tertiary",
+      "--m-line": "--cpd-color-border-subtle",
+      "--m-line2": "--cpd-color-border-strong",
+      "--m-accent": "--cpd-color-text-action-accent",
+      "--m-accent-deep": "--cpd-color-bg-accent",
+      "--m-self": "--cpd-color-bg-self-bubble",
+      "--m-subtle": "--cpd-color-bg-subtle-primary",
+      "--m-subtle2": "--cpd-color-bg-subtle-secondary",
+      "--m-track": "--cpd-color-bg-usage-track",
+      "--m-green": "--cpd-color-usage-low",
+      "--m-amber": "--cpd-color-usage-medium",
+      "--m-red": "--cpd-color-usage-high",
+      "--m-crit": "--cpd-color-text-critical-primary",
+      "--m-diff-add / --m-diff-del": "new — tinted diff row backgrounds"
+    },
+    "theming": {
+      "attribute": "data-theme='light' | 'dark' on <html>",
+      "persistence": "localStorage 'matron-redesign-theme'; falls back to prefers-color-scheme on first load"
+    }
+  },
+  "type": {
+    "roles": {
+      "title.lg": {
+        "font": "600 15px/20px Inter",
+        "use": "header conversation title, sidebar brand"
+      },
+      "title.md": {
+        "font": "600 14px/19px Inter",
+        "use": "modal title"
+      },
+      "title.sm": {
+        "font": "600 13px/17px Inter",
+        "use": "message author name, unread session name, modal filename"
+      },
+      "label.strong": {
+        "font": "500 13px/17px Inter",
+        "use": "session row title (read state)"
+      },
+      "label.md": {
+        "font": "500 13px/16px Inter",
+        "use": "New session button"
+      },
+      "label.sm": {
+        "font": "500 12.5px/16px Inter",
+        "use": "buttons (secondary), resolved permission line"
+      },
+      "label.smStrong": {
+        "font": "600 12.5px/16px Inter",
+        "use": "buttons (primary)"
+      },
+      "label.xs": {
+        "font": "500 12px/16px Inter",
+        "use": "sidebar tabs, compact button, diff open-file link"
+      },
+      "label.micro": {
+        "font": "500 11px/14px Inter",
+        "use": "date divider"
+      },
+      "label.caps": {
+        "font": "500 10px/14px Inter",
+        "use": "SUBAGENTS strip label (letter-spacing .06em, uppercase)"
+      },
+      "label.capsAccent": {
+        "font": "600 10px/14px Inter",
+        "use": "PERMISSION REQUEST label (letter-spacing .07em, uppercase)"
+      },
+      "body.md": {
+        "font": "400 14px/22px Inter",
+        "use": "message prose, own-message bubbles, composer input"
+      },
+      "body.sm": {
+        "font": "400 13.5px/20px Inter",
+        "use": "permission body, modal caption input"
+      },
+      "body.xs": {
+        "font": "400 13px/16px Inter",
+        "use": "search input"
+      },
+      "meta.md": {
+        "font": "400 12px/16px Inter",
+        "use": "session preview, subagent pill, slash summary, footer email"
+      },
+      "meta.sm": {
+        "font": "400 11.5px/15px Inter",
+        "use": "popover rows, upload queue hint"
+      },
+      "meta.xs": {
+        "font": "400 11px/14px Inter",
+        "use": "timestamps, header subtitle, composer hints"
+      },
+      "meta.nano": {
+        "font": "400 10px/14px Inter",
+        "use": "inline bubble timestamp (floor — never smaller)"
+      },
+      "badge.count": {
+        "font": "600 10px/18px Inter",
+        "use": "unread badge numeral"
+      },
+      "badge.status": {
+        "font": "600 11px/16px Inter",
+        "use": "tool card exit badge"
+      },
+      "mono.usage": {
+        "font": "400 10.5px/13px 'Fira Code'",
+        "use": "usage meter labels + percentages (500 + ink for the ctx row)"
+      },
+      "mono.micro": {
+        "font": "400 11px/16px 'Fira Code'",
+        "use": "slash arg hints, code block filename, queue counter chip, popover figures"
+      },
+      "mono.badge": {
+        "font": "600 11px/16px 'Fira Code'",
+        "use": "diff +n / −n counts"
+      },
+      "mono.code": {
+        "font": "400 12px/19px 'Fira Code'",
+        "use": "code block body, diff rows, tool output"
+      },
+      "mono.inline": {
+        "font": "400 12.5px/18px 'Fira Code'",
+        "use": "inline code"
+      },
+      "mono.command": {
+        "font": "500 12.5px/18px 'Fira Code'",
+        "use": "tool card command, slash trigger, mini ctx readout"
+      },
+      "mono.filename": {
+        "font": "600 12.5px/18px 'Fira Code'",
+        "use": "diff card filename"
+      }
+    },
+    "usageCensus": {
+      "600 15px/20px Inter": 2,
+      "500 13px/16px Inter": 1,
+      "500 12px/16px Inter": 6,
+      "400 13px/16px Inter": 1,
+      "500 13px/17px Inter": 9,
+      "400 11px/14px Inter": 20,
+      "400 12px/16px Inter": 15,
+      "600 13px/17px Inter": 5,
+      "600 10px/18px Inter": 1,
+      "400 12px/17px Inter": 1,
+      "600 12px/16px Inter": 1,
+      "400 11.5px/15px Inter": 7,
+      "500 10.5px/13px 'Fira Code'": 3,
+      "400 10.5px/13px 'Fira Code'": 6,
+      "500 11.5px/15px Inter": 1,
+      "400 10px/14px Inter": 4,
+      "500 10px/14px Inter": 1,
+      "500 11px/14px Inter": 1,
+      "400 14px/22px Inter": 10,
+      "400 12.5px/18px 'Fira Code'": 3,
+      "500 12.5px/18px 'Fira Code'": 3,
+      "600 11px/16px Inter": 1,
+      "400 12px/19px 'Fira Code'": 3,
+      "600 12.5px/18px 'Fira Code'": 1,
+      "600 11px/16px 'Fira Code'": 2,
+      "400 11px/16px 'Fira Code'": 3,
+      "600 10px/14px Inter": 1,
+      "400 13.5px/20px Inter": 2,
+      "600 12.5px/16px Inter": 2,
+      "500 12.5px/16px Inter": 5,
+      "600 14px/19px Inter": 1,
+      "500 11px/16px 'Fira Code'": 1
+    },
+    "minimumSize": "10px, used only for the bubble timestamp and unread numeral; body copy never below 12px"
+  },
+  "space": {
+    "scale": [
+      2,
+      4,
+      6,
+      7,
+      8,
+      9,
+      10,
+      12,
+      14,
+      16,
+      18,
+      20
+    ],
+    "note": "7px and 9px appear inside dense control rows (usage meter gap, card header gap); everything structural uses even steps.",
+    "regions": {
+      "sidebar.header": "14px 12px 10px 14px",
+      "sidebar.section": "0 12px",
+      "sidebar.list": "2px 8px 8px, row gap 1px",
+      "sidebar.row": "9px 10px (subagent child rows 9px 10px 9px 26px), glyph gap 10px, title/preview gap 2px",
+      "header": "0 14px, min-height 58px, gap 12px",
+      "subagentStrip": "7px 14px, gap 8px",
+      "canvas": "18px 20px 8px, max-width 860px centred",
+      "canvas.agentBlock": "padding-left 32px (24px avatar + 8px gap), gap 8px between elements, 16px above a new agent group",
+      "composer": "footer 8px 16px 12px, input row 6px 8px 6px 6px",
+      "card": "header 9px 12px, body 10px 12px, permission card 12px 14px",
+      "modal": "header 13px 14px 13px 16px, body 14px 16px, footer 11px 14px"
+    }
+  },
+  "radius": {
+    "iconButton": 8,
+    "pill": 999,
+    "card": 10,
+    "modal": 14,
+    "composer": 12,
+    "sendButton": 9,
+    "avatar": 7,
+    "inlineCode": 4,
+    "thumbnail": 7,
+    "bubble": {
+      "first": "14px 14px 4px 14px",
+      "middle": "14px 14px 4px 4px",
+      "last": "4px 14px 4px 14px",
+      "rule": "Consecutive own-messages tighten inner corners to 4px; the group's last bubble carries the tail."
+    }
+  },
+  "elevation": {
+    "--m-sh-sm": "cards, bubbles, selected tab",
+    "--m-sh-md": "popovers, slash palette",
+    "--m-sh-lg": "modal card only"
+  },
+  "motion": {
+    "duration": {
+      "fast": "120ms",
+      "medium": "180ms"
+    },
+    "easing": "cubic-bezier(0.2, 0, 0, 1)",
+    "transitions": {
+      "hover backgrounds": "background 120ms",
+      "chevrons (tool + diff cards)": "transform 120ms, rotate(-90deg) collapsed -> rotate(0deg) expanded",
+      "primary buttons": "filter: brightness(1.08) on hover, no transform"
+    },
+    "keyframes": {
+      "m-pulse": "1.2s ease-in-out infinite, opacity .35 -> 1 — typing dots, live session dot (1.6s), recording dot (1.1s)",
+      "m-spin": "0.8s linear infinite — subagent spinners",
+      "m-wave": "0.9s ease-in-out infinite, scaleY .3 -> 1 — 12 recording bars, staggered 0.12s"
+    },
+    "principle": "No entrance animation anywhere. Motion is reserved for state that is genuinely live."
+  },
+  "states": {
+    "note": "The part a screenshot cannot show.",
+    "button.icon": {
+      "rest": "transparent, colour --m-ink3 (composer) or --m-ink2 (chrome)",
+      "hover": "background --m-hover, colour --m-ink",
+      "active": "background --m-active"
+    },
+    "button.primary": {
+      "rest": "background --m-accent-deep, colour --m-on-accent",
+      "hover": "filter brightness(1.08)",
+      "disabled": "opacity .45 (send button when the composer is empty), pointer-events kept"
+    },
+    "button.secondary": {
+      "rest": "1px solid --m-line2, transparent fill, colour --m-ink",
+      "hover": "background --m-hover"
+    },
+    "button.ghostDanger": {
+      "rest": "transparent, colour --m-ink2",
+      "hover": "background --m-hover, colour --m-crit — Deny, Cancel all, discard recording"
+    },
+    "sidebar.row": {
+      "rest": "transparent",
+      "hover": "background --m-hover",
+      "selected": "background --m-selected + 3px --m-accent bar pinned left, inset 8px top/bottom, radius 999px",
+      "unread": "title weight 600 + teal count badge, or an 8px teal dot when there is no count"
+    },
+    "sidebar.tab": {
+      "rest": "transparent, colour --m-ink2",
+      "hover": "colour --m-ink",
+      "selected": "background --m-panel + --m-sh-sm + colour --m-ink"
+    },
+    "input.textarea": {
+      "rest": "1px solid --m-line2",
+      "focus": "border-color --m-accent (no glow, no ring)",
+      "placeholder": "--m-ink3"
+    },
+    "slashPalette.row": {
+      "rest": "transparent",
+      "hover": "background --m-hover",
+      "keyboardHighlight": "background --m-hover (same treatment — mouse and keyboard highlight are one state)"
+    },
+    "card.collapsible": {
+      "rest": "1px solid --m-line, background --m-panel",
+      "hoverHeader": "background --m-hover",
+      "expanded": "body border-top 1px --m-line, background --m-raised"
+    },
+    "resizeHandle": {
+      "rest": "transparent, 5px wide, cursor col-resize",
+      "hover": "background rgb(13 148 136 / 18%)",
+      "dragging": "pointer capture on window, width clamped 240–420"
+    },
+    "focusVisible": "Not yet designed — implement as 2px --m-accent outline with 2px offset on the app background; do not reuse the border-color focus treatment for keyboard focus."
+  },
+  "breakpoints": {
+    "principle": "The header adapts to the CHAT PANE width via ResizeObserver, not the viewport. This is what makes half- and quarter-screen desktop windows work; a viewport media query would be wrong here.",
+    "chatPane >= 760": "full 2×2 usage grid, 300px wide",
+    "chatPane < 760": "usage collapses to the ctx bar alone; hover reveals a 250px popover with all four meters + reset times",
+    "chatPane >= 560": "header subtitle shows model · workdir · status; Compact button visible",
+    "chatPane < 560": "subtitle collapses to status dot + short model name; hovering the title block reveals a popover with full title, model, workdir, status; Compact button hidden",
+    "viewport <= 700 (matchMedia)": "single column — sidebar and chat swap via state.screen ('list' | 'chat'); back chevron appears in the header; sidebar takes 100% width",
+    "truncationRule": "Every truncating element uses overflow:hidden + text-overflow:ellipsis + white-space:nowrap AND must expose its full value on hover — native title for single fields, a designed popover wherever more than one field collapses at once."
+  },
+  "layering": {
+    "1": "sticky in-flow chrome (header, composer) — no explicit z-index, source order",
+    "5": "sidebar resize handle",
+    "20": "slash palette (above the composer, below modals)",
+    "30": "header popovers (usage, title)",
+    "50": "modal scrim + card",
+    "scrim": "rgb(18 16 14 / 55%) in both themes; click-outside cancels"
+  },
+  "components": {
+    "usageMeter": {
+      "bars": [
+        "ctx",
+        "5h",
+        "fbl",
+        "wk"
+      ],
+      "layout": "2×2 grid, 300px, column-gap 16px, row-gap 4px; ctx first and emphasised (mono.usage at weight 500 + --m-ink), others 400 + --m-ink2",
+      "row": "grid 24px 1fr 32px, gap 7px — label right-aligned / track / percentage",
+      "track": "height 4px, radius 999px, --m-track",
+      "thresholds": "<50% --m-green, 50–84% --m-amber, ≥85% --m-red",
+      "collapsed": "single ctx row, 24px 72px 32px"
+    },
+    "sessionRow": {
+      "statusColumn": "fixed 8px: running = pulsing teal dot; idle = --m-line2 dot; pinned = 13px pin --m-ink3; favourite = 13px star --m-amber; subagent = 12px spinner + 26px text indent"
+    },
+    "tabs": [
+      "Active",
+      "Favs (star)",
+      "Archived + count"
+    ],
+    "toolCard": {
+      "header": "chevron 13px, mono.command, exit badge, duration",
+      "badge": "radius 999px, 1px 8px, --m-diff-add/--m-green (non-zero exits --m-diff-del/--m-crit)",
+      "body": "max-height 280px, scrolls"
+    },
+    "diffCard": {
+      "header": "chevron, 14px file icon, mono.filename, +n --m-green, −n --m-crit, 'Open file ↗'",
+      "rows": "padding 2px 12px, white-space pre; added --m-diff-add, removed --m-diff-del + --m-crit, hunk --m-ink3",
+      "codeTheme": "code follows the UI theme — no fixed-dark code surface"
+    },
+    "permissionCard": {
+      "border": "1px solid rgb(13 148 136 / 25%)",
+      "actions": "Allow (primary) / Always allow (secondary) / Deny (ghost danger)",
+      "resolved": "buttons replaced by one label.sm line in --m-ink2"
+    },
+    "composer": {
+      "textarea": "rows = clamp(1..6) of newline count, max-height 160px then scrolls",
+      "buttons": "attach, mic, send (32×32; send radius 9px, filled)",
+      "hints": "'/ commands', 'shift+enter for newline', right-aligned live 'ctx N% · auto-idle in Nm'",
+      "keyboard": "Enter sends; Shift+Enter newline; palette open → ↑/↓ move highlight, Enter/Tab complete, Esc clears"
+    },
+    "slashPalette": {
+      "trigger": "composer matches /^\\/\\S*$/",
+      "position": "bottom: calc(100% + 8px), max-height 262px",
+      "row": "grid auto auto minmax(0,1fr), baseline, gap 9px, padding 7px 12px",
+      "commands": 19
+    },
+    "voiceRecording": {
+      "bar": "replaces the input row; 1px solid rgb(13 148 136 / 30%), min-height 44px",
+      "parts": "9px red pulsing dot, mono m:ss timer, 12-bar waveform (3px bars, staggered), 'transcribing on stop', discard, stop",
+      "onStop": "transcript lands in the composer as editable text — never auto-sends"
+    },
+    "uploadModal": {
+      "card": "min(440px, 94vw), max-height 88vh, three-part flex (fixed header / scrolling body / fixed footer)",
+      "queue": "header chip 'n of N', thumbnail strip (34px, active = 2px --m-accent ring, inactive = 1px --m-line2 on --m-raised), Skip advances without posting, Send posts and advances, modal closes only after the last file",
+      "perFile": "caption clears between files; the posted chip carries that file's real name and size"
+    }
+  }
+}

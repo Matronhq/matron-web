@@ -1,0 +1,1277 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --m-app:#f4f2ee; --m-panel:#ffffff; --m-paper:#efece6; --m-raised:#faf8f4; --m-overlay:#ffffff;
+  --m-ink:#1b1815; --m-ink2:#6b655c; --m-ink3:#9a938a;
+  --m-line:#e7e2d9; --m-line2:#d8d1c5;
+  --m-accent:#0d9488; --m-accent-deep:#0f766e; --m-on-accent:#ffffff;
+  --m-self:#e6f4ef; --m-subtle:#f2efe9; --m-subtle2:#eae5dd;
+  --m-hover:rgb(28 24 20 / 0.05); --m-active:rgb(28 24 20 / 0.09); --m-selected:rgb(13 148 136 / 0.10);
+  --m-track:rgb(28 24 20 / 0.12);
+  --m-green:#34c759; --m-amber:#ff9500; --m-red:#ff3b30; --m-crit:#bd2020;
+  --m-diff-add:rgb(52 199 89 / 0.13); --m-diff-del:rgb(255 59 48 / 0.09);
+  --m-sh-sm:0 1px 2px rgb(28 24 20 / 0.06); --m-sh-md:0 4px 12px rgb(28 24 20 / 0.10); --m-sh-lg:0 16px 48px rgb(28 24 20 / 0.16);
+}
+[data-theme="dark"] {
+  --m-app:#121316; --m-panel:#1a1c20; --m-paper:#151619; --m-raised:#212429; --m-overlay:#282c32;
+  --m-ink:#e7e4df; --m-ink2:#9a948b; --m-ink3:#6d675f;
+  --m-line:#2a2d33; --m-line2:#3a3f46;
+  --m-accent:#2dd4bf; --m-accent-deep:#14b8a6; --m-on-accent:#0b201c;
+  --m-self:#123530; --m-subtle:#212429; --m-subtle2:#282c32;
+  --m-hover:rgb(255 255 255 / 0.06); --m-active:rgb(255 255 255 / 0.10); --m-selected:rgb(45 212 191 / 0.14);
+  --m-track:rgb(255 255 255 / 0.12);
+  --m-crit:#ff6a6a;
+  --m-diff-add:rgb(52 199 89 / 0.12); --m-diff-del:rgb(255 107 107 / 0.10);
+  --m-sh-sm:0 1px 2px rgb(0 0 0 / 0.3); --m-sh-md:0 4px 12px rgb(0 0 0 / 0.4); --m-sh-lg:0 16px 48px rgb(0 0 0 / 0.5);
+}
+html, body { width:100%; height:100%; margin:0; overflow:hidden; }
+body { background:var(--m-app); }
+a { color:var(--m-accent); text-decoration:none; }
+a:hover { text-decoration:underline; }
+textarea::placeholder, input::placeholder { color:var(--m-ink3); }
+* { scrollbar-width:thin; scrollbar-color:rgb(120 114 105 / 40%) transparent; }
+@keyframes m-pulse { 0%,100% { opacity:.35; } 50% { opacity:1; } }
+@keyframes m-spin { to { transform:rotate(360deg); } }
+@keyframes m-wave { 0%,100% { transform:scaleY(0.3); } 50% { transform:scaleY(1); } }
+</style>
+<script type="application/json" id="matron-design-tokens">
+{
+  "$schema": "matron-design-tokens/1",
+  "meta": {
+    "name": "Matron UI redesign",
+    "source": "Matron Redesign.dc.html",
+    "generated": "2026-07-25",
+    "derivation": "Colour tokens and font shorthands are PARSED from the rendering artifact, not hand-written. Regenerate after any change rather than editing this file. States, breakpoints, layering and intent (below) are hand-authored — they cannot be probed from a static render.",
+    "fontStacks": {
+      "ui": "Inter, 'Helvetica Neue', sans-serif",
+      "mono": "'Fira Code', monospace"
+    },
+    "rootFontSize": "html font-size is calc(16px - 1px) = 15px in matron-web; every value here is absolute px, so it is unaffected",
+    "weights": [
+      400,
+      500,
+      600
+    ],
+    "probing": {
+      "attribute": "data-spec",
+      "names": [
+        "sidebar",
+        "sidebar.list",
+        "header",
+        "subagentStrip",
+        "canvas",
+        "card.permission",
+        "composer",
+        "composer.slashPalette",
+        "composer.recording",
+        "modal.upload"
+      ],
+      "snippet": "[...document.querySelectorAll('[data-spec]')].map(el => ({ name: el.dataset.spec, cs: getComputedStyle(el) }))"
+    }
+  },
+  "color": {
+    "light": {
+      "--m-app": "#f4f2ee",
+      "--m-panel": "#ffffff",
+      "--m-paper": "#efece6",
+      "--m-raised": "#faf8f4",
+      "--m-overlay": "#ffffff",
+      "--m-ink": "#1b1815",
+      "--m-ink2": "#6b655c",
+      "--m-ink3": "#9a938a",
+      "--m-line": "#e7e2d9",
+      "--m-line2": "#d8d1c5",
+      "--m-accent": "#0d9488",
+      "--m-accent-deep": "#0f766e",
+      "--m-on-accent": "#ffffff",
+      "--m-self": "#e6f4ef",
+      "--m-subtle": "#f2efe9",
+      "--m-subtle2": "#eae5dd",
+      "--m-hover": "rgb(28 24 20 / 0.05)",
+      "--m-active": "rgb(28 24 20 / 0.09)",
+      "--m-selected": "rgb(13 148 136 / 0.10)",
+      "--m-track": "rgb(28 24 20 / 0.12)",
+      "--m-green": "#34c759",
+      "--m-amber": "#ff9500",
+      "--m-red": "#ff3b30",
+      "--m-crit": "#bd2020",
+      "--m-diff-add": "rgb(52 199 89 / 0.13)",
+      "--m-diff-del": "rgb(255 59 48 / 0.09)",
+      "--m-sh-sm": "0 1px 2px rgb(28 24 20 / 0.06)",
+      "--m-sh-md": "0 4px 12px rgb(28 24 20 / 0.10)",
+      "--m-sh-lg": "0 16px 48px rgb(28 24 20 / 0.16)"
+    },
+    "dark": {
+      "--m-app": "#121316",
+      "--m-panel": "#1a1c20",
+      "--m-paper": "#151619",
+      "--m-raised": "#212429",
+      "--m-overlay": "#282c32",
+      "--m-ink": "#e7e4df",
+      "--m-ink2": "#9a948b",
+      "--m-ink3": "#6d675f",
+      "--m-line": "#2a2d33",
+      "--m-line2": "#3a3f46",
+      "--m-accent": "#2dd4bf",
+      "--m-accent-deep": "#14b8a6",
+      "--m-on-accent": "#0b201c",
+      "--m-self": "#123530",
+      "--m-subtle": "#212429",
+      "--m-subtle2": "#282c32",
+      "--m-hover": "rgb(255 255 255 / 0.06)",
+      "--m-active": "rgb(255 255 255 / 0.10)",
+      "--m-selected": "rgb(45 212 191 / 0.14)",
+      "--m-track": "rgb(255 255 255 / 0.12)",
+      "--m-crit": "#ff6a6a",
+      "--m-diff-add": "rgb(52 199 89 / 0.12)",
+      "--m-diff-del": "rgb(255 107 107 / 0.10)",
+      "--m-sh-sm": "0 1px 2px rgb(0 0 0 / 0.3)",
+      "--m-sh-md": "0 4px 12px rgb(0 0 0 / 0.4)",
+      "--m-sh-lg": "0 16px 48px rgb(0 0 0 / 0.5)"
+    },
+    "surfaceLadder": {
+      "intent": "Dark is a lightness ladder, not an inverted light theme.",
+      "order": [
+        "--m-app",
+        "--m-paper",
+        "--m-panel",
+        "--m-raised",
+        "--m-overlay"
+      ],
+      "roles": {
+        "--m-app": "window background behind everything",
+        "--m-paper": "message canvas reading surface (recedes behind chrome)",
+        "--m-panel": "sidebar, header, composer, cards — raised chrome",
+        "--m-raised": "inset areas inside cards: tool output, diff body, upload preview",
+        "--m-overlay": "modals and popovers only"
+      }
+    },
+    "mapToRepoTokens": {
+      "note": "Suggested mapping onto the existing --cpd-* names in src/journal/shell.pcss",
+      "--m-app": "--cpd-color-bg-app",
+      "--m-panel": "--cpd-color-bg-canvas-default",
+      "--m-paper": "--cpd-color-bg-room-canvas",
+      "--m-raised": "--cpd-color-bg-canvas-raised",
+      "--m-overlay": "new (dark #282c32) — light reuses --cpd-color-bg-canvas-default",
+      "--m-ink": "--cpd-color-text-primary",
+      "--m-ink2": "--cpd-color-text-secondary",
+      "--m-ink3": "--cpd-color-text-tertiary",
+      "--m-line": "--cpd-color-border-subtle",
+      "--m-line2": "--cpd-color-border-strong",
+      "--m-accent": "--cpd-color-text-action-accent",
+      "--m-accent-deep": "--cpd-color-bg-accent",
+      "--m-self": "--cpd-color-bg-self-bubble",
+      "--m-subtle": "--cpd-color-bg-subtle-primary",
+      "--m-subtle2": "--cpd-color-bg-subtle-secondary",
+      "--m-track": "--cpd-color-bg-usage-track",
+      "--m-green": "--cpd-color-usage-low",
+      "--m-amber": "--cpd-color-usage-medium",
+      "--m-red": "--cpd-color-usage-high",
+      "--m-crit": "--cpd-color-text-critical-primary",
+      "--m-diff-add / --m-diff-del": "new — tinted diff row backgrounds"
+    },
+    "theming": {
+      "attribute": "data-theme='light' | 'dark' on <html>",
+      "persistence": "localStorage 'matron-redesign-theme'; falls back to prefers-color-scheme on first load"
+    }
+  },
+  "type": {
+    "roles": {
+      "title.lg": {
+        "font": "600 15px/20px Inter",
+        "use": "header conversation title, sidebar brand"
+      },
+      "title.md": {
+        "font": "600 14px/19px Inter",
+        "use": "modal title"
+      },
+      "title.sm": {
+        "font": "600 13px/17px Inter",
+        "use": "message author name, unread session name, modal filename"
+      },
+      "label.strong": {
+        "font": "500 13px/17px Inter",
+        "use": "session row title (read state)"
+      },
+      "label.md": {
+        "font": "500 13px/16px Inter",
+        "use": "New session button"
+      },
+      "label.sm": {
+        "font": "500 12.5px/16px Inter",
+        "use": "buttons (secondary), resolved permission line"
+      },
+      "label.smStrong": {
+        "font": "600 12.5px/16px Inter",
+        "use": "buttons (primary)"
+      },
+      "label.xs": {
+        "font": "500 12px/16px Inter",
+        "use": "sidebar tabs, compact button, diff open-file link"
+      },
+      "label.micro": {
+        "font": "500 11px/14px Inter",
+        "use": "date divider"
+      },
+      "label.caps": {
+        "font": "500 10px/14px Inter",
+        "use": "SUBAGENTS strip label (letter-spacing .06em, uppercase)"
+      },
+      "label.capsAccent": {
+        "font": "600 10px/14px Inter",
+        "use": "PERMISSION REQUEST label (letter-spacing .07em, uppercase)"
+      },
+      "body.md": {
+        "font": "400 14px/22px Inter",
+        "use": "message prose, own-message bubbles, composer input"
+      },
+      "body.sm": {
+        "font": "400 13.5px/20px Inter",
+        "use": "permission body, modal caption input"
+      },
+      "body.xs": {
+        "font": "400 13px/16px Inter",
+        "use": "search input"
+      },
+      "meta.md": {
+        "font": "400 12px/16px Inter",
+        "use": "session preview, subagent pill, slash summary, footer email"
+      },
+      "meta.sm": {
+        "font": "400 11.5px/15px Inter",
+        "use": "popover rows, upload queue hint"
+      },
+      "meta.xs": {
+        "font": "400 11px/14px Inter",
+        "use": "timestamps, header subtitle, composer hints"
+      },
+      "meta.nano": {
+        "font": "400 10px/14px Inter",
+        "use": "inline bubble timestamp (floor — never smaller)"
+      },
+      "badge.count": {
+        "font": "600 10px/18px Inter",
+        "use": "unread badge numeral"
+      },
+      "badge.status": {
+        "font": "600 11px/16px Inter",
+        "use": "tool card exit badge"
+      },
+      "mono.usage": {
+        "font": "400 10.5px/13px 'Fira Code'",
+        "use": "usage meter labels + percentages (500 + ink for the ctx row)"
+      },
+      "mono.micro": {
+        "font": "400 11px/16px 'Fira Code'",
+        "use": "slash arg hints, code block filename, queue counter chip, popover figures"
+      },
+      "mono.badge": {
+        "font": "600 11px/16px 'Fira Code'",
+        "use": "diff +n / −n counts"
+      },
+      "mono.code": {
+        "font": "400 12px/19px 'Fira Code'",
+        "use": "code block body, diff rows, tool output"
+      },
+      "mono.inline": {
+        "font": "400 12.5px/18px 'Fira Code'",
+        "use": "inline code"
+      },
+      "mono.command": {
+        "font": "500 12.5px/18px 'Fira Code'",
+        "use": "tool card command, slash trigger, mini ctx readout"
+      },
+      "mono.filename": {
+        "font": "600 12.5px/18px 'Fira Code'",
+        "use": "diff card filename"
+      }
+    },
+    "usageCensus": {
+      "600 15px/20px Inter": 2,
+      "500 13px/16px Inter": 1,
+      "500 12px/16px Inter": 6,
+      "400 13px/16px Inter": 1,
+      "500 13px/17px Inter": 9,
+      "400 11px/14px Inter": 20,
+      "400 12px/16px Inter": 15,
+      "600 13px/17px Inter": 5,
+      "600 10px/18px Inter": 1,
+      "400 12px/17px Inter": 1,
+      "600 12px/16px Inter": 1,
+      "400 11.5px/15px Inter": 7,
+      "500 10.5px/13px 'Fira Code'": 3,
+      "400 10.5px/13px 'Fira Code'": 6,
+      "500 11.5px/15px Inter": 1,
+      "400 10px/14px Inter": 4,
+      "500 10px/14px Inter": 1,
+      "500 11px/14px Inter": 1,
+      "400 14px/22px Inter": 10,
+      "400 12.5px/18px 'Fira Code'": 3,
+      "500 12.5px/18px 'Fira Code'": 3,
+      "600 11px/16px Inter": 1,
+      "400 12px/19px 'Fira Code'": 3,
+      "600 12.5px/18px 'Fira Code'": 1,
+      "600 11px/16px 'Fira Code'": 2,
+      "400 11px/16px 'Fira Code'": 3,
+      "600 10px/14px Inter": 1,
+      "400 13.5px/20px Inter": 2,
+      "600 12.5px/16px Inter": 2,
+      "500 12.5px/16px Inter": 5,
+      "600 14px/19px Inter": 1,
+      "500 11px/16px 'Fira Code'": 1
+    },
+    "minimumSize": "10px, used only for the bubble timestamp and unread numeral; body copy never below 12px"
+  },
+  "space": {
+    "scale": [
+      2,
+      4,
+      6,
+      7,
+      8,
+      9,
+      10,
+      12,
+      14,
+      16,
+      18,
+      20
+    ],
+    "note": "7px and 9px appear inside dense control rows (usage meter gap, card header gap); everything structural uses even steps.",
+    "regions": {
+      "sidebar.header": "14px 12px 10px 14px",
+      "sidebar.section": "0 12px",
+      "sidebar.list": "2px 8px 8px, row gap 1px",
+      "sidebar.row": "9px 10px (subagent child rows 9px 10px 9px 26px), glyph gap 10px, title/preview gap 2px",
+      "header": "0 14px, min-height 58px, gap 12px",
+      "subagentStrip": "7px 14px, gap 8px",
+      "canvas": "18px 20px 8px, max-width 860px centred",
+      "canvas.agentBlock": "padding-left 32px (24px avatar + 8px gap), gap 8px between elements, 16px above a new agent group",
+      "composer": "footer 8px 16px 12px, input row 6px 8px 6px 6px",
+      "card": "header 9px 12px, body 10px 12px, permission card 12px 14px",
+      "modal": "header 13px 14px 13px 16px, body 14px 16px, footer 11px 14px"
+    }
+  },
+  "radius": {
+    "iconButton": 8,
+    "pill": 999,
+    "card": 10,
+    "modal": 14,
+    "composer": 12,
+    "sendButton": 9,
+    "avatar": 7,
+    "inlineCode": 4,
+    "thumbnail": 7,
+    "bubble": {
+      "first": "14px 14px 4px 14px",
+      "middle": "14px 14px 4px 4px",
+      "last": "4px 14px 4px 14px",
+      "rule": "Consecutive own-messages tighten inner corners to 4px; the group's last bubble carries the tail."
+    }
+  },
+  "elevation": {
+    "--m-sh-sm": "cards, bubbles, selected tab",
+    "--m-sh-md": "popovers, slash palette",
+    "--m-sh-lg": "modal card only"
+  },
+  "motion": {
+    "duration": {
+      "fast": "120ms",
+      "medium": "180ms"
+    },
+    "easing": "cubic-bezier(0.2, 0, 0, 1)",
+    "transitions": {
+      "hover backgrounds": "background 120ms",
+      "chevrons (tool + diff cards)": "transform 120ms, rotate(-90deg) collapsed -> rotate(0deg) expanded",
+      "primary buttons": "filter: brightness(1.08) on hover, no transform"
+    },
+    "keyframes": {
+      "m-pulse": "1.2s ease-in-out infinite, opacity .35 -> 1 — typing dots, live session dot (1.6s), recording dot (1.1s)",
+      "m-spin": "0.8s linear infinite — subagent spinners",
+      "m-wave": "0.9s ease-in-out infinite, scaleY .3 -> 1 — 12 recording bars, staggered 0.12s"
+    },
+    "principle": "No entrance animation anywhere. Motion is reserved for state that is genuinely live."
+  },
+  "states": {
+    "note": "The part a screenshot cannot show.",
+    "button.icon": {
+      "rest": "transparent, colour --m-ink3 (composer) or --m-ink2 (chrome)",
+      "hover": "background --m-hover, colour --m-ink",
+      "active": "background --m-active"
+    },
+    "button.primary": {
+      "rest": "background --m-accent-deep, colour --m-on-accent",
+      "hover": "filter brightness(1.08)",
+      "disabled": "opacity .45 (send button when the composer is empty), pointer-events kept"
+    },
+    "button.secondary": {
+      "rest": "1px solid --m-line2, transparent fill, colour --m-ink",
+      "hover": "background --m-hover"
+    },
+    "button.ghostDanger": {
+      "rest": "transparent, colour --m-ink2",
+      "hover": "background --m-hover, colour --m-crit — Deny, Cancel all, discard recording"
+    },
+    "sidebar.row": {
+      "rest": "transparent",
+      "hover": "background --m-hover",
+      "selected": "background --m-selected + 3px --m-accent bar pinned left, inset 8px top/bottom, radius 999px",
+      "unread": "title weight 600 + teal count badge, or an 8px teal dot when there is no count"
+    },
+    "sidebar.tab": {
+      "rest": "transparent, colour --m-ink2",
+      "hover": "colour --m-ink",
+      "selected": "background --m-panel + --m-sh-sm + colour --m-ink"
+    },
+    "input.textarea": {
+      "rest": "1px solid --m-line2",
+      "focus": "border-color --m-accent (no glow, no ring)",
+      "placeholder": "--m-ink3"
+    },
+    "slashPalette.row": {
+      "rest": "transparent",
+      "hover": "background --m-hover",
+      "keyboardHighlight": "background --m-hover (same treatment — mouse and keyboard highlight are one state)"
+    },
+    "card.collapsible": {
+      "rest": "1px solid --m-line, background --m-panel",
+      "hoverHeader": "background --m-hover",
+      "expanded": "body border-top 1px --m-line, background --m-raised"
+    },
+    "resizeHandle": {
+      "rest": "transparent, 5px wide, cursor col-resize",
+      "hover": "background rgb(13 148 136 / 18%)",
+      "dragging": "pointer capture on window, width clamped 240–420"
+    },
+    "focusVisible": "Not yet designed — implement as 2px --m-accent outline with 2px offset on the app background; do not reuse the border-color focus treatment for keyboard focus."
+  },
+  "breakpoints": {
+    "principle": "The header adapts to the CHAT PANE width via ResizeObserver, not the viewport. This is what makes half- and quarter-screen desktop windows work; a viewport media query would be wrong here.",
+    "chatPane >= 760": "full 2×2 usage grid, 300px wide",
+    "chatPane < 760": "usage collapses to the ctx bar alone; hover reveals a 250px popover with all four meters + reset times",
+    "chatPane >= 560": "header subtitle shows model · workdir · status; Compact button visible",
+    "chatPane < 560": "subtitle collapses to status dot + short model name; hovering the title block reveals a popover with full title, model, workdir, status; Compact button hidden",
+    "viewport <= 700 (matchMedia)": "single column — sidebar and chat swap via state.screen ('list' | 'chat'); back chevron appears in the header; sidebar takes 100% width",
+    "truncationRule": "Every truncating element uses overflow:hidden + text-overflow:ellipsis + white-space:nowrap AND must expose its full value on hover — native title for single fields, a designed popover wherever more than one field collapses at once."
+  },
+  "layering": {
+    "1": "sticky in-flow chrome (header, composer) — no explicit z-index, source order",
+    "5": "sidebar resize handle",
+    "20": "slash palette (above the composer, below modals)",
+    "30": "header popovers (usage, title)",
+    "50": "modal scrim + card",
+    "scrim": "rgb(18 16 14 / 55%) in both themes; click-outside cancels"
+  },
+  "components": {
+    "usageMeter": {
+      "bars": [
+        "ctx",
+        "5h",
+        "fbl",
+        "wk"
+      ],
+      "layout": "2×2 grid, 300px, column-gap 16px, row-gap 4px; ctx first and emphasised (mono.usage at weight 500 + --m-ink), others 400 + --m-ink2",
+      "row": "grid 24px 1fr 32px, gap 7px — label right-aligned / track / percentage",
+      "track": "height 4px, radius 999px, --m-track",
+      "thresholds": "<50% --m-green, 50–84% --m-amber, ≥85% --m-red",
+      "collapsed": "single ctx row, 24px 72px 32px"
+    },
+    "sessionRow": {
+      "statusColumn": "fixed 8px: running = pulsing teal dot; idle = --m-line2 dot; pinned = 13px pin --m-ink3; favourite = 13px star --m-amber; subagent = 12px spinner + 26px text indent"
+    },
+    "tabs": [
+      "Active",
+      "Favs (star)",
+      "Archived + count"
+    ],
+    "toolCard": {
+      "header": "chevron 13px, mono.command, exit badge, duration",
+      "badge": "radius 999px, 1px 8px, --m-diff-add/--m-green (non-zero exits --m-diff-del/--m-crit)",
+      "body": "max-height 280px, scrolls"
+    },
+    "diffCard": {
+      "header": "chevron, 14px file icon, mono.filename, +n --m-green, −n --m-crit, 'Open file ↗'",
+      "rows": "padding 2px 12px, white-space pre; added --m-diff-add, removed --m-diff-del + --m-crit, hunk --m-ink3",
+      "codeTheme": "code follows the UI theme — no fixed-dark code surface"
+    },
+    "permissionCard": {
+      "border": "1px solid rgb(13 148 136 / 25%)",
+      "actions": "Allow (primary) / Always allow (secondary) / Deny (ghost danger)",
+      "resolved": "buttons replaced by one label.sm line in --m-ink2"
+    },
+    "composer": {
+      "textarea": "rows = clamp(1..6) of newline count, max-height 160px then scrolls",
+      "buttons": "attach, mic, send (32×32; send radius 9px, filled)",
+      "hints": "'/ commands', 'shift+enter for newline', right-aligned live 'ctx N% · auto-idle in Nm'",
+      "keyboard": "Enter sends; Shift+Enter newline; palette open → ↑/↓ move highlight, Enter/Tab complete, Esc clears"
+    },
+    "slashPalette": {
+      "trigger": "composer matches /^\\/\\S*$/",
+      "position": "bottom: calc(100% + 8px), max-height 262px",
+      "row": "grid auto auto minmax(0,1fr), baseline, gap 9px, padding 7px 12px",
+      "commands": 19
+    },
+    "voiceRecording": {
+      "bar": "replaces the input row; 1px solid rgb(13 148 136 / 30%), min-height 44px",
+      "parts": "9px red pulsing dot, mono m:ss timer, 12-bar waveform (3px bars, staggered), 'transcribing on stop', discard, stop",
+      "onStop": "transcript lands in the composer as editable text — never auto-sends"
+    },
+    "uploadModal": {
+      "card": "min(440px, 94vw), max-height 88vh, three-part flex (fixed header / scrolling body / fixed footer)",
+      "queue": "header chip 'n of N', thumbnail strip (34px, active = 2px --m-accent ring, inactive = 1px --m-line2 on --m-raised), Skip advances without posting, Send posts and advances, modal closes only after the last file",
+      "perFile": "caption clears between files; the posted chip carries that file's real name and size"
+    }
+  }
+}
+</script>
+
+</helmet>
+<div data-screen-label="Matron redesign" style="display:flex; width:100%; height:100vh; overflow:hidden; background:var(--m-app); color:var(--m-ink); font:400 14px/1.55 Inter, 'Helvetica Neue', sans-serif;">
+
+  <sc-if value="{{ showSidebar }}" hint-placeholder-val="{{ true }}">
+  <aside data-screen-label="Sidebar" data-spec="sidebar" style="display:flex; flex-direction:column; min-height:0; flex:0 0 auto; width:{{ sidebarWidthPx }}; min-width:0; background:var(--m-panel); border-right:1px solid var(--m-line);">
+    <div style="display:flex; align-items:center; gap:10px; padding:14px 12px 10px 14px;">
+      <img src="res/matron-logo-simple.svg" alt="Matron" style="width:22px; height:22px;">
+      <span style="font:600 15px/20px Inter, sans-serif;">Matron</span>
+      <span style="flex:1;"></span>
+      <button title="Toggle theme" onClick="{{ toggleTheme }}" style="display:inline-flex; width:30px; height:30px; align-items:center; justify-content:center; border:0; border-radius:8px; background:transparent; color:var(--m-ink2); cursor:pointer;" style-hover="background:var(--m-hover); color:var(--m-ink);">
+        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.66 6.34l1.41-1.41"></path></svg>
+      </button>
+      <button title="Settings" style="display:inline-flex; width:30px; height:30px; align-items:center; justify-content:center; border:0; border-radius:8px; background:transparent; color:var(--m-ink2); cursor:pointer;" style-hover="background:var(--m-hover); color:var(--m-ink);">
+        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h9M17 8h3M4 16h3M11 16h9"></path><circle cx="15" cy="8" r="2"></circle><circle cx="9" cy="16" r="2"></circle></svg>
+      </button>
+    </div>
+    <div style="padding:0 12px 10px;">
+      <button onClick="{{ newSession }}" title="Runs /start" style="display:flex; width:100%; align-items:center; justify-content:center; gap:8px; height:34px; border:1px solid rgb(13 148 136 / 25%); border-radius:8px; background:var(--m-selected); color:var(--m-accent); font:500 13px/16px Inter, sans-serif; cursor:pointer;" style-hover="background:var(--m-active);">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h8"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"></path></svg>
+        New session
+      </button>
+    </div>
+    <div style="display:flex; gap:2px; margin:0 12px 8px; padding:2px; border-radius:999px; background:var(--m-subtle2);">
+      <button onClick="{{ tabActive }}" style="flex:1; border:0; border-radius:999px; padding:5px 8px; background:{{ tabBg0 }}; color:{{ tabInk0 }}; box-shadow:{{ tabSh0 }}; font:500 12px/16px Inter, sans-serif; cursor:pointer;" style-hover="color:var(--m-ink);">Active</button>
+      <button onClick="{{ tabFavorites }}" title="Favorites" style="flex:1; display:inline-flex; align-items:center; justify-content:center; gap:5px; border:0; border-radius:999px; padding:5px 8px; background:{{ tabBg1 }}; color:{{ tabInk1 }}; box-shadow:{{ tabSh1 }}; font:500 12px/16px Inter, sans-serif; cursor:pointer;" style-hover="color:var(--m-ink);"><svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor" stroke="none"><path d="M12 4l2.4 4.9 5.4.8-3.9 3.8.9 5.4L12 16.9 7.2 19l.9-5.4L4.2 9.7l5.4-.8L12 4Z"></path></svg>Favs</button>
+      <button onClick="{{ tabArchived }}" style="flex:1; border:0; border-radius:999px; padding:5px 8px; background:{{ tabBg2 }}; color:{{ tabInk2 }}; box-shadow:{{ tabSh2 }}; font:500 12px/16px Inter, sans-serif; cursor:pointer;" style-hover="color:var(--m-ink);">Archived <span style="color:var(--m-ink3);">4</span></button>
+    </div>
+    <div style="padding:0 12px 10px;">
+      <div style="display:flex; align-items:center; gap:8px; height:32px; padding:0 10px; border-radius:8px; background:var(--m-subtle2); color:var(--m-ink2);">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-4-4"></path></svg>
+        <input type="search" placeholder="Search sessions" style="width:100%; min-width:0; border:0; outline:0; background:transparent; color:var(--m-ink); font:400 13px/16px Inter, sans-serif;">
+      </div>
+    </div>
+    <nav data-spec="sidebar.list" style="flex:1; min-height:0; overflow-y:auto; padding:2px 8px 8px; display:flex; flex-direction:column; gap:1px;">
+      <sc-if value="{{ tabShowsAll }}" hint-placeholder-val="{{ true }}">
+      <button onClick="{{ select0 }}" style="position:relative; display:flex; width:100%; align-items:center; gap:10px; padding:9px 10px; border:0; border-radius:8px; background:{{ rowBg0 }}; color:var(--m-ink); text-align:left; cursor:pointer;" style-hover="background:var(--m-hover);">
+        <span style="position:absolute; left:0; top:8px; bottom:8px; width:3px; border-radius:99px; background:{{ rowBar0 }};"></span>
+        <span title="running" style="width:8px; height:8px; flex:0 0 auto; border-radius:50%; background:var(--m-accent); animation:m-pulse 1.6s ease-in-out infinite;"></span>
+        <span style="flex:1; min-width:0; display:flex; flex-direction:column; gap:2px;">
+          <span style="display:flex; align-items:baseline; gap:8px;"><span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:500 13px/17px Inter, sans-serif;">matron-web · deploy</span><span style="flex:0 0 auto; font:400 11px/14px Inter, sans-serif; color:var(--m-ink3);">10:06</span></span>
+          <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:400 12px/16px Inter, sans-serif; color:var(--m-ink2);">Restarted nginx; error rate steady at 0.02%</span>
+        </span>
+      </button>
+      <button onClick="{{ select1 }}" style="position:relative; display:flex; width:100%; align-items:center; gap:10px; padding:9px 10px; border:0; border-radius:8px; background:{{ rowBg1 }}; color:var(--m-ink); text-align:left; cursor:pointer;" style-hover="background:var(--m-hover);">
+        <span style="position:absolute; left:0; top:8px; bottom:8px; width:3px; border-radius:99px; background:{{ rowBar1 }};"></span>
+        <span style="width:8px; display:inline-flex; justify-content:center; flex:0 0 auto; color:var(--m-ink3);"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4h6l-1 6 3 3H7l3-3-1-6Z"></path><path d="M12 16v4"></path></svg></span>
+        <span style="flex:1; min-width:0; display:flex; flex-direction:column; gap:2px;">
+          <span style="display:flex; align-items:baseline; gap:8px;"><span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:600 13px/17px Inter, sans-serif;">infra: backup rotation</span><span style="flex:0 0 auto; font:400 11px/14px Inter, sans-serif; color:var(--m-ink3);">09:41</span></span>
+          <span style="display:flex; align-items:center; gap:6px;"><span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:400 12px/16px Inter, sans-serif; color:var(--m-ink2);">Cron entry added for 03:15 UTC daily</span><span style="flex:0 0 auto; display:inline-flex; min-width:18px; height:18px; align-items:center; justify-content:center; padding:0 5px; border-radius:9px; background:var(--m-accent); color:var(--m-on-accent); font:600 10px/18px Inter, sans-serif;">3</span></span>
+        </span>
+      </button>
+      <button onClick="{{ select2 }}" style="position:relative; display:flex; width:100%; align-items:center; gap:10px; padding:9px 10px; border:0; border-radius:8px; background:{{ rowBg2 }}; color:var(--m-ink); text-align:left; cursor:pointer;" style-hover="background:var(--m-hover);">
+        <span style="position:absolute; left:0; top:8px; bottom:8px; width:3px; border-radius:99px; background:{{ rowBar2 }};"></span>
+        <span style="width:8px; height:8px; flex:0 0 auto; border-radius:50%; background:var(--m-line2);"></span>
+        <span style="flex:1; min-width:0; display:flex; flex-direction:column; gap:2px;">
+          <span style="display:flex; align-items:baseline; gap:8px;"><span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:600 13px/17px Inter, sans-serif;">postgres upgrade dry-run</span><span style="flex:0 0 auto; font:400 11px/14px Inter, sans-serif; color:var(--m-ink3);">Wed</span></span>
+          <span style="display:flex; align-items:center; gap:6px;"><span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:400 12px/16px Inter, sans-serif; color:var(--m-ink2);">pg_upgrade finished · 0 errors</span><span style="flex:0 0 auto; width:8px; height:8px; border-radius:50%; background:var(--m-accent);"></span></span>
+        </span>
+      </button>
+      </sc-if>
+      <sc-if value="{{ tabShowsMain }}" hint-placeholder-val="{{ true }}">
+      <button onClick="{{ select3 }}" style="position:relative; display:flex; width:100%; align-items:center; gap:10px; padding:9px 10px; border:0; border-radius:8px; background:{{ rowBg3 }}; color:var(--m-ink); text-align:left; cursor:pointer;" style-hover="background:var(--m-hover);">
+        <span style="position:absolute; left:0; top:8px; bottom:8px; width:3px; border-radius:99px; background:{{ rowBar3 }};"></span>
+        <span style="width:8px; display:inline-flex; justify-content:center; flex:0 0 auto; color:var(--m-amber);"><svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" stroke="none"><path d="M12 4l2.4 4.9 5.4.8-3.9 3.8.9 5.4L12 16.9 7.2 19l.9-5.4L4.2 9.7l5.4-.8L12 4Z"></path></svg></span>
+        <span style="flex:1; min-width:0; display:flex; flex-direction:column; gap:2px;">
+          <span style="display:flex; align-items:baseline; gap:8px;"><span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:500 13px/17px Inter, sans-serif;">codex: log parser</span><span style="flex:0 0 auto; font:400 11px/14px Inter, sans-serif; color:var(--m-ink3);">Tue</span></span>
+          <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:400 12px/16px Inter, sans-serif; color:var(--m-ink2);">idle · resumed twice today</span>
+        </span>
+      </button>
+      </sc-if>
+      <sc-if value="{{ tabShowsAll }}" hint-placeholder-val="{{ true }}">
+      <button onClick="{{ select4 }}" style="position:relative; display:flex; width:100%; align-items:center; gap:10px; padding:9px 10px 9px 26px; border:0; border-radius:8px; background:{{ rowBg4 }}; color:var(--m-ink); text-align:left; cursor:pointer;" style-hover="background:var(--m-hover);">
+        <span style="position:absolute; left:0; top:8px; bottom:8px; width:3px; border-radius:99px; background:{{ rowBar4 }};"></span>
+        <span style="width:12px; height:12px; flex:0 0 auto; box-sizing:border-box; border:2px solid rgb(13 148 136 / 25%); border-top-color:var(--m-accent); border-radius:50%; animation:m-spin 0.8s linear infinite;"></span>
+        <span style="flex:1; min-width:0; display:flex; flex-direction:column; gap:2px;">
+          <span style="display:flex; align-items:baseline; gap:8px;"><span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:500 13px/17px Inter, sans-serif; color:var(--m-ink2);">↳ subagent: test triage</span><span style="flex:0 0 auto; font:400 11px/14px Inter, sans-serif; color:var(--m-ink3);">10:01</span></span>
+          <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:400 12px/16px Inter, sans-serif; color:var(--m-ink2);">32 tests fixed, 1 quarantined</span>
+        </span>
+      </button>
+      <button onClick="{{ select5 }}" style="position:relative; display:flex; width:100%; align-items:center; gap:10px; padding:9px 10px; border:0; border-radius:8px; background:{{ rowBg5 }}; color:var(--m-ink); text-align:left; cursor:pointer;" style-hover="background:var(--m-hover);">
+        <span style="position:absolute; left:0; top:8px; bottom:8px; width:3px; border-radius:99px; background:{{ rowBar5 }};"></span>
+        <span style="width:8px; height:8px; flex:0 0 auto; border-radius:50%; background:var(--m-line2);"></span>
+        <span style="flex:1; min-width:0; display:flex; flex-direction:column; gap:2px;">
+          <span style="display:flex; align-items:baseline; gap:8px;"><span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:500 13px/17px Inter, sans-serif;">homelab dns cutover</span><span style="flex:0 0 auto; font:400 11px/14px Inter, sans-serif; color:var(--m-ink3);">Mon</span></span>
+          <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:400 12px/16px Inter, sans-serif; color:var(--m-ink2);">waiting on TTL expiry</span>
+        </span>
+      </button>
+      </sc-if>
+      <sc-if value="{{ tabIsFavorites }}" hint-placeholder-val="{{ false }}">
+      <div style="padding:14px 10px 4px; font:400 12px/17px Inter, sans-serif; color:var(--m-ink3); text-align:center;">Starred sessions stay here for quick access.</div>
+      </sc-if>
+      <sc-if value="{{ tabIsArchived }}" hint-placeholder-val="{{ false }}">
+      <button style="position:relative; display:flex; width:100%; align-items:center; gap:10px; padding:9px 10px; border:0; border-radius:8px; background:transparent; color:var(--m-ink2); text-align:left; cursor:pointer;" style-hover="background:var(--m-hover);">
+        <span style="width:8px; height:8px; flex:0 0 auto; border-radius:50%; background:var(--m-line2);"></span>
+        <span style="flex:1; min-width:0; display:flex; flex-direction:column; gap:2px;">
+          <span style="display:flex; align-items:baseline; gap:8px;"><span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:500 13px/17px Inter, sans-serif;">letsencrypt renewal fix</span><span style="flex:0 0 auto; font:400 11px/14px Inter, sans-serif; color:var(--m-ink3);">12 Jul</span></span>
+          <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:400 12px/16px Inter, sans-serif;">certbot hook patched · closed</span>
+        </span>
+      </button>
+      <button style="position:relative; display:flex; width:100%; align-items:center; gap:10px; padding:9px 10px; border:0; border-radius:8px; background:transparent; color:var(--m-ink2); text-align:left; cursor:pointer;" style-hover="background:var(--m-hover);">
+        <span style="width:8px; height:8px; flex:0 0 auto; border-radius:50%; background:var(--m-line2);"></span>
+        <span style="flex:1; min-width:0; display:flex; flex-direction:column; gap:2px;">
+          <span style="display:flex; align-items:baseline; gap:8px;"><span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:500 13px/17px Inter, sans-serif;">ci: flaky e2e hunt</span><span style="flex:0 0 auto; font:400 11px/14px Inter, sans-serif; color:var(--m-ink3);">8 Jul</span></span>
+          <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:400 12px/16px Inter, sans-serif;">3 tests quarantined · closed</span>
+        </span>
+      </button>
+      <button style="position:relative; display:flex; width:100%; align-items:center; gap:10px; padding:9px 10px; border:0; border-radius:8px; background:transparent; color:var(--m-ink2); text-align:left; cursor:pointer;" style-hover="background:var(--m-hover);">
+        <span style="width:8px; height:8px; flex:0 0 auto; border-radius:50%; background:var(--m-line2);"></span>
+        <span style="flex:1; min-width:0; display:flex; flex-direction:column; gap:2px;">
+          <span style="display:flex; align-items:baseline; gap:8px;"><span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:500 13px/17px Inter, sans-serif;">grafana alerts cleanup</span><span style="flex:0 0 auto; font:400 11px/14px Inter, sans-serif; color:var(--m-ink3);">30 Jun</span></span>
+          <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:400 12px/16px Inter, sans-serif;">14 rules pruned · closed</span>
+        </span>
+      </button>
+      <button style="position:relative; display:flex; width:100%; align-items:center; gap:10px; padding:9px 10px; border:0; border-radius:8px; background:transparent; color:var(--m-ink2); text-align:left; cursor:pointer;" style-hover="background:var(--m-hover);">
+        <span style="width:8px; height:8px; flex:0 0 auto; border-radius:50%; background:var(--m-line2);"></span>
+        <span style="flex:1; min-width:0; display:flex; flex-direction:column; gap:2px;">
+          <span style="display:flex; align-items:baseline; gap:8px;"><span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:500 13px/17px Inter, sans-serif;">node 22 migration</span><span style="flex:0 0 auto; font:400 11px/14px Inter, sans-serif; color:var(--m-ink3);">21 Jun</span></span>
+          <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:400 12px/16px Inter, sans-serif;">corepack pinned · closed</span>
+        </span>
+      </button>
+      </sc-if>
+    </nav>
+    <div style="display:flex; align-items:center; gap:10px; padding:10px 14px; border-top:1px solid var(--m-line);">
+      <span style="display:inline-flex; width:26px; height:26px; align-items:center; justify-content:center; border-radius:50%; background:var(--m-selected); color:var(--m-accent); font:600 12px/16px Inter, sans-serif;">O</span>
+      <span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:400 12px/16px Inter, sans-serif; color:var(--m-ink2);">operator@easelyte.ai</span>
+      <span style="font:400 11px/14px Inter, sans-serif; color:var(--m-ink3);">connected</span>
+    </div>
+  </aside>
+  </sc-if>
+
+  <sc-if value="{{ showHandle }}" hint-placeholder-val="{{ false }}">
+  <div onPointerDown="{{ startResize }}" title="Drag to resize" style="width:5px; margin:0 -2px; flex:0 0 auto; cursor:col-resize; z-index:5;" style-hover="background:rgb(13 148 136 / 18%);"></div>
+  </sc-if>
+
+  <sc-if value="{{ showChat }}" hint-placeholder-val="{{ true }}">
+  <section data-screen-label="Conversation" ref="{{ chatRef }}" style="flex:1; min-width:0; display:flex; flex-direction:column; min-height:0; background:var(--m-paper);">
+
+    <header data-screen-label="Header" data-spec="header" style="display:flex; align-items:center; gap:12px; flex:0 0 auto; min-height:58px; padding:0 14px; background:var(--m-panel); border-bottom:1px solid var(--m-line);">
+      <sc-if value="{{ isMobile }}" hint-placeholder-val="{{ false }}">
+      <button onClick="{{ backToList }}" title="Back" style="display:inline-flex; width:32px; height:32px; align-items:center; justify-content:center; margin-left:-6px; border:0; border-radius:8px; background:transparent; color:var(--m-ink2); cursor:pointer;" style-hover="background:var(--m-hover);">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"></path></svg>
+      </button>
+      </sc-if>
+      <div onMouseEnter="{{ titleEnter }}" onMouseLeave="{{ titleLeave }}" style="position:relative; min-width:0; display:flex; flex-direction:column; gap:1px;">
+        <div style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:600 15px/20px Inter, sans-serif;">matron-web · deploy</div>
+        <sc-if value="{{ titleFull }}" hint-placeholder-val="{{ true }}">
+        <div style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:400 11px/14px Inter, sans-serif; color:var(--m-ink2);">claude-sonnet-4-5 · /opt/matron/web-journal · <span style="color:var(--m-accent);">running</span></div>
+        </sc-if>
+        <sc-if value="{{ titleMini }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex; align-items:center; gap:5px; font:400 11px/14px Inter, sans-serif; color:var(--m-ink2);"><span style="width:6px; height:6px; border-radius:50%; background:var(--m-accent); flex:0 0 auto;"></span><span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">sonnet-4-5</span></div>
+        </sc-if>
+        <sc-if value="{{ titlePopover }}" hint-placeholder-val="{{ false }}">
+        <div style="position:absolute; top:calc(100% + 10px); left:0; z-index:30; display:grid; gap:7px; width:min(280px, 84vw); padding:12px 14px; border:1px solid var(--m-line); border-radius:10px; background:var(--m-overlay); box-shadow:var(--m-sh-md);">
+          <span style="font:600 13px/17px Inter, sans-serif; overflow-wrap:anywhere;">matron-web · deploy</span>
+          <span style="display:grid; grid-template-columns:56px 1fr; gap:8px; font:400 11.5px/15px Inter, sans-serif; color:var(--m-ink2);"><span style="color:var(--m-ink3);">model</span><span style="font-family:'Fira Code', monospace; overflow-wrap:anywhere;">claude-sonnet-4-5</span></span>
+          <span style="display:grid; grid-template-columns:56px 1fr; gap:8px; font:400 11.5px/15px Inter, sans-serif; color:var(--m-ink2);"><span style="color:var(--m-ink3);">workdir</span><span style="font-family:'Fira Code', monospace; overflow-wrap:anywhere;">/opt/matron/web-journal</span></span>
+          <span style="display:grid; grid-template-columns:56px 1fr; gap:8px; font:400 11.5px/15px Inter, sans-serif;"><span style="color:var(--m-ink3);">status</span><span style="color:var(--m-accent);">running · auto-idle in 18m</span></span>
+        </div>
+        </sc-if>
+      </div>
+      <span style="flex:1;"></span>
+      <div onMouseEnter="{{ usageEnter }}" onMouseLeave="{{ usageLeave }}" style="position:relative; flex:0 0 auto; display:flex; align-items:center;">
+      <sc-if value="{{ usageFull }}" hint-placeholder-val="{{ true }}">
+      <div style="display:grid; grid-template-columns:1fr 1fr; column-gap:16px; row-gap:4px; width:300px; flex:0 0 auto;">
+        <div style="display:grid; grid-template-columns:24px 1fr 32px; align-items:center; gap:7px; font:500 10.5px/13px 'Fira Code', monospace; color:var(--m-ink);">
+          <span style="text-align:right;">ctx</span>
+          <span style="display:block; height:4px; border-radius:99px; background:var(--m-track); overflow:hidden;"><span style="display:block; height:100%; width:72%; border-radius:inherit; background:var(--m-amber);"></span></span>
+          <span>72%</span>
+        </div>
+        <div style="display:grid; grid-template-columns:24px 1fr 32px; align-items:center; gap:7px; font:400 10.5px/13px 'Fira Code', monospace; color:var(--m-ink2);">
+          <span style="text-align:right;">5h</span>
+          <span style="display:block; height:4px; border-radius:99px; background:var(--m-track); overflow:hidden;"><span style="display:block; height:100%; width:34%; border-radius:inherit; background:var(--m-green);"></span></span>
+          <span style="color:var(--m-ink3);">34%</span>
+        </div>
+        <div style="display:grid; grid-template-columns:24px 1fr 32px; align-items:center; gap:7px; font:400 10.5px/13px 'Fira Code', monospace; color:var(--m-ink2);">
+          <span style="text-align:right;">fbl</span>
+          <span style="display:block; height:4px; border-radius:99px; background:var(--m-track); overflow:hidden;"><span style="display:block; height:100%; width:18%; border-radius:inherit; background:var(--m-green);"></span></span>
+          <span style="color:var(--m-ink3);">18%</span>
+        </div>
+        <div style="display:grid; grid-template-columns:24px 1fr 32px; align-items:center; gap:7px; font:400 10.5px/13px 'Fira Code', monospace; color:var(--m-ink2);">
+          <span style="text-align:right;">wk</span>
+          <span style="display:block; height:4px; border-radius:99px; background:var(--m-track); overflow:hidden;"><span style="display:block; height:100%; width:61%; border-radius:inherit; background:var(--m-amber);"></span></span>
+          <span style="color:var(--m-ink3);">61%</span>
+        </div>
+      </div>
+      </sc-if>
+      <sc-if value="{{ usageMini }}" hint-placeholder-val="{{ false }}">
+      <button style="display:grid; grid-template-columns:24px 72px 32px; align-items:center; gap:7px; border:0; background:transparent; padding:4px 2px; cursor:default; font:500 10.5px/13px 'Fira Code', monospace; color:var(--m-ink);">
+        <span style="text-align:right;">ctx</span>
+        <span style="display:block; height:4px; border-radius:99px; background:var(--m-track); overflow:hidden;"><span style="display:block; height:100%; width:72%; border-radius:inherit; background:var(--m-amber);"></span></span>
+        <span>72%</span>
+      </button>
+      </sc-if>
+      <sc-if value="{{ usagePopover }}" hint-placeholder-val="{{ false }}">
+      <div style="position:absolute; top:calc(100% + 10px); right:0; z-index:30; display:grid; gap:8px; width:250px; padding:12px 14px; border:1px solid var(--m-line); border-radius:10px; background:var(--m-overlay); box-shadow:var(--m-sh-md);">
+        <div style="display:grid; grid-template-columns:76px 1fr; align-items:center; gap:10px; font:500 11.5px/15px Inter, sans-serif;">
+          <span>context</span>
+          <span style="display:flex; align-items:center; gap:8px;"><span style="flex:1; display:block; height:4px; border-radius:99px; background:var(--m-track); overflow:hidden;"><span style="display:block; height:100%; width:72%; border-radius:inherit; background:var(--m-amber);"></span></span><span style="font:500 10.5px/13px 'Fira Code', monospace;">144k/200k</span></span>
+        </div>
+        <div style="display:grid; grid-template-columns:76px 1fr; align-items:center; gap:10px; font:400 11.5px/15px Inter, sans-serif; color:var(--m-ink2);">
+          <span>session 5h</span>
+          <span style="display:flex; align-items:center; gap:8px;"><span style="flex:1; display:block; height:4px; border-radius:99px; background:var(--m-track); overflow:hidden;"><span style="display:block; height:100%; width:34%; border-radius:inherit; background:var(--m-green);"></span></span><span style="font:400 10.5px/13px 'Fira Code', monospace; color:var(--m-ink3);">34%</span></span>
+        </div>
+        <div style="display:grid; grid-template-columns:76px 1fr; align-items:center; gap:10px; font:400 11.5px/15px Inter, sans-serif; color:var(--m-ink2);">
+          <span>fable</span>
+          <span style="display:flex; align-items:center; gap:8px;"><span style="flex:1; display:block; height:4px; border-radius:99px; background:var(--m-track); overflow:hidden;"><span style="display:block; height:100%; width:18%; border-radius:inherit; background:var(--m-green);"></span></span><span style="font:400 10.5px/13px 'Fira Code', monospace; color:var(--m-ink3);">18%</span></span>
+        </div>
+        <div style="display:grid; grid-template-columns:76px 1fr; align-items:center; gap:10px; font:400 11.5px/15px Inter, sans-serif; color:var(--m-ink2);">
+          <span>weekly</span>
+          <span style="display:flex; align-items:center; gap:8px;"><span style="flex:1; display:block; height:4px; border-radius:99px; background:var(--m-track); overflow:hidden;"><span style="display:block; height:100%; width:61%; border-radius:inherit; background:var(--m-amber);"></span></span><span style="font:400 10.5px/13px 'Fira Code', monospace; color:var(--m-ink3);">61%</span></span>
+        </div>
+        <div style="font:400 10px/14px Inter, sans-serif; color:var(--m-ink3); border-top:1px solid var(--m-line); padding-top:8px;">5h resets 12:00 · weekly resets Mon · fable resets 01 Aug</div>
+      </div>
+      </sc-if>
+      </div>
+      <sc-if value="{{ showCompactBtn }}" hint-placeholder-val="{{ true }}">
+      <span style="width:1px; height:26px; background:var(--m-line); flex:0 0 auto;"></span>
+      <button title="Compact context" style="display:inline-flex; height:28px; align-items:center; gap:6px; padding:0 10px; border:1px solid var(--m-line2); border-radius:999px; background:transparent; color:var(--m-ink2); font:500 12px/16px Inter, sans-serif; cursor:pointer; flex:0 0 auto;" style-hover="background:var(--m-hover); color:var(--m-ink);">
+        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 9 4 4M4 8V4h4"></path><path d="m15 15 5 5M20 16v4h-4"></path></svg>
+        Compact
+      </button>
+      </sc-if>
+      <button title="More" style="display:inline-flex; width:32px; height:32px; align-items:center; justify-content:center; border:0; border-radius:8px; background:transparent; color:var(--m-ink2); cursor:pointer; flex:0 0 auto;" style-hover="background:var(--m-hover);">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" stroke="none"><circle cx="5" cy="12" r="1.5"></circle><circle cx="12" cy="12" r="1.5"></circle><circle cx="19" cy="12" r="1.5"></circle></svg>
+      </button>
+    </header>
+
+    <sc-if value="{{ showSubagentStrip }}" hint-placeholder-val="{{ true }}">
+    <div data-screen-label="Subagent strip" data-spec="subagentStrip" style="display:flex; align-items:center; gap:8px; flex:0 0 auto; overflow-x:auto; padding:7px 14px; background:var(--m-panel); border-bottom:1px solid var(--m-line);">
+      <span style="font:500 10px/14px Inter, sans-serif; letter-spacing:0.06em; text-transform:uppercase; color:var(--m-ink3); flex:0 0 auto;">Subagents</span>
+      <button style="display:inline-flex; align-items:center; gap:7px; height:26px; padding:0 11px; border:1px solid var(--m-line2); border-radius:999px; background:transparent; color:var(--m-ink); font:400 12px/16px Inter, sans-serif; cursor:pointer; white-space:nowrap; flex:0 0 auto;" style-hover="background:var(--m-hover);">
+        <span style="width:10px; height:10px; box-sizing:border-box; border:2px solid rgb(13 148 136 / 25%); border-top-color:var(--m-accent); border-radius:50%; animation:m-spin 0.8s linear infinite;"></span>
+        test triage
+      </button>
+      <button style="display:inline-flex; align-items:center; gap:7px; height:26px; padding:0 11px; border:1px solid var(--m-line); border-radius:999px; background:transparent; color:var(--m-ink2); font:400 12px/16px Inter, sans-serif; cursor:pointer; white-space:nowrap; flex:0 0 auto;" style-hover="background:var(--m-hover);">
+        <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="var(--m-green)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 4 4 10-10"></path></svg>
+        docs sweep
+      </button>
+    </div>
+    </sc-if>
+
+    <div data-screen-label="Message canvas" data-spec="canvas" onScroll="{{ noop }}" style="flex:1; min-height:0; overflow-y:auto;" ref="{{ canvasRef }}">
+      <div style="max-width:860px; margin:0 auto; padding:18px 20px 8px; display:flex; flex-direction:column;">
+
+        <div style="display:flex; align-items:center; gap:12px; margin:4px 0 14px;">
+          <span style="flex:1; height:1px; background:var(--m-line);"></span>
+          <span style="font:500 11px/14px Inter, sans-serif; color:var(--m-ink3);">Today · 24 July</span>
+          <span style="flex:1; height:1px; background:var(--m-line);"></span>
+        </div>
+
+        <div style="display:flex; justify-content:flex-end; margin:2px 0;">
+          <div style="max-width:min(78%, 560px); padding:9px 13px; border-radius:14px 14px 4px 14px; background:var(--m-self); box-shadow:var(--m-sh-sm); font:400 14px/22px Inter, sans-serif;">morning — deploy the usage-bar fix to prod, then rotate the backups<span style="margin-left:9px; font:400 10px/14px Inter, sans-serif; color:var(--m-ink3); white-space:nowrap;">09:58</span></div>
+        </div>
+
+        <div style="display:flex; align-items:center; gap:8px; margin:16px 0 4px;">
+          <span style="display:inline-flex; width:24px; height:24px; align-items:center; justify-content:center; border-radius:7px; background:var(--m-selected);"><img src="res/matron-logo-simple.svg" alt="" style="width:14px; height:14px;"></span>
+          <span style="font:600 13px/17px Inter, sans-serif;">claude</span>
+          <span style="font:400 11px/14px Inter, sans-serif; color:var(--m-ink3);">10:02</span>
+        </div>
+        <div style="padding-left:32px; display:flex; flex-direction:column; gap:8px;">
+          <div style="max-width:680px; font:400 14px/22px Inter, sans-serif;">On it. Plan: build → atomic swap of <code style="padding:1px 5px; border-radius:4px; background:var(--m-subtle2); font:400 12.5px/18px 'Fira Code', monospace;">webapp/</code> → verify → rotate backups.</div>
+
+          <div style="max-width:680px; border:1px solid var(--m-line); border-radius:10px; background:var(--m-panel); overflow:hidden;">
+            <button onClick="{{ toggleTool }}" style="display:flex; width:100%; align-items:center; gap:10px; padding:9px 12px; border:0; background:transparent; color:var(--m-ink); text-align:left; cursor:pointer;" style-hover="background:var(--m-hover);">
+              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="color:var(--m-ink3); flex:0 0 auto; transform:{{ toolChevron }}; transition:transform 120ms;"><path d="m6 9 6 6 6-6"></path></svg>
+              <code style="font:500 12.5px/18px 'Fira Code', monospace; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">$ pnpm build</code>
+              <span style="flex:1;"></span>
+              <span style="padding:1px 8px; border-radius:999px; background:var(--m-diff-add); color:var(--m-green); font:600 11px/16px Inter, sans-serif; flex:0 0 auto;">exit 0</span>
+              <span style="font:400 11px/14px Inter, sans-serif; color:var(--m-ink3); flex:0 0 auto;">41s</span>
+            </button>
+            <sc-if value="{{ toolOpen }}" hint-placeholder-val="{{ false }}">
+            <pre style="margin:0; padding:10px 12px; border-top:1px solid var(--m-line); background:var(--m-raised); font:400 12px/19px 'Fira Code', monospace; color:var(--m-ink2); white-space:pre-wrap; overflow-wrap:anywhere; max-height:280px; overflow:auto;">webpack 5.99 compiled successfully in 38412 ms
+webapp/ written (11.2 MB, 214 assets)
+backup: webapp.bak.20260724T100212Z</pre>
+            </sc-if>
+          </div>
+
+          <div style="max-width:680px; border:1px solid var(--m-line); border-radius:10px; background:var(--m-panel); overflow:hidden;">
+            <div style="display:flex; align-items:center; gap:9px; padding:9px 12px;">
+              <button onClick="{{ toggleDiff }}" title="Expand diff" style="display:inline-flex; width:20px; height:20px; align-items:center; justify-content:center; border:0; background:transparent; color:var(--m-ink3); cursor:pointer; flex:0 0 auto;">
+                <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="transform:{{ diffChevron }}; transition:transform 120ms;"><path d="m6 9 6 6 6-6"></path></svg>
+              </button>
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="color:var(--m-ink3); flex:0 0 auto;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"></path><path d="M14 2v6h6"></path><path d="M15.5 12.5a2.1 2.1 0 0 1 3 3L12 22l-4 1 1-4Z"></path></svg>
+              <span style="min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:600 12.5px/18px 'Fira Code', monospace;">src/journal/journal.pcss</span>
+              <span style="font:600 11px/16px 'Fira Code', monospace; color:var(--m-green); flex:0 0 auto;">+6</span>
+              <span style="font:600 11px/16px 'Fira Code', monospace; color:var(--m-crit); flex:0 0 auto;">−2</span>
+              <span style="flex:1;"></span>
+              <a style="font:500 12px/16px Inter, sans-serif; flex:0 0 auto; cursor:pointer;">Open file ↗</a>
+            </div>
+            <sc-if value="{{ diffOpen }}" hint-placeholder-val="{{ true }}">
+            <div style="border-top:1px solid var(--m-line); background:var(--m-raised); font:400 12px/19px 'Fira Code', monospace; overflow-x:auto;">
+              <div style="padding:2px 12px; color:var(--m-ink3); white-space:pre;">@@ -256,7 +256,11 @@ .mj_UsageBars</div>
+              <div style="padding:2px 12px; white-space:pre;">  .mj_UsageBars {</div>
+              <div style="padding:2px 12px; white-space:pre; background:var(--m-diff-del); color:var(--m-crit);">-     gap: 4px;</div>
+              <div style="padding:2px 12px; white-space:pre; background:var(--m-diff-add);">+     /* micro-gap keeps three rows inside the pill */</div>
+              <div style="padding:2px 12px; white-space:pre; background:var(--m-diff-add);">+     gap: 2px;</div>
+              <div style="padding:2px 12px; white-space:pre; background:var(--m-diff-add);">+     align-content: center;</div>
+              <div style="padding:2px 12px 6px; white-space:pre;">  }</div>
+            </div>
+            </sc-if>
+          </div>
+
+          <div style="max-width:680px; font:400 14px/22px Inter, sans-serif;">Build is clean and the diff is deployed to the staging copy. Verified:
+            <ul style="margin:8px 0 0; padding-left:20px;">
+              <li style="margin:3px 0;"><code style="padding:1px 5px; border-radius:4px; background:var(--m-subtle2); font:400 12.5px/18px 'Fira Code', monospace;">curl -s 127.0.0.1:8082</code> → 200 in 24 ms</li>
+              <li style="margin:3px 0;">usage bars render in both themes</li>
+              <li style="margin:3px 0;">no console errors on load</li>
+            </ul>
+          </div>
+          <div style="max-width:680px; border:1px solid var(--m-line); border-radius:10px; background:var(--m-panel); overflow:hidden;">
+            <div style="display:flex; align-items:center; gap:8px; padding:6px 12px; border-bottom:1px solid var(--m-line);">
+              <span style="font:400 11px/16px 'Fira Code', monospace; color:var(--m-ink3);">nginx.conf</span>
+              <span style="flex:1;"></span>
+              <button style="border:0; background:transparent; color:var(--m-ink3); font:400 11px/14px Inter, sans-serif; cursor:pointer;" style-hover="color:var(--m-accent);">copy</button>
+            </div>
+            <pre style="margin:0; padding:10px 12px; font:400 12px/19px 'Fira Code', monospace; overflow-x:auto;"><span style="color:var(--m-accent);">location</span> /journal/ {
+    <span style="color:var(--m-accent);">proxy_pass</span> http://127.0.0.1:9810/;
+    <span style="color:var(--m-accent);">proxy_read_timeout</span> <span style="color:var(--m-crit);">3600s</span>;  <span style="color:var(--m-ink3);"># websocket frames</span>
+}</pre>
+          </div>
+          <div style="max-width:680px; font:400 14px/22px Inter, sans-serif;">To swap prod I need to restart nginx.</div>
+
+          <div data-screen-label="Permission request" data-spec="card.permission" style="max-width:680px; border:1px solid rgb(13 148 136 / 25%); border-radius:10px; background:var(--m-panel); padding:12px 14px; display:flex; flex-direction:column; gap:9px;">
+            <span style="font:600 10px/14px Inter, sans-serif; letter-spacing:0.07em; text-transform:uppercase; color:var(--m-accent);">Permission request</span>
+            <span style="font:400 13.5px/20px Inter, sans-serif;">Run <code style="padding:1px 5px; border-radius:4px; background:var(--m-subtle2); font:400 12.5px/18px 'Fira Code', monospace;">systemctl restart nginx</code> on prod?</span>
+            <sc-if value="{{ promptPending }}" hint-placeholder-val="{{ true }}">
+            <div style="display:flex; gap:8px; flex-wrap:wrap;">
+              <button onClick="{{ allowOnce }}" style="height:30px; padding:0 14px; border:0; border-radius:8px; background:var(--m-accent-deep); color:var(--m-on-accent); font:600 12.5px/16px Inter, sans-serif; cursor:pointer;" style-hover="filter:brightness(1.08);">Allow</button>
+              <button onClick="{{ allowAlways }}" style="height:30px; padding:0 14px; border:1px solid var(--m-line2); border-radius:8px; background:transparent; color:var(--m-ink); font:500 12.5px/16px Inter, sans-serif; cursor:pointer;" style-hover="background:var(--m-hover);">Always allow</button>
+              <button onClick="{{ deny }}" style="height:30px; padding:0 14px; border:0; border-radius:8px; background:transparent; color:var(--m-ink2); font:500 12.5px/16px Inter, sans-serif; cursor:pointer;" style-hover="background:var(--m-hover); color:var(--m-crit);">Deny</button>
+            </div>
+            </sc-if>
+            <sc-if value="{{ promptAnswered }}" hint-placeholder-val="{{ false }}">
+            <span style="font:500 12px/16px Inter, sans-serif; color:var(--m-ink2);">{{ promptAnswer }}</span>
+            </sc-if>
+          </div>
+        </div>
+
+        <div style="display:flex; flex-direction:column; align-items:flex-end; gap:2px; margin:14px 0 2px;">
+          <div style="max-width:min(78%, 560px); padding:9px 13px; border-radius:14px 14px 4px 4px; background:var(--m-self); box-shadow:var(--m-sh-sm); font:400 14px/22px Inter, sans-serif;">yes</div>
+          <div style="max-width:min(78%, 560px); padding:9px 13px; border-radius:4px 14px 4px 14px; background:var(--m-self); box-shadow:var(--m-sh-sm); font:400 14px/22px Inter, sans-serif;">and watch the error rate for 10 minutes after<span style="margin-left:9px; font:400 10px/14px Inter, sans-serif; color:var(--m-ink3); white-space:nowrap;">10:05</span></div>
+        </div>
+
+        <div style="display:flex; align-items:center; gap:8px; margin:16px 0 4px;">
+          <span style="display:inline-flex; width:24px; height:24px; align-items:center; justify-content:center; border-radius:7px; background:var(--m-selected);"><img src="res/matron-logo-simple.svg" alt="" style="width:14px; height:14px;"></span>
+          <span style="font:600 13px/17px Inter, sans-serif;">claude</span>
+          <span style="font:400 11px/14px Inter, sans-serif; color:var(--m-ink3);">10:06</span>
+        </div>
+        <div style="padding-left:32px; display:flex; flex-direction:column; gap:8px;">
+          <div style="max-width:680px; font:400 14px/22px Inter, sans-serif;">Restarted. Error rate steady at <strong style="font-weight:600;">0.02%</strong> over the last 10 minutes — dashboards clean, websocket reconnects normal.</div>
+          <div style="max-width:680px; font:400 14px/22px Inter, sans-serif;">Backups rotated: oldest three pruned, latest verified with a test restore. Kept <a style="cursor:pointer;">webapp.bak.20260724T100212Z</a> as the rollback point.</div>
+        </div>
+
+        <sc-for list="{{ sent }}" as="m" hint-placeholder-count="0">
+          <div style="display:flex; justify-content:flex-end; margin:10px 0 2px;">
+            <div style="max-width:min(78%, 560px); padding:9px 13px; border-radius:14px 14px 4px 14px; background:var(--m-self); box-shadow:var(--m-sh-sm); font:400 14px/22px Inter, sans-serif;">
+              <sc-if value="{{ m.isFile }}" hint-placeholder-val="{{ false }}">
+                <span style="display:flex; align-items:center; gap:8px; font:500 13px/17px Inter, sans-serif;"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m20.5 11.5-8.7 8.7a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7L9 17.4a2 2 0 0 1-2.8-2.8l8.5-8.5"></path></svg>{{ m.name }} <span style="font:400 11px/14px Inter, sans-serif; color:var(--m-ink3);">{{ m.size }}</span></span>
+              </sc-if>
+              <span style="white-space:pre-wrap; overflow-wrap:anywhere;">{{ m.text }}</span>
+              <span style="margin-left:9px; font:400 10px/14px Inter, sans-serif; color:var(--m-ink3); white-space:nowrap;">{{ m.time }}</span>
+            </div>
+          </div>
+        </sc-for>
+
+        <sc-if value="{{ showActivity }}" hint-placeholder-val="{{ true }}">
+        <div style="display:flex; align-items:center; gap:5px; margin:12px 0 4px 32px; color:var(--m-ink2); font:400 12px/16px Inter, sans-serif;">
+          <span style="width:4px; height:4px; border-radius:50%; background:currentColor; animation:m-pulse 1.2s ease-in-out infinite;"></span>
+          <span style="width:4px; height:4px; border-radius:50%; background:currentColor; animation:m-pulse 1.2s ease-in-out 0.15s infinite;"></span>
+          <span style="width:4px; height:4px; border-radius:50%; background:currentColor; animation:m-pulse 1.2s ease-in-out 0.3s infinite; margin-right:4px;"></span>
+          claude is watching error rates
+        </div>
+        </sc-if>
+      </div>
+    </div>
+
+    <footer data-screen-label="Composer" data-spec="composer" style="flex:0 0 auto; padding:8px 16px 12px;">
+      <div style="position:relative; max-width:860px; margin:0 auto;">
+        <sc-if value="{{ paletteOpen }}" hint-placeholder-val="{{ false }}">
+        <div data-screen-label="Slash palette" data-spec="composer.slashPalette" style="position:absolute; left:0; right:0; bottom:calc(100% + 8px); max-height:262px; overflow-y:auto; border:1px solid var(--m-line); border-radius:10px; background:var(--m-overlay); box-shadow:var(--m-sh-md); z-index:20;">
+          <sc-for list="{{ filteredCommands }}" as="cmd" hint-placeholder-count="4">
+            <div onClick="{{ cmd.pick }}" onMouseEnter="{{ cmd.hover }}" style="display:grid; grid-template-columns:auto auto minmax(0,1fr); align-items:baseline; gap:9px; padding:7px 12px; cursor:pointer; background:{{ cmd.bg }};">
+              <span style="font:500 12.5px/18px 'Fira Code', monospace; color:var(--m-accent); white-space:nowrap;">{{ cmd.trigger }}</span>
+              <span style="font:400 11px/16px 'Fira Code', monospace; color:var(--m-ink3); white-space:nowrap;">{{ cmd.argHint }}</span>
+              <span style="min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:400 12px/16px Inter, sans-serif; color:var(--m-ink2);">{{ cmd.summary }}</span>
+            </div>
+          </sc-for>
+        </div>
+        </sc-if>
+        <sc-if value="{{ recording }}" hint-placeholder-val="{{ false }}">
+        <div data-screen-label="Voice recording" data-spec="composer.recording" style="display:flex; align-items:center; gap:10px; border:1px solid rgb(13 148 136 / 30%); border-radius:12px; background:var(--m-panel); box-shadow:var(--m-sh-sm); padding:8px 10px; min-height:44px; box-sizing:border-box;">
+          <span style="width:9px; height:9px; flex:0 0 auto; border-radius:50%; background:var(--m-red); animation:m-pulse 1.1s ease-in-out infinite;"></span>
+          <span style="font:500 12.5px/18px 'Fira Code', monospace; color:var(--m-ink); flex:0 0 auto; min-width:34px;">{{ recTime }}</span>
+          <span style="flex:1; display:flex; align-items:center; gap:2px; height:22px; overflow:hidden;">
+            <span style="width:3px; height:60%; border-radius:99px; background:var(--m-accent); animation:m-wave 0.9s ease-in-out 0s infinite;"></span>
+            <span style="width:3px; height:90%; border-radius:99px; background:var(--m-accent); animation:m-wave 0.9s ease-in-out 0.12s infinite;"></span>
+            <span style="width:3px; height:45%; border-radius:99px; background:var(--m-accent); animation:m-wave 0.9s ease-in-out 0.24s infinite;"></span>
+            <span style="width:3px; height:100%; border-radius:99px; background:var(--m-accent); animation:m-wave 0.9s ease-in-out 0.36s infinite;"></span>
+            <span style="width:3px; height:70%; border-radius:99px; background:var(--m-accent); animation:m-wave 0.9s ease-in-out 0.48s infinite;"></span>
+            <span style="width:3px; height:50%; border-radius:99px; background:var(--m-accent); animation:m-wave 0.9s ease-in-out 0.6s infinite;"></span>
+            <span style="width:3px; height:85%; border-radius:99px; background:var(--m-accent); animation:m-wave 0.9s ease-in-out 0.72s infinite;"></span>
+            <span style="width:3px; height:40%; border-radius:99px; background:var(--m-accent); animation:m-wave 0.9s ease-in-out 0.84s infinite;"></span>
+            <span style="width:3px; height:95%; border-radius:99px; background:var(--m-accent); animation:m-wave 0.9s ease-in-out 0.2s infinite;"></span>
+            <span style="width:3px; height:65%; border-radius:99px; background:var(--m-accent); animation:m-wave 0.9s ease-in-out 0.44s infinite;"></span>
+            <span style="width:3px; height:55%; border-radius:99px; background:var(--m-accent); animation:m-wave 0.9s ease-in-out 0.68s infinite;"></span>
+            <span style="width:3px; height:80%; border-radius:99px; background:var(--m-accent); animation:m-wave 0.9s ease-in-out 0.08s infinite;"></span>
+          </span>
+          <span style="font:400 11px/14px Inter, sans-serif; color:var(--m-ink3); flex:0 0 auto;">transcribing on stop</span>
+          <button onClick="{{ cancelRec }}" title="Discard" style="display:inline-flex; width:32px; height:32px; align-items:center; justify-content:center; border:0; border-radius:8px; background:transparent; color:var(--m-ink2); cursor:pointer; flex:0 0 auto;" style-hover="background:var(--m-hover); color:var(--m-crit);">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"></path></svg>
+          </button>
+          <button onClick="{{ stopRec }}" title="Stop & transcribe" style="display:inline-flex; width:32px; height:32px; align-items:center; justify-content:center; border:0; border-radius:9px; background:var(--m-accent-deep); color:var(--m-on-accent); cursor:pointer; flex:0 0 auto;" style-hover="filter:brightness(1.08);">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" stroke="none"><rect x="6" y="6" width="12" height="12" rx="2"></rect></svg>
+          </button>
+        </div>
+        </sc-if>
+        <sc-if value="{{ notRecording }}" hint-placeholder-val="{{ true }}">
+        <div style="display:flex; align-items:flex-end; gap:6px; border:1px solid var(--m-line2); border-radius:12px; background:var(--m-panel); box-shadow:var(--m-sh-sm); padding:6px 8px 6px 6px;">
+          <button onClick="{{ openUpload }}" title="Attach file" style="display:inline-flex; width:32px; height:32px; align-items:center; justify-content:center; border:0; border-radius:8px; background:transparent; color:var(--m-ink3); cursor:pointer; flex:0 0 auto;" style-hover="background:var(--m-hover); color:var(--m-ink);">
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m20.5 11.5-8.7 8.7a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7L9 17.4a2 2 0 0 1-2.8-2.8l8.5-8.5"></path></svg>
+          </button>
+          <textarea value="{{ composerText }}" onChange="{{ onComposerChange }}" onKeyDown="{{ onComposerKeyDown }}" rows="{{ composerRows }}" placeholder="Message claude — type / for commands" style="flex:1; min-width:0; border:0; outline:none; resize:none; background:transparent; color:var(--m-ink); font:400 14px/22px Inter, sans-serif; padding:6px 4px; max-height:160px; overflow-y:auto;"></textarea>
+          <button onClick="{{ startRec }}" title="Voice message" style="display:inline-flex; width:32px; height:32px; align-items:center; justify-content:center; border:0; border-radius:8px; background:transparent; color:var(--m-ink3); cursor:pointer; flex:0 0 auto;" style-hover="background:var(--m-hover); color:var(--m-ink);">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"></rect><path d="M5 11a7 7 0 0 0 14 0M12 18v4M8 22h8"></path></svg>
+          </button>
+          <button onClick="{{ sendMessage }}" title="Send" style="display:inline-flex; width:32px; height:32px; align-items:center; justify-content:center; border:0; border-radius:9px; background:var(--m-accent-deep); color:var(--m-on-accent); cursor:pointer; flex:0 0 auto; opacity:{{ sendOpacity }};" style-hover="filter:brightness(1.08);">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" stroke="none"><path d="M3.4 3.2 21 11.3a.8.8 0 0 1 0 1.4L3.4 20.8a.8.8 0 0 1-1.1-.9L4 13l9-1-9-1-1.7-6.9a.8.8 0 0 1 1.1-.9Z"></path></svg>
+          </button>
+        </div>
+        </sc-if>
+        <div style="display:flex; gap:14px; padding:6px 8px 0; font:400 11px/14px Inter, sans-serif; color:var(--m-ink3);">
+          <span><span style="font-family:'Fira Code', monospace;">/</span> commands</span>
+          <span>shift+enter for newline</span>
+          <span style="margin-left:auto;">ctx 72% · auto-idle in 18m</span>
+        </div>
+      </div>
+    </footer>
+  </section>
+  </sc-if>
+
+  <sc-if value="{{ uploadOpen }}" hint-placeholder-val="{{ false }}">
+  <div data-screen-label="Upload modal" data-spec="modal.upload" onClick="{{ closeUpload }}" style="position:fixed; inset:0; z-index:50; display:flex; align-items:center; justify-content:center; background:rgb(18 16 14 / 55%); padding:16px;">
+    <div onClick="{{ stopProp }}" style="display:flex; width:min(440px, 94vw); max-height:88vh; flex-direction:column; border:1px solid var(--m-line); border-radius:14px; background:var(--m-overlay); box-shadow:var(--m-sh-lg); box-sizing:border-box; overflow:hidden;">
+
+      <div style="display:flex; align-items:center; gap:10px; padding:13px 14px 13px 16px; border-bottom:1px solid var(--m-line);">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="color:var(--m-ink2); flex:0 0 auto;"><path d="M12 16V4M12 4 7 9M12 4l5 5"></path><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"></path></svg>
+        <span style="font:600 14px/19px Inter, sans-serif;">Send file</span>
+        <span style="padding:1px 8px; border-radius:999px; background:var(--m-subtle2); color:var(--m-ink2); font:500 11px/16px 'Fira Code', monospace; flex:0 0 auto;">{{ uploadCounter }}</span>
+        <span style="flex:1;"></span>
+        <button onClick="{{ closeUpload }}" title="Cancel all" style="display:inline-flex; width:28px; height:28px; align-items:center; justify-content:center; border:0; border-radius:7px; background:transparent; color:var(--m-ink3); cursor:pointer; flex:0 0 auto;" style-hover="background:var(--m-hover); color:var(--m-ink);">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"></path></svg>
+        </button>
+      </div>
+
+      <div style="flex:1; min-height:0; overflow-y:auto; padding:14px 16px; display:flex; flex-direction:column; gap:12px;">
+        <div style="position:relative; border:1px solid var(--m-line); border-radius:10px; background:var(--m-raised); overflow:hidden;">
+          <svg width="100%" height="150" style="display:block;" role="img" aria-label="image preview placeholder">
+            <defs><pattern id="mstripe" width="8" height="8" patternTransform="rotate(45)" patternUnits="userSpaceOnUse"><rect width="8" height="8" fill="var(--m-raised)"></rect><rect width="4" height="8" fill="var(--m-subtle2)"></rect></pattern></defs>
+            <rect width="100%" height="100%" fill="url(#mstripe)"></rect>
+            <text x="50%" y="52%" text-anchor="middle" fill="var(--m-ink3)" style="font:400 11px 'Fira Code', monospace;">image preview</text>
+          </svg>
+          <div style="display:flex; align-items:center; gap:9px; padding:9px 11px; border-top:1px solid var(--m-line); background:var(--m-panel);">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="var(--m-accent)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex:0 0 auto;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"></path><path d="M14 2v6h6"></path></svg>
+            <span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:500 12.5px/16px Inter, sans-serif;">{{ uploadName }}</span>
+            <span style="font:400 11px/16px 'Fira Code', monospace; color:var(--m-ink3); flex:0 0 auto;">{{ uploadSize }}</span>
+          </div>
+        </div>
+
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span style="width:34px; height:34px; flex:0 0 auto; border-radius:7px; border:{{ uploadThumb0 }}; background:var(--m-raised);"></span>
+          <span style="width:34px; height:34px; flex:0 0 auto; border-radius:7px; border:{{ uploadThumb1 }}; background:var(--m-raised);"></span>
+          <sc-if value="{{ uploadHasMore }}" hint-placeholder-val="{{ true }}">
+          <span style="font:400 11.5px/15px Inter, sans-serif; color:var(--m-ink3);">{{ uploadRemaining }}</span>
+          </sc-if>
+        </div>
+
+        <textarea value="{{ caption }}" onChange="{{ onCaptionChange }}" rows="2" placeholder="Add a caption…" style="min-height:56px; border:1px solid var(--m-line2); border-radius:10px; background:var(--m-panel); color:var(--m-ink); font:400 13.5px/20px Inter, sans-serif; padding:10px 12px; resize:vertical; outline:none;" style-focus="border-color:var(--m-accent);"></textarea>
+      </div>
+
+      <div style="display:flex; align-items:center; gap:8px; padding:11px 14px; border-top:1px solid var(--m-line); background:var(--m-panel);">
+        <button onClick="{{ closeUpload }}" style="height:32px; padding:0 12px; border:0; border-radius:8px; background:transparent; color:var(--m-ink2); font:500 12.5px/16px Inter, sans-serif; cursor:pointer;" style-hover="background:var(--m-hover); color:var(--m-crit);">Cancel all</button>
+        <span style="flex:1;"></span>
+        <button onClick="{{ skipUpload }}" style="height:32px; padding:0 14px; border:1px solid var(--m-line2); border-radius:8px; background:transparent; color:var(--m-ink); font:500 12.5px/16px Inter, sans-serif; cursor:pointer;" style-hover="background:var(--m-hover);">Skip</button>
+        <button onClick="{{ sendUpload }}" style="display:inline-flex; align-items:center; gap:7px; height:32px; padding:0 15px; border:0; border-radius:8px; background:var(--m-accent-deep); color:var(--m-on-accent); font:600 12.5px/16px Inter, sans-serif; cursor:pointer;" style-hover="filter:brightness(1.08);">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" stroke="none"><path d="M3.4 3.2 21 11.3a.8.8 0 0 1 0 1.4L3.4 20.8a.8.8 0 0 1-1.1-.9L4 13l9-1-9-1-1.7-6.9a.8.8 0 0 1 1.1-.9Z"></path></svg>
+          Send
+        </button>
+      </div>
+    </div>
+  </div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;defaultTheme&quot;: {&quot;editor&quot;: &quot;enum&quot;, &quot;default&quot;: &quot;system&quot;, &quot;options&quot;: [&quot;system&quot;, &quot;light&quot;, &quot;dark&quot;], &quot;tsType&quot;: &quot;string&quot;, &quot;section&quot;: &quot;Appearance&quot;}, &quot;showSubagentStrip&quot;: {&quot;editor&quot;: &quot;boolean&quot;, &quot;default&quot;: true, &quot;tsType&quot;: &quot;boolean&quot;, &quot;section&quot;: &quot;Layout&quot;}, &quot;showActivity&quot;: {&quot;editor&quot;: &quot;boolean&quot;, &quot;default&quot;: true, &quot;tsType&quot;: &quot;boolean&quot;, &quot;section&quot;: &quot;Layout&quot;}}">
+class Component extends DCLogic {
+  state = {
+    theme: null, sidebarWidth: 320, isMobile: false, screen: "chat",
+    composer: "", hl: 0, toolOpen: false, diffOpen: true,
+    uploadOpen: false, caption: "", prompt: null, sent: [], selected: 0,
+    chatW: 1200, usageHover: false, tab: "active", recording: false, recSecs: 0,
+    uploadIdx: 0,
+  };
+
+  COMMANDS = [
+    { trigger: "/start", argHint: "[--claude|--codex] [workdir]", summary: "Start a new session (creates a new room)" },
+    { trigger: "/stop", argHint: "", summary: "Stop the current session" },
+    { trigger: "/restart", argHint: "", summary: "Stop and immediately resume the session" },
+    { trigger: "/resume", argHint: "<n|id>", summary: "Resume a session from that agent" },
+    { trigger: "/sessions", argHint: "[--claude|--codex]", summary: "List past sessions for an agent" },
+    { trigger: "/workdir", argHint: "<path>", summary: "Start a session in a different directory" },
+    { trigger: "/status", argHint: "", summary: "Show current session info" },
+    { trigger: "/agent", argHint: "", summary: "Show the current agent" },
+    { trigger: "/switch", argHint: "<claude|codex>", summary: "Hand this conversation to the other agent" },
+    { trigger: "/working", argHint: "", summary: "Toggle tool call visibility" },
+    { trigger: "/mcp", argHint: "", summary: "Show MCP server status" },
+    { trigger: "/model", argHint: "", summary: "Show current model" },
+    { trigger: "/effort", argHint: "[level]", summary: "Show or set effort level" },
+    { trigger: "/mode", argHint: "[interactive|print]", summary: "Show or switch interactive vs non-interactive" },
+    { trigger: "/cost", argHint: "", summary: "Show session cost" },
+    { trigger: "/usage", argHint: "", summary: "Show token usage" },
+    { trigger: "/limits", argHint: "", summary: "Show subscription usage limits" },
+    { trigger: "/tools", argHint: "", summary: "List available tools" },
+    { trigger: "/help", argHint: "", summary: "Show this help message" },
+  ];
+
+  componentDidMount() {
+    this.mq = window.matchMedia("(max-width: 700px)");
+    this.onMq = () => this.setState({ isMobile: this.mq.matches });
+    this.mq.addEventListener("change", this.onMq);
+    let theme = null;
+    try { theme = localStorage.getItem("matron-redesign-theme"); } catch {}
+    if (theme !== "light" && theme !== "dark") {
+      theme = this.props.defaultTheme && this.props.defaultTheme !== "system"
+        ? this.props.defaultTheme
+        : (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    }
+    document.documentElement.dataset.theme = theme;
+    this.setState({ theme, isMobile: this.mq.matches });
+    this.ro = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect?.width;
+      if (w && Math.abs(w - this.state.chatW) > 4) this.setState({ chatW: w });
+    });
+    if (this._chat) this.ro.observe(this._chat);
+    requestAnimationFrame(() => this.scrollDown());
+  }
+  componentWillUnmount() {
+    if (this.mq) this.mq.removeEventListener("change", this.onMq);
+    if (this.ro) this.ro.disconnect();
+  }
+
+  paletteItems() {
+    const t = this.state.composer.replace(/^\s+/, "");
+    if (!t.startsWith("/") || /\s/.test(t)) return [];
+    const prefix = t.slice(1).toLowerCase();
+    return this.COMMANDS.filter((c) => c.trigger.slice(1).startsWith(prefix));
+  }
+
+  send() {
+    const text = this.state.composer.trim();
+    if (!text) return;
+    const time = new Date().toTimeString().slice(0, 5);
+    this.setState((s) => ({ sent: [...s.sent, { text, time, isFile: false }], composer: "", hl: 0 }), () => this.scrollDown());
+  }
+  scrollDown() {
+    if (this._canvas) this._canvas.scrollTop = this._canvas.scrollHeight;
+  }
+
+  QUEUE = [
+    { name: "Screenshot 2026-07-25 at 10.12.05 AM.png", size: "1.2 MB" },
+    { name: "nginx-error-rate.png", size: "460 KB" },
+  ];
+
+  thumbStyle(i) {
+    return this.state.uploadIdx === i
+      ? "2px solid var(--m-accent)"
+      : "1px solid var(--m-line2)";
+  }
+
+  advanceUpload(send) {
+    const s = this.state;
+    const file = this.QUEUE[s.uploadIdx];
+    const last = s.uploadIdx >= this.QUEUE.length - 1;
+    const time = new Date().toTimeString().slice(0, 5);
+    this.setState((p) => ({
+      caption: "",
+      uploadIdx: last ? 0 : p.uploadIdx + 1,
+      uploadOpen: !last,
+      sent: send
+        ? [...p.sent, { text: p.caption.trim(), time, isFile: true, name: file.name, size: file.size }]
+        : p.sent,
+    }), () => { if (last) this.scrollDown(); });
+  }
+
+  renderVals() {
+    const s = this.state;
+    const file = this.QUEUE[s.uploadIdx] || this.QUEUE[0];
+    const items = this.paletteItems();
+    const paletteOpen = items.length > 0;
+    const hl = Math.min(s.hl, Math.max(0, items.length - 1));
+    const sel = (i) => s.selected === i;
+    const vals = {
+      noop: () => {},
+      stopProp: (e) => e.stopPropagation(),
+      canvasRef: (el) => { this._canvas = el; },
+      chatRef: (el) => { this._chat = el; if (el && this.ro) this.ro.observe(el); },
+      // shell
+      showSidebar: !s.isMobile || s.screen === "list",
+      showChat: !s.isMobile || s.screen === "chat",
+      showHandle: !s.isMobile,
+      isMobile: s.isMobile,
+      notMobile: !s.isMobile,
+      usageFull: s.chatW >= 760,
+      usageMini: s.chatW < 760,
+      usagePopover: s.usageHover && s.chatW < 760,
+      usageEnter: () => this.setState({ usageHover: true }),
+      usageLeave: () => this.setState({ usageHover: false }),
+      titleFull: s.chatW >= 560,
+      titleMini: s.chatW < 560,
+      titlePopover: s.titleHover && s.chatW < 560,
+      titleEnter: () => this.setState({ titleHover: true }),
+      titleLeave: () => this.setState({ titleHover: false }),
+      showCompactBtn: !s.isMobile && s.chatW >= 560,
+      sidebarWidthPx: s.isMobile ? "100%" : s.sidebarWidth + "px",
+      backToList: () => this.setState({ screen: "list" }),
+      toggleTheme: () => {
+        const theme = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+        document.documentElement.dataset.theme = theme;
+        try { localStorage.setItem("matron-redesign-theme", theme); } catch {}
+        this.setState({ theme });
+      },
+      startResize: (e) => {
+        e.preventDefault();
+        const startX = e.clientX, startW = this.state.sidebarWidth;
+        const move = (ev) => this.setState({ sidebarWidth: Math.max(240, Math.min(420, startW + ev.clientX - startX)) });
+        const up = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
+        window.addEventListener("pointermove", move);
+        window.addEventListener("pointerup", up);
+      },
+      newSession: () => this.setState({ composer: "/start ", screen: "chat" }),
+      tabActive: () => this.setState({ tab: "active" }),
+      tabFavorites: () => this.setState({ tab: "favorites" }),
+      tabArchived: () => this.setState({ tab: "archived" }),
+      tabShowsAll: s.tab === "active",
+      tabShowsMain: s.tab !== "archived",
+      tabIsFavorites: s.tab === "favorites",
+      tabIsArchived: s.tab === "archived",
+      tabBg0: s.tab === "active" ? "var(--m-panel)" : "transparent",
+      tabBg1: s.tab === "favorites" ? "var(--m-panel)" : "transparent",
+      tabBg2: s.tab === "archived" ? "var(--m-panel)" : "transparent",
+      tabInk0: s.tab === "active" ? "var(--m-ink)" : "var(--m-ink2)",
+      tabInk1: s.tab === "favorites" ? "var(--m-ink)" : "var(--m-ink2)",
+      tabInk2: s.tab === "archived" ? "var(--m-ink)" : "var(--m-ink2)",
+      tabSh0: s.tab === "active" ? "var(--m-sh-sm)" : "none",
+      tabSh1: s.tab === "favorites" ? "var(--m-sh-sm)" : "none",
+      tabSh2: s.tab === "archived" ? "var(--m-sh-sm)" : "none",
+      // tweaks
+      showSubagentStrip: this.props.showSubagentStrip ?? true,
+      showActivity: this.props.showActivity ?? true,
+      // cards
+      toolOpen: s.toolOpen,
+      toolChevron: s.toolOpen ? "rotate(0deg)" : "rotate(-90deg)",
+      toggleTool: () => this.setState((p) => ({ toolOpen: !p.toolOpen })),
+      diffOpen: s.diffOpen,
+      diffChevron: s.diffOpen ? "rotate(0deg)" : "rotate(-90deg)",
+      toggleDiff: () => this.setState((p) => ({ diffOpen: !p.diffOpen })),
+      // prompt card
+      promptPending: s.prompt === null,
+      promptAnswered: s.prompt !== null,
+      promptAnswer: s.prompt === "deny" ? "Denied · just now" : s.prompt === "always" ? "Always allowed · systemctl restart nginx" : "Allowed once · just now",
+      allowOnce: () => this.setState({ prompt: "once" }),
+      allowAlways: () => this.setState({ prompt: "always" }),
+      deny: () => this.setState({ prompt: "deny" }),
+      // composer
+      composerText: s.composer,
+      composerRows: Math.max(1, Math.min(6, s.composer.split("\n").length)),
+      sendOpacity: s.composer.trim() ? 1 : 0.45,
+      onComposerChange: (e) => this.setState({ composer: e.target.value, hl: 0 }),
+      onComposerKeyDown: (e) => {
+        const list = this.paletteItems();
+        if (list.length > 0) {
+          if (e.key === "ArrowDown") { e.preventDefault(); this.setState({ hl: (hl + 1) % list.length }); return; }
+          if (e.key === "ArrowUp") { e.preventDefault(); this.setState({ hl: (hl - 1 + list.length) % list.length }); return; }
+          if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); this.setState({ composer: list[hl].trigger + " " }); return; }
+          if (e.key === "Escape") { this.setState({ composer: "" }); return; }
+        }
+        if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); this.send(); }
+      },
+      sendMessage: () => this.send(),
+      recording: s.recording,
+      notRecording: !s.recording,
+      recTime: Math.floor(s.recSecs / 60) + ":" + String(s.recSecs % 60).padStart(2, "0"),
+      startRec: () => {
+        this.setState({ recording: true, recSecs: 0 });
+        this._recTimer = setInterval(() => this.setState((p) => ({ recSecs: p.recSecs + 1 })), 1000);
+      },
+      cancelRec: () => {
+        clearInterval(this._recTimer);
+        this.setState({ recording: false, recSecs: 0 });
+      },
+      stopRec: () => {
+        clearInterval(this._recTimer);
+        this.setState({ recording: false, recSecs: 0, composer: "voice note (0:0" + Math.min(9, s.recSecs) + ") — transcript: check the nginx error rate one more time before you archive this" });
+      },
+      paletteOpen,
+      filteredCommands: items.map((c, i) => ({
+        ...c,
+        bg: i === hl ? "var(--m-hover)" : "transparent",
+        hover: () => this.setState({ hl: i }),
+        pick: () => this.setState({ composer: c.trigger + " " }),
+      })),
+      sent: s.sent,
+      // upload modal
+      uploadOpen: s.uploadOpen,
+      openUpload: () => this.setState({ uploadOpen: true, uploadIdx: 0, caption: "" }),
+      closeUpload: () => this.setState({ uploadOpen: false, uploadIdx: 0, caption: "" }),
+      caption: s.caption,
+      onCaptionChange: (e) => this.setState({ caption: e.target.value }),
+      uploadName: file.name,
+      uploadSize: file.size,
+      uploadCounter: (s.uploadIdx + 1) + " of " + this.QUEUE.length,
+      uploadHasMore: s.uploadIdx < this.QUEUE.length - 1,
+      uploadRemaining: (this.QUEUE.length - s.uploadIdx - 1) + " more file queued",
+      uploadThumb0: this.thumbStyle(0),
+      uploadThumb1: this.thumbStyle(1),
+      skipUpload: () => this.advanceUpload(false),
+      sendUpload: () => this.advanceUpload(true),
+    };
+    for (let i = 0; i < 6; i++) {
+      vals["select" + i] = () => this.setState({ selected: i, screen: "chat" });
+      vals["rowBg" + i] = sel(i) ? "var(--m-selected)" : "transparent";
+      vals["rowBar" + i] = sel(i) ? "var(--m-accent)" : "transparent";
+    }
+    return vals;
+  }
+}
+</script>
+</body>
+</html>
