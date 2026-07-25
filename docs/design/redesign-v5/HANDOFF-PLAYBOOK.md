@@ -86,6 +86,29 @@ Before handoff, assert against the loaded page: do all custom properties resolve
 
 ---
 
+---
+
+## Rule 11 — export the generative system, not just the artifact
+
+Everything in rules 1–10 describes *what the artifact is*. It does not carry the rules the designer was applying, which is what lets an implementer extend the system to screens nobody drew and to real data nobody mocked. That gap is where live re-diverges from design after handoff.
+
+Ask for, as its own document:
+
+1. **Responsive priority — the order of sacrifice.** Not "collapses below 760" but the ordered list: what degrades first, second, third, and what is never sacrificed, per region.
+2. **Content ranges + overflow per element.** What length was assumed, and the required behaviour beyond it: 200-char titles, zero rows, a 4000-line diff, a turn that is only an image, a filename with no extension.
+3. **Accessibility intent.** Tab order, focus restoration per dismissal, what is `aria-live` and at what politeness, screen-reader text for visual-only state, touch-target floors. Designers decide these implicitly and never write them down.
+4. **Transition choreography** — the sequences between the still frames, including what deliberately does *not* animate.
+5. **Component parameter space** — every variant × size × state × content combination and which are valid. This is what separates a system from a set of screens.
+6. **Derivation rules** — how to pick a surface, a colour, a radius, a gap for something new, so extensions look native.
+7. **Anti-goals and rejected alternatives** — so nobody "fixes" a deliberate choice.
+8. **Where the designer was uncertain** — flags the soft decisions so they can be changed without fear.
+
+The efficient way to get all of it: don't hand the designer this list. Ask for a **reflection pass**: *"Walk back through building this. Enumerate every decision you had to make that a static render plus tokens don't capture — priorities, rules, intent, what you rejected, the content ranges you assumed. Anything you'd have to re-explain to an agent building a screen you didn't draw."* That surfaces the load-bearing decisions nobody would have thought to ask for.
+
+## Two axes of "done"
+
+Split implementation status into **does the code exist** and **does it match the design**. A component can be fully implemented and visually divergent, and that combination hides from both a "already built" list and a "gaps" list. Anything not determinable by reading should be marked *unverified* and settled by measuring, not by judgement.
+
 ## Definition of done
 
 - [ ] Artifact runs standalone and offline; every state reachable by clicking
@@ -96,3 +119,5 @@ Before handoff, assert against the loaded page: do all custom properties resolve
 - [ ] Value census taken and outliers normalized
 - [ ] Fixtures, mocks, and open items listed with their contracts
 - [ ] Probed, not eyeballed: tokens resolve, names exist, flows advance, dark-mode surfaces separate
+- [ ] Generative system exported (order of sacrifice, content ranges, a11y intent, choreography, parameter space, derivation rules, anti-goals, uncertainties)
+- [ ] Status split into exists-vs-matches, with unresolved items marked for measurement

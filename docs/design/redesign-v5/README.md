@@ -8,6 +8,8 @@ Drop-in for `docs/design/redesign-v5/`. Every file is under 256 KiB, so it also 
 2. **`component-map.json`** — `data-spec` → `src/journal` selector, each marked `implemented` / `new` / `devtool`.
 3. **`static/index.json`** → **`static/*.html`** — 20 runtime-free states. Measure these; do not eyeball screenshots.
 4. **`design-tokens.json`** / **`.css`** — tokens, 27 type roles, states, breakpoints, layering, content-type specs, exact copy strings, usage relabel map.
+5. **`GENERATIVE-SYSTEM.md`** — the rules behind the values: order of sacrifice as the pane narrows, assumed content ranges + overflow behaviour per element, accessibility intent, transition choreography, each component's full parameter space, derivation rules for extending the system, deliberate anti-goals, and where I was genuinely uncertain. **Read this before building any screen the mock doesn't show.**
+6. **`tools/probe.js`** — dumps computed values for every tagged specimen (design side) or every mapped selector (live side). Feed both into your auto-diff.
 
 `Matron Redesign.dc.html` (+ `support.js`, `res/`) is the interactive source of truth if you need to click through something the static files don't cover. `DESIGN-SPEC.md` is the narrative; `HANDOFF-PLAYBOOK.md` is the general contract for future design rounds.
 
@@ -25,6 +27,10 @@ const state = document.querySelector('meta[name=matron-state]').content;
 ```
 
 `data-style-hover|active|focus` carry designed pseudo-state declarations as CSS text — a static file can't be hovered, so they are exposed as data instead.
+
+## Two axes of status in `component-map.json`
+
+`status` answers *does the code exist* (`implemented` / `new` / `devtool`). `visual` answers *does it match the design* (`aligned` / `divergent` / `unverified`). They are independent: **6 entries are implemented-but-divergent** — e.g. `sidebar.newSession` (a bare pencil icon where the design has a full teal button) — which neither the changelog's "do not redo" list nor its divergence list would have caught. **24 are `unverified`**: not determinable from reading source, deliberately left for the auto-diff rather than guessed at.
 
 ## Confirmed decisions
 
