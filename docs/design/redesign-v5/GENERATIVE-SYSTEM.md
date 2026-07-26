@@ -242,13 +242,46 @@ The conversation-actions menu is a single component. Only its anchor changes: **
 
 Menu internals: rows are `grid 16px 1fr` with a 10px gap inside a 4px-padded shell, and row radius is smaller than shell radius so the hover fill **insets** from the shell edge instead of touching it. Groups are separated by a hairline, not by a gap.
 
+### 10.7 Menus are one component; items and anchor are the only variables
+
+There is **one menu component** in the app. Conversation actions and message actions differ only in their items and where they anchor (header ⋯ / sidebar right-click / message right-click). Shell, row grid, hover inset, hairline grouping, and focus ring are identical — if a second menu needs different internals, the first one is wrong.
+
+Two rules on items:
+
+- **Every row carries an icon.** A menu with icons on some rows and not others has two label edges, which breaks §10.2's gutter. If an item has no natural icon, it does not belong in the menu.
+- **Grouping is semantic, by hairline.** Ordinary actions group first; the diagnostic or destructive item sits below a hairline (`View source`, `Archive`). Never separate groups with a gap — a gap reads as a rendering artefact, a hairline reads as intent.
+
+### 10.8 Read-only viewers state their own limits
+
+A surface that shows raw data (event source, full file, log) is read-only *by construction*: no editable affordance, no focusable text field. It must also make its own truncation visible — the footer states the payload size, so a clipped body is detectable rather than silent.
+
+Scalar fields the operator actually scans for are **lifted out of the blob** into a labelled meta grid above it. Reading JSON to find a timestamp is a failure of the viewer, not a task for the reader. The blob itself lives in a bordered well one surface rung up, scrolls in both axes with themed scrollbars, and caps its height so the footer never leaves the viewport.
+
+### 10.9 A selector map states provenance, never a guess
+
+The map's whole value is that the implementer does not have to guess which class a `data-spec` maps to. So an entry must record *where its selector came from*, and an unread selector is marked `status: new` with the name as an explicit `suggested` proposal — never asserted as existing. I broke this once: two round-2 surfaces claimed `.mj_ContextMenu`, which does not exist in the repo at all. Re-reading HEAD gave the real names (`.mj_RoomItemMenu`, `.mj_EventRowMenu`, `.mj_EventSource`), and the map now carries `repo.tree` + `selectorProvenance`.
+
+The same rule covers the reverse case: when the implementation has *already solved something better than the design*, record that and adopt it. `.mj_RoomItemMenu_trigger` is the example — it satisfies "no persistent ⋯ for pointer users" by being `opacity: 0; pointer-events: none` until `:focus-visible`, which keeps a discoverable route for keyboard and AT users that the design had simply dropped. That is better than what I specified; the design defers to it.
+
+### 10.10 The card owns its chrome; the payload supplies only content
+
+A card's icon, label, and count are **design elements**, not payload text. When the bridge sends a body like `📨 Queued (1): …`, the card must strip that leading emoji and count prefix rather than render them beside its own gutter icon — the live card showed two envelopes in a row for exactly this reason, and it is the same failure as §10.2's ban on inline emoji: the payload was allowed to draw chrome.
+
+Concretely, on arrival: strip a leading emoji run, strip a `Label (n):` prefix, and promote the parsed count into a chip on the label row. What remains in the body is the question itself.
+
+**Variable-length quoted content is clamped by lines, never ellipsed at one.** A single-line ellipsis on a queued message produces "Now below the header i see a sub agen…", which cannot answer the only question the operator has — *what am I about to send?* Quote it (2px left rule, one surface step of contrast) and clamp to three lines. The same applies anywhere the UI previews text the user wrote: three lines, quoted, never one line ellipsed.
+
+**A released/resolved card keeps its rows and only re-inks them.** When queued messages are let through, the resolution line, the quote rule, and the quoted text drop to tertiary ink; nothing moves and nothing is re-stated elsewhere. Re-emitting "Sending 1 queued message:" plus a numbered list as bare thread prose duplicates content that is already on the card and reintroduces the emoji-as-chrome problem one message lower.
+
 ### The hard states every surface must render
 
 Non-negotiable; each has a static file:
 
 | Surface | States |
 |---|---|
-| Prompt / Question card | un-answered · answered (+ queued list) · expired · read-only · both themes |
+| Prompt / Question card | queued (pending) · released · expired · read-only · both themes — count chip, quoted 3-line clamp, no payload emoji |
 | New session sheet | default · path typed · checkbox on · disabled workspace field · both themes |
 | Actions menu | rest · hover · keyboard-focused · destructive hover · both themes |
 | Upload modal | single file · multi-file (`n of N` + strip) · last file · caption filled · both themes |
+| Message context menu | rest · hover · keyboard-focused · both themes |
+| Event source viewer | short payload · long payload (both-axis scroll) · both themes |

@@ -2,6 +2,9 @@ repo: easelyte/matron-web
 branch: main
 path: src/journal
 
+## Round 2 review pass (2026-07-26T14:09Z, tree f661b266f772)
+Re-read src/journal at HEAD to correct guessed selectors: .mj_ContextMenu does not exist — real classes are .mj_RoomItemMenu / .mj_EventRowMenu / .mj_RoomItemMenu_item / .mj_RoomItemMenu_trigger / .mj_EventSource(_scrim|_header|_json|_actions). Map now records repo.tree + selectorProvenance; added §10.9 (a selector map states provenance, never a guess). Scoped scrollbar pseudo-boxes to real scroll containers. Noted that most of round 2 is already implemented, with remaining divergence concentrated in the event-source viewer.
+
 ## Round 2 (2026-07-26T09:22Z)
 Designed four more surfaces (prompt/question card, new-session sheet, conversation-actions menu, upload modal) into redesign-v5. Added GENERATIVE-SYSTEM.md §10 cross-cutting invariants; themed native chrome (scrollbars, global focus-visible, selection) with three new tokens; 28 static states incl. 8 round-2; component-map now 83 entries (18 aligned / 21 divergent / 36 unverified). Sidebar ⋯ dropped — right-click only.
 
@@ -10,6 +13,7 @@ date: 2026-07-25T19:50:00Z
 tree: 0bea310ef3e8
 
 ### Updated in this project
+- Added BRIDGE-PAYLOAD-PROPOSAL.md: additive payload changes (structured queued prompts, prompt kind + action intents, limit ids/resets_at, tool exit_code/duration_ms, diff counts, image dimensions) that remove the client's string-parsing workarounds. payload.body retained for text clients.
 - Aligned every data-spec tag to the granularity of its component-map selector; split multi-rung components (composer footer/shell/input, modal scrim/card, row/badge).
 - Split map status into `status` (code exists) and `visual` (matches design): 17 aligned, 10 divergent, 36 unverified.
 - Self-hosted Inter + Fira Code in static/fonts/ (OFL, from rsms/inter and google/fonts) so the static states are screenshot-faithful offline.

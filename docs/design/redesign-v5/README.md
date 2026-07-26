@@ -8,8 +8,9 @@ Drop-in for `docs/design/redesign-v5/`. Every file is under 256 KiB, so it also 
 2. **`component-map.json`** — `data-spec` → `src/journal` selector, each marked `implemented` / `new` / `devtool`.
 3. **`static/index.json`** → **`static/*.html`** — 20 runtime-free states. Measure these; do not eyeball screenshots.
 4. **`design-tokens.json`** / **`.css`** — tokens, 27 type roles, states, breakpoints, layering, content-type specs, exact copy strings, usage relabel map.
-5. **`GENERATIVE-SYSTEM.md`** — the rules behind the values: order of sacrifice as the pane narrows, assumed content ranges + overflow behaviour per element, accessibility intent, transition choreography, each component's full parameter space, derivation rules for extending the system, deliberate anti-goals, and where I was genuinely uncertain. **Read this before building any screen the mock doesn't show.**
-6. **`tools/probe.js`** — dumps computed values for every tagged specimen (design side) or every mapped selector (live side). Feed both into your auto-diff.
+5. **`BRIDGE-PAYLOAD-PROPOSAL.md`** — concrete payload changes that would remove the client's string-parsing workarounds. Additive and non-breaking (`payload.body` stays for text clients). §1 (queued prompts) and §3 (usage limits) are where the design pays the most tax today.
+6. **`GENERATIVE-SYSTEM.md`** — the rules behind the values: order of sacrifice as the pane narrows, assumed content ranges + overflow behaviour per element, accessibility intent, transition choreography, each component's full parameter space, derivation rules for extending the system, deliberate anti-goals, and where I was genuinely uncertain. **Read this before building any screen the mock doesn't show.**
+7. **`tools/probe.js`** — dumps computed values for every tagged specimen (design side) or every mapped selector (live side). Feed both into your auto-diff.
 
 `Matron Redesign.dc.html` (+ `support.js`, `res/`) is the interactive source of truth if you need to click through something the static files don't cover. `DESIGN-SPEC.md` is the narrative; `HANDOFF-PLAYBOOK.md` is the general contract for future design rounds.
 
@@ -84,3 +85,43 @@ Three new tokens: `--m-scrollbar`, `--m-scrollbar-hover`, `--m-selection`.
 ### Publishing
 
 No DesignSync tool is exposed in this canvas session, so the package ships as the zip in chat (and as `redesign-v5/` in the project). `from-coding-agent/` is created and ignored on my side — drop auto-diff output there and I'll read it next round. If you'd rather I publish directly, wire the connector and I'll push instead of exporting.
+
+### Two more surfaces (2026-07-26, later)
+
+**Message context menu** (right-click a turn) and the **event source viewer**. New states: `light|dark-message-menu`, `light|dark-event-source`; both also appear in `*-round2` as sections 5 and 6. 32 states total.
+
+The menu is the *same component* as the conversation-actions menu — that is now a written rule (§10.7), along with two item rules the live version breaks: every row carries an icon (otherwise the menu has two label edges), and groups are separated by a hairline rather than a gap, with the diagnostic item below it. `Copy as Markdown` is a proposal, not a requirement — drop it if the bridge only stores rendered text.
+
+The source viewer gets §10.8: read-only viewers state their own limits. It uses the wider 720px shell (it holds code, not a form), lifts seq/sender/timestamp/convo into a labelled meta grid so finding a timestamp doesn't mean reading braces, puts the JSON in a bordered `--m-raised` well capped at 46vh with themed scrollbars, and states the payload size in the footer so truncation is visible. One primary: `Copy JSON`. The live version's blank second footer button should simply not exist.
+
+### Selector corrections (2026-07-26, after review)
+
+Re-read `src/journal` at tree `f661b266f772`. Two round-2 entries had asserted `.mj_ContextMenu` as their selector — **that class does not exist**; it was inferred, not read. Corrected against source:
+
+| data-spec | real selector |
+|---|---|
+| `menu.conversationActions` | `.mj_RoomItemMenu` / `.mj_HeaderMenu.mj_RoomItemMenu` |
+| `menu.messageActions` | `.mj_EventRowMenu` |
+| `menu.item` (shared by both) | `.mj_RoomItemMenu_item` |
+| `sidebar.rowMenuTrigger` | `.mj_RoomItemMenu_trigger` |
+| `modal.eventSource` | `.mj_EventSource` + `_scrim` / `_header` / `_json` / `_actions` |
+
+`component-map.json` now carries `repo.tree` and a `selectorProvenance` note, and §10.9 makes the rule explicit: an unread selector is `status: new` with a `suggested` name, never asserted. Anything not determinable from CSS is `unverified` for the auto-diff.
+
+**Much of round 2 is already implemented** — `journal.pcss` quotes the §10.6/§10.7 rules verbatim and the menus genuinely share one item class. Remaining real divergences are concentrated in the event-source viewer (not yet on the modal shell: no border/shadow, bare `<pre>` at 14px with unstyled scrollbars, header without rule/chip/close, actions without the primary treatment) and its scrim sits at `z-index: 100` where every other modal scrim is `50`.
+
+**Two things where live is better or already settled, and the design defers:**
+- `.mj_RoomItemMenu_trigger` — invisible and non-interactive for pointer users, visible on `:focus-visible`. Keeps a keyboard/AT route the design had dropped. Adopted.
+- `.mj_RoomItemMenu_item` is `padding 7px 8px` / `500 12.5px/16px` / 16px icons where my specimen was `7px 9px` / `400 13px/17px` / 15px. Live is internally consistent and shipped — **pick one and make it canonical**; my recommendation is to keep live and I will fold those values into the next token regeneration.
+
+Scrollbar pseudo-boxes are now scoped to real scroll containers instead of `*` (same rendering, much cheaper in a large DOM).
+
+### Queue card refinement (2026-07-26)
+
+Three fixes, now written as §10.10 (*the card owns its chrome; the payload supplies only content*):
+
+1. **Two envelopes.** The payload body arrives as `📨 Queued (1): …` and the card adds its own gutter icon, so the live card shows two envelopes in a row. Strip the leading emoji run and the `Label (n):` prefix on arrival — the same rule as §10.2's ban on inline emoji, which the payload was bypassing.
+2. **Count is a chip, not prose.** `Queued` + a mono count pill on the label row; the body is then only the question.
+3. **Quoted text clamps to 3 lines, never ellipses at one.** `…i see a sub agen…` cannot answer the only question the operator has — *what am I about to send?* Quote it with a 2px left rule and clamp to three lines.
+
+The **released** state stays on the card and only re-inks (resolution line, rule, quote → tertiary): no reflow, and no re-emitting `📤 Sending 1 queued message:` + a numbered list as bare thread prose, which duplicated the card's content and reintroduced payload-emoji-as-chrome one message lower.

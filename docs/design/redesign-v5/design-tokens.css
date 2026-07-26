@@ -1,6 +1,6 @@
 /* Matron redesign — design tokens
    Generated from Matron Redesign.dc.html. Values mirror the rendered artifact exactly.
-   Companion files: design-tokens.json (machine-readable), GENERATIVE-SYSTEM.md (rules), DESIGN-SPEC.md. */
+   Companion files: design-tokens.json (machine-readable), GENERATIVE-SYSTEM.md (rules), component-map.json. */
 
 :root {
     --m-app: #f4f2ee;
@@ -100,11 +100,13 @@
     --m-font-mono-filename: 600 12.5px/18px 'Fira Code';
 }
 
-/* Native chrome — part of the theme, not an exception to it. See design-tokens.json → nativeChrome. */
-* { scrollbar-width: thin; scrollbar-color: var(--m-scrollbar) transparent; }
-*::-webkit-scrollbar { width: 10px; height: 10px; }
-*::-webkit-scrollbar-track, *::-webkit-scrollbar-corner { background: transparent; }
-*::-webkit-scrollbar-thumb { background: var(--m-scrollbar); border: 3px solid transparent; background-clip: content-box; border-radius: 99px; }
-*::-webkit-scrollbar-thumb:hover { background: var(--m-scrollbar-hover); border: 3px solid transparent; background-clip: content-box; }
+/* Native chrome — part of the theme, not an exception to it (§10.4).
+   scrollbar-color inherits, so set it once; scope the webkit boxes to scroll containers. */
+html { scrollbar-width: thin; scrollbar-color: var(--m-scrollbar) transparent; }
+nav::-webkit-scrollbar, pre::-webkit-scrollbar, textarea::-webkit-scrollbar, div::-webkit-scrollbar { width: 10px; height: 10px; }
+nav::-webkit-scrollbar-track, pre::-webkit-scrollbar-track, textarea::-webkit-scrollbar-track, div::-webkit-scrollbar-track,
+nav::-webkit-scrollbar-corner, pre::-webkit-scrollbar-corner, textarea::-webkit-scrollbar-corner, div::-webkit-scrollbar-corner { background: transparent; }
+nav::-webkit-scrollbar-thumb, pre::-webkit-scrollbar-thumb, textarea::-webkit-scrollbar-thumb, div::-webkit-scrollbar-thumb { background: var(--m-scrollbar); border: 3px solid transparent; background-clip: content-box; border-radius: 99px; }
+nav::-webkit-scrollbar-thumb:hover, pre::-webkit-scrollbar-thumb:hover, textarea::-webkit-scrollbar-thumb:hover, div::-webkit-scrollbar-thumb:hover { background: var(--m-scrollbar-hover); border: 3px solid transparent; background-clip: content-box; }
 ::selection { background: var(--m-selection); }
 :focus-visible { outline: 2px solid var(--m-accent); outline-offset: 2px; }

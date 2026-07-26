@@ -1,16 +1,16 @@
 {
   "$schema": "matron-component-map/1",
-  "generated": "2026-07-26T09:22Z",
+  "generated": "2026-07-26T15:05Z",
   "repo": {
     "name": "easelyte/matron-web",
     "branch": "main",
-    "tree": "eb6e7d6f3c4b",
+    "tree": "f661b266f772",
     "read": [
       "src/journal/journal.pcss",
-      "src/journal/shell.pcss",
       "src/journal/components.tsx",
-      "src/journal/status.ts"
-    ]
+      "src/journal/context-menu.ts"
+    ],
+    "readAt": "2026-07-26T14:01Z"
   },
   "how": "data-spec (in the artifact and every static state) → the selector in src/journal that implements it. TWO independent axes: `status` = does the class/feature exist at the tree below (implemented | new | devtool); `visual` = does what exists match the design (aligned | divergent | unverified). A thing can be implemented and divergent — that combination is invisible to both the changelog's 'do not redo' list and its divergence list, so it gets its own field. `unverified` means settle it with the auto-diff, not by reading.",
   "components": [
@@ -215,7 +215,30 @@
       "selector": ".mj_PromptCard .mj_Answered",
       "status": "implemented",
       "visual": "divergent",
-      "visualNote": "Live stacks label/body/✓ Answered/⚡ Sending/numbered list at four different left edges with uneven gaps. Design keeps three rows (label+time / body / resolution) at a constant 10px gap, list hanging off the inner edge, so answering does not reflow the card."
+      "visualNote": "Released state. Live drops the card and re-emits '📤 Sending 1 queued message:' + a numbered list as bare thread prose — duplicating content that was already on the card and reintroducing payload-emoji-as-chrome one message lower. Design: same card, same rows, resolution line + rule + quote re-inked to tertiary; no reflow, nothing restated."
+    },
+    {
+      "spec": "event.prompt.countChip",
+      "selector": "—",
+      "status": "new",
+      "visual": "n/a — nothing to compare",
+      "suggested": ".mj_PromptCard_count",
+      "notes": "mono count pill on the label row, mirroring .mj_UploadConfirm_count"
+    },
+    {
+      "spec": "event.prompt.queuedItem",
+      "selector": "—",
+      "status": "new",
+      "visual": "n/a — nothing to compare",
+      "suggested": ".mj_PromptCard_queued",
+      "notes": "quoted queued message: 2px --m-line2 left rule, 3-line clamp"
+    },
+    {
+      "spec": "event.prompt.resolution",
+      "selector": ".mj_Answered",
+      "status": "implemented",
+      "visual": "divergent",
+      "visualNote": "Design copy is 'Sent · N message(s) released to the agent' inside the card, in --m-ink2 with a green check."
     },
     {
       "spec": "event.prompt.timestamp",
@@ -229,7 +252,7 @@
       "selector": ".mj_PromptCard",
       "status": "implemented",
       "visual": "divergent",
-      "visualNote": "Live has no primary — Cancel and Send now are both outlined, so nothing marks the affirmative. Design: Send now is the single filled --m-accent-deep button, Cancel secondary. Live also prefixes the body with inline emoji (📨/⚡/✓), which makes the left edge glyph-width-dependent; design uses SVG in a fixed 24px gutter so label/body/actions share one edge."
+      "visualNote": "Queued state. Live renders the payload verbatim, so its leading 📨 sits next to the card's own envelope icon (two envelopes), the count arrives as prose ('Queued (1):') instead of a chip, and the queued message is ellipsed at one line ('…i see a sub agen…') — unreadable, which defeats the card's only purpose. Design: strip the emoji + 'Label (n):' prefix on arrival, count as a chip on the label row, queued text quoted with a 2px left rule and clamped to 3 lines."
     },
     {
       "spec": "event.text",
@@ -364,24 +387,110 @@
     },
     {
       "spec": "menu.conversationActions",
-      "selector": ".mj_ContextMenu",
+      "selector": ".mj_RoomItemMenu (sidebar anchor) / .mj_HeaderMenu.mj_RoomItemMenu (header ⋯ anchor)",
       "status": "implemented",
-      "visual": "divergent",
-      "visualNote": "Live: browser-blue focus ring, rows are full-width filled boxes touching the shell edge, gaps between rows, no separator before Archive. Design: 4px-padded shell, row radius 7 < shell radius 10 so hover insets, 1px hairline before Archive, teal inset focus."
+      "visual": "aligned",
+      "notes": "CORRECTED from the guessed .mj_ContextMenu. journal.pcss now carries the §10.6 rules verbatim: 4px-padded shell, radius 10, gap 0, hairline on :last-child:not(:only-child), teal focus inset -2px. Width is min(224px, 100vw-16px) where the design specimen is 212px — treat 224 as shipped and fine."
     },
     {
       "spec": "menu.item",
-      "selector": ".mj_ContextMenu button",
+      "selector": ".mj_RoomItemMenu_item",
       "status": "implemented",
       "visual": "divergent",
-      "visualNote": "grid 16px 1fr, gap 10, padding 7/9, 400 13/17."
+      "visualNote": "Shared by both menus. Live: grid 16px 1fr, gap 10, padding 7px 8px, font 500 12.5px/16px, 16px icons. Design specimen: padding 7px 9px, font 400 13px/17px, 15px icons. Live is internally consistent and already shipped — adopt the live values as canonical and I will fold them into the next token regen, OR align to the design; either way pick ONE, do not leave both."
     },
     {
       "spec": "menu.item.archive",
-      "selector": ".mj_ContextMenu button (archive)",
+      "selector": ".mj_RoomItemMenu_item:last-child:not(:only-child)",
+      "status": "implemented",
+      "visual": "aligned",
+      "notes": "hairline + 4px margin-top + 8px padding-top, per §10.7"
+    },
+    {
+      "spec": "menu.item.copy",
+      "selector": ".mj_EventRowMenu .mj_RoomItemMenu_item (copy)",
+      "status": "implemented",
+      "visual": "unverified",
+      "notes": "selector confirmed; icon presence not verifiable from CSS — settle by probe"
+    },
+    {
+      "spec": "menu.item.copyMarkdown",
+      "selector": "—",
+      "status": "new",
+      "visual": "n/a — nothing to compare",
+      "suggested": "a third .mj_RoomItemMenu_item in .mj_EventRowMenu",
+      "notes": "PROPOSAL ONLY — not present at this tree. Drop if the bridge stores rendered text only."
+    },
+    {
+      "spec": "menu.item.viewSource",
+      "selector": ".mj_EventRowMenu .mj_RoomItemMenu_item (view-source)",
+      "status": "implemented",
+      "visual": "unverified"
+    },
+    {
+      "spec": "menu.messageActions",
+      "selector": ".mj_EventRowMenu",
+      "status": "implemented",
+      "visual": "aligned",
+      "notes": "CORRECTED from the guessed '.mj_ContextMenu (message anchor)'. Confirmed in journal.pcss:962 — same shell rules as .mj_RoomItemMenu, items reuse .mj_RoomItemMenu_item, so §10.7's one-component rule is genuinely satisfied. Anchored at the pointer by useRowContextMenu() in context-menu.ts (right-click + 500ms long-press, viewport-clamped, arrow-key roving, Escape restores focus)."
+    },
+    {
+      "spec": "modal.eventSource",
+      "selector": ".mj_EventSource",
       "status": "implemented",
       "visual": "divergent",
-      "visualNote": "ghostDanger: --m-ink2 at rest, --m-crit on hover only."
+      "visualNote": "Selector confirmed (journal.pcss:1403). Live: max-width min(720px,92vw), max-height 80vh, radius 12, --cpd-color-bg-canvas-default, NO border, NO shadow. Design: radius 14, 1px --m-line border, --m-overlay fill, --m-sh-lg, max-height 88vh — i.e. it is not yet on the modal shell the upload dialog uses."
+    },
+    {
+      "spec": "modal.eventSource.actions",
+      "selector": ".mj_EventSource_actions",
+      "status": "implemented",
+      "visual": "divergent",
+      "visualNote": "Live: flex-end, gap 8, padding 8px 16px, no top border, no meta text, and per the screenshot a UA-styled 'Copy' plus a second BLANK button. Design footer: 11px 14px on --m-panel with a 1px --m-line top rule, 'Read-only · N bytes' on the left, Close (secondary) + one filled 'Copy JSON' primary."
+    },
+    {
+      "spec": "modal.eventSource.copy",
+      "selector": ".mj_EventSource_actions button (copy)",
+      "status": "implemented",
+      "visual": "divergent",
+      "visualNote": "Inherits no button styling in .mj_EventSource_actions (unlike .mj_UploadConfirm_actions which styles its children) — hence the UA look. Needs the primary treatment + copy glyph."
+    },
+    {
+      "spec": "modal.eventSource.header",
+      "selector": ".mj_EventSource_header",
+      "status": "implemented",
+      "visual": "divergent",
+      "visualNote": "Live is bare `padding: 12px 16px` with an <h2> and no border-bottom, no icon, no type chip, no close button. Design: 13px 14px 13px 16px, 1px --m-line rule, brackets glyph + 600 14/19 title + mono type chip + X close."
+    },
+    {
+      "spec": "modal.eventSource.json",
+      "selector": ".mj_EventSource_json",
+      "status": "implemented",
+      "visual": "divergent",
+      "visualNote": "Live: bare <pre>, no border, no background, font-family var(--mj-mono) at --cpd-font-size-sm (14px), padding 12px 16px, unstyled native scrollbars. Design: bordered --m-raised well, radius 10, 400 12px/19px 'Fira Code', keys in --m-accent, max-height 46vh, themed scrollbars. This is the surface the operator's screenshot shows as an unstyled scrollbar crossing a dark modal."
+    },
+    {
+      "spec": "modal.eventSource.meta",
+      "selector": "—",
+      "status": "new",
+      "visual": "n/a — nothing to compare",
+      "suggested": ".mj_EventSource_meta",
+      "notes": "not present at this tree"
+    },
+    {
+      "spec": "modal.eventSource.scrim",
+      "selector": ".mj_EventSource_scrim",
+      "status": "implemented",
+      "visual": "divergent",
+      "visualNote": "Correct colour rgb(18 16 14 / 55%) but z-index 100 where every other modal scrim is 50 (.mj_UploadConfirm_scrim). §10 layering says one ladder — bring it to 50 or raise the ladder deliberately."
+    },
+    {
+      "spec": "modal.eventSource.typeChip",
+      "selector": "—",
+      "status": "new",
+      "visual": "n/a — nothing to compare",
+      "suggested": ".mj_EventSource_typeChip",
+      "notes": "not present at this tree"
     },
     {
       "spec": "modal.newSession",
@@ -545,6 +654,13 @@
       "notes": "row-level treatment: name weight 600"
     },
     {
+      "spec": "sidebar.rowMenuTrigger",
+      "selector": ".mj_RoomItemMenu_trigger",
+      "status": "implemented",
+      "visual": "aligned",
+      "notes": "Implements the operator's call better than the design did: opacity 0 + pointer-events none for pointer users, becoming visible/operable only on :focus-visible — so there is no persistent ⋯ for the mouse, but keyboard/AT keep a discoverable route. Adopt this pattern in the design docs."
+    },
+    {
       "spec": "sidebar.tab.active",
       "selector": ".mj_RoomListTab_active",
       "status": "implemented",
@@ -603,5 +719,6 @@
     "tolerance": "Exact match on colour/weight/size. ±1px on padding/height (subpixel + the app's 15px root). Ignore font-family when a fallback stack is in play.",
     "expectation": "Every `unverified` above resolves to aligned or divergent on the first run. Treat the output as both the work list and the regression gate."
   },
-  "granularity": "Each data-spec is tagged on the SAME element the selector resolves to. Where a component needs several rungs (composer footer vs shell vs input; modal scrim vs card; row vs badge) each rung is its own spec/selector pair, so a diff never compares a container against a child. Fixed after the first auto-diff run reported mismatched granularity."
+  "granularity": "Each data-spec is tagged on the SAME element the selector resolves to. Where a component needs several rungs (composer footer vs shell vs input; modal scrim vs card; row vs badge) each rung is its own spec/selector pair, so a diff never compares a container against a child. Fixed after the first auto-diff run reported mismatched granularity.",
+  "selectorProvenance": "Every selector below was read from journal.pcss / components.tsx / context-menu.ts at the tree above. Entries whose selector could not be found in source are marked status:new with the name as an explicit `suggested` proposal — never asserted as existing. A previous revision of this file guessed `.mj_ContextMenu` for the menus; no such class exists and those entries are corrected here."
 }

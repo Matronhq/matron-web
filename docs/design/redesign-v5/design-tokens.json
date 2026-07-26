@@ -3,7 +3,7 @@
   "meta": {
     "name": "Matron UI redesign",
     "source": "Matron Redesign.dc.html",
-    "generated": "2026-07-26T09:22Z",
+    "generated": "2026-07-26T15:05Z",
     "derivation": "Colour tokens and font shorthands are PARSED from the rendering artifact, not hand-written. Regenerate after any change rather than editing this file. States, breakpoints, layering and intent (below) are hand-authored — they cannot be probed from a static render.",
     "fontStacks": {
       "ui": "Inter, 'Helvetica Neue', sans-serif",
@@ -58,6 +58,9 @@
         "event.permission_request",
         "event.prompt",
         "event.prompt.answered",
+        "event.prompt.countChip",
+        "event.prompt.queuedItem",
+        "event.prompt.resolution",
         "event.prompt.timestamp",
         "event.prompt.unanswered",
         "event.prompt_reply",
@@ -85,11 +88,22 @@
         "menu.item",
         "menu.item.archive",
         "menu.item.archive.hover",
+        "menu.item.copy",
+        "menu.item.copyMarkdown",
         "menu.item.favorite",
         "menu.item.focus",
         "menu.item.hover",
         "menu.item.unread",
+        "menu.item.viewSource",
+        "menu.messageActions",
+        "menu.messageActions.specimen",
         "menu.specimen",
+        "modal.eventSource",
+        "modal.eventSource.copy",
+        "modal.eventSource.json",
+        "modal.eventSource.meta",
+        "modal.eventSource.scrim",
+        "modal.eventSource.typeChip",
         "modal.newSession",
         "modal.newSession.checkbox",
         "modal.newSession.disabledField",
@@ -126,7 +140,7 @@
         "subagentStrip.pill"
       ],
       "selectorMap": "component-map.json",
-      "staticStates": "static/index.json — 28 runtime-free files with self-hosted fonts (8 cover the round-2 surfaces)",
+      "staticStates": "static/index.json — 32 runtime-free files with self-hosted fonts (12 cover the round-2 surfaces)",
       "snippet": "[...document.querySelectorAll('[data-spec]')].map(el => ({ name: el.dataset.spec, target: el.dataset.target, cs: getComputedStyle(el) }))",
       "devtool": "data-spec values starting 'devtool.' and 'gallery' are handoff affordances — do not implement",
       "granularity": "Tagged at the same granularity as component-map.json's selectors; multi-rung components are split so a diff never compares a container against a child."
@@ -137,7 +151,8 @@
       "design-tokens.json / .css": "tokens, type roles, states, breakpoints, layering, content types, copy",
       "component-map.json": "data-spec → src/journal selector, with implemented/new/devtool status",
       "CHANGELOG-vs-current.md": "what already landed at tree eb6e7d6f vs what has not",
-      "DESIGN-SPEC.md": "narrative spec + open items"
+      "DESIGN-SPEC.md": "narrative spec + open items",
+      "BRIDGE-PAYLOAD-PROPOSAL.md": "proposed bridge payload changes (additive) that would delete the client's emoji-stripping, count-parsing and label-heuristic branches"
     }
   },
   "color": {
@@ -369,39 +384,40 @@
       "500 12px/16px Inter": 6,
       "400 13px/16px Inter": 7,
       "500 13px/17px Inter": 17,
-      "400 11px/14px Inter": 34,
+      "400 11px/14px Inter": 35,
       "400 12px/16px Inter": 21,
       "600 13px/17px Inter": 8,
       "600 10px/18px Inter": 2,
       "400 12px/17px Inter": 7,
       "600 12px/16px Inter": 3,
-      "500 10px/14px Inter": 12,
+      "500 10px/14px Inter": 18,
       "400 11.5px/15px Inter": 7,
       "500 10.5px/13px 'Fira Code'": 3,
       "400 10.5px/13px 'Fira Code'": 14,
       "500 11.5px/15px Inter": 1,
       "400 10px/14px Inter": 4,
-      "400 13px/17px Inter": 8,
+      "400 13px/17px Inter": 14,
       "500 11px/14px Inter": 2,
       "400 14px/22px Inter": 12,
       "400 12.5px/18px 'Fira Code'": 8,
       "500 12.5px/18px 'Fira Code'": 5,
       "600 11px/16px Inter": 2,
-      "400 12px/19px 'Fira Code'": 4,
+      "400 12px/19px 'Fira Code'": 5,
       "600 12.5px/18px 'Fira Code'": 1,
       "600 11px/16px 'Fira Code'": 2,
       "400 11px/16px 'Fira Code'": 5,
       "600 10px/14px Inter": 5,
       "400 13.5px/20px Inter": 6,
-      "600 12.5px/16px Inter": 12,
-      "500 12.5px/16px Inter": 23,
+      "600 12.5px/16px Inter": 13,
+      "500 12.5px/16px Inter": 25,
       "400 12.5px/18px Inter": 1,
-      "400 11px/16px Inter": 3,
-      "600 14px/19px Inter": 3,
+      "400 11px/16px Inter": 5,
+      "600 14px/19px Inter": 4,
       "500 12.5px/18px Inter": 1,
+      "500 11px/16px 'Fira Code'": 2,
+      "400 12px/16px 'Fira Code'": 4,
       "400 11px/15px Inter": 1,
-      "400 11px/14px 'Fira Code'": 1,
-      "500 11px/16px 'Fira Code'": 1
+      "400 11px/14px 'Fira Code'": 1
     },
     "minimumSize": "10px, used only for the bubble timestamp and unread numeral; body copy never below 12px"
   },
@@ -584,7 +600,8 @@
           "wk"
         ],
         "fallback": "unknown labels fall through to usageBarLabel() in status.ts so a new limit still renders",
-        "missingMeter": "omit the bar entirely — never render an empty track (the fable limit is absent from today's payload)"
+        "missingMeter": "omit the bar entirely — never render an empty track (the fable limit is absent from today's payload)",
+        "upstreamFix": "BRIDGE-PAYLOAD-PROPOSAL.md §3 — stable limit `id`s + resets_at retire this map entirely and let a new limit (fbl) appear without a client release."
       }
     },
     "sessionRow": {
@@ -631,6 +648,14 @@
       "card": "min(440px, 94vw), max-height 88vh, three-part flex (fixed header / scrolling body / fixed footer)",
       "queue": "header chip 'n of N', thumbnail strip (34px, active = 2px --m-accent ring, inactive = 1px --m-line2 on --m-raised), Skip advances without posting, Send posts and advances, modal closes only after the last file",
       "perFile": "caption clears between files; the posted chip carries that file's real name and size"
+    },
+    "eventSource": {
+      "shell": "modal.upload frame at 720px; three-part flex (header / scrolling body / footer)",
+      "header": "code-brackets glyph + 'Event source' + the event `type` as a mono chip + X close",
+      "metaGrid": "seq / sender / timestamp / convo lifted out of the JSON into a labelled auto-fit grid (minmax 150px), 10px uppercase labels over 12px mono values — the common case needs no brace-reading",
+      "json": "--m-raised well, 1px --m-line, radius 10, 12/19 mono, keys in --m-accent, scrolls both axes with themed scrollbars, max-height 46vh",
+      "footer": "'Read-only · N bytes' + Close (secondary) + Copy JSON (the single primary)",
+      "rule": "read-only by definition — no editable affordance, and the byte count is stated so a truncation is visible"
     }
   },
   "contentTypes": {
@@ -643,7 +668,14 @@
       "prompt": {
         "selector": ".mj_PromptCard",
         "label": "Question",
-        "spec": "neutral --m-line2 border; option buttons are all secondary; free-text row when allows_free_text or no options; Send disabled until non-empty"
+        "spec": "neutral --m-line2 border; option buttons are all secondary; free-text row when allows_free_text or no options; Send disabled until non-empty",
+        "queueCard": {
+          "labelRow": "'Queued' label + count chip + timestamp on the shared right edge",
+          "body": "the question only — payload's leading emoji and 'Label (n):' prefix stripped on arrival",
+          "quotedItem": "2px --m-line2 left rule, 10px padding-left, 400 13px/19px, clamped to 3 lines via -webkit-line-clamp — never a one-line ellipsis",
+          "released": "same rows, re-inked to tertiary (resolution line, rule, quote); no reflow, and the released text is NOT restated as bare thread prose",
+          "actions": "Send now (single filled primary) + Cancel (secondary)"
+        }
       },
       "permission_request": {
         "selector": ".mj_PromptCard[permission]",
@@ -755,7 +787,7 @@
   },
   "nativeChrome": {
     "why": "A theme is not done when only the custom elements are themed. Each of these was an observed parity failure in the live app.",
-    "scrollbars": "scrollbar-width:thin + scrollbar-color:var(--m-scrollbar) transparent, plus ::-webkit-scrollbar (10px), -thumb (var(--m-scrollbar), 3px transparent border, background-clip:content-box, radius 99px), -thumb:hover (--m-scrollbar-hover), -track and -corner transparent.",
+    "scrollbars": "scrollbar-color is set once on html (it inherits). The ::-webkit-scrollbar boxes are scoped to real scroll containers (nav, pre, textarea, div) rather than * — identical rendering, far fewer elements carrying pseudo-boxes in a large DOM.",
     "focusVisible": "A GLOBAL `:focus-visible { outline:2px solid var(--m-accent); outline-offset:2px }` is the floor. Inside menus the offset is -2px so the ring insets. Never browser-blue.",
     "selection": "::selection { background: var(--m-selection) }",
     "nativeInputs": "Every input/textarea/select sets background, color AND border explicitly — an unstyled input inherits UA white, which is the white-on-dark 'Agent default' field. Placeholder colour set to --m-ink3.",
@@ -764,7 +796,8 @@
       "--m-scrollbar",
       "--m-scrollbar-hover",
       "--m-selection"
-    ]
+    ],
+    "selectorNote": "In matron-web these belong in journal.pcss next to the existing html{scrollbar-color} rule, not as a * selector."
   },
   "invariants": {
     "reference": "GENERATIVE-SYSTEM.md §10 — full prose. Summarised here for machine consumption.",
@@ -773,7 +806,8 @@
       "modal": "min(440px, 94vw)",
       "menu": "212–300px, content-sized",
       "ownBubble": "min(78%, 560px)",
-      "rule": "one measure per region; overflow scrolls inside the element, the measure never bends"
+      "rule": "one measure per region; overflow scrolls inside the element, the measure never bends",
+      "codeModal": "720px — a modal that holds code, not a form, gets the wider shell; the JSON well caps at 46vh so the footer never leaves the viewport."
     },
     "alignmentGrid": {
       "outerEdge": "card padding-left — every direct child starts here",
@@ -796,9 +830,11 @@
       "component": "one component, many anchors",
       "anchors": {
         "sidebarRow": "right-click context menu ONLY — no persistent ⋯ affordance (operator decision)",
-        "header": "the ⋯ button"
+        "header": "the ⋯ button",
+        "messageRow": "right-click on a message → the message-actions menu at the pointer. Identical internals to the conversation-actions menu; only items and anchor differ."
       },
-      "internals": "rows grid 16px 1fr, gap 10, padding 7/9, radius 7 inside a 4px-padded shell so hover insets from the shell edge; groups separated by a hairline, not a gap"
+      "internals": "rows grid 16px 1fr, gap 10, padding 7/9, radius 7 inside a 4px-padded shell so hover insets from the shell edge; groups separated by a hairline, not a gap",
+      "itemGrouping": "Actions group above the hairline; the diagnostic/destructive item sits below it (View source, Archive). Every row carries an icon — a menu with icons on some rows only breaks the 16px gutter."
     },
     "hardStates": {
       "promptCard": [
@@ -828,7 +864,19 @@
         "last file",
         "caption filled",
         "both themes"
+      ],
+      "messageMenu": [
+        "rest",
+        "hover",
+        "keyboard-focused",
+        "both themes"
+      ],
+      "eventSource": [
+        "short payload",
+        "long payload (both-axis scroll)",
+        "both themes"
       ]
-    }
+    },
+    "payloadVsChrome": "A card's icon, label and count are design elements. Strip leading emoji and 'Label (n):' prefixes from payload bodies; promote the count into a chip. Clamp quoted user text to 3 lines, never ellipse at one. Upstream fix proposed in BRIDGE-PAYLOAD-PROPOSAL.md §1 — once items[] arrives untruncated with a kind, the stripping branch is deleted rather than maintained."
   }
 }

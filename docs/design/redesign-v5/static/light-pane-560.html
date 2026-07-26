@@ -6,10 +6,6 @@
 <meta name="matron-state" content="light-pane-560">
 <meta name="matron-state-note" content="Chat pane below 560px: title collapses, title popover open, Compact hidden.">
 <style>
-/* Self-hosted so these files are screenshot-faithful offline, not just probe-faithful.
-   Inter: rsms/inter docs/font-files/InterVariable.woff2 (OFL). Fira Code: google/fonts
-   ofl/firacode/FiraCode[wght].ttf (OFL, licence alongside). Metrics unaffected either
-   way — every size/weight/line-height in this design is authored absolutely. */
 @font-face { font-family: Inter; font-weight: 100 900; font-style: normal; font-display: block; src: url("./fonts/InterVariable.woff2") format("woff2"); }
 @font-face { font-family: "Fira Code"; font-weight: 300 700; font-style: normal; font-display: block; src: url("./fonts/FiraCode%5Bwght%5D.ttf") format("truetype"); }
 
@@ -45,13 +41,19 @@ body { background:var(--m-app); }
 a { color:var(--m-accent); text-decoration:none; }
 a:hover { text-decoration:underline; }
 textarea::placeholder, input::placeholder { color:var(--m-ink3); }
-/* Native chrome is part of the theme, not an exception to it. */
-* { scrollbar-width:thin; scrollbar-color:var(--m-scrollbar) transparent; }
-*::-webkit-scrollbar { width:10px; height:10px; }
-*::-webkit-scrollbar-track { background:transparent; }
-*::-webkit-scrollbar-thumb { background:var(--m-scrollbar); border:3px solid transparent; background-clip:content-box; border-radius:99px; }
-*::-webkit-scrollbar-thumb:hover { background:var(--m-scrollbar-hover); border:3px solid transparent; background-clip:content-box; }
-*::-webkit-scrollbar-corner { background:transparent; }
+/* Native chrome is part of the theme, not an exception to it.
+   scrollbar-color inherits, so it is set once on the root; the ::-webkit-* boxes are
+   scoped to actual scroll containers rather than * — same result, far fewer elements
+   carrying scrollbar pseudo-boxes in a large DOM. */
+html { scrollbar-width:thin; scrollbar-color:var(--m-scrollbar) transparent; }
+nav, pre, textarea, [data-spec="canvas"], [data-spec="subagentStrip"], [data-spec="header.usage"],
+[data-spec="composer.slashPalette"], [data-spec="modal.upload"], [data-spec="modal.newSession"],
+[data-spec="modal.eventSource"], [data-spec="modal.eventSource.json"] { scrollbar-width:thin; scrollbar-color:var(--m-scrollbar) transparent; }
+nav::-webkit-scrollbar, pre::-webkit-scrollbar, textarea::-webkit-scrollbar, div::-webkit-scrollbar { width:10px; height:10px; }
+nav::-webkit-scrollbar-track, pre::-webkit-scrollbar-track, textarea::-webkit-scrollbar-track, div::-webkit-scrollbar-track,
+nav::-webkit-scrollbar-corner, pre::-webkit-scrollbar-corner, textarea::-webkit-scrollbar-corner, div::-webkit-scrollbar-corner { background:transparent; }
+nav::-webkit-scrollbar-thumb, pre::-webkit-scrollbar-thumb, textarea::-webkit-scrollbar-thumb, div::-webkit-scrollbar-thumb { background:var(--m-scrollbar); border:3px solid transparent; background-clip:content-box; border-radius:99px; }
+nav::-webkit-scrollbar-thumb:hover, pre::-webkit-scrollbar-thumb:hover, textarea::-webkit-scrollbar-thumb:hover, div::-webkit-scrollbar-thumb:hover { background:var(--m-scrollbar-hover); border:3px solid transparent; background-clip:content-box; }
 ::selection { background:var(--m-selection); }
 :focus-visible { outline:2px solid var(--m-accent); outline-offset:2px; }
 @keyframes m-pulse { 0%,100% { opacity:.35; } 50% { opacity:1; } }
@@ -240,7 +242,8 @@ textarea::placeholder, input::placeholder { color:var(--m-ink3); }
           <span style="font:600 13px/17px Inter, sans-serif;">claude</span>
           <span style="font:400 11px/14px Inter, sans-serif; color:var(--m-ink3);">10:02</span>
         </div>
-        <div style="padding-left:32px; display:flex; flex-direction:column; gap:8px;">
+        <div style="position:relative; padding-left:32px; display:flex; flex-direction:column; gap:8px;">
+          
           <div data-spec="event.text" style="max-width:680px; font:400 14px/22px Inter, sans-serif;">On it. Plan: build → atomic swap of <code style="padding:1px 5px; border-radius:4px; background:var(--m-subtle2); font:400 12.5px/18px 'Fira Code', monospace;">webapp/</code> → verify → rotate backups.</div>
 
           <div style="max-width:680px; border:1px solid var(--m-line); border-radius:10px; background:var(--m-panel); overflow:hidden;">
@@ -372,6 +375,8 @@ textarea::placeholder, input::placeholder { color:var(--m-ink3); }
       </div>
     </footer>
   </section>
+  
+
   
 
   
