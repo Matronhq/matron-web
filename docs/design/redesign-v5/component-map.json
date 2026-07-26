@@ -1,6 +1,6 @@
 {
   "$schema": "matron-component-map/1",
-  "generated": "2026-07-26T15:05Z",
+  "generated": "2026-07-26T17:05Z",
   "repo": {
     "name": "easelyte/matron-web",
     "branch": "main",
@@ -320,18 +320,28 @@
       "notes": "Sidebar rows must NOT carry a persistent ⋯ — right-click only (operator decision). The header ⋯ is the only persistent trigger."
     },
     {
+      "spec": "header.subagentBadge",
+      "selector": "—",
+      "status": "new",
+      "visual": "n/a — nothing to compare",
+      "suggested": ".mj_HeaderSubagentBadge",
+      "notes": "uppercase SUBAGENT pill beside the header title when the operator is inside a child session; 500 10px/16px, +0.05em, --m-subtle2 on --m-ink2"
+    },
+    {
       "spec": "header.subtitle",
       "selector": ".mj_HeaderEmail / the subtitle row in .mj_HeaderTitleCluster",
       "status": "implemented",
       "visual": "divergent",
-      "visualNote": "Design subtitle is model · workdir · run-state at 400 11px/14px --m-ink2, with the run-state word in accent."
+      "visualNote": "Design subtitle is model · workdir · run-state at 400 11px/14px --m-ink2, with the run-state word in accent.",
+      "notes": "Has a SUBAGENT variant: title becomes '↳ <child name>' + badge, subtitle becomes 'of <parent> · <progress> · <run-state>'. The parent may be stated in the SUBTITLE as hierarchy and is actionable on the back chip; it must never occupy the header TITLE while the chip offers to return there."
     },
     {
       "spec": "header.title",
       "selector": ".mj_HeaderTitleCluster .mx_RoomHeader_heading",
       "status": "implemented",
       "visual": "divergent",
-      "visualNote": "Design title is 600 15px/20px. Verify weight — a 500 title reads as a different hierarchy."
+      "visualNote": "Design title is 600 15px/20px. Verify weight — a 500 title reads as a different hierarchy.",
+      "notes": "Has a SUBAGENT variant: title becomes '↳ <child name>' + badge, subtitle becomes 'of <parent> · <progress> · <run-state>'. The parent may be stated in the SUBTITLE as hierarchy and is actionable on the back chip; it must never occupy the header TITLE while the chip offers to return there."
     },
     {
       "spec": "header.titlePopover",
@@ -678,13 +688,36 @@
       "spec": "subagentStrip",
       "selector": ".mj_SubagentStrip",
       "status": "implemented",
-      "visual": "unverified"
+      "visual": "divergent",
+      "visualNote": "The whole strip is overflow-x:auto in live (.mj_SubagentStrip), so any pinned child would scroll with the pills. Design splits it: non-scrolling strip -> pinned back chip -> hairline -> inner overflow-x container holding the label + pills."
+    },
+    {
+      "spec": "subagentStrip.back",
+      "selector": "—",
+      "status": "new",
+      "visual": "n/a — nothing to compare",
+      "suggested": ".mj_SubagentBack",
+      "notes": "Pinned escape from a subagent context back to the parent. Same 26px pill geometry as .mj_SubagentPill but accent ink on --m-selected, 1px rgb(13 148 136 / 28%) border, 13px left chevron; carries the PARENT conversation title (ellipsised, max 220px). Must sit OUTSIDE the horizontally-scrolling pill run (flex:0 0 auto in the strip; pills in their own overflow-x container) or it scrolls away exactly when there are many subagents. Hairline divider after it, not a gap. Also bound to Escape."
+    },
+    {
+      "spec": "subagentStrip.enter",
+      "selector": "—",
+      "status": "devtool",
+      "visual": "n/a",
+      "notes": "dashed 'open subagent' chip in the mock only, to make the subagent context reachable by clicking. DO NOT IMPLEMENT."
     },
     {
       "spec": "subagentStrip.pill",
       "selector": ".mj_SubagentPill",
       "status": "implemented",
       "visual": "unverified"
+    },
+    {
+      "spec": "subagentStrip.pillCurrent",
+      "selector": ".mj_SubagentPill_current",
+      "status": "implemented",
+      "visual": "aligned",
+      "notes": "Already in journal.pcss: box-shadow 0 0 0 2px accent + cursor:default. Design uses accent border + 2px --m-selected ring; equivalent in intent — keep live."
     }
   ],
   "visualLegend": {

@@ -273,6 +273,22 @@ Concretely, on arrival: strip a leading emoji run, strip a `Label (n):` prefix, 
 
 **A released/resolved card keeps its rows and only re-inks them.** When queued messages are let through, the resolution line, the quote rule, and the quoted text drop to tertiary ink; nothing moves and nothing is re-stated elsewhere. Re-emitting "Sending 1 queued message:" plus a numbered list as bare thread prose duplicates content that is already on the card and reintroduces the emoji-as-chrome problem one message lower.
 
+### 10.11 An escape from a nested context is pinned, named, and never scrolls away
+
+When the operator is inside a subagent, the strip that lists siblings also has to get them **out**. Three rules:
+
+1. **The escape is pinned, the siblings scroll.** The subagent pills are a horizontally scrolling run; a back affordance placed inside that run scrolls off-screen exactly when there are enough subagents to get lost among. So the strip is a non-scrolling flex row: pinned back chip -> hairline -> scrolling pill run. Only the pills move.
+2. **It names its destination.** "Back" alone doesn't say where; the chip carries the parent conversation's title (ellipsised, max 220px), so the operator knows which context they're returning to before clicking. Escapes state their target.
+3. **It reads as "leave", not "another sibling".** Same pill geometry as the subagent pills so it belongs to the strip, but accent ink on `--m-selected` with a left chevron, versus the pills' neutral ink. Identical geometry + different ink = same family, different action. Separated by a hairline, not a gap (10.7).
+
+**The header names the context; the strip confirms it.** The header is the primary "where am I" signal and must name the *subagent* when you are inside one — `↳ test triage` with a `SUBAGENT` badge, and a subtitle reading `of <parent> · <progress> · <run-state>`. This ordering is load-bearing: naming the destination only carries information if the current context is named something *else*. An earlier draft left the parent's title in the header **title** while the chip also said "back to <parent>", so the mock offered to navigate you to where you already were, and the ringed pill was the only signal you had descended at all.
+
+The parent is therefore named **twice, with two different jobs**, and that is deliberate: *stated* in the subtitle as hierarchy ("this is a child of X" — read-only, part of the sentence describing where you are), and *actionable* on the back chip as the escape ("return to X" — a target). What must never happen is the parent occupying the header **title** while the chip simultaneously offers to return there; that is the incoherent state, not the repetition itself. The rule is about which slot, not about the count.
+
+With the header carrying it, the **current** pill's accent border + 2px `--m-selected` ring + `cursor: default` becomes confirmation and sibling-disambiguation ("which of the four am I in"), not the sole indicator. Two signals, ranked — header first, strip second.
+
+**`Escape` unwinds one layer at a time, outermost-last:** source viewer -> upload -> new-session -> open menu -> subagent context. Never more than one layer per press, and never the whole stack.
+
 ### The hard states every surface must render
 
 Non-negotiable; each has a static file:
@@ -284,4 +300,5 @@ Non-negotiable; each has a static file:
 | Actions menu | rest · hover · keyboard-focused · destructive hover · both themes |
 | Upload modal | single file · multi-file (`n of N` + strip) · last file · caption filled · both themes |
 | Message context menu | rest · hover · keyboard-focused · both themes |
+| Subagent strip | parent view (no escape) · inside a subagent (pinned back chip + current pill ringed) · many pills (escape stays pinned) · both themes |
 | Event source viewer | short payload · long payload (both-axis scroll) · both themes |

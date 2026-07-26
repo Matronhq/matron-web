@@ -68,7 +68,7 @@ nav::-webkit-scrollbar-thumb:hover, pre::-webkit-scrollbar-thumb:hover, textarea
   "meta": {
     "name": "Matron UI redesign",
     "source": "Matron Redesign.dc.html",
-    "generated": "2026-07-26T15:05Z",
+    "generated": "2026-07-26T17:05Z",
     "derivation": "Colour tokens and font shorthands are PARSED from the rendering artifact, not hand-written. Regenerate after any change rather than editing this file. States, breakpoints, layering and intent (below) are hand-authored — they cannot be probed from a static render.",
     "fontStacks": {
       "ui": "Inter, 'Helvetica Neue', sans-serif",
@@ -138,6 +138,7 @@ nav::-webkit-scrollbar-thumb:hover, pre::-webkit-scrollbar-thumb:hover, textarea
         "header",
         "header.compact",
         "header.more",
+        "header.subagentBadge",
         "header.subtitle",
         "header.title",
         "header.titlePopover",
@@ -202,10 +203,12 @@ nav::-webkit-scrollbar-thumb:hover, pre::-webkit-scrollbar-thumb:hover, textarea
         "sidebar.tab.active",
         "sidebar.tabs",
         "subagentStrip",
+        "subagentStrip.back",
+        "subagentStrip.enter",
         "subagentStrip.pill"
       ],
       "selectorMap": "component-map.json",
-      "staticStates": "static/index.json — 32 runtime-free files with self-hosted fonts (12 cover the round-2 surfaces)",
+      "staticStates": "static/index.json — 35 runtime-free files with self-hosted fonts",
       "snippet": "[...document.querySelectorAll('[data-spec]')].map(el => ({ name: el.dataset.spec, target: el.dataset.target, cs: getComputedStyle(el) }))",
       "devtool": "data-spec values starting 'devtool.' and 'gallery' are handoff affordances — do not implement",
       "granularity": "Tagged at the same granularity as component-map.json's selectors; multi-rung components are split so a diff never compares a container against a child."
@@ -216,7 +219,8 @@ nav::-webkit-scrollbar-thumb:hover, pre::-webkit-scrollbar-thumb:hover, textarea
       "design-tokens.json / .css": "tokens, type roles, states, breakpoints, layering, content types, copy",
       "component-map.json": "data-spec → src/journal selector, with implemented/new/devtool status",
       "CHANGELOG-vs-current.md": "what already landed at tree eb6e7d6f vs what has not",
-      "DESIGN-SPEC.md": "narrative spec + open items"
+      "DESIGN-SPEC.md": "narrative spec + open items",
+      "BRIDGE-PAYLOAD-PROPOSAL.md": "proposed bridge payload changes (additive) that would delete the client's emoji-stripping, count-parsing and label-heuristic branches"
     }
   },
   "color": {
@@ -664,7 +668,8 @@ nav::-webkit-scrollbar-thumb:hover, pre::-webkit-scrollbar-thumb:hover, textarea
           "wk"
         ],
         "fallback": "unknown labels fall through to usageBarLabel() in status.ts so a new limit still renders",
-        "missingMeter": "omit the bar entirely — never render an empty track (the fable limit is absent from today's payload)"
+        "missingMeter": "omit the bar entirely — never render an empty track (the fable limit is absent from today's payload)",
+        "upstreamFix": "BRIDGE-PAYLOAD-PROPOSAL.md §3 — stable limit `id`s + resets_at retire this map entirely and let a new limit (fbl) appear without a client release."
       }
     },
     "sessionRow": {
@@ -719,6 +724,13 @@ nav::-webkit-scrollbar-thumb:hover, pre::-webkit-scrollbar-thumb:hover, textarea
       "json": "--m-raised well, 1px --m-line, radius 10, 12/19 mono, keys in --m-accent, scrolls both axes with themed scrollbars, max-height 46vh",
       "footer": "'Read-only · N bytes' + Close (secondary) + Copy JSON (the single primary)",
       "rule": "read-only by definition — no editable affordance, and the byte count is stated so a truncation is visible"
+    },
+    "subagentStrip": {
+      "structure": "non-scrolling flex row: pinned back chip (only inside a subagent) -> 1px x 18px hairline -> inner overflow-x container with the SUBAGENTS label + pills",
+      "back": "26px pill, padding 0 11px 0 8px, 1px solid rgb(13 148 136 / 28%), --m-selected fill, --m-accent ink, 500 12/16, 13px left chevron, parent title ellipsised at max 220px, bound to Escape",
+      "current": "the pill for the subagent you are in: accent border + 2px --m-selected ring, cursor default, not clickable",
+      "rule": "the escape never scrolls with the pills — it is pinned outside the scroll container",
+      "contextNaming": "The HEADER is the primary 'where am I' signal: inside a subagent it reads '↳ <child>' + a SUBAGENT badge, subtitle 'of <parent> · <progress> · <run-state>'. The parent is named twice with two distinct jobs — STATED in the subtitle as hierarchy (read-only) and ACTIONABLE on the back chip as the escape target. The prohibited state is the parent occupying the header TITLE while the chip offers to return there; the repetition itself is intended. The ringed current pill is confirmation and sibling-disambiguation, not the sole indicator."
     }
   },
   "contentTypes": {
@@ -940,7 +952,14 @@ nav::-webkit-scrollbar-thumb:hover, pre::-webkit-scrollbar-thumb:hover, textarea
         "both themes"
       ]
     },
-    "payloadVsChrome": "A card's icon, label and count are design elements. Strip leading emoji and 'Label (n):' prefixes from payload bodies; promote the count into a chip. Clamp quoted user text to 3 lines, never ellipse at one."
+    "payloadVsChrome": "A card's icon, label and count are design elements. Strip leading emoji and 'Label (n):' prefixes from payload bodies; promote the count into a chip. Clamp quoted user text to 3 lines, never ellipse at one. Upstream fix proposed in BRIDGE-PAYLOAD-PROPOSAL.md §1 — once items[] arrives untruncated with a kind, the stripping branch is deleted rather than maintained.",
+    "escapes": {
+      "pinned": "an escape from a nested context sits outside any scrolling run",
+      "named": "it carries its destination's title, not just 'Back'",
+      "ink": "same geometry as siblings, accent ink — same family, different action",
+      "keyboard": "Escape unwinds one layer at a time, outermost-last: source viewer -> upload -> new-session -> open menu -> subagent context",
+      "namedRequires": "Naming the destination only informs if the current context is named something else — so the header TITLE must name the child. The parent may still be stated in the subtitle as hierarchy; the rule constrains which slot, not how many times."
+    }
   }
 }
 </script>
@@ -1090,9 +1109,21 @@ nav::-webkit-scrollbar-thumb:hover, pre::-webkit-scrollbar-thumb:hover, textarea
       </button>
       </sc-if>
       <div onMouseEnter="{{ titleEnter }}" onMouseLeave="{{ titleLeave }}" style="position:relative; min-width:0; display:flex; flex-direction:column; gap:1px;">
+        <sc-if value="{{ notInSubagent }}" hint-placeholder-val="{{ true }}">
         <div data-spec="header.title" style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:600 15px/20px Inter, sans-serif;">matron-web · deploy</div>
-        <sc-if value="{{ titleFull }}" hint-placeholder-val="{{ true }}">
+        </sc-if>
+        <sc-if value="{{ inSubagent }}" hint-placeholder-val="{{ false }}">
+        <div data-spec="header.title" style="display:flex; align-items:baseline; gap:6px; min-width:0; font:600 15px/20px Inter, sans-serif;">
+          <span style="flex:0 0 auto; color:var(--m-ink3); font-weight:400;">↳</span>
+          <span style="min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">test triage</span>
+          <span data-spec="header.subagentBadge" style="flex:0 0 auto; padding:0 7px; border-radius:999px; background:var(--m-subtle2); color:var(--m-ink2); font:500 10px/16px Inter, sans-serif; letter-spacing:0.05em; text-transform:uppercase;">subagent</span>
+        </div>
+        </sc-if>
+        <sc-if value="{{ subtitleParent }}" hint-placeholder-val="{{ true }}">
         <div data-spec="header.subtitle" style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:400 11px/14px Inter, sans-serif; color:var(--m-ink2);">claude-sonnet-4-5 · /opt/matron/web-journal · <span style="color:var(--m-accent);">running</span></div>
+        </sc-if>
+        <sc-if value="{{ subtitleSubagent }}" hint-placeholder-val="{{ false }}">
+        <div data-spec="header.subtitle" style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:400 11px/14px Inter, sans-serif; color:var(--m-ink2);">of <span style="color:var(--m-ink);">matron-web · deploy</span> · 32 tests fixed · <span style="color:var(--m-accent);">working</span></div>
         </sc-if>
         <sc-if value="{{ titleMini }}" hint-placeholder-val="{{ false }}">
         <div style="display:flex; align-items:center; gap:5px; font:400 11px/14px Inter, sans-serif; color:var(--m-ink2);"><span style="width:6px; height:6px; border-radius:50%; background:var(--m-accent); flex:0 0 auto;"></span><span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">sonnet-4-5</span></div>
@@ -1197,16 +1228,28 @@ nav::-webkit-scrollbar-thumb:hover, pre::-webkit-scrollbar-thumb:hover, textarea
     </header>
 
     <sc-if value="{{ showSubagentStrip }}" hint-placeholder-val="{{ true }}">
-    <div data-screen-label="Subagent strip" data-spec="subagentStrip" style="display:flex; align-items:center; gap:8px; flex:0 0 auto; overflow-x:auto; padding:7px 14px; background:var(--m-panel); border-bottom:1px solid var(--m-line);">
-      <span style="font:500 10px/14px Inter, sans-serif; letter-spacing:0.06em; text-transform:uppercase; color:var(--m-ink3); flex:0 0 auto;">Subagents</span>
-      <button data-spec="subagentStrip.pill" style="display:inline-flex; align-items:center; gap:7px; height:26px; padding:0 11px; border:1px solid var(--m-line2); border-radius:999px; background:transparent; color:var(--m-ink); font:400 12px/16px Inter, sans-serif; cursor:pointer; white-space:nowrap; flex:0 0 auto;" style-hover="background:var(--m-hover);">
-        <span style="width:10px; height:10px; box-sizing:border-box; border:2px solid rgb(13 148 136 / 25%); border-top-color:var(--m-accent); border-radius:50%; animation:m-spin 0.8s linear infinite;"></span>
-        test triage
+    <div data-screen-label="Subagent strip" data-spec="subagentStrip" style="display:flex; align-items:center; gap:0; flex:0 0 auto; padding:7px 14px; background:var(--m-panel); border-bottom:1px solid var(--m-line);">
+      <sc-if value="{{ inSubagent }}" hint-placeholder-val="{{ false }}">
+      <button data-spec="subagentStrip.back" onClick="{{ leaveSubagent }}" title="Back to the parent conversation (Esc)" style="display:inline-flex; align-items:center; gap:6px; height:26px; margin-right:10px; padding:0 11px 0 8px; border:1px solid rgb(13 148 136 / 28%); border-radius:999px; background:var(--m-selected); color:var(--m-accent); font:500 12px/16px Inter, sans-serif; cursor:pointer; white-space:nowrap; flex:0 0 auto; max-width:220px;" style-hover="filter:brightness(1.04);" style-focus="outline:2px solid var(--m-accent); outline-offset:2px;">
+        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:0 0 auto;"><path d="m15 18-6-6 6-6"></path></svg>
+        <span style="min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">matron-web · deploy</span>
       </button>
-      <button style="display:inline-flex; align-items:center; gap:7px; height:26px; padding:0 11px; border:1px solid var(--m-line); border-radius:999px; background:transparent; color:var(--m-ink2); font:400 12px/16px Inter, sans-serif; cursor:pointer; white-space:nowrap; flex:0 0 auto;" style-hover="background:var(--m-hover);">
-        <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="var(--m-green)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 4 4 10-10"></path></svg>
-        docs sweep
-      </button>
+      <span style="width:1px; height:18px; margin-right:10px; background:var(--m-line); flex:0 0 auto;"></span>
+      </sc-if>
+      <div style="display:flex; align-items:center; gap:8px; min-width:0; flex:1 1 auto; overflow-x:auto;">
+        <span style="font:500 10px/14px Inter, sans-serif; letter-spacing:0.06em; text-transform:uppercase; color:var(--m-ink3); flex:0 0 auto;">Subagents</span>
+        <button data-spec="subagentStrip.pill" style="display:inline-flex; align-items:center; gap:7px; height:26px; padding:0 11px; border:1px solid {{ pillBorder0 }}; border-radius:999px; background:transparent; color:var(--m-ink); box-shadow:{{ pillRing0 }}; font:400 12px/16px Inter, sans-serif; cursor:{{ pillCursor0 }}; white-space:nowrap; flex:0 0 auto;" style-hover="background:var(--m-hover);" style-focus="outline:2px solid var(--m-accent); outline-offset:2px;">
+          <span style="width:10px; height:10px; box-sizing:border-box; border:2px solid rgb(13 148 136 / 25%); border-top-color:var(--m-accent); border-radius:50%; animation:m-spin 0.8s linear infinite;"></span>
+          test triage
+        </button>
+        <button style="display:inline-flex; align-items:center; gap:7px; height:26px; padding:0 11px; border:1px solid var(--m-line); border-radius:999px; background:transparent; color:var(--m-ink2); font:400 12px/16px Inter, sans-serif; cursor:pointer; white-space:nowrap; flex:0 0 auto;" style-hover="background:var(--m-hover);" style-focus="outline:2px solid var(--m-accent); outline-offset:2px;">
+          <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="var(--m-green)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 4 4 10-10"></path></svg>
+          docs sweep
+        </button>
+      </div>
+      <sc-if value="{{ notInSubagent }}" hint-placeholder-val="{{ true }}">
+      <button data-spec="subagentStrip.enter" onClick="{{ enterSubagent }}" title="Demo: open the running subagent" style="margin-left:10px; border:1px dashed var(--m-line2); border-radius:6px; background:transparent; color:var(--m-ink3); font:500 10px/14px Inter, sans-serif; cursor:pointer; padding:1px 5px; flex:0 0 auto;" style-hover="background:var(--m-hover);">open subagent</button>
+      </sc-if>
     </div>
     </sc-if>
 
@@ -1909,7 +1952,7 @@ class Component extends DCLogic {
     uploadOpen: false, caption: "", prompt: null, sent: [], selected: 0,
     chatW: 1200, usageHover: false, tab: "active", recording: false, recSecs: 0,
     uploadIdx: 0, mode: "live", newSessionOpen: false, actionsOpen: false, browserTools: false,
-    msgMenuOpen: false, sourceOpen: false,
+    msgMenuOpen: false, sourceOpen: false, inSubagent: false,
   };
 
   COMMANDS = [
@@ -1952,11 +1995,22 @@ class Component extends DCLogic {
       if (w && Math.abs(w - this.state.chatW) > 4) this.setState({ chatW: w });
     });
     if (this._chat) this.ro.observe(this._chat);
+    this.onKey = (e) => {
+      if (e.key !== "Escape") return;
+      // Escape unwinds one layer at a time, outermost-last (§10.11).
+      if (this.state.sourceOpen) this.setState({ sourceOpen: false });
+      else if (this.state.uploadOpen) this.setState({ uploadOpen: false });
+      else if (this.state.newSessionOpen) this.setState({ newSessionOpen: false });
+      else if (this.state.msgMenuOpen || this.state.actionsOpen) this.setState({ msgMenuOpen: false, actionsOpen: false });
+      else if (this.state.inSubagent) this.setState({ inSubagent: false });
+    };
+    window.addEventListener("keydown", this.onKey);
     requestAnimationFrame(() => this.scrollDown());
   }
   componentWillUnmount() {
     if (this.mq) this.mq.removeEventListener("change", this.onMq);
     if (this.ro) this.ro.disconnect();
+    if (this.onKey) window.removeEventListener("keydown", this.onKey);
   }
 
   paletteItems() {
@@ -2027,6 +2081,8 @@ class Component extends DCLogic {
       usageLeave: () => this.setState({ usageHover: false }),
       titleFull: s.chatW >= 560,
       titleMini: s.chatW < 560,
+      subtitleParent: s.chatW >= 560 && !s.inSubagent,
+      subtitleSubagent: s.chatW >= 560 && s.inSubagent,
       titlePopover: s.titleHover && s.chatW < 560,
       titleEnter: () => this.setState({ titleHover: true }),
       titleLeave: () => this.setState({ titleHover: false }),
@@ -2061,6 +2117,13 @@ class Component extends DCLogic {
       actionsTriggerBg: s.actionsOpen ? "var(--m-active)" : "transparent",
       toggleActions: () => this.setState((p) => ({ actionsOpen: !p.actionsOpen })),
       closeActions: () => this.setState({ actionsOpen: false }),
+      inSubagent: s.inSubagent,
+      notInSubagent: !s.inSubagent,
+      enterSubagent: () => this.setState({ inSubagent: true }),
+      leaveSubagent: () => this.setState({ inSubagent: false }),
+      pillBorder0: s.inSubagent ? "var(--m-accent)" : "var(--m-line2)",
+      pillRing0: s.inSubagent ? "0 0 0 2px var(--m-selected)" : "none",
+      pillCursor0: s.inSubagent ? "default" : "pointer",
       msgMenuOpen: s.msgMenuOpen,
       openMsgMenu: (e) => { e.preventDefault(); this.setState({ msgMenuOpen: true }); },
       closeMsgMenu: () => this.setState({ msgMenuOpen: false }),

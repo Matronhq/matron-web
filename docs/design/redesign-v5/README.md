@@ -125,3 +125,21 @@ Three fixes, now written as §10.10 (*the card owns its chrome; the payload supp
 3. **Quoted text clamps to 3 lines, never ellipses at one.** `…i see a sub agen…` cannot answer the only question the operator has — *what am I about to send?* Quote it with a 2px left rule and clamp to three lines.
 
 The **released** state stays on the card and only re-inks (resolution line, rule, quote → tertiary): no reflow, and no re-emitting `📤 Sending 1 queued message:` + a numbered list as bare thread prose, which duplicated the card's content and reintroduced payload-emoji-as-chrome one message lower.
+
+### Subagent escape (2026-07-26)
+
+A "back to the parent conversation" affordance in the subagent strip, written up as §10.11.
+
+The load-bearing detail: **live's `.mj_SubagentStrip` is itself `overflow-x: auto`**, so a back button placed in it would scroll away exactly when there are enough subagents to get lost among — the moment you most need it. The design splits the strip into a non-scrolling row: **pinned back chip → hairline → an inner `overflow-x` container holding the label + pills.** Only the pills move.
+
+**The header names the child; the chip names the parent.** An earlier draft left the parent in the header *title* while the chip also offered to return there, so the mock offered to navigate you to where you already were — naming a destination only informs if the current context is named something else. Inside a subagent the header now reads `↳ test triage` with a `SUBAGENT` badge and a subtitle `of matron-web · deploy · 32 tests fixed · working`.
+
+The parent appears **twice on purpose, with two jobs**: *stated* in the subtitle as hierarchy (read-only, part of the sentence describing where you are) and *actionable* on the chip as the escape target. The rule is about which slot, not the count — what must never happen is the parent in the header **title** while the chip offers to return there. The ringed current pill drops to confirmation and sibling-disambiguation rather than the sole indicator you had descended.
+
+Two more rules: the chip **names its destination** (the parent conversation's title, ellipsised at 220px) rather than saying just "Back"; and it reads as *leave*, not *another sibling* — same 26px pill geometry as the subagent pills, but accent ink on `--m-selected` with a left chevron. Same family, different action.
+
+The strip now answers both questions an operator has inside a nested context: **where am I** (the current pill takes an accent border + 2px ring and stops being clickable — `.mj_SubagentPill_current` already does this in live, so the design defers to it) and **how do I get out**.
+
+`Escape` is bound to the whole stack and unwinds **one layer per press, outermost-last**: source viewer → upload → new-session → open menu → subagent context.
+
+New states: `light|dark-subagent-view`, plus `light-subagent-narrow` at an 820px pane specifically to prove the escape stays pinned while the pills scroll. 35 states total. The dashed "open subagent" chip in the mock is a devtool to make the context reachable by clicking — `data-spec="subagentStrip.enter"`, do not implement.

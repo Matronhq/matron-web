@@ -2,9 +2,9 @@
 <html lang="en" data-theme="light">
 <head>
 <meta charset="utf-8">
-<title>Matron · light-tool-expanded</title>
-<meta name="matron-state" content="light-tool-expanded">
-<meta name="matron-state-note" content="Tool card expanded (output visible) alongside the expanded diff card.">
+<title>Matron · light-subagent-narrow</title>
+<meta name="matron-state" content="light-subagent-narrow">
+<meta name="matron-state-note" content="ROUND 2 · Inside a subagent at an 820px pane — the back chip stays pinned while the pills scroll; header title collapses but still names the child.">
 <style>
 @font-face { font-family: Inter; font-weight: 100 900; font-style: normal; font-display: block; src: url("./fonts/InterVariable.woff2") format("woff2"); }
 @font-face { font-family: "Fira Code"; font-weight: 300 700; font-style: normal; font-display: block; src: url("./fonts/FiraCode%5Bwght%5D.ttf") format("truetype"); }
@@ -63,7 +63,7 @@ nav::-webkit-scrollbar-thumb:hover, pre::-webkit-scrollbar-thumb:hover, textarea
 </style>
 </head>
 <body>
-
+<div style="width:820px; height:100vh; overflow:hidden;">
 
 <div data-screen-label="Matron redesign" style="display:flex; width:100%; height:100vh; overflow:hidden; background:var(--m-app); color:var(--m-ink); font:400 14px/1.55 Inter, 'Helvetica Neue', sans-serif;">
 
@@ -175,51 +175,32 @@ nav::-webkit-scrollbar-thumb:hover, pre::-webkit-scrollbar-thumb:hover, textarea
       
       <div style="position:relative; min-width:0; display:flex; flex-direction:column; gap:1px;">
         
-        <div data-spec="header.title" style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:600 15px/20px Inter, sans-serif;">matron-web · deploy</div>
+        
+        <div data-spec="header.title" style="display:flex; align-items:baseline; gap:6px; min-width:0; font:600 15px/20px Inter, sans-serif;">
+          <span style="flex:0 0 auto; color:var(--m-ink3); font-weight:400;">↳</span>
+          <span style="min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">test triage</span>
+          <span data-spec="header.subagentBadge" style="flex:0 0 auto; padding:0 7px; border-radius:999px; background:var(--m-subtle2); color:var(--m-ink2); font:500 10px/16px Inter, sans-serif; letter-spacing:0.05em; text-transform:uppercase;">subagent</span>
+        </div>
         
         
         
-        <div data-spec="header.subtitle" style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:400 11px/14px Inter, sans-serif; color:var(--m-ink2);">claude-sonnet-4-5 · /opt/matron/web-journal · <span style="color:var(--m-accent);">running</span></div>
         
-        
+        <div style="display:flex; align-items:center; gap:5px; font:400 11px/14px Inter, sans-serif; color:var(--m-ink2);"><span style="width:6px; height:6px; border-radius:50%; background:var(--m-accent); flex:0 0 auto;"></span><span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">sonnet-4-5</span></div>
         
         
       </div>
       <span style="flex:1;"></span>
       <div style="position:relative; flex:0 0 auto; display:flex; align-items:center;">
       
-      <div data-spec="header.usage" style="display:grid; grid-template-columns:1fr 1fr; column-gap:16px; row-gap:4px; width:300px; flex:0 0 auto;">
-        <div data-spec="header.usage.row" style="display:grid; grid-template-columns:24px 1fr 32px; align-items:center; gap:7px; font:500 10.5px/13px 'Fira Code', monospace; color:var(--m-ink);">
-          <span data-spec="header.usage.label" style="text-align:right;">ctx</span>
-          <span style="display:block; height:4px; border-radius:99px; background:var(--m-track); overflow:hidden;"><span style="display:block; height:100%; width:72%; border-radius:inherit; background:var(--m-amber);"></span></span>
-          <span>72%</span>
-        </div>
-        <div style="display:grid; grid-template-columns:24px 1fr 32px; align-items:center; gap:7px; font:400 10.5px/13px 'Fira Code', monospace; color:var(--m-ink2);">
-          <span style="text-align:right;">5h</span>
-          <span style="display:block; height:4px; border-radius:99px; background:var(--m-track); overflow:hidden;"><span style="display:block; height:100%; width:34%; border-radius:inherit; background:var(--m-green);"></span></span>
-          <span style="color:var(--m-ink3);">34%</span>
-        </div>
-        <div style="display:grid; grid-template-columns:24px 1fr 32px; align-items:center; gap:7px; font:400 10.5px/13px 'Fira Code', monospace; color:var(--m-ink2);">
-          <span style="text-align:right;">fbl</span>
-          <span style="display:block; height:4px; border-radius:99px; background:var(--m-track); overflow:hidden;"><span style="display:block; height:100%; width:18%; border-radius:inherit; background:var(--m-green);"></span></span>
-          <span style="color:var(--m-ink3);">18%</span>
-        </div>
-        <div style="display:grid; grid-template-columns:24px 1fr 32px; align-items:center; gap:7px; font:400 10.5px/13px 'Fira Code', monospace; color:var(--m-ink2);">
-          <span style="text-align:right;">wk</span>
-          <span style="display:block; height:4px; border-radius:99px; background:var(--m-track); overflow:hidden;"><span style="display:block; height:100%; width:61%; border-radius:inherit; background:var(--m-amber);"></span></span>
-          <span style="color:var(--m-ink3);">61%</span>
-        </div>
-      </div>
       
-      
-      
-      </div>
-      
-      <span style="width:1px; height:26px; background:var(--m-line); flex:0 0 auto;"></span>
-      <button data-spec="header.compact" title="Compact context" style="display:inline-flex; height:28px; align-items:center; gap:6px; padding:0 10px; border:1px solid var(--m-line2); border-radius:999px; background:transparent; color:var(--m-ink2); font:500 12px/16px Inter, sans-serif; cursor:pointer; flex:0 0 auto;" data-style-hover="background:var(--m-hover); color:var(--m-ink);">
-        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 9 4 4M4 8V4h4"></path><path d="m15 15 5 5M20 16v4h-4"></path></svg>
-        Compact
+      <button style="display:grid; grid-template-columns:24px 72px 32px; align-items:center; gap:7px; border:0; background:transparent; padding:4px 2px; cursor:default; font:500 10.5px/13px 'Fira Code', monospace; color:var(--m-ink);">
+        <span style="text-align:right;">ctx</span>
+        <span style="display:block; height:4px; border-radius:99px; background:var(--m-track); overflow:hidden;"><span style="display:block; height:100%; width:72%; border-radius:inherit; background:var(--m-amber);"></span></span>
+        <span>72%</span>
       </button>
+      
+      
+      </div>
       
       <span style="position:relative; flex:0 0 auto;">
       <button data-spec="header.more" title="Conversation actions" style="display:inline-flex; width:32px; height:32px; align-items:center; justify-content:center; border:0; border-radius:8px; background:transparent; color:var(--m-ink2); cursor:pointer;" data-style-hover="background:var(--m-hover);">
@@ -232,9 +213,15 @@ nav::-webkit-scrollbar-thumb:hover, pre::-webkit-scrollbar-thumb:hover, textarea
     
     <div data-screen-label="Subagent strip" data-spec="subagentStrip" style="display:flex; align-items:center; gap:0; flex:0 0 auto; padding:7px 14px; background:var(--m-panel); border-bottom:1px solid var(--m-line);">
       
+      <button data-spec="subagentStrip.back" title="Back to the parent conversation (Esc)" style="display:inline-flex; align-items:center; gap:6px; height:26px; margin-right:10px; padding:0 11px 0 8px; border:1px solid rgb(13 148 136 / 28%); border-radius:999px; background:var(--m-selected); color:var(--m-accent); font:500 12px/16px Inter, sans-serif; cursor:pointer; white-space:nowrap; flex:0 0 auto; max-width:220px;" data-style-hover="filter:brightness(1.04);" data-style-focus="outline:2px solid var(--m-accent); outline-offset:2px;">
+        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:0 0 auto;"><path d="m15 18-6-6 6-6"></path></svg>
+        <span style="min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">matron-web · deploy</span>
+      </button>
+      <span style="width:1px; height:18px; margin-right:10px; background:var(--m-line); flex:0 0 auto;"></span>
+      
       <div style="display:flex; align-items:center; gap:8px; min-width:0; flex:1 1 auto; overflow-x:auto;">
         <span style="font:500 10px/14px Inter, sans-serif; letter-spacing:0.06em; text-transform:uppercase; color:var(--m-ink3); flex:0 0 auto;">Subagents</span>
-        <button data-spec="subagentStrip.pill" style="display:inline-flex; align-items:center; gap:7px; height:26px; padding:0 11px; border:1px solid var(--m-line2); border-radius:999px; background:transparent; color:var(--m-ink); box-shadow:none; font:400 12px/16px Inter, sans-serif; cursor:pointer; white-space:nowrap; flex:0 0 auto;" data-style-hover="background:var(--m-hover);" data-style-focus="outline:2px solid var(--m-accent); outline-offset:2px;">
+        <button data-spec="subagentStrip.pill" style="display:inline-flex; align-items:center; gap:7px; height:26px; padding:0 11px; border:1px solid var(--m-accent); border-radius:999px; background:transparent; color:var(--m-ink); box-shadow:0 0 0 2px var(--m-selected); font:400 12px/16px Inter, sans-serif; cursor:default; white-space:nowrap; flex:0 0 auto;" data-style-hover="background:var(--m-hover);" data-style-focus="outline:2px solid var(--m-accent); outline-offset:2px;">
           <span style="width:10px; height:10px; box-sizing:border-box; border:2px solid rgb(13 148 136 / 25%); border-top-color:var(--m-accent); border-radius:50%; animation:m-spin 0.8s linear infinite;"></span>
           test triage
         </button>
@@ -243,8 +230,6 @@ nav::-webkit-scrollbar-thumb:hover, pre::-webkit-scrollbar-thumb:hover, textarea
           docs sweep
         </button>
       </div>
-      
-      <button data-spec="subagentStrip.enter" title="Demo: open the running subagent" style="margin-left:10px; border:1px dashed var(--m-line2); border-radius:6px; background:transparent; color:var(--m-ink3); font:500 10px/14px Inter, sans-serif; cursor:pointer; padding:1px 5px; flex:0 0 auto;" data-style-hover="background:var(--m-hover);">open subagent</button>
       
     </div>
     
@@ -274,16 +259,12 @@ nav::-webkit-scrollbar-thumb:hover, pre::-webkit-scrollbar-thumb:hover, textarea
 
           <div style="max-width:680px; border:1px solid var(--m-line); border-radius:10px; background:var(--m-panel); overflow:hidden;">
             <button data-spec="event.tool_output.summary" style="display:flex; width:100%; align-items:center; gap:10px; padding:9px 12px; border:0; background:transparent; color:var(--m-ink); text-align:left; cursor:pointer;" data-style-hover="background:var(--m-hover);">
-              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="color:var(--m-ink3); flex:0 0 auto; transform:rotate(0deg); transition:transform 120ms;"><path d="m6 9 6 6 6-6"></path></svg>
+              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="color:var(--m-ink3); flex:0 0 auto; transform:rotate(-90deg); transition:transform 120ms;"><path d="m6 9 6 6 6-6"></path></svg>
               <code style="font:500 12.5px/18px 'Fira Code', monospace; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">$ pnpm build</code>
               <span style="flex:1;"></span>
               <span style="padding:1px 8px; border-radius:999px; background:var(--m-diff-add); color:var(--m-green); font:600 11px/16px Inter, sans-serif; flex:0 0 auto;">exit 0</span>
               <span style="font:400 11px/14px Inter, sans-serif; color:var(--m-ink3); flex:0 0 auto;">41s</span>
             </button>
-            
-            <pre style="margin:0; padding:10px 12px; border-top:1px solid var(--m-line); background:var(--m-raised); font:400 12px/19px 'Fira Code', monospace; color:var(--m-ink2); white-space:pre-wrap; overflow-wrap:anywhere; max-height:280px; overflow:auto;">webpack 5.99 compiled successfully in 38412 ms
-webapp/ written (11.2 MB, 214 assets)
-backup: webapp.bak.20260724T100212Z</pre>
             
           </div>
 
@@ -413,6 +394,6 @@ backup: webapp.bak.20260724T100212Z</pre>
 
   
 </div>
-
+</div>
 </body>
 </html>

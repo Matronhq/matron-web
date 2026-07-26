@@ -13,6 +13,7 @@ date: 2026-07-25T19:50:00Z
 tree: 0bea310ef3e8
 
 ### Updated in this project
+- Added a pinned "back to parent" escape in the subagent strip (§10.11): the strip becomes a non-scrolling row with the chip outside the pill scroll container, chip names the parent, Escape unwinds one layer per press. 3 new static states incl. a narrow-pane proof.
 - Added BRIDGE-PAYLOAD-PROPOSAL.md: additive payload changes (structured queued prompts, prompt kind + action intents, limit ids/resets_at, tool exit_code/duration_ms, diff counts, image dimensions) that remove the client's string-parsing workarounds. payload.body retained for text clients.
 - Aligned every data-spec tag to the granularity of its component-map selector; split multi-rung components (composer footer/shell/input, modal scrim/card, row/badge).
 - Split map status into `status` (code exists) and `visual` (matches design): 17 aligned, 10 divergent, 36 unverified.

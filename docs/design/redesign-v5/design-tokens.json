@@ -3,7 +3,7 @@
   "meta": {
     "name": "Matron UI redesign",
     "source": "Matron Redesign.dc.html",
-    "generated": "2026-07-26T15:05Z",
+    "generated": "2026-07-26T17:05Z",
     "derivation": "Colour tokens and font shorthands are PARSED from the rendering artifact, not hand-written. Regenerate after any change rather than editing this file. States, breakpoints, layering and intent (below) are hand-authored — they cannot be probed from a static render.",
     "fontStacks": {
       "ui": "Inter, 'Helvetica Neue', sans-serif",
@@ -73,6 +73,7 @@
         "header",
         "header.compact",
         "header.more",
+        "header.subagentBadge",
         "header.subtitle",
         "header.title",
         "header.titlePopover",
@@ -137,10 +138,12 @@
         "sidebar.tab.active",
         "sidebar.tabs",
         "subagentStrip",
+        "subagentStrip.back",
+        "subagentStrip.enter",
         "subagentStrip.pill"
       ],
       "selectorMap": "component-map.json",
-      "staticStates": "static/index.json — 32 runtime-free files with self-hosted fonts (12 cover the round-2 surfaces)",
+      "staticStates": "static/index.json — 35 runtime-free files with self-hosted fonts",
       "snippet": "[...document.querySelectorAll('[data-spec]')].map(el => ({ name: el.dataset.spec, target: el.dataset.target, cs: getComputedStyle(el) }))",
       "devtool": "data-spec values starting 'devtool.' and 'gallery' are handoff affordances — do not implement",
       "granularity": "Tagged at the same granularity as component-map.json's selectors; multi-rung components are split so a diff never compares a container against a child."
@@ -656,6 +659,13 @@
       "json": "--m-raised well, 1px --m-line, radius 10, 12/19 mono, keys in --m-accent, scrolls both axes with themed scrollbars, max-height 46vh",
       "footer": "'Read-only · N bytes' + Close (secondary) + Copy JSON (the single primary)",
       "rule": "read-only by definition — no editable affordance, and the byte count is stated so a truncation is visible"
+    },
+    "subagentStrip": {
+      "structure": "non-scrolling flex row: pinned back chip (only inside a subagent) -> 1px x 18px hairline -> inner overflow-x container with the SUBAGENTS label + pills",
+      "back": "26px pill, padding 0 11px 0 8px, 1px solid rgb(13 148 136 / 28%), --m-selected fill, --m-accent ink, 500 12/16, 13px left chevron, parent title ellipsised at max 220px, bound to Escape",
+      "current": "the pill for the subagent you are in: accent border + 2px --m-selected ring, cursor default, not clickable",
+      "rule": "the escape never scrolls with the pills — it is pinned outside the scroll container",
+      "contextNaming": "The HEADER is the primary 'where am I' signal: inside a subagent it reads '↳ <child>' + a SUBAGENT badge, subtitle 'of <parent> · <progress> · <run-state>'. The parent is named twice with two distinct jobs — STATED in the subtitle as hierarchy (read-only) and ACTIONABLE on the back chip as the escape target. The prohibited state is the parent occupying the header TITLE while the chip offers to return there; the repetition itself is intended. The ringed current pill is confirmation and sibling-disambiguation, not the sole indicator."
     }
   },
   "contentTypes": {
@@ -877,6 +887,13 @@
         "both themes"
       ]
     },
-    "payloadVsChrome": "A card's icon, label and count are design elements. Strip leading emoji and 'Label (n):' prefixes from payload bodies; promote the count into a chip. Clamp quoted user text to 3 lines, never ellipse at one. Upstream fix proposed in BRIDGE-PAYLOAD-PROPOSAL.md §1 — once items[] arrives untruncated with a kind, the stripping branch is deleted rather than maintained."
+    "payloadVsChrome": "A card's icon, label and count are design elements. Strip leading emoji and 'Label (n):' prefixes from payload bodies; promote the count into a chip. Clamp quoted user text to 3 lines, never ellipse at one. Upstream fix proposed in BRIDGE-PAYLOAD-PROPOSAL.md §1 — once items[] arrives untruncated with a kind, the stripping branch is deleted rather than maintained.",
+    "escapes": {
+      "pinned": "an escape from a nested context sits outside any scrolling run",
+      "named": "it carries its destination's title, not just 'Back'",
+      "ink": "same geometry as siblings, accent ink — same family, different action",
+      "keyboard": "Escape unwinds one layer at a time, outermost-last: source viewer -> upload -> new-session -> open menu -> subagent context",
+      "namedRequires": "Naming the destination only informs if the current context is named something else — so the header TITLE must name the child. The parent may still be stated in the subtitle as hierarchy; the rule constrains which slot, not how many times."
+    }
   }
 }
