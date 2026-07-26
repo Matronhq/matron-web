@@ -43,6 +43,7 @@ import {
     CompactIcon,
     ComposeIcon,
     FileEditIcon,
+    FileIcon,
     KebabIcon,
     MarkdownIcon,
     MarkAllReadIcon,
@@ -61,6 +62,7 @@ import {
     StarIcon,
     TrashIcon,
     UnarchiveIcon,
+    UploadTrayIcon,
 } from "./icons";
 import { createLongPressController, type LongPressController } from "./longPress";
 import { MarkdownBody, markdownToPlainText } from "./markdown";
@@ -4600,24 +4602,43 @@ function UploadConfirmPage({
             <header className="mj_UploadConfirm_header">
                 {/* §10.1/§10.2: the title is ALWAYS "Send file" (never the filename — the
                     filename lives in the file-info row below). "n of N" is a chip. */}
+                <UploadTrayIcon className="mj_UploadConfirm_uploadIcon" aria-hidden />
                 <h2 className="mj_UploadConfirm_title">Send file</h2>
                 {staged.total > 1 && (
                     <span className="mj_UploadConfirm_count">
                         {position} of {staged.total}
                     </span>
                 )}
+                <span className="mj_UploadConfirm_headerSpacer" />
+                {/* ✕ is DESTRUCTIVE: cancelStagedFiles() irreversibly clears the ENTIRE staged
+                    queue (every file + all typed captions), not just this page. Its accessible
+                    name must disclose that — count-aware, so a SR user hears what is discarded.
+                    Same handler + semantics as the footer "Cancel all" (hidden for a lone file). */}
+                <button
+                    className="mj_UploadConfirm_close"
+                    aria-label={staged.total > 1 ? "Cancel all uploads" : "Cancel upload"}
+                    disabled={staged.confirming}
+                    onClick={() => client.cancelStagedFiles()}
+                >
+                    <CloseIcon />
+                </button>
             </header>
             <div className="mj_UploadConfirm_body">
-                {isImage && previewUrl ? (
-                    <img className="mj_UploadConfirm_preview" src={previewUrl} alt={head.file.name} />
-                ) : (
-                    <div className="mj_UploadConfirm_previewPlaceholder" aria-hidden="true">
-                        <AttachmentIcon />
+                {/* Preview + file-info are ONE card: a real image fills the top, otherwise a
+                    hatched "image preview" placeholder; the file-info row sits under a hairline. */}
+                <div className="mj_UploadConfirm_previewCard">
+                    {isImage && previewUrl ? (
+                        <img className="mj_UploadConfirm_preview" src={previewUrl} alt={head.file.name} />
+                    ) : (
+                        <div className="mj_UploadConfirm_previewPlaceholder" aria-hidden="true">
+                            <span>image preview</span>
+                        </div>
+                    )}
+                    <div className="mj_UploadConfirm_fileMeta">
+                        <FileIcon className="mj_UploadConfirm_fileIcon" aria-hidden />
+                        <span className="mj_UploadConfirm_fileName">{head.file.name}</span>
+                        <span className="mj_FileSize">{formatBytes(head.file.size)}</span>
                     </div>
-                )}
-                <div className="mj_UploadConfirm_fileMeta">
-                    <span className="mj_UploadConfirm_fileName">{head.file.name}</span>
-                    <span className="mj_FileSize">{formatBytes(head.file.size)}</span>
                 </div>
                 {staged.total > 1 && (
                     <div className="mj_UploadConfirm_strip" role="list" aria-label="Queued files">
@@ -4687,6 +4708,7 @@ function UploadConfirmPage({
                     Skip
                 </button>
                 <button className="mj_UploadConfirm_send" aria-label="Send" disabled={!canSend} onClick={send}>
+                    <SendIcon />
                     Send
                 </button>
             </footer>

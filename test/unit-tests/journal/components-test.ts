@@ -2058,6 +2058,50 @@ describe("UploadConfirmDialog", () => {
         expect(confirm).toHaveBeenCalledWith(headId, "look here");
     });
 
+    it("single file: header has tray+plane glyphs, no count/strip, and the ✕ is honestly labeled 'Cancel upload' and truly clears the queue + closes the dialog", async () => {
+        const client = signedInClient();
+        rendered = await renderClient(client);
+        await stage(client, [new File(["only"], "solo.pdf", { type: "application/pdf" })]);
+
+        const dialog = rendered.container.querySelector<HTMLElement>('[role="dialog"]')!;
+        const header = dialog.querySelector(".mj_UploadConfirm_header")!;
+        expect(header.querySelector(".mj_UploadConfirm_uploadIcon")).not.toBeNull();
+        expect(dialog.querySelector(".mj_UploadConfirm_send svg")).not.toBeNull();
+        expect(dialog.querySelector(".mj_UploadConfirm_count")).toBeNull();
+        expect(dialog.querySelector(".mj_UploadConfirm_strip")).toBeNull();
+        expect(dialog.querySelector(".mj_UploadConfirm_previewPlaceholder")).not.toBeNull();
+
+        // The ✕ is destructive (clears the queue) — its accessible name must say so, not "Close".
+        const close = button(dialog, "Cancel upload");
+        expect(header.contains(close)).toBe(true);
+        expect(dialog.querySelector('button[aria-label="Close"]')).toBeNull();
+        // The footer "Cancel all" is multi-file only; a lone file dismisses via the ✕.
+        expect(dialog.querySelector('button[aria-label="Cancel all"]')).toBeNull();
+
+        // Real outcome: the whole staged queue is discarded and the dialog unmounts.
+        await act(async () => close.click());
+        expect(client.getSnapshot().stagedUploads).toBeUndefined();
+        expect(rendered.container.querySelector('[role="dialog"]')).toBeNull();
+    });
+
+    it("multi-file: the ✕ is labeled 'Cancel all uploads' and discards the ENTIRE queue (every file) + closes the dialog", async () => {
+        const client = signedInClient();
+        rendered = await renderClient(client);
+        await stage(client, [
+            new File(["a"], "a.txt", { type: "text/plain" }),
+            new File(["b"], "b.txt", { type: "text/plain" }),
+        ]);
+
+        const dialog = rendered.container.querySelector<HTMLElement>('[role="dialog"]')!;
+        expect(client.getSnapshot().stagedUploads!.items.length).toBe(2);
+        const close = button(dialog, "Cancel all uploads");
+        expect(dialog.querySelector('button[aria-label="Close"]')).toBeNull();
+
+        await act(async () => close.click());
+        expect(client.getSnapshot().stagedUploads).toBeUndefined();
+        expect(rendered.container.querySelector('[role="dialog"]')).toBeNull();
+    });
+
     it("makes background keyboard controls inert and restores composer focus when the dialog closes", async () => {
         const client = signedInClient();
         rendered = await renderClient(client);
