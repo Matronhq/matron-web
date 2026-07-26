@@ -31,6 +31,8 @@ import React, {
 import ReactMarkdown, { type Components, type ExtraProps } from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
+import remarkParse from "remark-parse";
+import { unified } from "unified";
 
 import { copyText } from "./clipboard";
 
@@ -64,6 +66,113 @@ const ALIASES = {
 };
 
 const HIGHLIGHT_OPTIONS = { languages: CURATED, aliases: ALIASES };
+
+/**
+ * Shared resource guard: above this size/line budget the parser is skipped and the raw text
+ * is shown/copied instead. Both MarkdownBody (render) and markdownToPlainText (Copy) gate on
+ * this so a ~220KB / 20k-node message never parses on the main thread (~5.6s / 305MB → wedge).
+ */
+export function exceedsMarkdownRenderLimit(text: string): boolean {
+    if (text.length > MARKDOWN_MAX) return true;
+    // Count logical line endings — CR, LF, and CRLF each as ONE (CRLF matches once, not twice).
+    // Counting only LF let a CR-only / CRLF payload slip past the line budget and still parse
+    // to tens of thousands of nodes → a multi-second main-thread wedge in render AND Copy.
+    const lineEndings = text.match(/\r\n|\r|\n/g)?.length ?? 0;
+    return lineEndings >= MARKDOWN_MAX_LINES;
+}
+
+// Parse markdown SOURCE to an mdast tree with the SAME GFM extensions MarkdownBody renders
+// from, so the plain-text extraction agrees with what the operator sees. A regex stripper is
+// wrong here: it deletes paired intraword underscores (AWS_ACCESS_KEY_ID, foo_bar_baz) that
+// CommonMark never treats as emphasis, silently corrupting identifiers/paths/config on paste.
+const plainTextProcessor = unified().use(remarkParse).use(remarkGfm);
+
+interface MdastNode {
+    type: string;
+    value?: string;
+    alt?: string | null;
+    // GFM task-list state lives here, NOT in the child text: true = [x], false = [ ], null/
+    // undefined = an ordinary (non-task) list item.
+    checked?: boolean | null;
+    children?: MdastNode[];
+}
+
+// Node types whose children are joined WITHOUT a separator (inline runs + block wrappers
+// whose own line break is provided by their block parent).
+const INLINE_MDAST_TYPES = new Set([
+    "paragraph",
+    "heading",
+    "emphasis",
+    "strong",
+    "delete",
+    "link",
+    "linkReference",
+    "tableCell",
+    "footnote",
+    "footnoteReference",
+]);
+
+function mdastToText(node: MdastNode): string {
+    switch (node.type) {
+        // Literal nodes carry verbatim text — including intraword underscores, escaped
+        // punctuation (already unescaped by the parser: `\*` → "*"), inline code, and the full
+        // body of a fenced/indented code block.
+        case "text":
+        case "inlineCode":
+        case "code":
+        case "html":
+            return node.value ?? "";
+        case "image":
+        case "imageReference":
+            return node.alt ?? "";
+        case "break":
+            return "\n";
+        case "thematicBreak":
+            return "";
+        default:
+            break;
+    }
+    const children = node.children ?? [];
+    if (node.type === "table") {
+        // Rows on their own lines; cells tab-separated.
+        return children.map(mdastToText).join("\n");
+    }
+    if (node.type === "tableRow") {
+        return children.map(mdastToText).join("\t");
+    }
+    if (INLINE_MDAST_TYPES.has(node.type)) {
+        return children.map(mdastToText).join("");
+    }
+    // Block container (root, list, listItem, blockquote, footnoteDefinition, …): its block
+    // children are separated by a blank line.
+    const body = children
+        .map(mdastToText)
+        .filter((part) => part.length > 0)
+        .join("\n\n");
+    // GFM task-list item: preserve the checkbox marker (state is on listItem.checked, never in
+    // the child text) so pasted checklists keep done/todo distinct.
+    if (node.type === "listItem" && node.checked != null) {
+        return `${node.checked ? "[x]" : "[ ]"} ${body}`;
+    }
+    return body;
+}
+
+/**
+ * Reduce markdown SOURCE to readable plain text for the "Copy" menu action ("Copy as
+ * Markdown" keeps the raw body). Walks the parsed mdast and concatenates its text, so
+ * technical identifiers with intraword underscores, escaped punctuation, inline code, and
+ * fenced-code content survive exactly as rendered.
+ */
+export function markdownToPlainText(source: string): string {
+    // Above the render budget, MarkdownBody shows the raw text unparsed — Copy agrees with it
+    // and skips the parse entirely, so a huge message never wedges the main thread.
+    if (exceedsMarkdownRenderLimit(source)) return source;
+    const tree = plainTextProcessor.parse(source) as unknown as MdastNode;
+    return mdastToText(tree)
+        .replace(/[^\S\n]+\n/g, "\n")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
+}
 
 interface HighlightNode {
     type: string;
@@ -267,12 +376,7 @@ class MarkdownErrorBoundary extends Component<MarkdownErrorBoundaryProps, Markdo
 }
 
 function MarkdownBodyComponent({ text, streaming = false, label }: MarkdownBodyProps): React.ReactElement {
-    let newlineCount = 0;
-    for (let index = 0; index < text.length && newlineCount < MARKDOWN_MAX_LINES; index += 1) {
-        if (text.charCodeAt(index) === 10) newlineCount += 1;
-    }
-
-    if (text.length > MARKDOWN_MAX || newlineCount >= MARKDOWN_MAX_LINES) {
+    if (exceedsMarkdownRenderLimit(text)) {
         return <div className="mj_MessageText mj_MarkdownRaw">{text}</div>;
     }
 
