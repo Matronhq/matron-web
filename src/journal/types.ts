@@ -276,6 +276,113 @@ export function parentPresent(c: Conversation, ids: ReadonlySet<string>): boolea
     return isSubChat(c) && c.parent_convo_id !== c.id && c.parent_convo_id != null && ids.has(c.parent_convo_id);
 }
 
+export type ChildSidebarPlacement = "nested" | "top-level" | "hidden";
+
+/**
+ * #536: precomputed lookups shared by every sidebar-visibility consumer so the SAME
+ * classification drives rendering, selection, unread aggregation, the desktop badge, and
+ * mark-all. Build it once per derivation from the conversation list + the archived set.
+ * `placement` holds each conversation's fully-resolved Active/Favorites placement (see
+ * buildSidebarIndex) — consumers READ it rather than re-deriving, so no two consumers can
+ * disagree and no approximation of "is the parent a real top-level row" survives.
+ */
+export interface SidebarIndex {
+    /** Every conversation id, archived or not — distinguishes archived-parent from orphan. */
+    allIds: Set<string>;
+    /** id → conversation. */
+    byId: Map<string, Conversation>;
+    /** id → fully-resolved Active/Favorites placement (memoized, cycle-safe). */
+    placement: Map<string, ChildSidebarPlacement>;
+}
+
+/**
+ * #536 (terminal): resolve EVERY conversation's Active/Favorites placement once, through
+ * the SAME recursive classifier, memoized and cycle-safe. This removes the last
+ * approximation — a running child nests ONLY when its direct parent's ACTUAL resolved
+ * placement is "top-level" (a real, rendered top-level row); if the parent is archived,
+ * hidden, or itself nested, the child cannot nest and follows the transient rule directly
+ * (running → "top-level", done/idle → "hidden"). So a running descendant is always
+ * reachable — nested under a real top-level parent, or top-level itself — never lost, at
+ * any tree depth.
+ *
+ * Placement rules per conversation:
+ *  - not a subchat → "top-level" (its Active presence is gated by archived at call sites).
+ *  - subchat, parent missing / self-referential / cyclic → "top-level" (orphan recovery).
+ *  - subchat, parent present, NOT running → "hidden" (one-shot: a finished child lingers
+ *    nowhere in Active).
+ *  - subchat, parent present, running → "nested" iff the parent is a non-archived row whose
+ *    resolved placement is "top-level"; otherwise "top-level".
+ */
+export function buildSidebarIndex(conversations: Conversation[], archivedIds: ReadonlySet<string>): SidebarIndex {
+    const allIds = new Set<string>();
+    const byId = new Map<string, Conversation>();
+    for (const conversation of conversations) {
+        allIds.add(conversation.id);
+        byId.set(conversation.id, conversation);
+    }
+
+    const placement = new Map<string, ChildSidebarPlacement>();
+    const resolving = new Set<string>(); // in-progress ids → parent-chain cycle guard
+
+    const resolve = (conversation: Conversation): ChildSidebarPlacement => {
+        const cached = placement.get(conversation.id);
+        if (cached) return cached;
+        // Re-entered while its own resolution is in progress → a parent_convo_id cycle. Break
+        // it by treating this node as top-level (recovery) so a running descendant is reachable
+        // and resolution terminates. Not cached here; the outermost call caches the real value.
+        if (resolving.has(conversation.id)) return "top-level";
+
+        if (!isSubChat(conversation)) {
+            placement.set(conversation.id, "top-level");
+            return "top-level";
+        }
+        const parentId = conversation.parent_convo_id;
+        if (parentId == null || parentId === "" || parentId === conversation.id || !allIds.has(parentId)) {
+            placement.set(conversation.id, "top-level"); // orphan / missing parent → recovery
+            return "top-level";
+        }
+        if (conversation.session_state !== "running") {
+            placement.set(conversation.id, "hidden"); // parent present, not running → transient hide
+            return "hidden";
+        }
+        // Running child: nest ONLY under a real top-level row — the parent's ACTUAL resolved
+        // placement, not an approximation. Archived parents are never hosts.
+        resolving.add(conversation.id);
+        const parent = byId.get(parentId);
+        const parentIsTopLevelRow = parent != null && !archivedIds.has(parent.id) && resolve(parent) === "top-level";
+        resolving.delete(conversation.id);
+
+        const result: ChildSidebarPlacement = parentIsTopLevelRow ? "nested" : "top-level";
+        placement.set(conversation.id, result);
+        return result;
+    };
+
+    for (const conversation of conversations) resolve(conversation);
+    return { allIds, byId, placement };
+}
+
+/**
+ * #536: the SINGLE source of truth for where a subagent conversation lands in the Active/
+ * Favorites sidebar — a pure lookup of the placement resolved once in buildSidebarIndex, so
+ * all call sites (rendering, selection, unread, badge, mark-all) stay in lock-step. Defaults
+ * to "top-level" for an id absent from the index (orphan-style recovery).
+ */
+export function childSidebarPlacement(conversation: Conversation, index: SidebarIndex): ChildSidebarPlacement {
+    return index.placement.get(conversation.id) ?? "top-level";
+}
+
+/**
+ * #536: the ONE canonical "does this conversation render as a TOP-LEVEL sidebar row?"
+ * predicate. A non-child always does; a child does only when its resolved placement is
+ * "top-level" (orphan, archived-parent-running, or a running descendant that cannot nest).
+ * Used by rendering, auto-selection, unread aggregation, the desktop badge, and mark-all so
+ * a row that is not rendered can never be silently auto-selected or counted. Callers still
+ * exclude archived ids separately where a tab or aggregate requires it.
+ */
+export function rendersAsTopLevelRow(conversation: Conversation, index: SidebarIndex): boolean {
+    return !isSubChat(conversation) || childSidebarPlacement(conversation, index) === "top-level";
+}
+
 export function isNearBottom(scrollTop: number, scrollHeight: number, clientHeight: number, thresholdPx = 80): boolean {
     return scrollHeight - scrollTop - clientHeight <= thresholdPx;
 }
