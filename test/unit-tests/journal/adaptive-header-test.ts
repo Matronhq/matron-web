@@ -143,14 +143,23 @@ async function mountHeader(overrides: Partial<React.ComponentProps<typeof Header
     return mounted;
 }
 
-function AdaptiveProbe({ el, onRender }: { el: HTMLElement | null; onRender?: () => void }): React.ReactElement {
+function AdaptiveProbe({
+    el,
+    onRender,
+    meterCount,
+}: {
+    el: HTMLElement | null;
+    onRender?: () => void;
+    meterCount?: number;
+}): React.ReactElement {
     onRender?.();
-    return React.createElement("output", null, JSON.stringify(useAdaptiveHeader(el)));
+    return React.createElement("output", null, JSON.stringify(useAdaptiveHeader(el, meterCount)));
 }
 
 async function mountAdaptiveProbe(
     el: HTMLElement | null,
     onRender?: () => void,
+    meterCount?: number,
 ): Promise<MountedProbe & { render: (nextEl: HTMLElement | null) => Promise<void> }> {
     const container = document.createElement("div");
     document.body.append(container);
@@ -158,7 +167,7 @@ async function mountAdaptiveProbe(
     const mounted = { container, root };
     mountedProbes.push(mounted);
     const render = async (nextEl: HTMLElement | null): Promise<void> => {
-        await act(async () => root.render(React.createElement(AdaptiveProbe, { el: nextEl, onRender })));
+        await act(async () => root.render(React.createElement(AdaptiveProbe, { el: nextEl, onRender, meterCount })));
     };
     await render(el);
     return { ...mounted, render };
@@ -325,6 +334,38 @@ describe("useAdaptiveHeader", () => {
         expect(probe.container.textContent).toBe('{"usageCollapsed":true,"titleCollapsed":true}');
     });
 
+    it("uses a wider usage-collapse threshold when >4 meters add a 3rd column (#526)", async () => {
+        // 6 meters (ctx+5h+fbl+wk+cpu+ram) → the 3-column grid needs a wider pane, so the
+        // usage collapses below 760 instead of 640; the title band still flips at 560.
+        const el = document.createElement("div");
+        const probe = await mountAdaptiveProbe(el, undefined, 6);
+        const observer = observers[0];
+
+        resize(observer, el, 800);
+        await flushFrames();
+        expect(probe.container.textContent).toBe('{"usageCollapsed":false,"titleCollapsed":false}');
+
+        // 700 clears the 4-bar 640 threshold but NOT the 6-bar 760 one → usage collapses.
+        resize(observer, el, 700);
+        await flushFrames();
+        expect(probe.container.textContent).toBe('{"usageCollapsed":true,"titleCollapsed":false}');
+    });
+
+    it("keeps the 640 usage-collapse threshold for the 4-bar grid", async () => {
+        const el = document.createElement("div");
+        const probe = await mountAdaptiveProbe(el, undefined, 4);
+        const observer = observers[0];
+
+        // 700 > 640 → the 4-bar grid stays expanded where the 6-bar grid would collapse.
+        resize(observer, el, 700);
+        await flushFrames();
+        expect(probe.container.textContent).toBe('{"usageCollapsed":false,"titleCollapsed":false}');
+
+        resize(observer, el, 600);
+        await flushFrames();
+        expect(probe.container.textContent).toBe('{"usageCollapsed":true,"titleCollapsed":false}');
+    });
+
     it("coalesces resize callbacks into one frame and renders only when flags flip", async () => {
         const el = document.createElement("div");
         const onRender = jest.fn();
@@ -466,6 +507,21 @@ describe("HeaderShell", () => {
         await act(async () => jest.advanceTimersByTime(60_000));
 
         expect(collapsedUsage?.getAttribute("aria-label")).toBe("Usage — worst limit 72%, resets 2m");
+    });
+
+    it("keeps the 5h session meter in the collapsed stack via its stable id", async () => {
+        const { container } = await mountHeader({
+            limits: [
+                { id: "context", label: "context", percent: 72, used: 144_000, limit: 200_000 },
+                { id: "week_all", label: "Week (all models)", percent: 63 },
+                { id: "session_5h", label: "Session", percent: 41 },
+            ],
+            collapse: { usageCollapsed: true, titleCollapsed: false },
+        });
+        // Collapsed trigger keeps two rows: ctx (limits[0]) + the id-matched 5h session.
+        const trigger = container.querySelector(".mj_UsageCluster_collapsed")!;
+        const tags = [...trigger.querySelectorAll(".mj_UsageLabel")].map((n) => n.textContent);
+        expect(tags).toEqual(["ctx", "5h"]);
     });
 
     it("renders the full subtitle when expanded and swaps to the compact subtitle at <560", async () => {
