@@ -114,10 +114,13 @@ textarea {
     min-width: 0;
     min-height: 58px;
     flex-direction: column;
-    justify-content: center;
+    /* Top-align the title so its top lands on the 2×2 bars' top (the centred 2×2 starts
+       ~14px into the 58px band): operator's "title-top == bars-top". */
+    justify-content: flex-start;
     align-items: flex-start;
     justify-self: start;
     gap: 2px;
+    padding-top: 14px;
 }
 
 .mj_HeaderTitleCluster .mx_RoomHeader_heading {
@@ -387,10 +390,14 @@ textarea {
 }
 
 .mj_UsageCluster {
+    display: flex;
     width: 300px;
     max-width: 100%;
     min-width: 0;
     height: 58px;
+    /* Centre the 2×2 grid vertically so its centre lands on the band centre — which is
+       where the Compact pill centres too (operator: bars-centre == Compact-middle). */
+    align-items: center;
     padding-block: var(--cpd-space-1x);
 }
 
@@ -937,34 +944,62 @@ textarea {
     height: 14px;
 }
 
+/* §10.6 conversation-actions menu (one component, sidebar-row + header ⋯ anchors): a
+   4px-padded shell, rows are grid 16px/1fr @10px gap, row radius (7) < shell radius (10)
+   so the hover fill insets from the shell edge, and the destructive Archive is split off
+   by a hairline (not a gap). Focus is the teal ring inset −2px, never browser-blue. */
 .mj_RoomItemMenu {
-    width: min(220px, calc(100vw - var(--cpd-space-4x)));
+    width: min(224px, calc(100vw - var(--cpd-space-4x)));
     max-height: calc(100vh - var(--cpd-space-4x));
+    gap: 0;
+    border-radius: 10px;
+    padding: 4px;
     overflow-y: auto;
 }
 
 .mj_EventRowMenu {
-    width: min(220px, calc(100vw - var(--cpd-space-4x)));
+    width: min(224px, calc(100vw - var(--cpd-space-4x)));
+    gap: 0;
+    border-radius: 10px;
+    padding: 4px;
 }
 
 .mj_RoomItemMenu_item {
-    display: flex;
+    display: grid;
     width: 100%;
+    grid-template-columns: 16px 1fr;
     align-items: center;
-    gap: var(--cpd-space-2x);
-    padding: var(--cpd-space-2x) var(--cpd-space-3x);
+    gap: 10px;
+    border-radius: 7px;
+    padding: 7px 8px;
     text-align: left;
+    font:
+        500 12.5px/16px Inter,
+        sans-serif;
 }
 
-.mj_RoomItemMenu_item:hover,
+.mj_RoomItemMenu_item:hover {
+    background: var(--cpd-color-bg-subtle-primary);
+}
+
 .mj_RoomItemMenu_item:focus-visible {
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: -2px;
     background: var(--cpd-color-bg-subtle-primary);
 }
 
 .mj_RoomItemMenu_item svg {
-    width: 20px;
-    height: 20px;
+    width: 16px;
+    height: 16px;
     flex: 0 0 auto;
+    color: var(--cpd-color-icon-secondary);
+}
+
+/* Archive/Unarchive is the destructive group — a hairline above it, not a gap. */
+.mj_RoomItemMenu_item:last-child:not(:only-child) {
+    margin-top: 4px;
+    border-top: 1px solid var(--cpd-color-border-subtle);
+    padding-top: 8px;
 }
 
 .mj_MarkAllReadButton {
@@ -1439,8 +1474,22 @@ textarea {
 }
 
 .mj_UploadConfirm_header {
+    display: flex;
     flex: 0 0 auto;
+    align-items: center;
+    gap: 10px;
     padding: 13px 14px 13px 16px;
+}
+
+.mj_UploadConfirm_header .mj_UploadConfirm_title {
+    flex: 1;
+    min-width: 0;
+}
+
+/* Upload title is always "Send file" in mono (the filename lives in the file-info row). */
+.mj_UploadConfirm_queue .mj_UploadConfirm_title {
+    font-family: "Fira Code", monospace;
+    font-size: 13px;
 }
 
 .mj_UploadConfirm_body {
@@ -1466,10 +1515,85 @@ textarea {
         sans-serif;
 }
 
+/* "n of N" chip (multi-file). */
 .mj_UploadConfirm_count {
+    flex: 0 0 auto;
+    border: 1px solid var(--cpd-color-border-subtle);
+    border-radius: 999px;
+    background: var(--cpd-color-bg-subtle-secondary);
+    color: var(--cpd-color-text-secondary);
+    padding: 1px 9px;
+    font:
+        500 11px/16px "Fira Code",
+        monospace;
+}
+
+/* File-info row under the preview: name (ellipsised) + size on the right. */
+.mj_UploadConfirm_fileName {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--cpd-color-text-primary);
+    font:
+        500 13px/18px Inter,
+        sans-serif;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Non-image preview placeholder (keeps the preview area's shape for any file type). */
+.mj_UploadConfirm_previewPlaceholder {
+    display: flex;
+    height: 72px;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--cpd-color-border-subtle);
+    border-radius: 10px;
+    background: var(--cpd-color-bg-canvas-raised);
+    color: var(--cpd-color-icon-secondary);
+}
+
+/* 34px thumbnail strip (multi-file): active = 2px teal ring, inactive = 1px line on raised. */
+.mj_UploadConfirm_strip {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.mj_UploadThumb {
+    display: inline-flex;
+    width: 34px;
+    height: 34px;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    overflow: hidden;
+    border: 1px solid var(--cpd-color-border-interactive-secondary);
+    border-radius: 8px;
+    background: var(--cpd-color-bg-canvas-raised);
+    color: var(--cpd-color-icon-secondary);
+}
+
+.mj_UploadThumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.mj_UploadThumb svg {
+    width: 16px;
+    height: 16px;
+}
+
+.mj_UploadThumb_active {
+    border: 2px solid var(--cpd-color-text-action-accent);
+}
+
+.mj_UploadConfirm_more {
     color: var(--cpd-color-text-secondary);
     font:
-        400 13.5px/20px Inter,
+        400 11px/16px Inter,
         sans-serif;
 }
 
@@ -1582,6 +1706,167 @@ textarea {
     margin: 0;
     color: var(--cpd-color-text-critical-primary);
     font: var(--cpd-font-body-sm-regular);
+}
+
+/* v5 new-session sheet: the upload-dialog shell + a fully themed form. The load-bearing
+   fix is §10.4 — the native inputs were unstyled, so they inherited the UA white and
+   vanished on dark ("Agent default" white-on-dark). Every input/checkbox/label now sets
+   its own themed colours, and each label binds to the field BELOW it at the 6px field
+   rhythm (§10.3). */
+.mj_NewSessionSheet {
+    gap: 14px;
+}
+
+.mj_NewSessionSheet_head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.mj_NewSessionSheet_head .mj_UploadConfirm_title {
+    flex: 1;
+    min-width: 0;
+}
+
+.mj_NewSessionSheet_close {
+    display: inline-flex;
+    width: 28px;
+    height: 28px;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--cpd-color-icon-secondary);
+    cursor: pointer;
+}
+
+.mj_NewSessionSheet_close:hover {
+    background: var(--cpd-color-bg-subtle-primary);
+    color: var(--cpd-color-text-primary);
+}
+
+.mj_NewSessionSheet_close:focus-visible {
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: 2px;
+}
+
+.mj_NewSessionSheet > p,
+.mj_NewSessionSheet [role="status"] {
+    margin: 0;
+    color: var(--cpd-color-text-secondary);
+    font:
+        400 13px/18px Inter,
+        sans-serif;
+}
+
+/* A field label binds to the field BELOW it (§10.3 6px). */
+.mj_NewSessionSheet label {
+    display: block;
+    margin-bottom: 6px;
+    color: var(--cpd-color-text-secondary);
+    font:
+        500 12px/16px Inter,
+        sans-serif;
+}
+
+/* §10.4 native text input: explicit background/colour/border in BOTH themes. */
+.mj_NewSessionSheet input[type="text"] {
+    display: block;
+    width: 100%;
+    min-height: 34px;
+    box-sizing: border-box;
+    border: 1px solid var(--cpd-color-border-interactive-secondary);
+    border-radius: 8px;
+    background: var(--cpd-color-bg-canvas-default);
+    color: var(--cpd-color-text-primary);
+    padding: 0 12px;
+    font:
+        400 13.5px/20px Inter,
+        sans-serif;
+}
+
+.mj_NewSessionSheet input[type="text"]::placeholder {
+    color: var(--cpd-color-text-tertiary);
+}
+
+.mj_NewSessionSheet input[type="text"]:focus,
+.mj_NewSessionSheet input[type="text"]:focus-visible {
+    border-color: var(--cpd-color-border-interactive-primary);
+    outline: none;
+}
+
+.mj_NewSessionSheet input[type="text"]:disabled {
+    background: var(--cpd-color-bg-subtle-secondary);
+    color: var(--cpd-color-text-secondary);
+    cursor: default;
+}
+
+/* Checkbox row: the label wraps the checkbox, so reset the block-label rule to inline. */
+.mj_NewSessionSheet label:has(input[type="checkbox"]) {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 0;
+    color: var(--cpd-color-text-primary);
+    font:
+        400 13.5px/20px Inter,
+        sans-serif;
+    cursor: pointer;
+}
+
+.mj_NewSessionSheet input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    margin: 0;
+    accent-color: var(--cpd-color-bg-accent);
+    cursor: pointer;
+}
+
+.mj_NewSessionSheet input[type="checkbox"]:focus-visible {
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: 2px;
+}
+
+/* Agent / recent-folder pick lists. */
+.mj_NewSessionSheet [role="list"] {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.mj_NewSessionSheet [role="listitem"] {
+    display: flex;
+    width: 100%;
+    box-sizing: border-box;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    border: 1px solid var(--cpd-color-border-interactive-secondary);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--cpd-color-text-primary);
+    padding: 8px 12px;
+    font:
+        400 13px/18px Inter,
+        sans-serif;
+    text-align: left;
+    cursor: pointer;
+}
+
+.mj_NewSessionSheet [role="listitem"]:hover:not(:disabled) {
+    background: var(--cpd-color-bg-subtle-primary);
+}
+
+.mj_NewSessionSheet [role="listitem"]:disabled {
+    cursor: default;
+    opacity: 0.5;
+}
+
+.mj_NewSessionSheet [role="listitem"]:focus-visible {
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: 2px;
 }
 
 .mj_AttachmentChip {
@@ -1709,49 +1994,83 @@ li.mj_AttachmentChip_error {
     opacity: 0.6;
 }
 
+/* v5 event.prompt (Question) + event.permission_request are one card family: chrome
+   (border / r10 / panel / pad 12·14), a label+time header row, a 24px-gutter icon+body
+   grid (§10.2 inner edge — SVG in the gutter, never inline emoji, which make the text's
+   left edge a function of glyph width), and an actions row with exactly one filled
+   primary (§10.5). Both states keep the same rows in the same order so answering doesn't
+   reflow the card (§10.3). Permission only differs by the teal border + accent label. */
 .mj_PromptCard {
-    min-width: min(360px, 55vw);
-}
-
-/* v5 event.permission_request: the only differences from a Question card are the
-   teal-tinted border, the accent uppercase label, and exactly one filled affirmative
-   (the first option, Allow). The card carries its own chrome (border/radius/panel/pad)
-   because the shared base is unstyled. */
-.mj_PromptCard_permission {
-    border: 1px solid rgb(13 148 136 / 25%);
+    display: flex;
+    min-width: 0;
+    max-width: var(--mj-content-width);
+    flex-direction: column;
+    gap: 10px;
+    box-sizing: border-box;
+    border: 1px solid var(--cpd-color-border-subtle);
     border-radius: 10px;
     background: var(--cpd-color-bg-canvas-default);
     padding: 12px 14px;
 }
 
-.mj_PromptCard_permission .mj_PromptLabel {
-    color: var(--cpd-color-text-action-accent);
+.mj_PromptCard_permission {
+    border-color: rgb(13 148 136 / 25%);
+}
+
+.mj_PromptHeader {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+}
+
+.mj_PromptLabel {
+    flex: 1;
+    min-width: 0;
+    color: var(--cpd-color-text-secondary);
     font:
         600 10px/14px Inter,
         sans-serif;
     letter-spacing: 0.07em;
-}
-
-.mj_PromptCard_permission .mj_PromptOptions button.mj_PromptOption_affirmative {
-    border: 0;
-    background: var(--cpd-color-bg-accent);
-    color: var(--cpd-color-text-on-accent);
-    font-weight: 600;
-}
-
-.mj_PromptCard_permission .mj_PromptOptions button.mj_PromptOption_affirmative:hover {
-    filter: brightness(1.08);
-}
-
-.mj_PromptCard p {
-    margin: 0 0 var(--cpd-space-3x);
-}
-
-.mj_PromptLabel {
-    margin-bottom: var(--cpd-space-1x);
-    color: var(--cpd-color-text-secondary);
-    font: var(--cpd-font-body-xs-semibold);
     text-transform: uppercase;
+}
+
+.mj_PromptCard_permission .mj_PromptLabel {
+    color: var(--cpd-color-text-action-accent);
+}
+
+.mj_PromptTime {
+    flex: 0 0 auto;
+    color: var(--cpd-color-text-secondary);
+    font:
+        400 11px/14px Inter,
+        sans-serif;
+    white-space: nowrap;
+}
+
+.mj_PromptBody,
+.mj_PromptResolved {
+    display: grid;
+    grid-template-columns: 24px minmax(0, 1fr);
+    align-items: start;
+    row-gap: 6px;
+}
+
+.mj_PromptGlyph {
+    display: inline-flex;
+    margin-top: 3px;
+    color: var(--cpd-color-icon-secondary);
+}
+
+/* Answered check = the design's green (#34c759 == --cpd-color-usage-low). */
+.mj_PromptGlyph_ok {
+    margin-top: 2px;
+    color: var(--cpd-color-usage-low);
+}
+
+.mj_PromptQuestion {
+    font:
+        400 13.5px/20px Inter,
+        sans-serif;
 }
 
 .mj_PromptOptions,
@@ -1764,18 +2083,61 @@ li.mj_AttachmentChip_error {
 .mj_PromptOptions button,
 .mj_PromptText button,
 .mj_PromptText input {
-    min-height: 32px;
+    min-height: 30px;
     box-sizing: border-box;
     border: 1px solid var(--cpd-color-border-interactive-secondary);
     border-radius: 8px;
-    background: var(--cpd-color-bg-canvas-default);
+    background: transparent;
     color: var(--cpd-color-text-primary);
-    padding: var(--cpd-space-1x) var(--cpd-space-3x);
+    padding: 0 14px;
+    font:
+        500 12.5px/16px Inter,
+        sans-serif;
 }
 
 .mj_PromptText input {
     flex: 1;
     min-width: 180px;
+    padding: 0 12px;
+}
+
+/* §10.5 the one filled primary: permission Allow, an affirmative question option, or the
+   free-text Send. Everything else is outlined/ghost. */
+.mj_PromptOptions button.mj_PromptOption_affirmative,
+.mj_PromptText button.mj_PromptOption_affirmative {
+    border: 0;
+    background: var(--cpd-color-bg-accent);
+    color: var(--cpd-color-text-on-accent);
+    font-weight: 600;
+}
+
+.mj_PromptOptions button.mj_PromptOption_affirmative:hover:not(:disabled),
+.mj_PromptText button.mj_PromptOption_affirmative:hover:not(:disabled) {
+    filter: brightness(1.08);
+}
+
+.mj_PromptOptions button:not(.mj_PromptOption_affirmative):hover,
+.mj_PromptText button:not(.mj_PromptOption_affirmative):hover:not(:disabled) {
+    background: var(--cpd-color-bg-subtle-primary);
+}
+
+.mj_PromptOptions button:focus-visible,
+.mj_PromptText button:focus-visible,
+.mj_PromptText input:focus-visible {
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: 2px;
+}
+
+.mj_PromptText button:disabled {
+    cursor: default;
+    opacity: 0.5;
+}
+
+.mj_PromptResolved .mj_Answered {
+    color: var(--cpd-color-text-secondary);
+    font:
+        500 13px/17px Inter,
+        sans-serif;
 }
 
 .mj_Answered,

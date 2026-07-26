@@ -167,6 +167,29 @@ const events: JournalEvent[] = [
         type: "telemetry_snapshot",
         payload: { cpu: 0.42, mem: "1.8GB", note: "unrecognised event → diagnostic card, never hidden" },
     },
+    // A user message so the prompt below starts a NEW section (first-in-section) — this is
+    // the case where a duplicate timestamp (profile row + card header) would show if the
+    // card didn't own its timestamp.
+    { seq: 10, convo_id: "c1", ts: T + 520, sender: "user:operator", type: "text", payload: { body: "go ahead" } },
+    {
+        // Question card — UNANSWERED (label+time / gutter mail icon + body / Send now·Cancel).
+        seq: 11,
+        convo_id: "c1",
+        ts: T + 540,
+        sender: "agent:claude",
+        type: "prompt",
+        payload: { question: "Queued (1) — send these now, or cancel and keep editing?", options: ["Send now", "Cancel"] },
+    },
+    {
+        // Question card — ANSWERED (green check + resolution line); seq 13 reply resolves it.
+        seq: 12,
+        convo_id: "c1",
+        ts: T + 600,
+        sender: "agent:claude",
+        type: "prompt",
+        payload: { question: "Which environment should I deploy to?", options: ["Staging", "Production"] },
+    },
+    { seq: 13, convo_id: "c1", ts: T + 660, sender: "user:operator", type: "prompt_reply", payload: { target_seq: 12, choice: "Staging" } },
 ];
 
 const client = new MatronJournalClient();
@@ -195,6 +218,16 @@ const state: ClientState = {
 };
 // The client keeps its state private; mirror the test harness's internal override.
 (client as unknown as { state: ClientState }).state = state;
+
+// Stub the new-session data path so a driver click on "New session" reaches the folders
+// form (agent → recent folders) where the themed inputs / checkbox / Start live.
+(client as unknown as { listAgents: () => Promise<unknown[]> }).listAgents = async () => [
+    { device_id: "dev-local", connected: true, label: "workstation", hostname: "workstation", name: "workstation" },
+];
+(client as unknown as { recentFolders: () => Promise<unknown[]> }).recentFolders = async () => [
+    { path: "/opt/matron/web-journal" },
+    { path: "/opt/matron/journal" },
+];
 
 const params = new URLSearchParams(window.location.search);
 document.documentElement.setAttribute("data-theme", params.get("theme") === "dark" ? "dark" : "light");

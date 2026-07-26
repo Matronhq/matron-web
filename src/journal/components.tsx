@@ -489,13 +489,15 @@ export function NewSessionSheet({
 
     return (
         <div className="mj_UploadConfirm_scrim" role="dialog" aria-modal="true" aria-labelledby="mj-new-session-title">
-            <div className="mj_UploadConfirm">
-                <div className="mj_UploadConfirm_actions">
+            <div className="mj_UploadConfirm mj_NewSessionSheet">
+                <div className="mj_NewSessionSheet_head">
                     <h2 className="mj_UploadConfirm_title" id="mj-new-session-title">
                         New session
                     </h2>
-                    <button type="button" aria-label="Close" onClick={dismiss}>
-                        Close
+                    <button type="button" className="mj_NewSessionSheet_close" aria-label="Close" onClick={dismiss}>
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                            <path d="M18 6 6 18M6 6l12 12" />
+                        </svg>
                     </button>
                 </div>
 
@@ -2008,27 +2010,41 @@ function PromptCard({
     const answer = (choice?: string, text?: string): void => {
         if (client.sendPromptReply(event.seq, choice, text)) setLocallyAnswered(true);
     };
+    // §10.5 one primary per surface: exactly one filled affirmative. For permission it's
+    // "Allow"; for a generic question the first option whose label reads affirmative
+    // (send/yes/continue/confirm/ok/approve). Chosen by SEMANTICS, not position, so a
+    // reordered payload never fills "Always allow" / "Deny" / "Cancel".
+    const affirmativeIndex = options.findIndex((option) =>
+        permission
+            ? option.label.trim().toLocaleLowerCase() === "allow"
+            : PROMPT_AFFIRMATIVE.test(option.label.trim()),
+    );
 
     return (
         <div className={permission ? "mj_PromptCard mj_PromptCard_permission" : "mj_PromptCard"}>
-            <div className="mj_PromptLabel">{permission ? "Permission needed" : "Question"}</div>
-            <p>{question}</p>
+            <div className="mj_PromptHeader">
+                <span className="mj_PromptLabel">{permission ? "Permission request" : "Question"}</span>
+                <time className="mj_PromptTime" dateTime={new Date(event.ts).toISOString()}>
+                    {formatTime(event.ts)}
+                </time>
+            </div>
+            <div className="mj_PromptBody">
+                <span className="mj_PromptGlyph" aria-hidden="true">
+                    {permission ? <PromptTerminalGlyph /> : <PromptMailGlyph />}
+                </span>
+                <span className="mj_PromptQuestion">{question}</span>
+            </div>
             {!isReadOnly && !disabled && options.length > 0 && (
                 <div className="mj_PromptOptions">
-                    {options.map((option) => {
-                        // The single filled affirmative is chosen by semantics ("Allow"), not
-                        // position — a reordered payload must not fill "Always allow" or "Deny".
-                        const affirmative = permission && option.label.trim().toLocaleLowerCase() === "allow";
-                        return (
-                            <button
-                                key={`${option.label}:${option.value}`}
-                                className={affirmative ? "mj_PromptOption_affirmative" : undefined}
-                                onClick={() => answer(option.value)}
-                            >
-                                {option.label}
-                            </button>
-                        );
-                    })}
+                    {options.map((option, index) => (
+                        <button
+                            key={`${option.label}:${option.value}`}
+                            className={index === affirmativeIndex ? "mj_PromptOption_affirmative" : undefined}
+                            onClick={() => answer(option.value)}
+                        >
+                            {option.label}
+                        </button>
+                    ))}
                 </div>
             )}
             {!isReadOnly && !disabled && (event.payload.allows_free_text === true || options.length === 0) && (
@@ -2044,13 +2060,50 @@ function PromptCard({
                         onChange={(changeEvent) => setFreeText(changeEvent.target.value)}
                         placeholder="Type an answer"
                     />
-                    <button type="submit" disabled={!freeText.trim()}>
+                    <button type="submit" className="mj_PromptOption_affirmative" disabled={!freeText.trim()}>
                         Send
                     </button>
                 </form>
             )}
-            {disabled && <div className="mj_Answered">✓ Answered</div>}
+            {disabled && (
+                <div className="mj_PromptResolved">
+                    <span className="mj_PromptGlyph mj_PromptGlyph_ok" aria-hidden="true">
+                        <PromptCheckGlyph />
+                    </span>
+                    <span className="mj_Answered">Answered</span>
+                </div>
+            )}
         </div>
+    );
+}
+
+// §10.2 alignment grid: SVG glyphs in the 24px prompt-card gutter (never inline emoji,
+// which make the text's left edge a function of glyph width). Stroke inherits currentColor.
+const PROMPT_AFFIRMATIVE = /^(send|yes|continue|confirm|ok|okay|approve|proceed|accept)\b/i;
+
+function PromptMailGlyph(): React.ReactElement {
+    return (
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M4 6h16v12H4z" />
+            <path d="m4 7 8 6 8-6" />
+        </svg>
+    );
+}
+
+function PromptTerminalGlyph(): React.ReactElement {
+    return (
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+            <path d="m5 7 5 5-5 5" />
+            <path d="M13 17h6" />
+        </svg>
+    );
+}
+
+function PromptCheckGlyph(): React.ReactElement {
+    return (
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+            <path d="m5 12 4 4 10-10" />
+        </svg>
     );
 }
 
@@ -2541,14 +2594,19 @@ function EventRow({
                 <span className="mx_DisambiguatedProfile">
                     <MsgAvatar />
                     <span className="mx_DisambiguatedProfile_displayName">{displaySender(event.sender)}</span>
-                    {/* tool_output owns its timestamp inline (after the exit badge). */}
-                    {event.type !== "tool_output" && (
-                        <a href={`#event-${event.seq}`} onClick={(clickEvent) => clickEvent.preventDefault()}>
-                            <time className="mx_MessageTimestamp" dateTime={new Date(event.ts).toISOString()}>
-                                {formatTime(event.ts)}
-                            </time>
-                        </a>
-                    )}
+                    {/* tool_output owns its timestamp inline (after the exit badge); prompt /
+                        permission cards own theirs in the card header (§10.2). Suppress the
+                        profile-row time for all three so a first-in-section event never shows
+                        two identical timestamps. */}
+                    {event.type !== "tool_output" &&
+                        event.type !== "prompt" &&
+                        event.type !== "permission_request" && (
+                            <a href={`#event-${event.seq}`} onClick={(clickEvent) => clickEvent.preventDefault()}>
+                                <time className="mx_MessageTimestamp" dateTime={new Date(event.ts).toISOString()}>
+                                    {formatTime(event.ts)}
+                                </time>
+                            </a>
+                        )}
                 </span>
             )}
             <div className="mx_EventTile_line">
@@ -4051,24 +4109,45 @@ function UploadConfirmPage({
     return (
         <div className="mj_UploadConfirm mj_UploadConfirm_queue">
             <header className="mj_UploadConfirm_header">
-                <h2 className="mj_UploadConfirm_title">
-                    {head.file.name}
-                    {staged.total > 1 && (
-                        <span className="mj_UploadConfirm_count">
-                            {" "}
-                            — File {position} of {staged.total}
-                        </span>
-                    )}
-                </h2>
+                {/* §10.1/§10.2: the title is ALWAYS "Send file" (never the filename — the
+                    filename lives in the file-info row below). "n of N" is a chip. */}
+                <h2 className="mj_UploadConfirm_title">Send file</h2>
+                {staged.total > 1 && (
+                    <span className="mj_UploadConfirm_count">
+                        {position} of {staged.total}
+                    </span>
+                )}
             </header>
             <div className="mj_UploadConfirm_body">
                 {isImage && previewUrl ? (
                     <img className="mj_UploadConfirm_preview" src={previewUrl} alt={head.file.name} />
                 ) : (
-                    <div className="mj_UploadConfirm_fileMeta">
+                    <div className="mj_UploadConfirm_previewPlaceholder" aria-hidden="true">
                         <AttachmentIcon />
-                        <span>{head.file.name}</span>
-                        <span className="mj_FileSize">{formatBytes(head.file.size)}</span>
+                    </div>
+                )}
+                <div className="mj_UploadConfirm_fileMeta">
+                    <span className="mj_UploadConfirm_fileName">{head.file.name}</span>
+                    <span className="mj_FileSize">{formatBytes(head.file.size)}</span>
+                </div>
+                {staged.total > 1 && (
+                    <div className="mj_UploadConfirm_strip" role="list" aria-label="Queued files">
+                        {staged.items.map((item) => {
+                            const active = item.id === head.id;
+                            return (
+                                <span
+                                    key={item.id}
+                                    role="listitem"
+                                    className={active ? "mj_UploadThumb mj_UploadThumb_active" : "mj_UploadThumb"}
+                                    title={item.file.name}
+                                >
+                                    {active && isImage && previewUrl ? <img src={previewUrl} alt="" /> : <AttachmentIcon aria-hidden />}
+                                </span>
+                            );
+                        })}
+                        {staged.items.length > 1 && (
+                            <span className="mj_UploadConfirm_more">{staged.items.length - 1} more file queued</span>
+                        )}
                     </div>
                 )}
                 {preflight && <p className="mj_UploadConfirm_error">{preflight}</p>}
