@@ -209,6 +209,14 @@ describe("journal session status presentation", () => {
         });
     });
 
+    it("carries and retains top-level vitals across partial updates", () => {
+        const vitals = { cpu_pct: 34, ram_pct: 55, sampled_at_ms: 1_000 };
+        // Update introduces vitals.
+        expect(mergeSessionStatus({ model: "m" }, { vitals }).vitals).toEqual(vitals);
+        // A later update that omits vitals retains the prior reading.
+        expect(mergeSessionStatus({ vitals }, { model: "m2" }).vitals).toEqual(vitals);
+    });
+
     it("ages and expires host-vital samples via sampled_at_ms", () => {
         const now = 1_000_000_000_000;
         // No sampled_at_ms → no age, never stale (non-host meters / older bridges).

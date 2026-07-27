@@ -237,6 +237,7 @@ export function mergeSessionStatus(current: SessionStatus | undefined, update: S
         workdir: update.workdir ?? current?.workdir,
         context: update.context ?? current?.context,
         limits: update.limits ?? current?.limits,
+        vitals: update.vitals ?? current?.vitals,
         email: update.email ?? current?.email,
     };
 }

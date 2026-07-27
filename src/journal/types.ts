@@ -188,6 +188,17 @@ export interface SessionStatus {
         // no staleness logic (current behaviour). See status.ts HOST_VITALS_STALE_MS.
         sampled_at_ms?: number;
     }>;
+    // Host machine vitals (bridge status frame, top-level — NOT a limits[] entry). CPU/RAM
+    // percentages plus the epoch-ms time of their last real sample. Absent on bridges that
+    // don't publish vitals → the CPU/RAM meters simply don't render (graceful degradation).
+    // `sampled_at_ms` drives the same staleness muting as the per-meter field on limits[]:
+    // host readings only refresh on turn-end and get replayed verbatim to new viewers, so an
+    // idle conversation can show a minutes-old reading as live. See status.ts HOST_VITALS_STALE_MS.
+    vitals?: {
+        cpu_pct: number;
+        ram_pct: number;
+        sampled_at_ms: number;
+    };
     email?: string;
 }
 
