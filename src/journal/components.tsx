@@ -1547,7 +1547,7 @@ function useMinuteClock(now?: number): number {
 
 // The usage meter leads with a synthetic "ctx" bar (context-window %), matching
 // the v3/v4 mock where ctx is the first, emphasised meter; the rate limits follow.
-function buildUsageMeters(
+export function buildUsageMeters(
     status: SessionStatus | undefined,
     limits: SessionStatus["limits"] | undefined,
 ): NonNullable<SessionStatus["limits"]> {
@@ -1564,6 +1564,20 @@ function buildUsageMeters(
         });
     }
     if (limits?.length) meters.push(...limits);
+    // Host CPU/RAM ride a TOP-LEVEL `status.vitals` object on the status frame (never a
+    // limits[] entry). Synthesize them into the meter row here, carrying `sampled_at_ms` so
+    // the shared staleness muting expires an idle conversation's replayed reading. Absent
+    // `status.vitals` → no host meters, no crash (graceful degradation). Non-finite readings
+    // are skipped individually so a partial vitals object still renders what it can.
+    if (status?.vitals) {
+        const { cpu_pct, ram_pct, sampled_at_ms } = status.vitals;
+        if (Number.isFinite(cpu_pct)) {
+            meters.push({ id: "host_cpu", label: "host CPU", percent: cpu_pct, sampled_at_ms });
+        }
+        if (Number.isFinite(ram_pct)) {
+            meters.push({ id: "host_ram", label: "host RAM", percent: ram_pct, sampled_at_ms });
+        }
+    }
     // Normalise to the design's column-first grid order (ctx/5h, fbl/model/wk, cpu/ram);
     // stable so any extra limits keep their relative order after the known ones.
     return meters
@@ -1917,11 +1931,21 @@ function HeaderOverflowMenu({
     const [open, setOpen] = useState(false);
     const openerRef = useRef<HTMLButtonElement>(null);
     const panelRef = useRef<HTMLDivElement>(null);
+    // Pending rAF id for the post-action focus restore; cancelled before re-scheduling and on
+    // unmount so a stale callback can never fire against a torn-down tree (mirrors the sidebar
+    // menu's restoreFocusAfterMenuAction).
+    const restoreFrameRef = useRef<number | undefined>(undefined);
     const close = useCallback(() => setOpen(false), []);
     useDismissablePopover(open, close, { openerRef, panelRef });
     useLayoutEffect(() => {
         if (open) panelRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
     }, [open]);
+    useEffect(
+        () => () => {
+            if (restoreFrameRef.current != null) cancelAnimationFrame(restoreFrameRef.current);
+        },
+        [],
+    );
 
     const id = conversation.id;
     const isPinned = state.pinnedIds.has(id);
@@ -1935,7 +1959,10 @@ function HeaderOverflowMenu({
         // Defer past the re-render: a non-navigating action (pin/favorite/read) keeps the
         // opener mounted → restore focus to it; archiving the selected conversation clears
         // selection and unmounts this whole header, so skip rather than focus a dead node.
-        requestAnimationFrame(() => {
+        // Cancel any still-pending restore first so a leaked callback can't fire on a later tick.
+        if (restoreFrameRef.current != null) cancelAnimationFrame(restoreFrameRef.current);
+        restoreFrameRef.current = requestAnimationFrame(() => {
+            restoreFrameRef.current = undefined;
             if (opener?.isConnected) opener.focus();
         });
     };

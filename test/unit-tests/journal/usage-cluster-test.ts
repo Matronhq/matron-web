@@ -8,7 +8,7 @@ Please see LICENSE files in the repository root for full details.
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
-import { UsageCluster } from "../../../src/journal/components";
+import { buildUsageMeters, UsageCluster } from "../../../src/journal/components";
 import { worstLimit } from "../../../src/journal/status";
 import { type SessionStatus } from "../../../src/journal/types";
 
@@ -183,5 +183,42 @@ describe("UsageCluster", () => {
 
         expect(container.querySelectorAll(".mj_UsageRow")).toHaveLength(2);
         expect(consoleError.mock.calls.some(([message]) => String(message).includes("same key"))).toBe(false);
+    });
+});
+
+describe("buildUsageMeters host vitals", () => {
+    const sampledAt = 1_000_000_000_000;
+
+    it("synthesizes host_cpu/host_ram meters from top-level status.vitals", () => {
+        const meters = buildUsageMeters(
+            { vitals: { cpu_pct: 34, ram_pct: 55, sampled_at_ms: sampledAt } },
+            undefined,
+        );
+        const cpu = meters.find((m) => m.id === "host_cpu");
+        const ram = meters.find((m) => m.id === "host_ram");
+        expect(cpu).toMatchObject({ id: "host_cpu", percent: 34, sampled_at_ms: sampledAt });
+        expect(ram).toMatchObject({ id: "host_ram", percent: 55, sampled_at_ms: sampledAt });
+    });
+
+    it("carries sampled_at_ms through so the staleness muting can fire on host meters", () => {
+        const meters = buildUsageMeters(
+            { vitals: { cpu_pct: 12, ram_pct: 90, sampled_at_ms: sampledAt } },
+            undefined,
+        );
+        for (const meter of meters) expect(meter.sampled_at_ms).toBe(sampledAt);
+    });
+
+    it("renders nothing extra when status.vitals is absent (graceful degradation)", () => {
+        const meters = buildUsageMeters({ context: { tokens: 1, window: 2, pct: 50 } }, undefined);
+        expect(meters.some((m) => m.id === "host_cpu" || m.id === "host_ram")).toBe(false);
+    });
+
+    it("skips a non-finite vital reading individually", () => {
+        const meters = buildUsageMeters(
+            { vitals: { cpu_pct: Number.NaN, ram_pct: 55, sampled_at_ms: sampledAt } },
+            undefined,
+        );
+        expect(meters.some((m) => m.id === "host_cpu")).toBe(false);
+        expect(meters.some((m) => m.id === "host_ram")).toBe(true);
     });
 });
