@@ -80,8 +80,11 @@ import {
 } from "./slash-palette";
 import {
     compactTokens,
+    formatSampleAge,
+    isSampleStale,
     normalizePercent,
     resetDisplay,
+    sampleAgeMs,
     usageAccessibleLabel,
     usageShortLabel,
     usageOrderRank,
@@ -718,6 +721,9 @@ function ConversationList({
     const roomMenuRef = useRef(roomMenu);
     const roomMenuElementRef = useRef<HTMLDivElement>(null);
     const roomMenuOpenerRef = useRef<HTMLElement | null>(null);
+    // Pending rAF id for the post-menu-action focus restore; cancelled before re-scheduling
+    // and on unmount so a stale callback can never steal focus (see restoreFocusAfterMenuAction).
+    const restoreFocusFrameRef = useRef<number | undefined>(undefined);
     const menuTriggerRefs = useRef(new Map<string, HTMLButtonElement>());
     const longPressTargetRef = useRef<{ conversationId: string; row: HTMLButtonElement } | undefined>(undefined);
     const longPressFiredRef = useRef(false);
@@ -777,11 +783,25 @@ function ConversationList({
     // through to document.body.
     const restoreFocusAfterMenuAction = useCallback((): void => {
         const opener = roomMenuOpenerRef.current;
-        requestAnimationFrame(() => {
+        // Cancel any still-pending restore before scheduling a new one. Without this the
+        // leaked callback fires on a LATER tick (or in a later test), finds its opener
+        // disconnected, and yanks focus to the search input — a real focus-steal, and the
+        // source of the flaky keyboard-focus test.
+        if (restoreFocusFrameRef.current != null) cancelAnimationFrame(restoreFocusFrameRef.current);
+        restoreFocusFrameRef.current = requestAnimationFrame(() => {
+            restoreFocusFrameRef.current = undefined;
             if (opener && opener.isConnected) opener.focus();
             else document.getElementById("room-list-search-input")?.focus();
         });
     }, []);
+
+    // Cancel a pending focus-restore rAF on unmount so it can't fire against a torn-down tree.
+    useEffect(
+        () => () => {
+            if (restoreFocusFrameRef.current != null) cancelAnimationFrame(restoreFocusFrameRef.current);
+        },
+        [],
+    );
 
     const cancelLongPress = useCallback((): void => {
         longPressControllerRef.current?.onPointerCancel();
@@ -1581,28 +1601,47 @@ export function UsageCluster({
                             ? `${compactTokens(limit.used)}/${compactTokens(limit.limit)}`
                             : undefined;
                     const accessibleLabel = usageAccessibleLabel(limit);
+                    // Host vitals (host_cpu/host_ram) carry `sampled_at_ms` = their last real
+                    // sample time. On an idle conversation the bridge replays a stale reading
+                    // that looks live; expire it past HOST_VITALS_STALE_MS. Re-evaluated on the
+                    // shared minute clock (displayNow) so it decays without a fresh frame. Non-
+                    // host meters have no `sampled_at_ms` → never stale (current behaviour).
+                    const stale = isSampleStale(limit.sampled_at_ms, displayNow);
+                    const staleSuffix = stale
+                        ? `, last sampled ${formatSampleAge(sampleAgeMs(limit.sampled_at_ms, displayNow) ?? 0)}`
+                        : "";
                     const valueText =
                         norm === null
                             ? "usage unknown"
                             : `${norm}% used${rawPair ? `, ${rawPair}` : ""}${reset ? `, resets ${reset}` : ""}`;
                     // Hover title carries the raw pair (a11y-adjacent affordance) alongside
-                    // any reset countdown; the visible figure is the percent only.
+                    // any reset countdown; the visible figure is the percent only. Stale host
+                    // readings append their sample age so the muted state is explained on hover.
                     const titleParts = [rawPair, reset ? `resets ${reset}` : undefined].filter(Boolean);
+                    const title =
+                        (titleParts.length ? titleParts.join(", ") : "") +
+                        (stale ? `${titleParts.length ? "" : accessibleLabel}${staleSuffix}` : "");
                     return (
                         <div
-                            className="mj_UsageRow"
-                            key={index}
-                            title={titleParts.length ? titleParts.join(", ") : undefined}
+                            className={`mj_UsageRow${stale ? " mj_UsageRow_stale" : ""}`}
+                            // Stable machine id (`session_5h`, `host_cpu`, …) keeps a row bound to
+                            // its meter across reorders and staleness re-renders. Fall back to
+                            // label:index for id-less frames (older bridge / cached), which stays
+                            // duplicate-safe when two meters share a label.
+                            key={limit.id ?? `${limit.label}:${index}`}
+                            title={title || undefined}
                         >
                             {/* Visible label is the short tag; the accessible name keeps the
-                                full server-authored label so SR users know which limit it is. */}
+                                full server-authored label so SR users know which limit it is.
+                                A stale host reading folds its sample age into the accessible
+                                name so SR users hear it (visible bar is just dimmed). */}
                             <span className="mj_UsageLabel" aria-hidden="true">
                                 {usageShortLabel(limit)}
                             </span>
                             <span
                                 className="mj_UsageTrack"
                                 role="progressbar"
-                                aria-label={accessibleLabel}
+                                aria-label={`${accessibleLabel}${staleSuffix}`}
                                 aria-valuemin={0}
                                 aria-valuemax={100}
                                 aria-valuenow={norm ?? undefined}
