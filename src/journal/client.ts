@@ -260,7 +260,9 @@ export class MatronJournalClient {
         this.api = undefined;
         for (const url of this.mediaUrls.values()) URL.revokeObjectURL(url);
         this.mediaUrls.clear();
-        // Per spec §3.1, retain this per-device preference so re-login can restore it without a null storage event.
+        // The archived-conversations key is deliberately left in place: it is a per-device
+        // preference that re-login should restore. Clearing it here would also go unnoticed
+        // by this tab, since storage events only fire in other tabs.
         localStorage.removeItem(SESSION_KEY);
         this.state = {
             ...blankState(),
@@ -736,7 +738,13 @@ export class MatronJournalClient {
     }
 
     private emit(): void {
-        const unread = this.state.conversations.reduce((total, conversation) => total + conversation.unread_count, 0);
+        // Archived conversations are hidden from the active list and skipped by mark-all-read,
+        // so they must not inflate the desktop badge either.
+        const unread = this.state.conversations.reduce(
+            (total, conversation) =>
+                this.state.archivedIds.has(conversation.id) ? total : total + conversation.unread_count,
+            0,
+        );
         ((window as Window & { electron?: ElectronBadgeBridge }).electron as ElectronBadgeBridge | undefined)?.send(
             "setBadgeCount",
             unread,
