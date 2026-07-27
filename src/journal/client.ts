@@ -736,7 +736,13 @@ export class MatronJournalClient {
     }
 
     private emit(): void {
-        const unread = this.state.conversations.reduce((total, conversation) => total + conversation.unread_count, 0);
+        // Archived conversations are hidden from the active list and skipped by mark-all-read,
+        // so they must not inflate the desktop badge either.
+        const unread = this.state.conversations.reduce(
+            (total, conversation) =>
+                this.state.archivedIds.has(conversation.id) ? total : total + conversation.unread_count,
+            0,
+        );
         ((window as Window & { electron?: ElectronBadgeBridge }).electron as ElectronBadgeBridge | undefined)?.send(
             "setBadgeCount",
             unread,
