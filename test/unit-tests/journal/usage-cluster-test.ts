@@ -190,10 +190,7 @@ describe("buildUsageMeters host vitals", () => {
     const sampledAt = 1_000_000_000_000;
 
     it("synthesizes host_cpu/host_ram meters from top-level status.vitals", () => {
-        const meters = buildUsageMeters(
-            { vitals: { cpu_pct: 34, ram_pct: 55, sampled_at_ms: sampledAt } },
-            undefined,
-        );
+        const meters = buildUsageMeters({ vitals: { cpu_pct: 34, ram_pct: 55, sampled_at_ms: sampledAt } }, undefined);
         const cpu = meters.find((m) => m.id === "host_cpu");
         const ram = meters.find((m) => m.id === "host_ram");
         expect(cpu).toMatchObject({ id: "host_cpu", percent: 34, sampled_at_ms: sampledAt });
@@ -201,10 +198,7 @@ describe("buildUsageMeters host vitals", () => {
     });
 
     it("carries sampled_at_ms through so the staleness muting can fire on host meters", () => {
-        const meters = buildUsageMeters(
-            { vitals: { cpu_pct: 12, ram_pct: 90, sampled_at_ms: sampledAt } },
-            undefined,
-        );
+        const meters = buildUsageMeters({ vitals: { cpu_pct: 12, ram_pct: 90, sampled_at_ms: sampledAt } }, undefined);
         for (const meter of meters) expect(meter.sampled_at_ms).toBe(sampledAt);
     });
 
