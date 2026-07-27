@@ -864,7 +864,7 @@ function ConversationList({
         if (!roomMenu) return;
         roomMenuElementRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
     }, [roomMenu]);
-    // #536: ONE canonical index feeds BOTH sidebar paths here (top-level fallback + nested
+    // ONE canonical index feeds BOTH sidebar paths here (top-level fallback + nested
     // splice) AND the client-side selection/unread/mark-all consumers, so "rendered" and
     // "selectable/counted" can never diverge. rendersAsTopLevelRow: a non-child always
     // renders top-level; a child renders top-level only when childSidebarPlacement says so
@@ -888,7 +888,7 @@ function ConversationList({
         ...activeAll.filter((conversation) => state.pinnedIds.has(conversation.id)),
         ...activeAll.filter((conversation) => !state.pinnedIds.has(conversation.id)),
     ];
-    // #532: the Archived tab lists EVERY archived conversation flat — including an archived
+    // the Archived tab lists EVERY archived conversation flat — including an archived
     // CHILD of an active parent, which `conversations` drops via isTopLevelRow (so it can be
     // nested under its live parent in Active). Deriving the archived set from the full list
     // (not the filtered `conversations`) keeps that child discoverable + it renders flat,
@@ -921,7 +921,7 @@ function ConversationList({
             isTopLevelRow(conversation),
     );
     // Count every archived conversation (parents AND archived children of active parents) so
-    // the tab badge matches the flat Archived list they render into (#532).
+    // the tab badge matches the flat Archived list they render into.
     const archivedTotal = state.conversations.filter((conversation) => state.archivedIds.has(conversation.id)).length;
     // Visibility is computed from the UNFILTERED conversation set (minus archived), NOT the
     // search-filtered `active` — mark-all operates on the full active partition regardless of
@@ -1202,13 +1202,13 @@ function ConversationList({
                                     role="list"
                                     aria-label="Conversations"
                                 >
-                                    {/* #532: Active/Favorites render each parent row, then splice
+                                    {/* Active/Favorites render each parent row, then splice
                                         its NON-ARCHIVED subagent children in beneath (indented) —
                                         archiving a child removes it from these tabs. The Archived
                                         tab renders flat (archived parents + archived children as
                                         top-level rows), so an archived child stays discoverable +
                                         unarchivable regardless of its parent's state.
-                                        #533/#536: children are TRANSIENT — a child nests here ONLY
+                                        children are TRANSIENT — a child nests here ONLY
                                         while running (subagents are one-shot; a done/idle child
                                         drops out of the sidebar but stays in state.conversations so
                                         the header pill strip still shows it when its parent is
@@ -1475,7 +1475,7 @@ export function useDismissablePopover(
 // two-row stack + popover with all four. >=560 full subtitle + Compact; <560 subtitle →
 // status dot + short model, title popover, Compact hidden.
 const USAGE_COLLAPSE_PX = 640;
-// #526: with host cpu/ram the grid grows to a 3rd column (~500px) — it needs a wider pane
+// with host cpu/ram the grid grows to a 3rd column (~500px) — it needs a wider pane
 // to render without crushing the title, so collapse earlier (to the ctx+5h popover, which
 // still lists all six bars). Only the collapse WIDTH moves for the wide grid; the collapse
 // BEHAVIOUR (ctx+5h stack + popover) is unchanged, preserving the tuned narrow experience.
@@ -1807,7 +1807,7 @@ export function HeaderShell({
     // Collapsed usage keeps two rows — ctx + the 5h (Session) limit — since the header
     // band has the height for two and one bar reads as too little (operator's call).
     // Pin BOTH by stable id, NOT by grid position: host cpu/ram now sort to limits[0]
-    // (#529 follow-up), so a positional pick would collapse to cpu/ram. Match the
+    // (host-vitals-first), so a positional pick would collapse to cpu/ram. Match the
     // short-tag heuristic as a fallback for older/cached frames that lack ids.
     const ctxMeter = limits?.find((meter) => meter.id === "context" || (!meter.id && usageShortLabel(meter) === "ctx"));
     const sessionMeter = limits?.find(
@@ -2667,7 +2667,7 @@ let _viewerExpDecodeWarned = false;
 // The bound is applied to the RAW viewerUrl string FIRST — before new URL() — so an
 // oversized durable event is rejected pre-parse (P8 Guard Boundary Inputs). Note the
 // residual: parseDiffPayload's own new URL(payload.viewer_url) at components.tsx:1305
-// (pre-existing #455 code, unchanged here) already parses the full string before this
+// (pre-existing code, unchanged here) already parses the full string before this
 // runs, so this bound protects only the work THIS function adds, not that prior parse.
 const MAX_VIEWER_TOKEN_LEN = 16384;
 
@@ -4800,7 +4800,7 @@ export function SubagentStrip({
     const selected = state.conversations.find((conversation) => conversation.id === state.selectedConversationId);
     const siblingOrChildParentId = mode === "parent" ? state.selectedConversationId : selected?.parent_convo_id;
     const siblingOrChildren = childrenOf(state.conversations, siblingOrChildParentId);
-    // #531: in child view the escape names its destination — look up the parent conversation.
+    // in child view the escape names its destination — look up the parent conversation.
     const parent =
         mode === "child" && selected?.parent_convo_id
             ? state.conversations.find((conversation) => conversation.id === selected.parent_convo_id)

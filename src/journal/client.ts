@@ -173,7 +173,7 @@ function firstSelectableConversation(
     preferredId: string | undefined,
     archivedIds: Set<string>,
 ): Conversation | undefined {
-    // #536: auto-selection uses the SAME canonical predicate as rendering — a child that
+    // auto-selection uses the SAME canonical predicate as rendering — a child that
     // is not a top-level sidebar row (hidden done child, or a nested child) must never be
     // silently auto-selected on reload; skip to the next selectable top-level row.
     const index = buildSidebarIndex(conversations, archivedIds);
@@ -526,7 +526,7 @@ export class MatronJournalClient {
 
     public markAllRead(): void {
         const previousControlError = this.state.controlError;
-        // #536: mark-all targets exactly the rows Active renders as top-level (canonical
+        // mark-all targets exactly the rows Active renders as top-level (canonical
         // predicate) — never a hidden done child (no row, no Mark-all button) nor a nested
         // child, both of which would otherwise leave a stuck, untargetable unread badge.
         const index = buildSidebarIndex(this.state.conversations, this.state.archivedIds);
@@ -911,7 +911,7 @@ export class MatronJournalClient {
         // and the send are atomic w.r.t. in-memory state. The convo may have transitioned to a read-only
         // child during the awaits above (concurrent convo_meta / snapshot refresh) after the entry check
         // at line 701. Defense-in-depth last line; authoritative read-only enforcement is server-side
-        // (#453 three-layer model — a documented server follow-up). (ship-review B1)
+        // (three-layer model, a documented server follow-up).
         if (this.isChildConvo(message.convoId)) {
             this.markChildBlocked(message);
             if (!(await this.persistAttachment(message, owner.db, owner.gen))) return;
@@ -1500,7 +1500,7 @@ export class MatronJournalClient {
         });
         // A snapshot can be the first place THIS tab observes a convo's parent link (→ read-only child).
         // Mirror the journal-event path and abort any in-flight upload to a now-child convo so it can't
-        // egress to a read-only transcript (ship-review major 2). Guarded to skip work when idle.
+        // egress to a read-only transcript. Guarded to skip work when idle.
         if (this.uploadConvos.size > 0) this.abortUploadsForChildConvos();
         if (selectedConversation) await this.selectConversation(selectedConversation.id, { clearUnread: false });
         else if (this.state.session) storeSelectedConversation(this.state.session, undefined);

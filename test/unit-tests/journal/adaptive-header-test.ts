@@ -334,7 +334,7 @@ describe("useAdaptiveHeader", () => {
         expect(probe.container.textContent).toBe('{"usageCollapsed":true,"titleCollapsed":true}');
     });
 
-    it("uses a wider usage-collapse threshold when >4 meters add a 3rd column (#526)", async () => {
+    it("uses a wider usage-collapse threshold when >4 meters add a 3rd column", async () => {
         // 6 meters (ctx+5h+fbl+wk+cpu+ram) → the 3-column grid needs a wider pane, so the
         // usage collapses below 760 instead of 640; the title band still flips at 560.
         const el = document.createElement("div");
@@ -510,7 +510,7 @@ describe("HeaderShell", () => {
     });
 
     it("pins the collapsed stack to ctx + 5h by id, not by grid position", async () => {
-        // Host cpu/ram sort to the front of the grid (#529 host-vitals-first), so the
+        // Host cpu/ram sort to the front of the grid (host-vitals-first), so the
         // collapsed pair must be chosen by id — a positional limits[0]/limits[1] pick would
         // wrongly collapse to cpu/ram. Order here mirrors the reordered grid output.
         const { container } = await mountHeader({

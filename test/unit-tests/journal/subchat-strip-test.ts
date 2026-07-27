@@ -243,7 +243,7 @@ describe("subagent strip integration", () => {
         expect([...pills].map((pill) => pill.textContent)).toEqual(["Child", "Sibling"]);
     });
 
-    it("pins a back chip naming the parent in child view and returns to it on click (#531)", async () => {
+    it("pins a back chip naming the parent in child view and returns to it on click", async () => {
         const conversations = [
             conversation("parent", "Parent deploy", "running"),
             conversation("child", "Child", "running", "parent"),
@@ -266,7 +266,7 @@ describe("subagent strip integration", () => {
         expect(selectConversation).toHaveBeenCalledWith("parent");
     });
 
-    it("shows no back chip in parent view (#531)", async () => {
+    it("shows no back chip in parent view", async () => {
         const conversations = [
             conversation("parent", "Parent", "running"),
             conversation("child", "Child", "running", "parent"),
@@ -277,7 +277,7 @@ describe("subagent strip integration", () => {
         expect(rendered.container.querySelector(".mj_SubagentStrip_hairline")).toBeNull();
     });
 
-    it("marks the current sibling pill as ringed + non-interactive in child view (#531)", async () => {
+    it("marks the current sibling pill as ringed + non-interactive in child view", async () => {
         const conversations = [
             conversation("parent", "Parent", "running"),
             conversation("child", "Child", "running", "parent"),
@@ -290,7 +290,7 @@ describe("subagent strip integration", () => {
         expect(current?.disabled).toBe(true);
     });
 
-    it("returns to the parent on Escape when nothing else is open (#531 §10.11.E)", async () => {
+    it("returns to the parent on Escape when nothing else is open (§10.11.E)", async () => {
         const conversations = [
             conversation("parent", "Parent", "running"),
             conversation("child", "Child", "running", "parent"),

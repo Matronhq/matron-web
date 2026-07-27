@@ -46,7 +46,7 @@ describe("subchat derivations", () => {
         expect(parentPresent(convo("y", { parent_convo_id: "gone" }), ids)).toBe(false);
     });
 
-    describe("buildSidebarIndex placement resolution (#536)", () => {
+    describe("buildSidebarIndex placement resolution", () => {
         const placementOf = (convos: Conversation[], archived: Set<string>, id: string): string =>
             childSidebarPlacement(convos.find((c) => c.id === id)!, buildSidebarIndex(convos, archived));
 

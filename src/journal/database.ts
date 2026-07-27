@@ -116,7 +116,7 @@ export class JournalDatabase {
 
         // A malformed freshness field (null/NaN/non-number last_seq) makes the session_state merge
         // for THAT row unassessable. We must NOT reject the whole snapshot (that would block valid
-        // parent-link repair for every other row — ship-review major 1; the "parent-link backfill
+        // parent-link repair for every other row; the "parent-link backfill
         // unchanged" contract). Instead: repair parent links for all rows, skip only the unassessable
         // session_state write, and DEFER sealing the completion key so the reconcile retries rather
         // than sealing a possibly-stale state (phase-1 review — P3 Fail Visible / V6 Classify Errors).

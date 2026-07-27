@@ -54,7 +54,7 @@ describe("subchat desktop badge", () => {
         expect(send).toHaveBeenCalledWith("setBadgeCount", 6);
     });
 
-    it("excludes a hidden done child of an archived parent so the badge can't outlive its rows (#536)", () => {
+    it("excludes a hidden done child of an archived parent so the badge can't outlive its rows", () => {
         // Blocker 1: a done child of an archived parent renders NO sidebar row and has no
         // Mark-all to clear it, so it must contribute zero — otherwise a stuck, untargetable
         // unread badge persists. The archived parent itself is likewise not counted (no Active
@@ -78,7 +78,7 @@ describe("subchat desktop badge", () => {
         expect(send).toHaveBeenCalledWith("setBadgeCount", 3);
     });
 
-    it("counts a RUNNING child of an archived parent (top-level transient) but not its done sibling (#536)", () => {
+    it("counts a RUNNING child of an archived parent (top-level transient) but not its done sibling", () => {
         const send = jest.fn();
         (window as Window & { electron?: { send: typeof send } }).electron = { send };
         const client = new MatronJournalClient();

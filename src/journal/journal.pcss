@@ -138,7 +138,7 @@ textarea {
     /* v3 mock: two zones — title flush-LEFT (over a muted model·context subtitle)
        and a right controls cluster (usage bars + Compact pill). Replaces the old
        3-column grid (model/context LEFT · title CENTER · usage RIGHT) the operator
-       flagged as wrong vs. the design (#518). */
+       flagged as wrong vs. the design. */
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
@@ -150,7 +150,7 @@ textarea {
 
 .mj_HeaderCluster {
     /* v3 mock floats the header content on the banner background — no bordered,
-       shadowed chip boxes. Unbox for fidelity + declutter (#518). */
+       shadowed chip boxes. Unbox for fidelity + declutter. */
     min-width: 0;
     max-width: 100%;
     box-sizing: border-box;
@@ -230,7 +230,7 @@ textarea {
 }
 
 /* model · context (· subagent-state) inline subtitle with middot separators.
-   v3 mock subtitle: 11px / 400 / 14px, text-secondary (#518). */
+   v3 mock subtitle: 11px / 400 / 14px, text-secondary. */
 .mj_HeaderMeta {
     display: flex;
     min-width: 0;
@@ -354,7 +354,7 @@ textarea {
 }
 
 /* Persistent sidebar connection footer: avatar · operator id · connection status.
-   v3 mock bottom-left of the sidebar (#519). */
+   v3 mock bottom-left of the sidebar. */
 .mx_LeftPanel_wrapper--user {
     flex-direction: column;
 }
@@ -483,7 +483,7 @@ textarea {
 
 .mj_UsageCluster {
     display: flex;
-    /* Content-width: 4 bars → 2 columns (~350px), 6 bars (host cpu/ram, #526) → 3 columns
+    /* Content-width: 4 bars → 2 columns (~350px), 6 bars (host cpu/ram) → 3 columns
        (~500px). The full grid only renders when the pane is wide enough to hold it — see
        useAdaptiveHeader's meter-count-aware collapse threshold — so it never gets squeezed
        into a horizontal scroll; below the threshold it collapses to the ctx+5h popover. */
@@ -494,7 +494,7 @@ textarea {
     /* Centre the 2×2 grid vertically so its centre lands on the band centre — which is
        where the Compact pill centres too (operator: bars-centre == Compact-middle). */
     align-items: center;
-    /* #525: flush the bar cluster RIGHT against the divider so the gap left-of-divider
+    /* flush the bar cluster RIGHT against the divider so the gap left-of-divider
        (bars→divider = HeaderControls' 12px flex gap) matches the gap divider→Compact
        (also the 12px flex gap). Default flex-start left the reserved 300px cluster's
        bars floating far from the separator. */
@@ -509,7 +509,7 @@ textarea {
 }
 
 .mj_UsageCluster .mj_UsageBars {
-    /* Column-first fill, 2 rows: cpu/ram | ctx/5h | fbl/wk (#529 host-vitals-first). Columns size to their
+    /* Column-first fill, 2 rows: cpu/ram | ctx/5h | fbl/wk (host-vitals-first). Columns size to their
        content (grid-auto-columns: max-content) so the cluster stays exactly as wide as the
        bars it holds — no reserved empty column. column-gap 16. row-gap 10 makes the two-row
        block 36px tall = the title+subtitle block, so tops/bottoms line up. */
@@ -847,7 +847,7 @@ textarea {
 }
 
 /* The scrolling sibling run: pills flow horizontally and scroll; the label leads.
-   #534: reserve padding-bottom so the horizontal scrollbar (when the pills
+   reserve padding-bottom so the horizontal scrollbar (when the pills
    overflow) clears the pill row instead of sitting cramped against it. */
 .mj_SubagentStrip_run {
     display: flex;
@@ -1154,7 +1154,7 @@ textarea {
         sans-serif;
 }
 
-/* #527: item buttons ride the panel surface directly. The generic
+/* item buttons ride the panel surface directly. The generic
    `.mj_HeaderMenu button` rule (specificity 0,1,1) paints a subtle-secondary
    pill; suppress it here so the menu reads as ONE surface (panel) instead of a
    tinted pill layered on white/dark. Hover/focus below supply the only tint.
@@ -2907,7 +2907,7 @@ li.mj_AttachmentChip_error {
 
 .mj_DiffLine_hunk {
     color: var(--cpd-color-text-secondary);
-    /* #522: the hunk header (`@@ -a,b +c,d @@`) is diff metadata, not source.
+    /* the hunk header (`@@ -a,b +c,d @@`) is diff metadata, not source.
        Fira Code draws `@` as a ring-enclosed `a` (its base glyph — NOT a
        ligature, so font-feature-settings can't undo it), which made `@@`
        unreadable. Render the header row in a plain monospace whose at-sign is

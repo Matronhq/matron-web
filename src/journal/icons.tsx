@@ -29,7 +29,7 @@ function Icon({ children, ...props }: IconProps): React.ReactElement {
 }
 
 export function SettingsIcon(props: IconProps): React.ReactElement {
-    // v3 mock uses a sliders/faders glyph (not the cog) for settings (#519).
+    // v3 mock uses a sliders/faders glyph (not the cog) for settings.
     return (
         <Icon {...props}>
             <path d="M4 8h9M17 8h3M4 16h3M11 16h9" />

@@ -76,7 +76,7 @@ describe("journal session status presentation", () => {
     });
 
     it("ranks usage meters into the design's column-first grid order", () => {
-        // id path: cpu/ram | ctx/5h | fbl/model,wk (host vitals lead, #529 follow-up)
+        // id path: cpu/ram | ctx/5h | fbl/model,wk (host vitals lead)
         const byId = [
             { id: "host_ram", label: "Host RAM" },
             { id: "week_all", label: "Week (all models)" },

@@ -312,7 +312,7 @@ export function parentPresent(c: Conversation, ids: ReadonlySet<string>): boolea
 export type ChildSidebarPlacement = "nested" | "top-level" | "hidden";
 
 /**
- * #536: precomputed lookups shared by every sidebar-visibility consumer so the SAME
+ * precomputed lookups shared by every sidebar-visibility consumer so the SAME
  * classification drives rendering, selection, unread aggregation, the desktop badge, and
  * mark-all. Build it once per derivation from the conversation list + the archived set.
  * `placement` holds each conversation's fully-resolved Active/Favorites placement (see
@@ -329,7 +329,7 @@ export interface SidebarIndex {
 }
 
 /**
- * #536 (terminal): resolve EVERY conversation's Active/Favorites placement once, through
+ * resolve EVERY conversation's Active/Favorites placement once, through
  * the SAME recursive classifier, memoized and cycle-safe. This removes the last
  * approximation — a running child nests ONLY when its direct parent's ACTUAL resolved
  * placement is "top-level" (a real, rendered top-level row); if the parent is archived,
@@ -395,7 +395,7 @@ export function buildSidebarIndex(conversations: Conversation[], archivedIds: Re
 }
 
 /**
- * #536: the SINGLE source of truth for where a subagent conversation lands in the Active/
+ * the SINGLE source of truth for where a subagent conversation lands in the Active/
  * Favorites sidebar — a pure lookup of the placement resolved once in buildSidebarIndex, so
  * all call sites (rendering, selection, unread, badge, mark-all) stay in lock-step. Defaults
  * to "top-level" for an id absent from the index (orphan-style recovery).
@@ -405,7 +405,7 @@ export function childSidebarPlacement(conversation: Conversation, index: Sidebar
 }
 
 /**
- * #536: the ONE canonical "does this conversation render as a TOP-LEVEL sidebar row?"
+ * the ONE canonical "does this conversation render as a TOP-LEVEL sidebar row?"
  * predicate. A non-child always does; a child does only when its resolved placement is
  * "top-level" (orphan, archived-parent-running, or a running descendant that cannot nest).
  * Used by rendering, auto-selection, unread aggregation, the desktop badge, and mark-all so

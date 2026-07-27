@@ -1130,7 +1130,7 @@ describe("composer drafts", () => {
         jest.useRealTimers();
     });
 
-    test("a failed draft persist surfaces the non-durable badge (T-3.3 render contract)", async () => {
+    test("a failed draft persist surfaces the non-durable badge (render contract)", async () => {
         jest.useFakeTimers();
         const spy = jest.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
             throw new DOMException("q", "QuotaExceededError");
@@ -1442,7 +1442,7 @@ describe("attachment composer", () => {
         expect(clickInput).toHaveBeenCalledTimes(1);
         expect(input.multiple).toBe(true);
         expect(button(rendered.container, "Attach a file").getAttribute("aria-disabled")).toBeNull();
-        // Mic button renamed to "Record voice message" (#470); in jsdom (no MediaRecorder) the
+        // Mic button renamed to "Record voice message"; in jsdom (no MediaRecorder) the
         // capability guard keeps it aria-disabled.
         expect(button(rendered.container, "Record voice message").getAttribute("aria-disabled")).toBe("true");
 
@@ -2573,7 +2573,7 @@ describe("conversation list tabs", () => {
         expect(tabButton(rendered.container, "active").getAttribute("aria-pressed")).toBe("true");
         expect(tabButton(rendered.container, "favorites").getAttribute("aria-pressed")).toBe("false");
         expect(tabButton(rendered.container, "archived").getAttribute("aria-pressed")).toBe("false");
-        // #535: the Archived tab no longer renders a conversation count — just the label.
+        // the Archived tab no longer renders a conversation count — just the label.
         expect(tabButton(rendered.container, "archived").textContent).toBe("Archived");
         expect(names()).toEqual(["Fav Room", "Other Room"]);
 

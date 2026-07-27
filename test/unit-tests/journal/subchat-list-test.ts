@@ -65,7 +65,7 @@ describe("subchat conversation list", () => {
             session: SESSION,
             conversations: [
                 conversation("root", "Root"),
-                // #533: a nested child only renders while RUNNING, so the linked child must be
+                // a nested child only renders while RUNNING, so the linked child must be
                 // running to appear beneath its parent. The orphan (missing parent) is a
                 // top-level fallback and is NOT subject to the active-only gate.
                 conversation("root:sub:linked", "Linked child", "root", "running"),
@@ -84,7 +84,7 @@ describe("subchat conversation list", () => {
 
         const rows = [...container.querySelectorAll<HTMLButtonElement>(".mj_RoomListItem")];
         const names = rows.map((row) => row.querySelector('[data-testid="room-name"]')?.textContent);
-        // #532: the linked child now renders nested (↳ prefix) beneath its parent; the orphan
+        // the linked child now renders nested (↳ prefix) beneath its parent; the orphan
         // (missing parent) stays a top-level fallback.
         expect(names).toEqual(["Root", "↳ Linked child", "Orphan child"]);
         const childRow = rows[1];
@@ -93,7 +93,7 @@ describe("subchat conversation list", () => {
         expect(rows[0].classList.contains("mj_RoomListItem_sub")).toBe(false);
     });
 
-    it("nests only RUNNING children in Active/Favorites; a done child drops out but Archived is unchanged (#533)", async () => {
+    it("nests only RUNNING children in Active/Favorites; a done child drops out but Archived is unchanged", async () => {
         const client = new MatronJournalClient();
         const state = client.getSnapshot();
         (client as unknown as ClientInternals).state = {
@@ -133,12 +133,12 @@ describe("subchat conversation list", () => {
         expect(client.getSnapshot().conversations.some((c) => c.id === "root:sub:done")).toBe(true);
 
         // Archived tab: the archived child is discoverable regardless of its (done) session state
-        // — the active-only gate does not apply here (behavior unchanged from #532).
+        // — the active-only gate does not apply here (behavior unchanged).
         await clickTab("Archived");
         expect(names()).toEqual(["Archived child"]);
     });
 
-    it("hides a done child whose (archived) parent still exists — not top-level, not in Active (#536)", async () => {
+    it("hides a done child whose (archived) parent still exists — not top-level, not in Active", async () => {
         // The blocker: a parent that EXISTS but is archived is NOT an orphan, so its done
         // child must be filtered like any other done child — it must NOT reappear as a
         // permanent top-level room. (Previously the fallback path bypassed the transient gate.)
@@ -178,7 +178,7 @@ describe("subchat conversation list", () => {
         expect(names()).toEqual(["Root"]);
     });
 
-    it("keeps a genuinely orphaned child (missing parent) visible top-level regardless of state (#536)", async () => {
+    it("keeps a genuinely orphaned child (missing parent) visible top-level regardless of state", async () => {
         // Recovery path: only a truly MISSING parent (id absent from state) grants a child
         // unconditional top-level visibility — even when the child itself is done.
         const client = new MatronJournalClient();
@@ -205,7 +205,7 @@ describe("subchat conversation list", () => {
         expect(names).toEqual(["Orphan child"]);
     });
 
-    it("shows a RUNNING child of an archived parent top-level (transient), not a permanent room (#536)", async () => {
+    it("shows a RUNNING child of an archived parent top-level (transient), not a permanent room", async () => {
         // A running child of an archived parent can't nest (its parent isn't an Active row),
         // so it renders top-level — but per the transient rule, not permanently: once it is
         // done it is hidden (covered by the archived-parent-done-child test above).
@@ -238,7 +238,7 @@ describe("subchat conversation list", () => {
         expect(rows[0].classList.contains("mj_RoomListItem_sub")).toBe(false);
     });
 
-    it("does not target a hidden done child of an archived parent in mark-all (#536)", async () => {
+    it("does not target a hidden done child of an archived parent in mark-all", async () => {
         // Blocker 1: the hidden child has no row and no Mark-all button; mark-all must not
         // target it either, or its unread override would be stuck with no way to clear it.
         const client = new MatronJournalClient();
@@ -268,7 +268,7 @@ describe("subchat conversation list", () => {
         expect(client.getSnapshot().unreadOverrideIds).toEqual(new Set(["root:sub:linked"]));
     });
 
-    it("renders a running grandchild top-level (never lost) and hides a done grandchild (#536)", async () => {
+    it("renders a running grandchild top-level (never lost) and hides a done grandchild", async () => {
         // Blocker 2: nesting is capped at one level. A running grandchild (its direct parent is
         // itself a nested child) can't nest, so it must render TOP-LEVEL rather than being
         // pulled from the list and never rendered. A done grandchild stays hidden.
@@ -305,7 +305,7 @@ describe("subchat conversation list", () => {
         expect(grandchildRow.classList.contains("mj_RoomListItem_sub")).toBe(false);
     });
 
-    it("renders a running grandchild rooted at an ARCHIVED parent (terminal case, not lost) (#536)", async () => {
+    it("renders a running grandchild rooted at an ARCHIVED parent (terminal case, not lost)", async () => {
         // The case the parentPresent host approximation lost: archived A → done child B (hidden)
         // → running grandchild C. B is not a real top-level row, so C must resolve top-level and
         // get a row — B's "not active" appearance must not be mistaken for host eligibility.
@@ -393,7 +393,7 @@ describe("subchat conversation list", () => {
         expect(container.textContent).not.toContain("No favorites match your search.");
     });
 
-    it("keeps an archived child out of Active/Favorites and discoverable in Archived (#532)", async () => {
+    it("keeps an archived child out of Active/Favorites and discoverable in Archived", async () => {
         const client = new MatronJournalClient();
         const state = client.getSnapshot();
         (client as unknown as ClientInternals).state = {

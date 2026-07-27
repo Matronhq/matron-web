@@ -111,7 +111,7 @@ describe("subchat automatic selection", () => {
         expect(client.getSnapshot().selectedConversationId).toBe("missing:sub:orphan");
     });
 
-    it("does NOT auto-select a done child whose archived parent still exists (#536)", async () => {
+    it("does NOT auto-select a done child whose archived parent still exists", async () => {
         // Blocker 1: the render gate hides a done child of an archived parent, so auto-select
         // must agree — a hidden child is never a top-level row and must never be silently
         // selected on reload (invisible selection). With nothing else selectable, selection
@@ -126,7 +126,7 @@ describe("subchat automatic selection", () => {
         expect(client.getSnapshot().selectedConversationId).toBeUndefined();
     });
 
-    it("auto-selects a RUNNING child of an archived parent (top-level transient, #536)", async () => {
+    it("auto-selects a RUNNING child of an archived parent (top-level transient)", async () => {
         // A running child of an archived parent renders top-level (can't nest), so it IS a
         // valid selection target — unlike its done sibling above.
         const runningChild: Conversation = { ...conversation("root:sub:run", "root"), session_state: "running" };

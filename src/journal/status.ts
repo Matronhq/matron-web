@@ -75,7 +75,7 @@ const USAGE_ID_SHORT_LABELS: Record<string, string> = {
 };
 
 // Canonical id → grid rank. Column-first 3×2: col1 [cpu,ram], col2 [ctx,5h],
-// col3 [fbl/model, wk]. Host vitals lead (leftmost column, #529 follow-up). Per-model
+// col3 [fbl/model, wk]. Host vitals lead (leftmost column). Per-model
 // weekly (`week_<slug>`) shares rank 4 with fbl.
 const USAGE_ID_RANKS: Record<string, number> = {
     host_cpu: 0,
