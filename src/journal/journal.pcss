@@ -18,6 +18,12 @@ body,
 html {
     /* Match Matron's pre-Journal FontWatcher default (the browser default minus 1px). */
     font-size: calc(var(--cpd-font-size-root) - 1px);
+    /* Themed scrollbars: a subtle themed thumb over a transparent track. Inherited by all
+       scrollable descendants; Matron's own .mx_AutoHideScrollbar (message panel etc.)
+       overrides this to stay auto-hidden, so only the un-styled native scrollbars — the
+       dark sidebar list, which otherwise reads grey-on-white — pick this up. */
+    scrollbar-width: thin;
+    scrollbar-color: var(--cpd-color-border-strong) transparent;
 }
 
 body {
@@ -28,6 +34,60 @@ button,
 input,
 textarea {
     font: inherit;
+}
+
+/* §10.4 native-chrome parity — all authored in both themes via the --mj-* tokens.
+
+   Text selection: an accent tint (no --cpd selection token exists). */
+::selection {
+    background: var(--mj-selection);
+}
+
+/* Focus-ring FLOOR: a themed 2px accent ring, never browser-blue. This is the floor —
+   components with their own :focus-visible (menus at offset −2px, etc.) are more specific
+   and win, so no double ring; this only catches elements that had no explicit rule. */
+:focus-visible {
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: 2px;
+}
+
+/* WebKit scrollbar boxes for legacy parity, SCOPED to the surfaces that intentionally show
+   a themed thumb (Firefox already themes these via the inherited scrollbar-color at :root).
+   Deliberately NOT global: a global ::-webkit-scrollbar rule force-shows Matron's
+   .mx_AutoHideScrollbar panels (message panel etc.), the exact round-4 regression. */
+.mj_RoomList::-webkit-scrollbar,
+.mj_SubagentStrip::-webkit-scrollbar,
+.mj_EventSource_json::-webkit-scrollbar,
+.mj_EventSource_body::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+.mj_RoomList::-webkit-scrollbar-track,
+.mj_SubagentStrip::-webkit-scrollbar-track,
+.mj_EventSource_json::-webkit-scrollbar-track,
+.mj_EventSource_body::-webkit-scrollbar-track,
+.mj_RoomList::-webkit-scrollbar-corner,
+.mj_EventSource_json::-webkit-scrollbar-corner {
+    background: transparent;
+}
+
+.mj_RoomList::-webkit-scrollbar-thumb,
+.mj_SubagentStrip::-webkit-scrollbar-thumb,
+.mj_EventSource_json::-webkit-scrollbar-thumb,
+.mj_EventSource_body::-webkit-scrollbar-thumb {
+    border: 3px solid transparent;
+    border-radius: 99px;
+    background: var(--mj-scrollbar);
+    background-clip: content-box;
+}
+
+.mj_RoomList::-webkit-scrollbar-thumb:hover,
+.mj_SubagentStrip::-webkit-scrollbar-thumb:hover,
+.mj_EventSource_json::-webkit-scrollbar-thumb:hover,
+.mj_EventSource_body::-webkit-scrollbar-thumb:hover {
+    background: var(--mj-scrollbar-hover);
+    background-clip: content-box;
 }
 
 .mx_LeftPanel_outerWrapper {
@@ -66,121 +126,446 @@ textarea {
     flex: 0 0 auto;
 }
 
+.mx_RoomView_body {
+    container: mj-room / inline-size;
+}
+
 .mx_RoomHeader:hover {
     background-color: var(--cpd-color-bg-canvas-default);
 }
 
 .mj_ChatHeader {
+    /* v3 mock: two zones — title flush-LEFT (over a muted model·context subtitle)
+       and a right controls cluster (usage bars + Compact pill). Replaces the old
+       3-column grid (model/context LEFT · title CENTER · usage RIGHT) the operator
+       flagged as wrong vs. the design. */
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
-    gap: var(--cpd-space-3x);
+    border-bottom: 1px solid var(--cpd-color-border-subtle);
+    background: var(--cpd-color-bg-canvas-default);
+    gap: var(--cpd-space-4x);
+    padding-inline: var(--cpd-space-4x);
 }
 
 .mj_HeaderCluster {
+    /* v3 mock floats the header content on the banner background — no bordered,
+       shadowed chip boxes. Unbox for fidelity + declutter. */
     min-width: 0;
     max-width: 100%;
     box-sizing: border-box;
-    border: 1px solid rgb(28, 24, 20, 0.08);
-    border-radius: 10px;
-    background-color: rgb(255, 254, 250, 0.72);
-    box-shadow: 0 1px 2px rgb(28, 24, 20, 0.06);
-    padding: 4px 10px;
+    border: 0;
+    background: transparent;
 }
 
 .mj_HeaderCluster_empty {
     visibility: hidden;
 }
 
-.mj_ModelContextCluster,
+/* LEFT zone: title flush-left (bold) stacked over the model·context subtitle. */
 .mj_HeaderTitleCluster {
     display: flex;
-    height: 38px;
+    min-width: 0;
+    min-height: 64px;
     flex-direction: column;
+    /* The title block (title + subtitle = 36px) and the 2×2 bars block (also 36px with
+       row-gap 10) are equal height, so centring both in the 64px band aligns their tops
+       (title-top == bars-top) AND their bottoms (subtitle-bottom == 5h/wk row bottom). */
     justify-content: center;
-}
-
-.mj_ModelContextCluster {
+    align-items: flex-start;
     justify-self: start;
-}
-
-.mj_HeaderTitleCluster {
-    max-width: min(360px, 38vw);
-    align-items: center;
-    justify-self: center;
-    padding-inline: 12px;
+    gap: 2px;
 }
 
 .mj_HeaderTitleCluster .mx_RoomHeader_heading {
     display: block;
-    width: 100%;
+    max-width: 100%;
+    overflow: hidden;
+    /* v5 title.lg (header conversation title): 600 15px/20px (measured from the design). */
+    color: var(--cpd-color-text-primary);
     font-size: 15px;
     font-weight: 600;
-    line-height: 18px;
-    text-align: center;
+    line-height: 20px;
+    text-align: left;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* §10.11 child-view title row: ↳ glyph · truncating name · SUBAGENT badge (all baseline). */
+.mj_SubChatHeader .mj_HeaderTitleCluster .mx_RoomHeader_heading {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+}
+
+.mj_SubChatHeader .mj_HeaderTitleCluster .mx_RoomHeader_heading .mx_RoomHeader_truncated {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_HeaderTitleGlyph {
+    flex: 0 0 auto;
+    color: var(--cpd-color-text-tertiary);
+    font-weight: 400;
+}
+
+.mj_HeaderSubagentBadge {
+    flex: 0 0 auto;
+    border-radius: 999px;
+    background: var(--cpd-color-bg-subtle-secondary);
+    color: var(--cpd-color-text-secondary);
+    padding: 0 7px;
+    font:
+        500 10px/16px Inter,
+        sans-serif;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+
+/* Subtitle parent reference: "of <parent>" — the parent name reads as primary ink. */
+.mj_HeaderParentName {
+    color: var(--cpd-color-text-primary);
+}
+
+/* model · context (· subagent-state) inline subtitle with middot separators.
+   v3 mock subtitle: 11px / 400 / 14px, text-secondary. */
+.mj_HeaderMeta {
+    display: flex;
+    min-width: 0;
+    max-width: 100%;
+    align-items: center;
+    overflow: hidden;
+    color: var(--cpd-color-text-secondary);
+    font-size: 11px;
+    font-weight: 400;
+    line-height: 14px;
+}
+
+.mj_HeaderMeta > * {
+    min-width: 0;
+    flex: 0 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_HeaderMeta > :not(:first-child)::before {
+    flex: none;
+    margin-inline: var(--cpd-space-1x);
+    color: var(--cpd-color-text-tertiary);
+    content: "·";
 }
 
 .mj_HeaderModel,
 .mj_HeaderContext,
-.mj_HeaderEmail {
+.mj_HeaderWorkdir {
     display: block;
     overflow: hidden;
-    color: var(--cpd-color-text-secondary);
+    color: inherit;
+    font: inherit;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+/* v5 subtitle: workdir is the flexible, first-to-truncate segment so the short,
+   meaningful model + run-state stay legible when the pane narrows. */
+.mj_HeaderWorkdir {
+    flex: 1 1 auto;
 }
 
 .mj_HeaderModel,
-.mj_HeaderEmail {
-    font-size: 10px;
-    line-height: 12px;
+.mj_HeaderMeta .mj_HeaderState {
+    flex: 0 1 auto;
 }
 
-.mj_HeaderContext {
+/* RIGHT zone: usage bars + Compact pill. */
+.mj_HeaderControls {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    justify-self: end;
+    gap: var(--cpd-space-3x);
+}
+
+/* v5 mock Compact pill: 28px, 1px --m-line2, transparent, secondary ink, 500 12/16. */
+.mj_CompactButton {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: 28px;
+    padding: 0 10px;
+    border: 1px solid var(--cpd-color-border-strong);
+    border-radius: var(--cpd-radius-pill);
+    background: transparent;
+    color: var(--cpd-color-text-secondary);
+    font:
+        500 12px/16px Inter,
+        sans-serif;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.mj_CompactButton svg {
+    width: 12px;
+    height: 12px;
+}
+
+.mj_CompactButton:hover {
+    background: var(--cpd-state-hover);
+    color: var(--cpd-color-text-primary);
+}
+
+/* 1px divider separating the usage grid from the Compact pill (mock). */
+.mj_HeaderDivider {
+    width: 1px;
+    height: 26px;
+    flex: 0 0 auto;
+    background: var(--cpd-color-border-subtle);
+}
+
+/* Header "⋯": the selected conversation's actions, reachable from the chat (next to
+   Compact) — 3-dot trigger + click-menu. */
+.mj_HeaderOverflow {
+    position: relative;
+    display: inline-flex;
+    flex: 0 0 auto;
+}
+
+.mj_HeaderOverflowTrigger svg {
+    width: 18px;
+    height: 18px;
+}
+
+.mj_HeaderOverflow .mj_HeaderMenu {
+    top: calc(100% + var(--cpd-space-1x));
+    right: 0;
+}
+
+/* Session run-state in the subtitle — teal while running (v3 mock), muted otherwise. */
+.mj_HeaderState {
+    color: var(--cpd-color-text-secondary);
+}
+
+.mj_HeaderState_running {
+    color: var(--cpd-color-text-action-accent);
+}
+
+/* Persistent sidebar connection footer: avatar · operator id · connection status.
+   v3 mock bottom-left of the sidebar. */
+.mx_LeftPanel_wrapper--user {
+    flex-direction: column;
+}
+
+.mj_SidebarFooter {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: var(--cpd-space-2x);
+    padding: var(--cpd-space-2x) var(--cpd-space-3x);
+    border-top: 1px solid var(--cpd-color-border-subtle);
+    background: var(--cpd-color-bg-canvas-default);
+}
+
+.mj_SidebarFooterAvatar {
+    display: inline-flex;
+    flex: none;
+    width: 24px;
+    height: 24px;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--cpd-radius-pill);
+    background: var(--cpd-color-bg-subtle-secondary);
+    color: var(--cpd-color-text-secondary);
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1;
+    text-transform: uppercase;
+}
+
+.mj_SidebarFooterId {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    color: var(--cpd-color-text-secondary);
     font-size: 12px;
+    font-weight: 400;
     line-height: 16px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
-.mj_HeaderEmail {
-    width: 100%;
-    text-align: center;
+.mj_SidebarFooterStatus {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    gap: var(--cpd-space-1x);
+    color: var(--cpd-color-text-tertiary);
+    font-size: 11px;
+    font-weight: 400;
+    line-height: 14px;
+}
+
+.mj_SidebarFooterDot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--cpd-color-text-tertiary);
+}
+
+.mj_SidebarFooterStatus_online .mj_SidebarFooterDot {
+    background: var(--cpd-color-text-action-accent);
+}
+
+.mj_SubChatState {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--cpd-space-1x);
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-body-xs-regular);
+}
+
+.mj_SubagentSwitcher {
+    position: relative;
+    display: flex;
+    justify-content: center;
+}
+
+.mj_SubagentSwitcherButton {
+    overflow: hidden;
+    max-width: 100%;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--cpd-color-text-action-accent);
+    cursor: pointer;
+    font: var(--cpd-font-body-xs-regular);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_SubagentSwitcherButton:focus-visible {
+    border-radius: 4px;
+    outline: 2px solid var(--cpd-color-icon-accent-primary);
+    outline-offset: 2px;
+}
+
+.mj_SubagentSwitcherMenu {
+    top: calc(100% + var(--cpd-space-2x));
+    left: 50%;
+    transform: translateX(-50%);
+    /* Bound to the viewport so a parent with many finished children stays fully reachable
+       (root overflow is hidden, so an unbounded menu would clip lower items). Phase-6 review. */
+    max-height: min(60vh, 420px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+}
+
+.mj_SubagentSwitcherMenu button {
+    overflow: hidden;
+    padding-inline: var(--cpd-space-3x);
+    text-align: left;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_SubagentSwitcherMenu button:disabled {
+    color: var(--cpd-color-text-secondary);
+    cursor: default;
+}
+
+.mj_SubagentSwitcherMenu button:focus-visible {
+    outline: 2px solid var(--cpd-color-icon-accent-primary);
+    outline-offset: 1px;
 }
 
 .mj_UsageCluster {
-    height: 38px;
-    overflow: hidden;
-    justify-self: end;
-    padding-block: 3px;
+    display: flex;
+    /* Content-width: 4 bars → 2 columns (~350px), 6 bars (host cpu/ram) → 3 columns
+       (~500px). The full grid only renders when the pane is wide enough to hold it — see
+       useAdaptiveHeader's meter-count-aware collapse threshold — so it never gets squeezed
+       into a horizontal scroll; below the threshold it collapses to the ctx+5h popover. */
+    width: auto;
+    max-width: 100%;
+    min-width: 0;
+    height: 64px;
+    /* Centre the 2×2 grid vertically so its centre lands on the band centre — which is
+       where the Compact pill centres too (operator: bars-centre == Compact-middle). */
+    align-items: center;
+    /* flush the bar cluster RIGHT against the divider so the gap left-of-divider
+       (bars→divider = HeaderControls' 12px flex gap) matches the gap divider→Compact
+       (also the 12px flex gap). Default flex-start left the reserved 300px cluster's
+       bars floating far from the separator. */
+    justify-content: flex-end;
+    padding-block: var(--cpd-space-1x);
 }
 
 .mj_UsageBars {
+    /* Default single-column (used by the collapsed popover). */
     display: grid;
-    gap: 2px;
+    gap: var(--cpd-space-1x);
+}
+
+.mj_UsageCluster .mj_UsageBars {
+    /* Column-first fill, 2 rows: cpu/ram | ctx/5h | fbl/wk (host-vitals-first). Columns size to their
+       content (grid-auto-columns: max-content) so the cluster stays exactly as wide as the
+       bars it holds — no reserved empty column. column-gap 16. row-gap 10 makes the two-row
+       block 36px tall = the title+subtitle block, so tops/bottoms line up. */
+    grid-template-rows: auto auto;
+    grid-auto-flow: column;
+    grid-auto-columns: max-content;
+    column-gap: 16px;
+    row-gap: 10px;
+    max-height: 100%;
+    /* Scroll (not clip) any set that outgrows the pane — the >4-meter collapse threshold
+       widens for host cpu/ram but the SAME threshold expands larger sets too, so a 12-limit
+       frame must stay reachable via x-scroll rather than being clipped off-pane. The common
+       6-bar case (~507px) fits the pane, so `auto` shows no scrollbar. y stays hidden so a
+       horizontal bar never steals a vertical one. */
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior: contain;
 }
 
 .mj_UsageRow {
+    /* v4 mock: label(24) / track / percent(32), gap 7, Fira Code. Fixed 68px track (columns
+       are content-sized now, so a 1fr track would collapse to its 40px min). */
     display: grid;
-    grid-template-columns: minmax(34px, auto) 90px minmax(34px, auto);
+    grid-template-columns: 24px 68px 32px;
     align-items: center;
-    gap: 5px;
-    font-size: 9px;
-    line-height: 9px;
+    column-gap: 7px;
+    font-family: "Fira Code", monospace;
+    font-size: 10.5px;
+    line-height: 13px;
+}
+
+.mj_UsageLabel,
+.mj_UsagePercent {
+    overflow: hidden;
+    /* Non-ctx meters: 400 + secondary. */
+    color: var(--cpd-color-text-secondary);
+    font-weight: 400;
+    white-space: nowrap;
 }
 
 .mj_UsageLabel {
-    overflow: hidden;
     text-align: right;
     text-overflow: ellipsis;
-    white-space: nowrap;
+}
+
+.mj_UsagePercent {
+    text-align: right;
 }
 
 .mj_UsageTrack {
     display: block;
-    width: 90px;
-    height: 3px;
+    width: 100%;
+    height: 4px; /* v4 mock track height */
     overflow: hidden;
-    border-radius: 999px;
-    background-color: rgb(28, 24, 20, 0.12);
+    border-radius: var(--cpd-radius-pill);
+    background-color: var(--cpd-color-bg-usage-track);
 }
 
 .mj_UsageFill {
@@ -190,22 +575,209 @@ textarea {
 }
 
 .mj_UsageFill_low {
-    background-color: #34c759;
+    background-color: var(--cpd-color-usage-low);
 }
 
 .mj_UsageFill_medium {
-    background-color: #ff9500;
+    background-color: var(--cpd-color-usage-medium);
+}
+
+.mj_UsageFill_unknown {
+    background: repeating-linear-gradient(
+        135deg,
+        var(--cpd-color-bg-usage-track) 0,
+        var(--cpd-color-bg-usage-track) var(--cpd-space-1x),
+        var(--cpd-color-border-interactive-primary) var(--cpd-space-1x),
+        var(--cpd-color-border-interactive-primary) var(--cpd-space-2x)
+    );
+}
+
+.mj_UsagePercent_unknown {
+    color: var(--cpd-color-text-secondary);
+}
+
+/* Stale host vitals (host_cpu/host_ram whose `sampled_at_ms` is past HOST_VITALS_STALE_MS):
+   dim the whole row so the value reads as "not live" rather than misleadingly current. Only
+   opacity — no layout shift, keeps the bar in place, and desaturates label + track + fill +
+   percent together in one subtle move (0.45 matches the disabled-control opacity used
+   elsewhere). The real age is exposed via the accessible name + hover title. */
+.mj_UsageRow_stale {
+    opacity: 0.45;
+}
+
+/* Header disclosures (collapsed usage <760, title <560): trigger + hover popover
+   wrapped together so the mouse can travel into the panel without dismissing. */
+.mj_HeaderUsageDisclosure {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+
+/* Collapsed usage = a two-row ctx+5h stack, as a bare hover/click trigger. Single
+   content-width column (not the 2×2's reserved 300px) so it sits tight against the
+   divider + Compact — only padding between the two bars and the separator. */
+.mj_UsageCluster_collapsed {
+    width: auto;
+    height: auto;
+    padding: var(--cpd-space-1x) var(--cpd-space-2x);
+    border: 0;
+    border-radius: var(--cpd-radius-lg);
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+}
+
+.mj_UsageCluster_collapsed .mj_UsageBars {
+    grid-template-columns: auto;
+}
+
+.mj_UsageCluster_collapsed .mj_UsageRow {
+    grid-template-columns: 24px 72px 32px;
+}
+
+.mj_UsageCluster_collapsed:hover {
+    background: var(--cpd-color-bg-subtle-secondary);
+}
+
+.mj_UsageCluster_collapsed:focus-visible {
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: 2px;
+}
+
+.mj_UsagePopover {
+    top: calc(100% + var(--cpd-space-1x));
+    right: 0;
+    width: 250px;
+}
+
+.mj_UsagePopover .mj_UsageRow {
+    grid-template-columns: 28px 1fr 40px;
+    font-size: 11px;
+    line-height: 16px;
+}
+
+/* Compact title block (<560): title + status-dot/short-model, hover → popover. */
+.mj_HeaderTitleCluster_compact {
+    position: relative;
+    gap: 2px;
+    padding: 0;
+}
+
+/* <560 title disclosure: the h1 (before) sits on top; this focusable trigger
+   (compact subtitle + chevron) below opens a popover with the full title +
+   subtitle. Stacked, not side-by-side, so the title doesn't get squeezed. */
+.mj_HeaderTitleDisclosure {
+    display: inline-flex;
+    min-width: 0;
+    max-width: 100%;
+    align-items: center;
+    gap: var(--cpd-space-1x);
+    padding: 0;
+    border: 0;
+    border-radius: var(--cpd-radius-md);
+    background: transparent;
+    color: var(--cpd-color-text-tertiary);
+    cursor: pointer;
+}
+
+.mj_HeaderTitleDisclosure:hover {
+    background: var(--cpd-color-bg-subtle-secondary);
+}
+
+.mj_HeaderTitleDisclosure:focus-visible {
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: 2px;
+}
+
+.mj_HeaderTitleDisclosure svg {
+    width: 14px;
+    height: 14px;
+    flex: none;
+}
+
+.mj_TitlePopover {
+    top: calc(100% + var(--cpd-space-1x));
+    left: 0;
+    width: max-content;
+    max-width: min(320px, calc(100vw - 32px));
+}
+
+.mj_TitlePopoverTitle {
+    font: var(--cpd-font-heading-sm-semibold);
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 17px;
+    color: var(--cpd-color-text-primary);
+}
+
+/* Visually hidden but exposed to assistive tech (e.g. compact run-state). */
+.mj_SrOnly {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+/* Compact subtitle: status dot + short model name. */
+.mj_HeaderMetaCompact {
+    display: inline-flex;
+    min-width: 0;
+    align-items: center;
+    gap: var(--cpd-space-1x);
+    color: var(--cpd-color-text-secondary);
+    font-size: 11px;
+    font-weight: 400;
+    line-height: 14px;
+}
+
+.mj_HeaderModelShort {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_HeaderStatusDot {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--cpd-color-border-strong);
+}
+
+.mj_HeaderStatusDot_running {
+    background: var(--cpd-color-text-action-accent);
+    animation: mj-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes mj-pulse {
+    0%,
+    100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.35;
+    }
+}
+
+/*
+ * The resizable sidebar can make the room much narrower than the viewport.
+ * Below 720px the right controls have collapsed usage (usageCollapsed at 700px),
+ * so just tighten the header gap/padding — the title stays flush-left.
+ */
+@container mj-room (max-width: 720px) {
+    .mj_ChatHeader {
+        gap: var(--cpd-space-2x);
+        padding-inline: var(--cpd-space-3x);
+    }
 }
 
 .mj_UsageFill_high {
-    background-color: #ff3b30;
-}
-
-.mj_UsageReset {
-    overflow: hidden;
-    color: var(--cpd-color-text-secondary);
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    background-color: var(--cpd-color-usage-high);
 }
 
 .mj_BackButton {
@@ -231,6 +803,9 @@ textarea {
     z-index: 1000;
     display: flex;
     width: min(280px, calc(100vw - 32px));
+    max-height: min(60vh, 420px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
     flex-direction: column;
     gap: var(--cpd-space-2x);
     box-sizing: border-box;
@@ -258,8 +833,177 @@ textarea {
     cursor: pointer;
 }
 
-.mj_AccountMenu,
-.mj_ComposeHint {
+/* §10.11: non-scrolling row — [pinned back chip] · [hairline] · [scrolling pill run].
+   Only .mj_SubagentStrip_run scrolls; the escape stays pinned. */
+.mj_SubagentStrip {
+    display: flex;
+    min-width: 0;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 0;
+    border-bottom: 1px solid var(--cpd-color-border-disabled);
+    background: var(--cpd-color-bg-canvas-default);
+    padding: 7px 14px;
+}
+
+/* The scrolling sibling run: pills flow horizontally and scroll; the label leads.
+   reserve padding-bottom so the horizontal scrollbar (when the pills
+   overflow) clears the pill row instead of sitting cramped against it. */
+.mj_SubagentStrip_run {
+    display: flex;
+    min-width: 0;
+    flex: 1 1 auto;
+    align-items: center;
+    gap: var(--cpd-space-2x);
+    overflow-x: auto;
+    padding-bottom: var(--cpd-space-2x);
+    scrollbar-width: thin;
+    scrollbar-color: var(--mj-scrollbar) transparent;
+}
+
+/* Back chip: same pill geometry, DIFFERENT ink — accent on selected bg + left chevron.
+   It names its destination (parent title, ellipsised, max 220px). §10.11. */
+.mj_SubagentBack {
+    display: inline-flex;
+    max-width: 220px;
+    height: 26px;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 6px;
+    margin-right: 10px;
+    border: 1px solid rgb(13 148 136 / 28%);
+    border-radius: 999px;
+    background: var(--cpd-state-selected);
+    color: var(--cpd-color-text-action-accent);
+    padding: 0 11px 0 8px;
+    font:
+        500 12px/16px Inter,
+        sans-serif;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.mj_SubagentBack_icon {
+    width: 13px;
+    height: 13px;
+    flex: 0 0 auto;
+}
+
+.mj_SubagentBack_name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_SubagentBack:hover {
+    filter: brightness(1.04);
+}
+
+.mj_SubagentBack:focus-visible {
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: 2px;
+}
+
+/* Hairline separating the escape from the pill run (§10.7 — a hairline, not a gap). */
+.mj_SubagentStrip_hairline {
+    width: 1px;
+    height: 18px;
+    flex: 0 0 auto;
+    margin-right: 10px;
+    background: var(--cpd-color-border-subtle);
+}
+
+/* v4 label.caps: 10px / 500 / 14px, uppercase, +0.06em, tertiary ink. */
+.mj_SubagentStripLabel {
+    flex: none;
+    color: var(--cpd-color-text-tertiary);
+    font-size: 10px;
+    font-weight: 500;
+    line-height: 14px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.mj_SubagentPill_wrapper {
+    display: inline-flex;
+}
+
+.mj_SubagentPill {
+    display: inline-flex;
+    min-height: 28px;
+    max-width: min(240px, 70vw);
+    flex: 0 0 auto;
+    align-items: center;
+    gap: var(--cpd-space-1x);
+    overflow: hidden;
+    box-sizing: border-box;
+    border: 1px solid var(--cpd-color-border-disabled);
+    border-radius: 9999px;
+    background: var(--cpd-color-bg-subtle-secondary);
+    color: var(--cpd-color-text-primary);
+    cursor: pointer;
+    padding: var(--cpd-space-1x) var(--cpd-space-3x);
+    /* v4 meta.md: 12px / 400 / 16px. */
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 16px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_SubagentPill_icon {
+    flex: none;
+    width: 13px;
+    height: 13px;
+    color: var(--cpd-color-text-action-accent);
+}
+
+.mj_SubagentPill_finished .mj_SubagentPill_icon {
+    color: var(--cpd-color-text-tertiary);
+}
+
+.mj_SubagentPill_name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_SubagentPill:hover {
+    background: var(--cpd-color-bg-subtle-primary);
+}
+
+.mj_SubagentPill:focus-visible {
+    outline: 2px solid var(--cpd-color-icon-accent-primary);
+    outline-offset: 2px;
+}
+
+.mj_SubagentPill_finished {
+    border-color: var(--cpd-color-border-subtle);
+    background: var(--cpd-color-bg-subtle-primary);
+    color: var(--cpd-color-text-secondary);
+}
+
+/* §10.11: the current pill CONFIRMS which sibling you're in (header carries the primary
+   "where am I") — accent border + a 2px selected-tint ring, non-interactive. */
+.mj_SubagentPill_current {
+    border-color: var(--cpd-color-text-action-accent);
+    box-shadow: 0 0 0 2px var(--cpd-state-selected);
+    cursor: default;
+}
+
+.mj_Spinner {
+    width: 12px;
+    height: 12px;
+    flex: 0 0 auto;
+    box-sizing: border-box;
+    border: 2px solid rgb(13 148 136 / 25%);
+    border-top-color: var(--cpd-color-text-action-accent);
+    border-radius: 50%;
+    animation: mj-spin 0.8s linear infinite;
+}
+
+.mj_AccountMenu {
     top: 44px;
     right: 8px;
 }
@@ -268,10 +1012,9 @@ textarea {
     position: relative;
 }
 
-.mj_RoomListItem_wrapper .mj_RoomListItem {
-    padding-right: calc(var(--cpd-space-5x) + var(--cpd-space-4x));
-}
-
+/* Row-menu trigger: invisible + non-interactive for pointer users (who open the menu via
+   right-click / long-press), so the sidebar stays clean; it appears and becomes operable
+   only on keyboard focus, preserving a discoverable route for keyboard/AT users. */
 .mj_RoomItemMenu_trigger {
     position: absolute;
     top: 50%;
@@ -285,22 +1028,18 @@ textarea {
     transform: translateY(-50%);
     border: 0;
     border-radius: 8px;
-    background: transparent;
+    background: var(--cpd-color-bg-canvas-default);
     color: var(--cpd-color-icon-secondary);
     cursor: pointer;
     opacity: 0;
     pointer-events: none;
 }
 
-.mj_RoomListItem_wrapper:hover .mj_RoomItemMenu_trigger,
-.mj_RoomListItem_wrapper:focus-within .mj_RoomItemMenu_trigger {
+.mj_RoomItemMenu_trigger:focus-visible {
     opacity: 1;
     pointer-events: auto;
-}
-
-.mj_RoomItemMenu_trigger:hover,
-.mj_RoomItemMenu_trigger:focus-visible {
-    background: var(--cpd-color-bg-subtle-secondary);
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: -2px;
 }
 
 .mj_RoomItemMenu_trigger svg {
@@ -308,67 +1047,174 @@ textarea {
     height: 20px;
 }
 
+.mj_RoomListTabs {
+    display: flex;
+    gap: var(--cpd-space-1x);
+    /* No top margin (the New session row provides the gap); 12px below = uniform gap. */
+    margin: 0 var(--cpd-space-3x) 12px;
+    /* v4: segmented control on a subtle track; the active tab is a raised chip. */
+    border-radius: var(--cpd-radius-pill);
+    background: var(--cpd-color-bg-subtle-secondary);
+    padding: 2px;
+}
+
+.mj_RoomListTab {
+    display: inline-flex;
+    flex: 1 1 0;
+    min-width: 0;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    border: 0;
+    border-radius: var(--cpd-radius-pill);
+    background: transparent;
+    color: var(--cpd-color-text-secondary);
+    cursor: pointer;
+    overflow: hidden;
+    /* v5 mock: 5px/8px so the pill row reads at the mock's height. */
+    padding: 5px var(--cpd-space-2x);
+    /* v4 label.xs (tabs): 12px / 500 / 16px. */
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 16px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    transition:
+        background var(--cpd-dur-fast) var(--cpd-ease),
+        color var(--cpd-dur-fast) var(--cpd-ease);
+}
+
+.mj_RoomListTab:hover {
+    color: var(--cpd-color-text-primary);
+}
+
+/* v4 selected tab: raised panel chip with a subtle shadow + primary ink. */
+.mj_RoomListTab_active,
+.mj_RoomListTab_active:hover {
+    background: var(--cpd-color-bg-canvas-default);
+    box-shadow: 0 1px 2px rgb(28 24 20 / 0.06);
+    color: var(--cpd-color-text-primary);
+}
+
+.mj_RoomListTab:focus-visible {
+    outline: 2px solid var(--cpd-color-border-interactive-primary);
+}
+
+.mj_UnreadDot {
+    width: 8px;
+    height: 8px;
+    flex: 0 0 auto;
+    border-radius: 50%;
+    background: var(--cpd-color-icon-accent-primary);
+}
+
+.mj_RoomListPinGlyph,
+.mj_RoomListStarGlyph {
+    flex: 0 0 auto;
+    color: var(--cpd-color-icon-secondary);
+}
+
+.mj_RoomListPinGlyph svg,
+.mj_RoomListStarGlyph svg {
+    width: 14px;
+    height: 14px;
+}
+
+/* §10.6 conversation-actions menu (one component, sidebar-row + header ⋯ anchors): a
+   4px-padded shell, rows are grid 16px/1fr @10px gap, row radius (7) < shell radius (10)
+   so the hover fill insets from the shell edge, and the destructive Archive is split off
+   by a hairline (not a gap). Focus is the teal ring inset −2px, never browser-blue. */
 .mj_RoomItemMenu {
-    width: min(220px, calc(100vw - var(--cpd-space-4x)));
+    width: min(224px, calc(100vw - var(--cpd-space-4x)));
     max-height: calc(100vh - var(--cpd-space-4x));
+    gap: 0;
+    border-radius: 10px;
+    padding: 4px;
     overflow-y: auto;
 }
 
-.mj_RoomItemMenu_item {
-    display: flex;
-    width: 100%;
-    align-items: center;
-    gap: var(--cpd-space-2x);
-    padding: var(--cpd-space-2x) var(--cpd-space-3x);
-    text-align: left;
+.mj_EventRowMenu {
+    width: min(224px, calc(100vw - var(--cpd-space-4x)));
+    gap: 0;
+    border-radius: 10px;
+    padding: 4px;
 }
 
-.mj_RoomItemMenu_item:hover,
+.mj_RoomItemMenu_item {
+    display: grid;
+    width: 100%;
+    grid-template-columns: 16px 1fr;
+    align-items: center;
+    gap: 10px;
+    border-radius: 7px;
+    padding: 7px 8px;
+    text-align: left;
+    font:
+        500 12.5px/16px Inter,
+        sans-serif;
+}
+
+/* item buttons ride the panel surface directly. The generic
+   `.mj_HeaderMenu button` rule (specificity 0,1,1) paints a subtle-secondary
+   pill; suppress it here so the menu reads as ONE surface (panel) instead of a
+   tinted pill layered on white/dark. Hover/focus below supply the only tint.
+   This 0,2,0 override beats `.mj_HeaderMenu button` at rest, and is placed
+   BEFORE :hover/:focus-visible (also 0,2,0) so those still win on interaction. */
+.mj_HeaderMenu .mj_RoomItemMenu_item {
+    background: transparent;
+}
+
+.mj_RoomItemMenu_item:hover {
+    background: var(--cpd-color-bg-subtle-primary);
+}
+
 .mj_RoomItemMenu_item:focus-visible {
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: -2px;
     background: var(--cpd-color-bg-subtle-primary);
 }
 
 .mj_RoomItemMenu_item svg {
-    width: 20px;
-    height: 20px;
+    width: 16px;
+    height: 16px;
     flex: 0 0 auto;
+    color: var(--cpd-color-icon-secondary);
 }
 
-.mj_RoomList_archivedToggle {
-    display: flex;
-    flex: 0 0 auto;
-    align-items: center;
-    gap: var(--cpd-space-1x);
-    border: 0;
-    border-top: 1px solid var(--cpd-color-border-disabled);
-    background: var(--cpd-color-bg-canvas-default);
-    color: var(--cpd-color-text-primary);
-    cursor: pointer;
-    padding: var(--cpd-space-3x) var(--cpd-space-4x);
-    font: var(--cpd-font-body-sm-regular);
-    text-align: left;
-}
-
-.mj_RoomList_archivedToggle:hover,
-.mj_RoomList_archivedToggle:focus-visible {
-    background: var(--cpd-color-bg-subtle-primary);
-}
-
-.mj_RoomList_archivedCount {
-    color: var(--cpd-color-text-secondary);
-}
-
-.mj_RoomList_archivedSection {
-    min-height: 0;
-    max-height: 40%;
-    flex: 0 1 auto;
-    overflow-y: auto;
-    background: var(--cpd-color-bg-canvas-default);
-    padding-top: var(--cpd-space-2x);
+/* Archive/Unarchive is the destructive group — a hairline above it, not a gap. */
+.mj_RoomItemMenu_item:last-child:not(:only-child) {
+    margin-top: 4px;
+    border-top: 1px solid var(--cpd-color-border-subtle);
+    padding-top: 8px;
 }
 
 .mj_MarkAllReadButton {
     color: var(--cpd-color-text-action-accent);
+}
+
+/* Timeline day divider: a centred dated label flanked by hairline rules, once per calendar
+   day (design *-upload-first). */
+.mj_DateDivider {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 4px 0 14px;
+    padding: 0;
+    list-style: none;
+}
+
+.mj_DateDivider_rule {
+    flex: 1 1 0;
+    height: 1px;
+    background: var(--cpd-color-border-subtle);
+}
+
+.mj_DateDivider_label {
+    flex: 0 0 auto;
+    color: var(--cpd-color-text-tertiary);
+    font:
+        500 11px/14px Inter,
+        sans-serif;
 }
 
 .mx_RoomView_messageListWrapper {
@@ -379,6 +1225,36 @@ textarea {
     min-height: 100%;
 }
 
+.mj_JumpToBottom {
+    position: absolute;
+    z-index: 2;
+    right: var(--cpd-space-4x);
+    bottom: var(--cpd-space-4x);
+    display: inline-flex;
+    width: 32px;
+    height: 32px;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 1px solid var(--cpd-color-border-disabled);
+    border-radius: 50%;
+    background: var(--cpd-color-bg-canvas-default);
+    box-shadow: 0 2px 8px rgb(15, 23, 42, 0.18);
+    color: var(--cpd-color-text-action-accent);
+    cursor: pointer;
+    font-size: var(--cpd-font-size-lg);
+    line-height: 1;
+}
+
+.mj_JumpToBottom:hover {
+    background: var(--cpd-color-bg-subtle-primary);
+}
+
+.mj_JumpToBottom:focus-visible {
+    outline: 2px solid var(--cpd-color-icon-accent-primary);
+    outline-offset: 2px;
+}
+
 .mx_EventTile[data-layout="bubble"] .mx_EventTile_line > a {
     color: inherit;
     text-decoration: none;
@@ -386,13 +1262,313 @@ textarea {
 
 .mx_EventTile[data-layout="bubble"] .mx_MessageTimestamp {
     color: var(--cpd-color-text-secondary);
-    font: var(--cpd-font-body-xs-regular);
+    font-size: var(--cpd-font-size-2xs);
+}
+
+/* Self-bubble is a distinct surface: dark #123530 + secondary #9a948b = 4.43:1
+   (just under AA 4.5 for the 10px timestamp). Use primary on the self bubble so
+   it clears AA on both bubble themes (final-review r3 B3). */
+.mx_EventTile[data-self="true"] .mx_MessageTimestamp {
+    color: var(--cpd-color-text-primary);
+    opacity: 0.75;
 }
 
 .mj_MessageText {
     min-width: 0;
+    /* Readability measure: ~75ch at the 15px root (Refactoring UI 45-75ch band). Fixed px, not
+       ch/em — ch drifts with the resolved font, and on a wide monitor an uncapped bubble runs
+       to ~140ch. Code/diff children carry their own wider max and let the bubble grow past this. */
+    max-width: 640px;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
+}
+
+.mj_Markdown {
+    min-width: 0;
+    /* v5: prose shares the uniform agent content width. */
+    max-width: var(--mj-content-width);
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+
+.mj_Markdown p {
+    margin: var(--cpd-space-3x) 0;
+}
+
+.mj_Markdown p:first-child {
+    margin-top: 0;
+}
+
+.mj_Markdown p:last-child {
+    margin-bottom: 0;
+}
+
+.mj_Markdown_streaming > p:nth-last-child(2),
+.mj_Markdown_streaming > .mj_MarkdownRaw:nth-last-child(2) {
+    display: inline;
+    margin-bottom: 0;
+}
+
+.mj_Markdown ul,
+.mj_Markdown ol {
+    margin: var(--cpd-space-3x) 0;
+    padding-left: var(--cpd-space-5x);
+}
+
+.mj_Markdown li {
+    margin: var(--cpd-space-1x) 0;
+}
+
+.mj_Markdown h1,
+.mj_Markdown h2,
+.mj_Markdown h3,
+.mj_Markdown h4,
+.mj_Markdown h5,
+.mj_Markdown h6 {
+    margin: var(--cpd-space-5x) 0 var(--cpd-space-2x);
+    color: var(--cpd-color-text-primary);
+    font-weight: 600;
+}
+
+.mj_Markdown h1,
+.mj_Markdown h2 {
+    font: var(--cpd-font-body-md-regular);
+    font-weight: 600;
+}
+
+.mj_Markdown h3,
+.mj_Markdown h4 {
+    font: var(--cpd-font-body-sm-regular);
+    font-weight: 600;
+}
+
+.mj_Markdown h5,
+.mj_Markdown h6 {
+    font: var(--cpd-font-body-xs-semibold);
+}
+
+.mj_Markdown blockquote {
+    margin: var(--cpd-space-3x) 0;
+    border-left: var(--cpd-space-1x) solid var(--cpd-color-border-interactive-secondary);
+    padding-left: var(--cpd-space-3x);
+    color: var(--cpd-color-text-secondary);
+}
+
+.mj_Markdown table {
+    width: 100%;
+    margin: var(--cpd-space-3x) 0;
+    border-collapse: collapse;
+}
+
+.mj_Markdown th,
+.mj_Markdown td {
+    border: 1px solid var(--cpd-color-border-disabled);
+    padding: var(--cpd-space-2x) var(--cpd-space-3x);
+    text-align: left;
+}
+
+.mj_Markdown th {
+    background: var(--cpd-color-bg-subtle-primary);
+    color: var(--cpd-color-text-primary);
+    font: var(--cpd-font-body-sm-regular);
+    font-weight: 600;
+}
+
+.mj_Markdown hr {
+    margin: var(--cpd-space-4x) 0;
+    border: 0;
+    border-top: 1px solid var(--cpd-color-border-disabled);
+}
+
+.mj_Markdown a {
+    color: var(--cpd-color-text-action-accent);
+}
+
+.mj_Markdown a:hover {
+    text-decoration: underline;
+}
+
+.mj_Markdown .contains-task-list {
+    padding-left: 0;
+    list-style: none;
+}
+
+.mj_Markdown .task-list-item {
+    list-style: none;
+}
+
+.mj_Markdown .task-list-item input[type="checkbox"] {
+    margin: 0 var(--cpd-space-2x) 0 0;
+    accent-color: var(--cpd-color-icon-accent-primary);
+}
+
+.mj_InlineCode {
+    border-radius: 4px;
+    background: var(--cpd-color-bg-subtle-secondary);
+    padding: 1px var(--cpd-space-1x);
+    font-family: "Fira Code", monospace;
+    font-size: 0.9em;
+}
+
+.mj_MarkdownRaw {
+    white-space: pre-wrap;
+}
+
+.mj_CodeBlock {
+    position: relative;
+    /* v5: fills the shared content width; long lines scroll inside. */
+    max-width: 100%;
+    max-height: 360px;
+    overflow: auto;
+    box-sizing: border-box;
+    margin: var(--cpd-space-3x) 0;
+    border: 1px solid var(--cpd-color-border-subtle);
+    border-radius: var(--cpd-radius-lg);
+    background: var(--cpd-color-bg-canvas-default);
+    padding: 0;
+    /* v5: 13px/20px — the 12px code read too small in the wide code window. */
+    font:
+        400 13px/20px "Fira Code",
+        monospace;
+}
+
+.mj_CodeBlock_header {
+    position: sticky;
+    z-index: 1;
+    top: 0;
+    left: 0;
+    display: flex;
+    width: 100%;
+    align-items: center;
+    justify-content: space-between;
+    box-sizing: border-box;
+    border-bottom: 1px solid var(--cpd-color-border-subtle);
+    background: var(--cpd-color-bg-canvas-raised);
+    /* v5 mock code header: 6px/12px. */
+    padding: 6px var(--cpd-space-3x);
+    opacity: 1;
+}
+
+.mj_CodeBlock_copy,
+.mj_CodeBlock_lang {
+    border: 0;
+    background: transparent;
+    /* Secondary (not tertiary) so the 11px label clears WCAG AA on the raised header. */
+    color: var(--cpd-color-text-secondary);
+    padding: 0;
+    opacity: 1;
+}
+
+/* v5: filename/lang label in mono; copy control in Inter. */
+.mj_CodeBlock_lang {
+    pointer-events: none;
+    font:
+        400 11px/16px "Fira Code",
+        monospace;
+}
+
+.mj_CodeBlock_copy {
+    font:
+        400 11px/14px Inter,
+        sans-serif;
+}
+
+.mj_CodeBlock_copy {
+    margin-left: auto;
+    cursor: pointer;
+}
+
+.mj_CodeBlock > code {
+    display: block;
+    width: max-content;
+    min-width: 100%;
+    box-sizing: border-box;
+    padding: var(--cpd-space-3x);
+}
+
+.mj_CodeBlock_copy:hover {
+    color: var(--cpd-color-text-action-accent);
+}
+
+.mj_CodeBlock_copy:focus-visible {
+    outline: 2px solid var(--cpd-color-icon-accent-primary);
+    outline-offset: 1px;
+}
+
+.hljs {
+    background: transparent;
+    color: var(--cpd-color-text-primary);
+}
+
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-type,
+.hljs-built_in {
+    color: var(--cpd-color-text-action-accent);
+}
+
+.hljs-string,
+.hljs-attr,
+.hljs-symbol,
+.hljs-bullet {
+    color: var(--cpd-color-text-link-external);
+}
+
+.hljs-comment,
+.hljs-quote,
+.hljs-meta {
+    color: var(--cpd-color-text-secondary);
+}
+
+.hljs-number,
+.hljs-literal,
+.hljs-regexp {
+    color: var(--cpd-color-text-critical-primary);
+}
+
+.hljs-title,
+.hljs-section,
+.hljs-name {
+    color: var(--cpd-color-text-primary);
+    font-weight: 600;
+}
+
+[data-theme="dark"] .hljs {
+    background: transparent;
+    color: var(--cpd-color-text-primary);
+}
+
+[data-theme="dark"] .hljs-keyword,
+[data-theme="dark"] .hljs-selector-tag,
+[data-theme="dark"] .hljs-type,
+[data-theme="dark"] .hljs-built_in {
+    color: var(--cpd-color-text-action-accent);
+}
+
+[data-theme="dark"] .hljs-string,
+[data-theme="dark"] .hljs-attr,
+[data-theme="dark"] .hljs-symbol,
+[data-theme="dark"] .hljs-bullet {
+    color: var(--cpd-color-text-link-external);
+}
+
+[data-theme="dark"] .hljs-comment,
+[data-theme="dark"] .hljs-quote,
+[data-theme="dark"] .hljs-meta {
+    color: var(--cpd-color-text-secondary);
+}
+
+[data-theme="dark"] .hljs-number,
+[data-theme="dark"] .hljs-literal,
+[data-theme="dark"] .hljs-regexp {
+    color: var(--cpd-color-text-critical-primary);
+}
+
+[data-theme="dark"] .hljs-title,
+[data-theme="dark"] .hljs-section,
+[data-theme="dark"] .hljs-name {
+    color: var(--cpd-color-text-primary);
+    font-weight: 600;
 }
 
 .mj_SendingLabel {
@@ -400,6 +1576,885 @@ textarea {
     margin: 2px 0 0;
     color: var(--cpd-color-text-secondary);
     font: var(--cpd-font-body-xs-regular);
+}
+
+.mj_RoomView_dragActive {
+    position: relative;
+}
+
+.mj_DragOverlay {
+    position: absolute;
+    z-index: 10;
+    display: flex;
+    inset: var(--cpd-space-3x);
+    align-items: center;
+    justify-content: center;
+    border: 2px dashed var(--cpd-color-icon-accent-primary);
+    border-radius: 12px;
+    background: var(--cpd-color-bg-scrim-drag);
+    box-shadow: 0 8px 24px rgb(15 23 42 / 14%);
+    color: var(--cpd-color-text-action-accent);
+    font: var(--cpd-font-body-sm-regular);
+    font-weight: 600;
+    pointer-events: none;
+}
+
+.mj_EventSource_scrim {
+    position: fixed;
+    z-index: 100;
+    display: flex;
+    inset: 0;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    background: rgb(18 16 14 / 55%);
+    padding: 16px;
+}
+
+/* §10.8 read-only viewer: header (icon · title · type chip · close) / meta grid + JSON
+   well body / footer stating the payload size. Three-part flex; body scrolls, footer stays. */
+.mj_EventSource {
+    display: flex;
+    width: min(720px, 94vw);
+    max-height: 88vh;
+    flex-direction: column;
+    box-sizing: border-box;
+    overflow: hidden;
+    border: 1px solid var(--cpd-color-border-subtle);
+    border-radius: 14px;
+    background: var(--cpd-color-bg-canvas-default);
+    box-shadow: var(--cpd-shadow-lg);
+    color: var(--cpd-color-text-primary);
+}
+
+.mj_EventSource_header {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 10px;
+    border-bottom: 1px solid var(--cpd-color-border-subtle);
+    padding: 13px 14px 13px 16px;
+}
+
+.mj_EventSource_headerIcon {
+    width: 15px;
+    height: 15px;
+    flex: 0 0 auto;
+    color: var(--cpd-color-icon-secondary);
+}
+
+.mj_EventSource_header h2 {
+    margin: 0;
+    font:
+        600 14px/19px Inter,
+        sans-serif;
+}
+
+.mj_EventSource_typeChip {
+    flex: 0 0 auto;
+    border-radius: 999px;
+    background: var(--cpd-color-bg-subtle-secondary);
+    color: var(--cpd-color-text-secondary);
+    padding: 1px 8px;
+    font:
+        500 11px/16px "Fira Code",
+        monospace;
+}
+
+.mj_EventSource_headerSpacer {
+    flex: 1 1 auto;
+}
+
+.mj_EventSource_close {
+    display: inline-flex;
+    width: 28px;
+    height: 28px;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    border: 0;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--cpd-color-text-tertiary);
+    cursor: pointer;
+}
+
+.mj_EventSource_close svg {
+    width: 15px;
+    height: 15px;
+}
+
+.mj_EventSource_close:hover {
+    background: var(--cpd-state-hover);
+    color: var(--cpd-color-text-primary);
+}
+
+.mj_EventSource_body {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: 14px;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 14px 16px;
+}
+
+/* Meta grid: scalar fields lifted out of the blob (§10.8). */
+.mj_EventSource_meta {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 8px 16px;
+}
+
+.mj_EventSource_metaCell {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.mj_EventSource_metaLabel {
+    color: var(--cpd-color-text-tertiary);
+    font:
+        500 10px/14px Inter,
+        sans-serif;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.mj_EventSource_metaValue {
+    color: var(--cpd-color-text-primary);
+    font:
+        400 12px/16px "Fira Code",
+        monospace;
+}
+
+.mj_EventSource_metaValue_trunc {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* JSON well: one surface rung up (raised), bordered, both-axis themed scroll, height-capped
+   so the footer never leaves the viewport (§10.8). */
+.mj_EventSource_json {
+    max-height: 46vh;
+    margin: 0;
+    overflow: auto;
+    border: 1px solid var(--cpd-color-border-subtle);
+    border-radius: 10px;
+    background: var(--cpd-color-bg-canvas-raised);
+    padding: 12px;
+    color: var(--cpd-color-text-primary);
+    font:
+        400 12px/19px "Fira Code",
+        monospace;
+    user-select: text;
+    white-space: pre;
+    scrollbar-width: thin;
+    scrollbar-color: var(--mj-scrollbar) transparent;
+}
+
+.mj_EventSource_footer {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 8px;
+    border-top: 1px solid var(--cpd-color-border-subtle);
+    background: var(--cpd-color-bg-canvas-raised);
+    padding: 11px 14px;
+}
+
+.mj_EventSource_note {
+    flex: 1 1 auto;
+    color: var(--cpd-color-text-tertiary);
+    font:
+        400 11px/14px Inter,
+        sans-serif;
+}
+
+.mj_EventSource_secondary {
+    height: 32px;
+    border: 1px solid var(--cpd-color-border-interactive-secondary);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--cpd-color-text-primary);
+    padding: 0 14px;
+    font:
+        500 12.5px/16px Inter,
+        sans-serif;
+    cursor: pointer;
+}
+
+.mj_EventSource_secondary:hover {
+    background: var(--cpd-state-hover);
+}
+
+.mj_EventSource_copy {
+    display: inline-flex;
+    height: 32px;
+    align-items: center;
+    gap: 7px;
+    border: 0;
+    border-radius: 8px;
+    background: var(--cpd-color-bg-accent);
+    color: var(--cpd-color-text-on-accent);
+    padding: 0 15px;
+    font:
+        600 12.5px/16px Inter,
+        sans-serif;
+    cursor: pointer;
+}
+
+.mj_EventSource_copy svg {
+    width: 13px;
+    height: 13px;
+}
+
+.mj_EventSource_copy:hover {
+    filter: brightness(1.08);
+}
+
+.mj_EventSource_secondary:focus-visible,
+.mj_EventSource_copy:focus-visible,
+.mj_EventSource_close:focus-visible {
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: 2px;
+}
+
+.mj_UploadConfirm_scrim {
+    position: fixed;
+    /* v4 layering: modal scrim + card sit at 50 (above header popovers at 30). */
+    z-index: 50;
+    display: flex;
+    inset: 0;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    background: rgb(18 16 14 / 55%);
+    padding: var(--cpd-space-4x);
+}
+
+.mj_UploadConfirm {
+    display: flex;
+    width: min(520px, 92vw);
+    max-height: 86vh;
+    flex-direction: column;
+    gap: var(--cpd-space-3x);
+    box-sizing: border-box;
+    overflow: auto;
+    border: 1px solid rgb(28 24 20 / 10%);
+    border-radius: 12px;
+    background: var(--cpd-color-bg-canvas-default);
+    box-shadow: 0 16px 48px rgb(18 16 14 / 24%);
+    color: var(--cpd-color-text-primary);
+    padding: var(--cpd-space-5x);
+}
+
+/* v4 upload-queue modal: min(440,94vw) · max-h 88vh · radius 14 · shadow-lg,
+   three-part flex — fixed header / scrolling body / fixed footer.
+   Scoped to the queue variant so the shared new-session + error cards keep their padding. */
+.mj_UploadConfirm_queue {
+    width: min(440px, 94vw);
+    max-height: 88vh;
+    gap: 0;
+    overflow: hidden;
+    border: 1px solid var(--cpd-color-border-subtle);
+    border-radius: 14px;
+    box-shadow: var(--cpd-shadow-lg);
+    padding: 0;
+}
+
+.mj_UploadConfirm_header {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 10px;
+    padding: 13px 14px 13px 16px;
+}
+
+/* Tray glyph immediately left of the "Send file" title (design *-upload-* statics). */
+.mj_UploadConfirm_uploadIcon {
+    width: 15px;
+    height: 15px;
+    flex: 0 0 auto;
+    color: var(--cpd-color-icon-secondary);
+}
+
+/* Title sits at natural width so the "n of N" chip hugs it on the left; the spacer below
+   pushes the ✕ close to the right edge. */
+.mj_UploadConfirm_header .mj_UploadConfirm_title {
+    flex: 0 1 auto;
+    min-width: 0;
+}
+
+.mj_UploadConfirm_headerSpacer {
+    flex: 1;
+}
+
+/* ✕ close — a 28px ghost button on the header's right edge; dismisses the whole upload. */
+.mj_UploadConfirm_close {
+    display: inline-flex;
+    width: 28px;
+    height: 28px;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    border: 0;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--cpd-color-icon-tertiary);
+    font-size: 15px;
+    cursor: pointer;
+}
+
+.mj_UploadConfirm_close:hover:not(:disabled) {
+    background: var(--cpd-color-bg-subtle-primary);
+    color: var(--cpd-color-text-primary);
+}
+
+.mj_UploadConfirm_close:focus-visible {
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: 2px;
+}
+
+.mj_UploadConfirm_close:disabled {
+    cursor: default;
+    opacity: 0.5;
+}
+
+.mj_UploadConfirm_body {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: var(--cpd-space-3x);
+    overflow-y: auto;
+    padding: 14px 16px;
+}
+
+.mj_UploadConfirm_footer {
+    flex: 0 0 auto;
+    padding: 11px 14px;
+}
+
+.mj_UploadConfirm_title {
+    margin: 0;
+    overflow-wrap: anywhere;
+    /* v4 modal title: 600 14px/19px Inter. */
+    font:
+        600 14px/19px Inter,
+        sans-serif;
+}
+
+/* "n of N" chip (multi-file). Borderless to match the design chip. */
+.mj_UploadConfirm_count {
+    flex: 0 0 auto;
+    border-radius: 999px;
+    background: var(--cpd-color-bg-subtle-secondary);
+    color: var(--cpd-color-text-secondary);
+    padding: 1px 9px;
+    font:
+        500 11px/16px "Fira Code",
+        monospace;
+}
+
+/* File-info row under the preview: name (ellipsised) + size on the right. */
+.mj_UploadConfirm_fileName {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    color: var(--cpd-color-text-primary);
+    font:
+        500 12.5px/16px Inter,
+        sans-serif;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Preview + file-info are one bordered card (design *-upload-* statics): the preview/
+   placeholder fills the top, a hairline divides it from the file-info row below. */
+.mj_UploadConfirm_previewCard {
+    position: relative;
+    overflow: hidden;
+    border: 1px solid var(--cpd-color-border-subtle);
+    border-radius: 10px;
+    background: var(--cpd-color-bg-canvas-raised);
+}
+
+/* Non-image preview placeholder: diagonal hatch + centered mono "image preview" label. */
+.mj_UploadConfirm_previewPlaceholder {
+    display: flex;
+    height: 150px;
+    align-items: center;
+    justify-content: center;
+    background-color: var(--cpd-color-bg-canvas-raised);
+    background-image: repeating-linear-gradient(
+        45deg,
+        var(--cpd-color-bg-canvas-raised) 0,
+        var(--cpd-color-bg-canvas-raised) 4px,
+        var(--cpd-color-bg-subtle-secondary) 4px,
+        var(--cpd-color-bg-subtle-secondary) 8px
+    );
+}
+
+.mj_UploadConfirm_previewPlaceholder span {
+    color: var(--cpd-color-text-tertiary);
+    font:
+        400 11px/16px "Fira Code",
+        monospace;
+}
+
+/* 34px thumbnail strip (multi-file): active = 2px teal ring, inactive = 1px line on raised.
+   §10.1 — strips SCROLL, they don't wrap: overflow-x on a single nowrap row. */
+.mj_UploadConfirm_strip {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--mj-scrollbar) transparent;
+}
+
+.mj_UploadThumb {
+    display: inline-flex;
+    width: 34px;
+    height: 34px;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    overflow: hidden;
+    border: 1px solid var(--cpd-color-border-interactive-secondary);
+    border-radius: 8px;
+    background: var(--cpd-color-bg-canvas-raised);
+    color: var(--cpd-color-icon-secondary);
+}
+
+.mj_UploadThumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.mj_UploadThumb svg {
+    width: 16px;
+    height: 16px;
+}
+
+.mj_UploadThumb_active {
+    border: 2px solid var(--cpd-color-text-action-accent);
+}
+
+.mj_UploadConfirm_more {
+    color: var(--cpd-color-text-secondary);
+    font:
+        400 11px/16px Inter,
+        sans-serif;
+}
+
+/* Real image fills the top of the preview card; object-fit keeps aspect, letterboxed on
+   the raised card background (no own border/radius — the card clips it). */
+.mj_UploadConfirm_preview {
+    display: block;
+    width: 100%;
+    max-height: 50vh;
+    background: var(--cpd-color-bg-canvas-raised);
+    object-fit: contain;
+}
+
+/* File-info row: a LIGHT bar under the preview (hairline top, panel bg) — doc icon +
+   ellipsised name + right-aligned mono size. NOT a heavy filled card. */
+.mj_UploadConfirm_fileMeta {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    border-top: 1px solid var(--cpd-color-border-subtle);
+    background: var(--cpd-color-bg-canvas-default);
+    padding: 9px 11px;
+}
+
+.mj_UploadConfirm_fileIcon {
+    width: 14px;
+    height: 14px;
+    flex: 0 0 auto;
+    color: var(--cpd-color-text-action-accent);
+}
+
+.mj_UploadConfirm_fileMeta .mj_FileSize {
+    flex: 0 0 auto;
+    margin-left: 0;
+    color: var(--cpd-color-text-tertiary);
+    font:
+        400 11px/16px "Fira Code",
+        monospace;
+}
+
+.mj_UploadConfirm_caption {
+    min-height: 60px;
+    box-sizing: border-box;
+    border: 1px solid var(--cpd-color-border-strong);
+    border-radius: var(--cpd-radius-lg);
+    background: var(--cpd-color-bg-canvas-default);
+    padding: var(--cpd-space-3x);
+    /* v4 modal caption input: body.sm 400 13.5/20. */
+    font:
+        400 13.5px/20px Inter,
+        sans-serif;
+    resize: vertical;
+}
+
+.mj_UploadConfirm_caption::placeholder {
+    color: var(--cpd-color-text-tertiary);
+}
+
+/* v4 mock (upload-modal-mock.png): the upload caption stays NEUTRAL on focus — no teal.
+   It does not accent-tint or ring like the composer input. Because the dialog auto-focuses
+   this field on open AND text inputs match :focus-visible on every focus, a teal ring/border
+   would make every upload read "active/teal" against the mock's calm neutral. Instead focus
+   darkens the border (border-strong → interactive-primary): a visible, neutral focus
+   indicator for both pointer and keyboard (the text caret backs it up), no accent. */
+.mj_UploadConfirm_caption:focus,
+.mj_UploadConfirm_caption:focus-visible {
+    border-color: var(--cpd-color-border-interactive-primary);
+    outline: none;
+}
+
+.mj_UploadConfirm_actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--cpd-space-2x);
+}
+
+.mj_UploadConfirm_actions button {
+    border: 1px solid transparent;
+    border-radius: var(--cpd-radius-md);
+    background: transparent;
+    /* v4 secondary/ghost button: 500 12.5/16. */
+    color: var(--cpd-color-text-secondary);
+    padding: var(--cpd-space-2x) var(--cpd-space-4x);
+    font:
+        500 12.5px/16px Inter,
+        sans-serif;
+}
+
+/* Skip = outlined secondary (design light-upload-first): a hairline border + primary ink,
+   distinct from the ghost "Cancel all". */
+.mj_UploadConfirm_actions button.mj_UploadConfirm_skip {
+    border-color: var(--cpd-color-border-interactive-secondary);
+    color: var(--cpd-color-text-primary);
+}
+
+/* Ghost hover applies only to the secondary buttons — the filled primary (Send) keeps
+   its accent background, or the generic rule (more specific than the primary's base
+   background) would flip it to near-white and leave white-on-white text on hover. */
+.mj_UploadConfirm_actions button:not(.mj_UploadConfirm_send):hover:not(:disabled) {
+    background: var(--cpd-color-bg-subtle-primary);
+    color: var(--cpd-color-text-primary);
+}
+
+.mj_UploadConfirm_actions button:focus-visible {
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: 2px;
+}
+
+.mj_UploadConfirm_actions button:disabled {
+    cursor: default;
+    opacity: 0.5;
+}
+
+/* v4 primary button: filled --m-accent-deep, weight 600, hover brightens (no colour swap).
+   Paper-plane glyph + label (design *-upload-* statics). */
+.mj_UploadConfirm_actions button.mj_UploadConfirm_send {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding-right: 15px;
+    padding-left: 15px;
+    background: var(--cpd-color-bg-accent);
+    color: var(--cpd-color-text-on-accent);
+    font-weight: 600;
+}
+
+.mj_UploadConfirm_actions button.mj_UploadConfirm_send svg {
+    width: 13px;
+    height: 13px;
+    flex: 0 0 auto;
+}
+
+.mj_UploadConfirm_actions button.mj_UploadConfirm_send:hover:not(:disabled) {
+    filter: brightness(1.08);
+    color: var(--cpd-color-text-on-accent);
+}
+
+.mj_UploadConfirm_error {
+    margin: 0;
+    color: var(--cpd-color-text-critical-primary);
+    font: var(--cpd-font-body-sm-regular);
+}
+
+/* v5 new-session sheet: the upload-dialog shell + a fully themed form. The load-bearing
+   fix is §10.4 — the native inputs were unstyled, so they inherited the UA white and
+   vanished on dark ("Agent default" white-on-dark). Every input/checkbox/label now sets
+   its own themed colours, and each label binds to the field BELOW it at the 6px field
+   rhythm (§10.3). */
+.mj_NewSessionSheet {
+    gap: 14px;
+}
+
+.mj_NewSessionSheet_head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.mj_NewSessionSheet_head .mj_UploadConfirm_title {
+    flex: 1;
+    min-width: 0;
+}
+
+.mj_NewSessionSheet_close {
+    display: inline-flex;
+    width: 28px;
+    height: 28px;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--cpd-color-icon-secondary);
+    cursor: pointer;
+}
+
+.mj_NewSessionSheet_close:hover {
+    background: var(--cpd-color-bg-subtle-primary);
+    color: var(--cpd-color-text-primary);
+}
+
+.mj_NewSessionSheet_close:focus-visible {
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: 2px;
+}
+
+.mj_NewSessionSheet > p,
+.mj_NewSessionSheet [role="status"] {
+    margin: 0;
+    color: var(--cpd-color-text-secondary);
+    font:
+        400 13px/18px Inter,
+        sans-serif;
+}
+
+/* A field label binds to the field BELOW it (§10.3 6px). */
+.mj_NewSessionSheet label {
+    display: block;
+    margin-bottom: 6px;
+    color: var(--cpd-color-text-secondary);
+    font:
+        500 12px/16px Inter,
+        sans-serif;
+}
+
+/* §10.4 native text input: explicit background/colour/border in BOTH themes. */
+.mj_NewSessionSheet input[type="text"] {
+    display: block;
+    width: 100%;
+    min-height: 34px;
+    box-sizing: border-box;
+    border: 1px solid var(--cpd-color-border-interactive-secondary);
+    border-radius: 8px;
+    background: var(--cpd-color-bg-canvas-default);
+    color: var(--cpd-color-text-primary);
+    padding: 0 12px;
+    font:
+        400 13.5px/20px Inter,
+        sans-serif;
+}
+
+.mj_NewSessionSheet input[type="text"]::placeholder {
+    color: var(--cpd-color-text-tertiary);
+}
+
+.mj_NewSessionSheet input[type="text"]:focus,
+.mj_NewSessionSheet input[type="text"]:focus-visible {
+    border-color: var(--cpd-color-border-interactive-primary);
+    outline: none;
+}
+
+.mj_NewSessionSheet input[type="text"]:disabled {
+    background: var(--cpd-color-bg-subtle-secondary);
+    color: var(--cpd-color-text-secondary);
+    cursor: default;
+}
+
+/* Checkbox row: the label wraps the checkbox, so reset the block-label rule to inline. */
+.mj_NewSessionSheet label:has(input[type="checkbox"]) {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 0;
+    color: var(--cpd-color-text-primary);
+    font:
+        400 13.5px/20px Inter,
+        sans-serif;
+    cursor: pointer;
+}
+
+.mj_NewSessionSheet input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    margin: 0;
+    accent-color: var(--cpd-color-bg-accent);
+    cursor: pointer;
+}
+
+.mj_NewSessionSheet input[type="checkbox"]:focus-visible {
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: 2px;
+}
+
+/* Agent / recent-folder pick lists. */
+.mj_NewSessionSheet [role="list"] {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.mj_NewSessionSheet [role="listitem"] {
+    display: flex;
+    width: 100%;
+    box-sizing: border-box;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    border: 1px solid var(--cpd-color-border-interactive-secondary);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--cpd-color-text-primary);
+    padding: 8px 12px;
+    font:
+        400 13px/18px Inter,
+        sans-serif;
+    text-align: left;
+    cursor: pointer;
+}
+
+.mj_NewSessionSheet [role="listitem"]:hover:not(:disabled) {
+    background: var(--cpd-color-bg-subtle-primary);
+}
+
+.mj_NewSessionSheet [role="listitem"]:disabled {
+    cursor: default;
+    opacity: 0.5;
+}
+
+.mj_NewSessionSheet [role="listitem"]:focus-visible {
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: 2px;
+}
+
+.mj_AttachmentChip {
+    display: grid;
+    width: fit-content;
+    max-width: min(76.75%, 520px);
+    align-self: flex-end;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--cpd-space-3x);
+    box-sizing: border-box;
+    margin-left: auto !important;
+    border: 1px solid rgb(13 148 136 / 20%);
+    border-radius: var(--cpd-radius-lg);
+    background: var(--cpd-color-bg-self-bubble);
+    box-shadow: var(--cpd-shadow-sm);
+    color: var(--cpd-color-text-primary);
+    padding: var(--cpd-space-2x) var(--cpd-space-3x);
+    font: var(--cpd-font-body-sm-regular);
+    list-style: none;
+}
+
+.mj_AttachmentChip_content {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+}
+
+.mj_AttachmentChip_caption {
+    display: block;
+    opacity: 0.8;
+    font-size: inherit;
+}
+
+.mj_AttachmentChip_name {
+    overflow: hidden;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_AttachmentChip_size,
+.mj_AttachmentChip_status {
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-body-xs-regular);
+}
+
+.mj_AttachmentChip_status {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--cpd-space-2x);
+    white-space: nowrap;
+}
+
+.mj_AttachmentChip_spinner {
+    width: 12px;
+    height: 12px;
+    box-sizing: border-box;
+    border: 2px solid rgb(13 148 136 / 25%);
+    border-top-color: var(--cpd-color-text-action-accent);
+    border-radius: 50%;
+    animation: mj-spin 0.8s linear infinite;
+}
+
+.mj_AttachmentChip_sending {
+    border-color: var(--cpd-color-border-interactive-secondary);
+}
+
+.mj_AttachmentChip > .mj_AttachmentChip_error {
+    display: flex;
+    align-items: center;
+    gap: var(--cpd-space-2x);
+    color: var(--cpd-color-text-critical-primary);
+    font: var(--cpd-font-body-xs-regular);
+}
+
+.mj_AttachmentChip_actions {
+    display: flex;
+    gap: var(--cpd-space-1x);
+}
+
+.mj_AttachmentChip_actions button {
+    min-height: 28px;
+    border: 1px solid var(--cpd-color-border-interactive-secondary);
+    border-radius: 8px;
+    background: var(--cpd-color-bg-canvas-default);
+    color: var(--cpd-color-text-primary);
+    padding: var(--cpd-space-1x) var(--cpd-space-2x);
+    font: var(--cpd-font-body-xs-semibold);
+}
+
+.mj_AttachmentChip_actions button:hover {
+    background: var(--cpd-color-bg-subtle-secondary);
+}
+
+.mj_AttachmentChip_actions button:focus-visible {
+    outline: 2px solid var(--cpd-color-icon-accent-primary);
+    outline-offset: 2px;
+}
+
+li.mj_AttachmentChip_error {
+    border-color: rgb(189 32 32 / 24%);
+    background: var(--cpd-color-bg-canvas-default);
 }
 
 .mj_HistoryRow {
@@ -424,19 +2479,83 @@ textarea {
     opacity: 0.6;
 }
 
+/* v5 event.prompt (Question) + event.permission_request are one card family: chrome
+   (border / r10 / panel / pad 12·14), a label+time header row, a 24px-gutter icon+body
+   grid (§10.2 inner edge — SVG in the gutter, never inline emoji, which make the text's
+   left edge a function of glyph width), and an actions row with exactly one filled
+   primary (§10.5). Both states keep the same rows in the same order so answering doesn't
+   reflow the card (§10.3). Permission only differs by the teal border + accent label. */
 .mj_PromptCard {
-    min-width: min(360px, 55vw);
+    display: flex;
+    min-width: 0;
+    max-width: var(--mj-content-width);
+    flex-direction: column;
+    gap: 10px;
+    box-sizing: border-box;
+    border: 1px solid var(--cpd-color-border-subtle);
+    border-radius: 10px;
+    background: var(--cpd-color-bg-canvas-default);
+    padding: 12px 14px;
 }
 
-.mj_PromptCard p {
-    margin: 0 0 var(--cpd-space-3x);
+.mj_PromptCard_permission {
+    border-color: rgb(13 148 136 / 25%);
+}
+
+.mj_PromptHeader {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
 }
 
 .mj_PromptLabel {
-    margin-bottom: var(--cpd-space-1x);
+    flex: 1;
+    min-width: 0;
     color: var(--cpd-color-text-secondary);
-    font: var(--cpd-font-body-xs-semibold);
+    font:
+        600 10px/14px Inter,
+        sans-serif;
+    letter-spacing: 0.07em;
     text-transform: uppercase;
+}
+
+.mj_PromptCard_permission .mj_PromptLabel {
+    color: var(--cpd-color-text-action-accent);
+}
+
+.mj_PromptTime {
+    flex: 0 0 auto;
+    color: var(--cpd-color-text-secondary);
+    font:
+        400 11px/14px Inter,
+        sans-serif;
+    white-space: nowrap;
+}
+
+.mj_PromptBody,
+.mj_PromptResolved {
+    display: grid;
+    grid-template-columns: 24px minmax(0, 1fr);
+    align-items: start;
+    row-gap: 6px;
+}
+
+.mj_PromptGlyph {
+    display: inline-flex;
+    margin-top: 3px;
+    color: var(--cpd-color-icon-secondary);
+}
+
+/* Answered check = the design's green (#34c759 == --cpd-color-usage-low). */
+.mj_PromptGlyph_ok {
+    margin-top: 2px;
+    color: var(--cpd-color-usage-low);
+}
+
+.mj_PromptQuestion {
+    font:
+        400 13.5px/20px Inter,
+        sans-serif;
 }
 
 .mj_PromptOptions,
@@ -449,18 +2568,61 @@ textarea {
 .mj_PromptOptions button,
 .mj_PromptText button,
 .mj_PromptText input {
-    min-height: 32px;
+    min-height: 30px;
     box-sizing: border-box;
     border: 1px solid var(--cpd-color-border-interactive-secondary);
     border-radius: 8px;
-    background: var(--cpd-color-bg-canvas-default);
+    background: transparent;
     color: var(--cpd-color-text-primary);
-    padding: var(--cpd-space-1x) var(--cpd-space-3x);
+    padding: 0 14px;
+    font:
+        500 12.5px/16px Inter,
+        sans-serif;
 }
 
 .mj_PromptText input {
     flex: 1;
     min-width: 180px;
+    padding: 0 12px;
+}
+
+/* §10.5 the one filled primary: permission Allow, an affirmative question option, or the
+   free-text Send. Everything else is outlined/ghost. */
+.mj_PromptOptions button.mj_PromptOption_affirmative,
+.mj_PromptText button.mj_PromptOption_affirmative {
+    border: 0;
+    background: var(--cpd-color-bg-accent);
+    color: var(--cpd-color-text-on-accent);
+    font-weight: 600;
+}
+
+.mj_PromptOptions button.mj_PromptOption_affirmative:hover:not(:disabled),
+.mj_PromptText button.mj_PromptOption_affirmative:hover:not(:disabled) {
+    filter: brightness(1.08);
+}
+
+.mj_PromptOptions button:not(.mj_PromptOption_affirmative):hover,
+.mj_PromptText button:not(.mj_PromptOption_affirmative):hover:not(:disabled) {
+    background: var(--cpd-color-bg-subtle-primary);
+}
+
+.mj_PromptOptions button:focus-visible,
+.mj_PromptText button:focus-visible,
+.mj_PromptText input:focus-visible {
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: 2px;
+}
+
+.mj_PromptText button:disabled {
+    cursor: default;
+    opacity: 0.5;
+}
+
+.mj_PromptResolved .mj_Answered {
+    color: var(--cpd-color-text-secondary);
+    font:
+        500 13px/17px Inter,
+        sans-serif;
 }
 
 .mj_Answered,
@@ -472,42 +2634,108 @@ textarea {
 }
 
 .mj_ToolCard {
-    min-width: min(480px, 60vw);
+    /* v5: fills the shared agent content width (no bespoke min). */
+    min-width: 0;
+    overflow: hidden;
+    border: 1px solid var(--cpd-color-border-subtle);
+    border-radius: var(--cpd-radius-lg);
+    background: var(--cpd-color-bg-canvas-default);
 }
 
+/* v5 tool card summary (mock): chevron + `$ command` + spacer + exit pill. */
 .mj_ToolCard summary {
     display: flex;
     align-items: center;
-    gap: var(--cpd-space-2x);
+    gap: 10px;
+    background: var(--cpd-color-bg-canvas-raised);
     cursor: pointer;
+    padding: 9px 12px;
     list-style: none;
+}
+
+.mj_ToolCard[open] summary {
+    border-bottom: 1px solid var(--cpd-color-border-subtle);
 }
 
 .mj_ToolCard summary::-webkit-details-marker {
     display: none;
 }
 
-.mj_ToolCard summary code {
-    border: 1px solid #e1e4e8;
-    border-radius: 4px;
-    background: var(--cpd-color-bg-subtle-secondary);
-    padding: 3px 4px;
-    font-family: "Fira Code", monospace;
-    font-size: 100%;
-    line-height: 22px;
+.mj_ToolCard_chevron {
+    width: 13px;
+    height: 13px;
+    flex: 0 0 auto;
+    color: var(--cpd-color-text-tertiary);
+    transform: rotate(-90deg);
+    transition: transform var(--cpd-dur-fast) var(--cpd-ease);
 }
 
-.mj_ToolCard summary span:last-child,
-.mj_ToolCard summary span:nth-last-child(2) {
-    color: var(--cpd-color-text-secondary);
-    font: var(--cpd-font-body-sm-regular);
+.mj_ToolCard[open] summary .mj_ToolCard_chevron {
+    transform: rotate(0deg);
+}
+
+/* `$ command` — bare mono, single line with ellipsis (no chip box). */
+.mj_ToolCard summary code {
+    min-width: 0;
+    overflow: hidden;
+    border: 0;
+    background: transparent;
+    padding: 0;
+    font:
+        500 12.5px/18px "Fira Code",
+        monospace;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_ToolCard_spacer {
+    flex: 1;
+}
+
+/* exit badge: pill, green bg on success, critical on failure. Text is primary ink so
+   the 11px label clears WCAG AA on the translucent tint (green text on green tint fails). */
+.mj_ToolBadge {
+    flex: 0 0 auto;
+    border-radius: 999px;
+    background: var(--cpd-color-bg-diff-add);
+    color: var(--cpd-color-text-primary);
+    padding: 1px 8px;
+    font:
+        600 11px/16px Inter,
+        sans-serif;
+}
+
+.mj_ToolBadge_failed {
+    background: var(--cpd-color-bg-diff-del);
+    color: var(--cpd-color-text-critical-primary);
+}
+
+/* Event time after the exit badge (mock puts the duration/time here). */
+.mj_ToolTime {
+    flex: 0 0 auto;
+    color: var(--cpd-color-text-tertiary);
+    font:
+        400 11px/14px Inter,
+        sans-serif;
+}
+
+/* v5 event.unknown: dashed --m-line2 border on --m-raised so an unrecognised event
+   reads as diagnostic (collapsed, JSON on expand), never as content. */
+.mj_Unknown {
+    /* v5: fills the shared agent content width. */
+    max-width: 100%;
+    border: 1px dashed var(--cpd-color-border-strong);
+    border-radius: 10px;
+    background: var(--cpd-color-bg-canvas-raised);
+    padding: 10px 12px;
 }
 
 .mj_ToolCommand,
 .mj_ToolCard pre,
 .mj_LiveTool pre,
 .mj_Unknown pre {
-    max-width: min(720px, 62vw);
+    /* v5: fill the card (which is capped at the shared content width); scroll inside. */
+    max-width: 100%;
     max-height: 360px;
     overflow: auto;
     box-sizing: border-box;
@@ -517,14 +2745,27 @@ textarea {
     white-space: pre-wrap;
     overflow-wrap: anywhere;
     font-family: "Fira Code", monospace;
-    font-size: 12px;
+    font-size: var(--cpd-font-size-xs);
+}
+
+/* terminal surface — theme-independent fixed colors (scoped --cpd exception, see spec §Feature 2); ANSI palette tuned for this backdrop */
+.mj_LiveTool pre {
+    background: #1e2127;
+    color: #dcdcdc;
+}
+
+.mj_ToolCard pre {
+    margin: 0;
+    border-radius: 0;
+    background: var(--cpd-color-bg-canvas-default);
 }
 
 .mj_DiffCard {
     min-width: 0;
     overflow: hidden;
-    border-radius: 8px;
-    background: var(--cpd-color-bg-subtle-secondary);
+    border: 1px solid var(--cpd-color-border-subtle);
+    border-radius: var(--cpd-radius-lg);
+    background: var(--cpd-color-bg-canvas-default);
 }
 
 .mj_DiffCard_header {
@@ -535,14 +2776,48 @@ textarea {
     padding: var(--cpd-space-2x) var(--cpd-space-3x);
 }
 
+/* v5: the expand toggle is a bare chevron, not a native button box. */
+.mj_DiffCard_header > button {
+    display: inline-flex;
+    width: 20px;
+    height: 20px;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--cpd-color-text-tertiary);
+    cursor: pointer;
+}
+
+.mj_DiffCard_header > button svg {
+    width: 13px;
+    height: 13px;
+}
+
+.mj_DiffCard_header > button:focus-visible {
+    border-radius: 4px;
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: 1px;
+}
+
 .mj_DiffCard_filename {
-    font-weight: 600;
     min-width: 0;
     overflow-wrap: anywhere;
+    /* v5 mock: mono.filename 600 12.5/18. */
+    font:
+        600 12.5px/18px "Fira Code",
+        monospace;
 }
 
 .mj_DiffCard_link {
     color: var(--cpd-color-text-action-accent);
+}
+
+.mj_DiffCard_expiredNote {
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-body-xs-regular);
 }
 
 .mj_DiffCard_link:hover {
@@ -561,6 +2836,10 @@ textarea {
     color: var(--cpd-color-text-secondary);
 }
 
+.mj_DiffCard_truncated {
+    padding: 2px var(--cpd-space-3x);
+}
+
 .mj_DiffCard_badge {
     border-radius: 999px;
     background: var(--cpd-color-bg-subtle-primary);
@@ -568,8 +2847,16 @@ textarea {
     font: var(--cpd-font-body-xs-semibold);
 }
 
+/* +n / −n header counts: Fira Code 600 11/16 (design event.diff filename-row counts),
+   coloured glyphs. Scoped to the header counts — NOT .mj_DiffLine_del (body line). */
 .mj_DiffCard_added,
-.mj_DiffLine_add {
+.mj_DiffCard_removed {
+    font:
+        600 11px/16px "Fira Code",
+        monospace;
+}
+
+.mj_DiffCard_added {
     color: var(--cpd-color-icon-accent-primary);
 }
 
@@ -578,18 +2865,54 @@ textarea {
     color: var(--cpd-color-text-critical-primary);
 }
 
+/* v5 event.diff.addRow: an added line is signalled by a full-bleed row-background
+   tint with DEFAULT ink — not green text. Removed lines keep bg tint + critical ink. */
+.mj_DiffLine_add {
+    background: var(--cpd-color-bg-diff-add);
+    color: var(--cpd-color-text-primary);
+}
+
+.mj_DiffLine_del {
+    background: var(--cpd-color-bg-diff-del);
+}
+
+/* Rows carry the 2px/12px padding (the body's horizontal padding is dropped) so each
+   row's background tint bleeds edge-to-edge while the code text stays inset. */
+.mj_DiffLine_add,
+.mj_DiffLine_del,
+.mj_DiffLine_ctx,
+.mj_DiffLine_hunk {
+    display: block;
+    padding: 2px var(--cpd-space-3x);
+}
+
+.mj_DiffCard_track {
+    display: flex;
+    flex-direction: column;
+    width: max-content;
+    min-width: 100%;
+}
+
 .mj_DiffCard_body {
-    max-width: min(720px, 62vw);
+    /* v5: fills the diff card (shared content width); wide rows scroll inside. */
+    max-width: 100%;
     overflow-x: auto;
     box-sizing: border-box;
-    padding: 0 var(--cpd-space-3x) var(--cpd-space-3x);
+    /* No horizontal padding — the rows carry it so their bg tint reaches the edges. */
+    padding: 0 0 var(--cpd-space-2x);
     white-space: pre;
     font-family: "Fira Code", monospace;
-    font-size: 12px;
+    font-size: var(--cpd-font-size-xs);
 }
 
 .mj_DiffLine_hunk {
     color: var(--cpd-color-text-secondary);
+    /* the hunk header (`@@ -a,b +c,d @@`) is diff metadata, not source.
+       Fira Code draws `@` as a ring-enclosed `a` (its base glyph — NOT a
+       ligature, so font-feature-settings can't undo it), which made `@@`
+       unreadable. Render the header row in a plain monospace whose at-sign is
+       conventional; the diff body keeps Fira Code. */
+    font-family: ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
 }
 
 .mj_DiffLine_ctx {
@@ -600,24 +2923,18 @@ textarea {
     border: 0;
     background: transparent;
     cursor: pointer;
-    padding: 0;
-}
-
-.mj_DiffCard_chevron {
-    display: inline-flex;
-    align-items: center;
-    border: 0;
-    background: transparent;
-    cursor: pointer;
-    padding: 0;
+    /* Inset to match the row text now that the body carries no horizontal padding. */
+    padding: 2px var(--cpd-space-3x);
 }
 
 .mj_ToolCommand {
     margin-top: var(--cpd-space-2x);
 }
 
-.mj_ToolCard_failed summary {
-    color: var(--cpd-color-text-critical-primary);
+/* v5 failed tool card: critical-tinted border; the exit badge (mj_ToolBadge_failed)
+   carries the colour, the command text stays neutral. */
+.mj_ToolCard_failed {
+    border-color: rgb(189 32 32 / 35%);
 }
 
 .mj_File {
@@ -633,6 +2950,10 @@ button.mj_File {
 
 .mj_FileSize {
     margin-left: var(--cpd-space-2x);
+}
+
+.mj_FileCaption {
+    margin-top: 4px;
 }
 
 .mj_Image {
@@ -717,6 +3038,11 @@ button.mj_File {
     overflow-y: auto;
 }
 
+/* No composer focus ring by design — the shell border recolor
+   (.mx_MessageComposer_row:focus-within) is the focus indicator. A :focus-visible ring on
+   this textarea would show on click-to-type (text inputs always match :focus-visible),
+   which the mock rejects. See reference_focus_visible_fires_on_every_text_input_focus. */
+
 .mx_MessageComposer_actions button {
     border: 0;
 }
@@ -725,10 +3051,181 @@ button.mj_File {
     cursor: default;
 }
 
+.mj_VoiceRecording {
+    display: flex;
+    width: 100%;
+    min-height: 44px;
+    align-items: center;
+    gap: var(--cpd-space-3x);
+    box-sizing: border-box;
+    /* v4: recording bar replaces the input row — 1px teal-tint border, composer radius. */
+    border: 1px solid rgb(13 148 136 / 0.3);
+    border-radius: var(--cpd-radius-lg);
+    background: var(--cpd-color-bg-subtle-secondary);
+    color: var(--cpd-color-text-primary);
+    padding: var(--cpd-space-2x) var(--cpd-space-3x);
+}
+
+.mj_VoiceRecording_dot {
+    width: 9px;
+    height: 9px;
+    flex: 0 0 auto;
+    border-radius: var(--cpd-radius-pill);
+    background: var(--cpd-color-text-critical-primary);
+    /* v4: recording dot pulses at 1.1s (distinct from the 1.2s typing/live-session dot). */
+    animation: mj-pulse 1.1s ease-in-out infinite;
+}
+
+.mj_VoiceRecording_waveform,
+.mj_VoiceRecording_waveformFallback {
+    width: min(240px, 40vw);
+    height: 32px;
+    min-width: 48px;
+    flex: 1 1 auto;
+}
+
+.mj_VoiceRecording_waveform {
+    color: var(--cpd-color-icon-accent-primary);
+}
+
+.mj_VoiceRecording_waveformFallback {
+    border-radius: var(--cpd-radius-pill);
+    background: var(--cpd-color-icon-accent-primary);
+    opacity: 0.35;
+    animation: mj-pulse 1.2s ease-in-out infinite;
+}
+
+.mj_VoiceRecording_time {
+    min-width: 3rem;
+    color: var(--cpd-color-text-secondary);
+    /* v4: mono m:ss timer. */
+    font:
+        500 12.5px/18px "Fira Code",
+        monospace;
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+}
+
+.mj_VoiceRecording_action {
+    display: inline-flex;
+    width: 32px;
+    height: 32px;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 0;
+    border-radius: var(--cpd-radius-pill);
+    background: transparent;
+    color: var(--cpd-color-icon-secondary);
+    cursor: pointer;
+}
+
+/* Ghost hover (background + danger colour) applies only to the discard control — the
+   filled Stop button keeps its accent background on hover, or the generic rule (more
+   specific than Stop's base background) flips it to near-white and hides the white icon. */
+.mj_VoiceRecording_action:not(.mj_VoiceRecording_stop):hover:not(:disabled) {
+    background: var(--cpd-color-bg-subtle-primary);
+    color: var(--cpd-color-text-critical-primary);
+}
+
+.mj_VoiceRecording_action:focus-visible {
+    outline: 2px solid var(--cpd-color-icon-accent-primary);
+    outline-offset: 2px;
+}
+
+.mj_VoiceRecording_action:disabled {
+    color: var(--cpd-color-icon-tertiary);
+    cursor: default;
+    opacity: 0.5;
+}
+
+.mj_VoiceRecording_action svg {
+    width: 19px;
+    height: 19px;
+}
+
+.mj_VoiceRecording_stop {
+    /* v4 primary button: filled --m-accent-deep, hover brightens (no colour swap). */
+    background: var(--cpd-color-bg-accent);
+    color: var(--cpd-color-text-on-accent);
+}
+
+.mj_VoiceRecording_stop:hover:not(:disabled) {
+    filter: brightness(1.08);
+    color: var(--cpd-color-text-on-accent);
+}
+
+.mj_VoiceError {
+    margin-inline: var(--cpd-space-1x);
+}
+
+.mj_ScreenReaderOnly {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+}
+
+.mj_ReadOnlyHint {
+    display: flex;
+    min-height: 56px;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    border-top: 1px solid var(--cpd-color-border-disabled);
+    background: var(--cpd-color-bg-canvas-default);
+    color: var(--cpd-color-text-secondary);
+    padding: var(--cpd-space-3x) var(--cpd-space-4x);
+    font: var(--cpd-font-body-sm-regular);
+    text-align: center;
+}
+
 .mj_ConnectionError {
+    display: flex;
+    align-items: center;
+    gap: var(--cpd-space-2x);
     margin: var(--cpd-space-2x) 0;
     color: var(--cpd-color-text-critical-primary);
     font: var(--cpd-font-body-sm-regular);
+}
+
+.mj_ConnectionError span[role="status"] {
+    flex: 1;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.mj_DraftNonDurable {
+    margin: var(--cpd-space-2x) 0;
+    color: var(--cpd-color-text-critical-primary);
+    font: var(--cpd-font-body-sm-regular);
+    overflow-wrap: anywhere;
+}
+
+.mj_ConnectionError_dismiss {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    min-width: 32px;
+    min-height: 32px;
+    padding: 0;
+    border: none;
+    background: none;
+    color: inherit;
+    font-size: var(--cpd-font-size-md);
+    line-height: 1;
+    cursor: pointer;
+}
+
+.mj_ConnectionError_dismiss svg {
+    width: 16px;
+    height: 16px;
 }
 
 .mj_Error {
@@ -749,7 +3246,7 @@ button.mj_File {
     display: flex;
     align-items: center;
     justify-content: center;
-    background: #fbfaf6;
+    background: var(--cpd-color-bg-canvas-raised);
 }
 
 .mj_Loading img {
@@ -770,6 +3267,23 @@ button.mj_File {
 @keyframes mj-blink {
     50% {
         opacity: 0;
+    }
+}
+
+@keyframes mj-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .mj_AttachmentChip_spinner,
+    .mj_Spinner,
+    .mj_VoiceRecording_dot,
+    .mj_VoiceRecording_waveformFallback,
+    .mj_HeaderStatusDot_running,
+    .mj_RoomListStatus_running {
+        animation: none;
     }
 }
 
@@ -794,25 +3308,8 @@ button.mj_File {
     }
 
     .mj_ChatHeader {
-        gap: var(--cpd-space-1x);
+        gap: var(--cpd-space-2x);
         padding-inline: 42px var(--cpd-space-2x);
-    }
-
-    .mj_HeaderCluster {
-        padding-inline: 6px;
-    }
-
-    .mj_HeaderTitleCluster {
-        max-width: 30vw;
-    }
-
-    .mj_UsageRow {
-        grid-template-columns: minmax(28px, auto) 58px minmax(28px, auto);
-        gap: 3px;
-    }
-
-    .mj_UsageTrack {
-        width: 58px;
     }
 
     .mx_RoomView_body[data-layout="bubble"] {
@@ -829,6 +3326,7 @@ button.mj_File {
     .mj_ToolCard,
     .mj_ToolCard pre,
     .mj_LiveTool pre,
+    .mj_CodeBlock,
     .mj_DiffCard,
     .mj_Unknown pre,
     .mj_Image {

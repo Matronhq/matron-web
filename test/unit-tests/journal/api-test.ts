@@ -1,0 +1,301 @@
+/*
+Copyright 2026 Matron Contributors.
+
+SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
+Please see LICENSE files in the repository root for full details.
+*/
+
+import { TextDecoder as NodeTextDecoder, TextEncoder as NodeTextEncoder } from "node:util";
+
+import { JournalApi, JournalApiError } from "../../../src/journal/api";
+import { type DevicesResponse } from "../../../src/journal/types";
+
+const fetchMock = jest.fn();
+
+function jsonResponse(body: unknown, status = 200): Pick<Response, "status" | "headers" | "arrayBuffer"> {
+    const encoded = new NodeTextEncoder().encode(JSON.stringify(body));
+    return {
+        status,
+        headers: new Headers({ "Content-Type": "application/json" }),
+        arrayBuffer: async () => encoded.buffer,
+    };
+}
+
+describe("JournalApi uploadMedia", () => {
+    beforeAll(() => {
+        globalThis.TextDecoder = NodeTextDecoder as typeof TextDecoder;
+    });
+
+    beforeEach(() => {
+        fetchMock.mockReset();
+        globalThis.fetch = fetchMock as unknown as typeof fetch;
+        delete (window as Window & { electron?: unknown }).electron;
+    });
+
+    it("sends the bytes and content type verbatim and returns a structurally valid media response", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ media_id: "media-1", size: 3, content_type: "image/png" }));
+        const api = new JournalApi("https://journal.example", "token");
+        const bytes = new Uint8Array([1, 2, 3]).buffer;
+
+        await expect(api.uploadMedia(bytes, "image/png")).resolves.toEqual({
+            media_id: "media-1",
+            size: 3,
+            content_type: "image/png",
+        });
+        expect(String(fetchMock.mock.calls[0][0])).toBe("https://journal.example/media");
+        expect(fetchMock.mock.calls[0][1]).toEqual(
+            expect.objectContaining({
+                method: "POST",
+                headers: expect.objectContaining({
+                    Authorization: "Bearer token",
+                    "Content-Type": "image/png",
+                }),
+            }),
+        );
+        expect(fetchMock.mock.calls[0][1].body).toBe(bytes);
+    });
+
+    it.each([
+        ["an object with no fields", {}],
+        ["a null media id", { media_id: null, size: 3, content_type: "image/png" }],
+        ["a blank media id", { media_id: "  ", size: 3, content_type: "image/png" }],
+        ["a missing size", { media_id: "media-1", content_type: "image/png" }],
+        ["a non-number size", { media_id: "media-1", size: "3", content_type: "image/png" }],
+        ["a missing content type", { media_id: "media-1", size: 3 }],
+        ["a non-string content type", { media_id: "media-1", size: 3, content_type: null }],
+    ])("rejects a successful response containing %s", async (_description, body) => {
+        fetchMock.mockResolvedValue(jsonResponse(body));
+        const api = new JournalApi("https://journal.example", "token");
+
+        const upload = api.uploadMedia(new ArrayBuffer(3), "image/png");
+
+        await expect(upload).rejects.toBeInstanceOf(JournalApiError);
+        await expect(upload).rejects.toMatchObject({ status: 200 });
+    });
+
+    it.each([
+        [413, "too_large", "File too large."],
+        [400, "empty", "That file is empty."],
+    ])("maps HTTP %i code %s to prose", async (status, code, message) => {
+        fetchMock.mockResolvedValue(jsonResponse({ error: code }, status));
+        const api = new JournalApi("https://journal.example", "token");
+
+        await expect(api.uploadMedia(new ArrayBuffer(1), "application/octet-stream")).rejects.toMatchObject({
+            message,
+            status,
+            code,
+        });
+    });
+
+    it("forwards the abort signal to fetch and rejects when it is aborted", async () => {
+        fetchMock.mockImplementation(
+            (_url: string, init: RequestInit) =>
+                new Promise((_resolve, reject) => {
+                    init.signal?.addEventListener(
+                        "abort",
+                        () => reject(new DOMException("The operation was aborted.", "AbortError")),
+                        { once: true },
+                    );
+                }),
+        );
+        const api = new JournalApi("https://journal.example", "token");
+        const controller = new AbortController();
+
+        const upload = api.uploadMedia(new ArrayBuffer(1), "application/octet-stream", controller.signal);
+        expect(fetchMock.mock.calls[0][1]).toEqual(expect.objectContaining({ signal: controller.signal }));
+        controller.abort();
+
+        await expect(upload).rejects.toMatchObject({ name: "Error", message: "The operation was aborted." });
+    });
+
+    it("rejects binary requests in Electron before issuing a POST", async () => {
+        const journalRequest = jest.fn();
+        (window as Window & { electron?: unknown }).electron = {
+            initialise: jest.fn(),
+            journalRequest,
+        };
+        const api = new JournalApi("https://journal.example", "token");
+
+        await expect(api.uploadMedia(new ArrayBuffer(1), "application/octet-stream")).rejects.toMatchObject({
+            message: "Attachments aren't supported in the desktop build yet.",
+            code: "electron_binary_unsupported",
+        });
+        expect(journalRequest).not.toHaveBeenCalled();
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+});
+
+describe("JournalApi devices", () => {
+    beforeAll(() => {
+        globalThis.TextDecoder = NodeTextDecoder as typeof TextDecoder;
+    });
+
+    beforeEach(() => {
+        jest.useFakeTimers();
+        fetchMock.mockReset();
+        globalThis.fetch = fetchMock as unknown as typeof fetch;
+        delete (window as Window & { electron?: unknown }).electron;
+    });
+
+    afterEach(() => {
+        jest.useRealTimers();
+    });
+
+    it("rejects a browser request that exceeds the transport-agnostic timeout", async () => {
+        let requestSignal: AbortSignal | undefined;
+        fetchMock.mockImplementation(
+            (_url: string, init: RequestInit) =>
+                new Promise((_resolve, reject) => {
+                    requestSignal = init.signal ?? undefined;
+                    init.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), {
+                        once: true,
+                    });
+                }),
+        );
+        const api = new JournalApi("https://journal.example", "token");
+
+        const devices = api.devices();
+        jest.advanceTimersByTime(10_000);
+
+        await expect(devices).rejects.toMatchObject({ message: "timeout", status: 0 });
+        expect(requestSignal?.aborted).toBe(true);
+    });
+
+    it("shares a browser devices request between concurrent callers", async () => {
+        let resolveRequest!: (response: ReturnType<typeof jsonResponse>) => void;
+        fetchMock.mockReturnValue(
+            new Promise((resolve) => {
+                resolveRequest = resolve;
+            }),
+        );
+        const api = new JournalApi("https://journal.example", "token");
+
+        const first = api.devices();
+        const second = api.devices();
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        resolveRequest(jsonResponse({ devices: [] }));
+
+        await expect(first).resolves.toEqual({ devices: [] });
+        await expect(second).resolves.toEqual({ devices: [] });
+    });
+
+    it("times out an Electron request and handles a late rejection from the losing branch", async () => {
+        let rejectRequest!: (reason: Error) => void;
+        const journalRequest = jest
+            .fn()
+            .mockImplementationOnce(
+                () =>
+                    new Promise<never>((_resolve, reject) => {
+                        rejectRequest = reject;
+                    }),
+            )
+            .mockResolvedValueOnce({
+                status: 200,
+                headers: { "Content-Type": "application/json" },
+                body: new NodeTextEncoder().encode(JSON.stringify({ devices: [] })).buffer,
+            });
+        (window as Window & { electron?: unknown }).electron = {
+            initialise: jest.fn(),
+            journalRequest,
+        };
+        const api = new JournalApi("https://journal.example", "token");
+
+        const devices = api.devices();
+        jest.advanceTimersByTime(10_000);
+        await expect(devices).rejects.toMatchObject({ message: "timeout", status: 0 });
+
+        const retry = api.devices();
+        expect(journalRequest).toHaveBeenCalledTimes(2);
+        await expect(retry).resolves.toEqual({ devices: [] });
+
+        rejectRequest(new Error("late desktop failure"));
+        await Promise.resolve();
+        expect(journalRequest).toHaveBeenCalledTimes(2);
+    });
+
+    it("drops malformed items when at least one roster item is valid", async () => {
+        fetchMock.mockResolvedValue(
+            jsonResponse({
+                devices: [
+                    { device_id: "wrong", kind: "agent", connected: true, is_self: false },
+                    {
+                        device_id: 7,
+                        kind: "agent",
+                        name: "Workstation",
+                        last_seen_at: 123,
+                        connected: true,
+                        is_self: false,
+                    },
+                ],
+            }),
+        );
+        const api = new JournalApi("https://journal.example", "token");
+        const warning = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+
+        await expect(api.devices()).resolves.toEqual({
+            devices: [
+                {
+                    device_id: 7,
+                    kind: "agent",
+                    name: "Workstation",
+                    last_seen_at: 123,
+                    connected: true,
+                    is_self: false,
+                },
+            ],
+        });
+        expect(warning).toHaveBeenCalledWith("matron:devices", {
+            event: "partial_roster",
+            rejected_count: 1,
+            reasons: [["invalid_device_id"]],
+        });
+    });
+
+    it.each([
+        ["a null envelope", null],
+        ["an array envelope", []],
+        ["a missing devices field", {}],
+        ["a non-array devices field", { devices: null }],
+    ])("throws a typed error for %s", async (_description, body) => {
+        fetchMock.mockResolvedValue(jsonResponse(body));
+        const api = new JournalApi("https://journal.example", "token");
+
+        await expect(api.devices()).rejects.toBeInstanceOf(JournalApiError);
+        await expect(api.devices()).rejects.toMatchObject({ status: 200 });
+    });
+
+    it("returns a genuinely empty roster", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ devices: [] }));
+        const api = new JournalApi("https://journal.example", "token");
+
+        await expect(api.devices()).resolves.toEqual({ devices: [] });
+    });
+
+    it("throws when a nonempty roster has no valid items", async () => {
+        fetchMock.mockResolvedValue(
+            jsonResponse({
+                devices: [
+                    { device_id: "7", kind: "agent", connected: true, is_self: false },
+                    { device_id: 8, kind: "agent", connected: "yes", is_self: false },
+                ],
+            }),
+        );
+        const api = new JournalApi("https://journal.example", "token");
+
+        await expect(api.devices()).rejects.toBeInstanceOf(JournalApiError);
+    });
+
+    it("returns a typed devices response on success", async () => {
+        fetchMock.mockResolvedValue(
+            jsonResponse({
+                devices: [{ device_id: 7, kind: "agent", connected: false, is_self: false }],
+            }),
+        );
+        const api = new JournalApi("https://journal.example", "token");
+
+        const response: DevicesResponse = await api.devices();
+
+        expect(response.devices).toHaveLength(1);
+        expect(response.devices[0]).toMatchObject({ device_id: 7, kind: "agent", connected: false });
+    });
+});

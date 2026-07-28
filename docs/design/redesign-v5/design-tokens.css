@@ -1,0 +1,112 @@
+/* Matron redesign — design tokens
+   Generated from Matron Redesign.dc.html. Values mirror the rendered artifact exactly.
+   Companion files: design-tokens.json (machine-readable), GENERATIVE-SYSTEM.md (rules), component-map.json. */
+
+:root {
+    --m-app: #f4f2ee;
+    --m-panel: #ffffff;
+    --m-paper: #efece6;
+    --m-raised: #faf8f4;
+    --m-overlay: #ffffff;
+    --m-ink: #1b1815;
+    --m-ink2: #6b655c;
+    --m-ink3: #9a938a;
+    --m-line: #e7e2d9;
+    --m-line2: #d8d1c5;
+    --m-accent: #0d9488;
+    --m-accent-deep: #0f766e;
+    --m-on-accent: #ffffff;
+    --m-self: #e6f4ef;
+    --m-subtle: #f2efe9;
+    --m-subtle2: #eae5dd;
+    --m-hover: rgb(28 24 20 / 0.05);
+    --m-active: rgb(28 24 20 / 0.09);
+    --m-selected: rgb(13 148 136 / 0.10);
+    --m-track: rgb(28 24 20 / 0.12);
+    --m-green: #34c759;
+    --m-amber: #ff9500;
+    --m-red: #ff3b30;
+    --m-crit: #bd2020;
+    --m-diff-add: rgb(52 199 89 / 0.13);
+    --m-diff-del: rgb(255 59 48 / 0.09);
+    --m-sh-sm: 0 1px 2px rgb(28 24 20 / 0.06);
+    --m-sh-md: 0 4px 12px rgb(28 24 20 / 0.10);
+    --m-sh-lg: 0 16px 48px rgb(28 24 20 / 0.16);
+    --m-scrollbar: rgb(28 24 20 / 0.22);
+    --m-scrollbar-hover: rgb(28 24 20 / 0.34);
+    --m-selection: rgb(13 148 136 / 0.20);
+}
+
+[data-theme="dark"] {
+    --m-app: #121316;
+    --m-panel: #1a1c20;
+    --m-paper: #151619;
+    --m-raised: #212429;
+    --m-overlay: #282c32;
+    --m-ink: #e7e4df;
+    --m-ink2: #9a948b;
+    --m-ink3: #6d675f;
+    --m-line: #2a2d33;
+    --m-line2: #3a3f46;
+    --m-accent: #2dd4bf;
+    --m-accent-deep: #14b8a6;
+    --m-on-accent: #0b201c;
+    --m-self: #123530;
+    --m-subtle: #212429;
+    --m-subtle2: #282c32;
+    --m-hover: rgb(255 255 255 / 0.06);
+    --m-active: rgb(255 255 255 / 0.10);
+    --m-selected: rgb(45 212 191 / 0.14);
+    --m-track: rgb(255 255 255 / 0.12);
+    --m-crit: #ff6a6a;
+    --m-diff-add: rgb(52 199 89 / 0.12);
+    --m-diff-del: rgb(255 107 107 / 0.10);
+    --m-sh-sm: 0 1px 2px rgb(0 0 0 / 0.3);
+    --m-sh-md: 0 4px 12px rgb(0 0 0 / 0.4);
+    --m-sh-lg: 0 16px 48px rgb(0 0 0 / 0.5);
+    --m-scrollbar: rgb(255 255 255 / 0.20);
+    --m-scrollbar-hover: rgb(255 255 255 / 0.32);
+    --m-selection: rgb(45 212 191 / 0.26);
+}
+
+/* Type roles — see design-tokens.json → type.roles for intent per role */
+:root {
+    --m-font-title-lg: 600 15px/20px Inter;
+    --m-font-title-md: 600 14px/19px Inter;
+    --m-font-title-sm: 600 13px/17px Inter;
+    --m-font-label-strong: 500 13px/17px Inter;
+    --m-font-label-md: 500 13px/16px Inter;
+    --m-font-label-sm: 500 12.5px/16px Inter;
+    --m-font-label-smStrong: 600 12.5px/16px Inter;
+    --m-font-label-xs: 500 12px/16px Inter;
+    --m-font-label-micro: 500 11px/14px Inter;
+    --m-font-label-caps: 500 10px/14px Inter;
+    --m-font-label-capsAccent: 600 10px/14px Inter;
+    --m-font-body-md: 400 14px/22px Inter;
+    --m-font-body-sm: 400 13.5px/20px Inter;
+    --m-font-body-xs: 400 13px/16px Inter;
+    --m-font-meta-md: 400 12px/16px Inter;
+    --m-font-meta-sm: 400 11.5px/15px Inter;
+    --m-font-meta-xs: 400 11px/14px Inter;
+    --m-font-meta-nano: 400 10px/14px Inter;
+    --m-font-badge-count: 600 10px/18px Inter;
+    --m-font-badge-status: 600 11px/16px Inter;
+    --m-font-mono-usage: 400 10.5px/13px 'Fira Code';
+    --m-font-mono-micro: 400 11px/16px 'Fira Code';
+    --m-font-mono-badge: 600 11px/16px 'Fira Code';
+    --m-font-mono-code: 400 12px/19px 'Fira Code';
+    --m-font-mono-inline: 400 12.5px/18px 'Fira Code';
+    --m-font-mono-command: 500 12.5px/18px 'Fira Code';
+    --m-font-mono-filename: 600 12.5px/18px 'Fira Code';
+}
+
+/* Native chrome — part of the theme, not an exception to it (§10.4).
+   scrollbar-color inherits, so set it once; scope the webkit boxes to scroll containers. */
+html { scrollbar-width: thin; scrollbar-color: var(--m-scrollbar) transparent; }
+nav::-webkit-scrollbar, pre::-webkit-scrollbar, textarea::-webkit-scrollbar, div::-webkit-scrollbar { width: 10px; height: 10px; }
+nav::-webkit-scrollbar-track, pre::-webkit-scrollbar-track, textarea::-webkit-scrollbar-track, div::-webkit-scrollbar-track,
+nav::-webkit-scrollbar-corner, pre::-webkit-scrollbar-corner, textarea::-webkit-scrollbar-corner, div::-webkit-scrollbar-corner { background: transparent; }
+nav::-webkit-scrollbar-thumb, pre::-webkit-scrollbar-thumb, textarea::-webkit-scrollbar-thumb, div::-webkit-scrollbar-thumb { background: var(--m-scrollbar); border: 3px solid transparent; background-clip: content-box; border-radius: 99px; }
+nav::-webkit-scrollbar-thumb:hover, pre::-webkit-scrollbar-thumb:hover, textarea::-webkit-scrollbar-thumb:hover, div::-webkit-scrollbar-thumb:hover { background: var(--m-scrollbar-hover); border: 3px solid transparent; background-clip: content-box; }
+::selection { background: var(--m-selection); }
+:focus-visible { outline: 2px solid var(--m-accent); outline-offset: 2px; }

@@ -1,0 +1,757 @@
+{
+  "$schema": "matron-component-map/1",
+  "generated": "2026-07-26T17:05Z",
+  "repo": {
+    "name": "easelyte/matron-web",
+    "branch": "main",
+    "tree": "f661b266f772",
+    "read": [
+      "src/journal/journal.pcss",
+      "src/journal/components.tsx",
+      "src/journal/context-menu.ts"
+    ],
+    "readAt": "2026-07-26T14:01Z"
+  },
+  "how": "data-spec (in the artifact and every static state) → the selector in src/journal that implements it. TWO independent axes: `status` = does the class/feature exist at the tree below (implemented | new | devtool); `visual` = does what exists match the design (aligned | divergent | unverified). A thing can be implemented and divergent — that combination is invisible to both the changelog's 'do not redo' list and its divergence list, so it gets its own field. `unverified` means settle it with the auto-diff, not by reading.",
+  "components": [
+    {
+      "spec": "activity",
+      "selector": ".mj_Activity",
+      "status": "implemented",
+      "visual": "aligned"
+    },
+    {
+      "spec": "attachmentChip.error",
+      "selector": "li.mj_AttachmentChip_error (+ _actions buttons)",
+      "status": "implemented",
+      "visual": "unverified"
+    },
+    {
+      "spec": "attachmentChip.sending",
+      "selector": "li.mj_AttachmentChip.mj_AttachmentChip_sending",
+      "status": "implemented",
+      "visual": "unverified"
+    },
+    {
+      "spec": "button.primary|secondary|ghostDanger|icon.*",
+      "selector": "per-component buttons; see design-tokens.json → states",
+      "status": "implemented",
+      "visual": "aligned"
+    },
+    {
+      "spec": "canvas",
+      "selector": ".mx_RoomView_messagePanel",
+      "status": "implemented",
+      "visual": "unverified"
+    },
+    {
+      "spec": "canvas.agentGroup",
+      "selector": ".mx_EventTile[data-self=false] (+ .mx_DisambiguatedProfile)",
+      "status": "implemented",
+      "notes": "redesign renders agent turns as flat prose with a 32px indent, not bubbles",
+      "visual": "unverified"
+    },
+    {
+      "spec": "canvas.dateDivider",
+      "selector": "—",
+      "status": "new",
+      "suggested": ".mj_DayDivider",
+      "notes": "hairline + centred label, 500 11px/14px",
+      "visual": "n/a — nothing to compare"
+    },
+    {
+      "spec": "canvas.ownBubble",
+      "selector": ".mx_EventTile[data-self=true] .mx_EventTile_line",
+      "status": "implemented",
+      "visual": "unverified"
+    },
+    {
+      "spec": "composer",
+      "selector": ".mx_MessageComposer",
+      "status": "implemented",
+      "visual": "unverified",
+      "visualNote": "Design composer container is TRANSPARENT (the warm --m-paper pane shows through the footer); the shell it sits in is --m-panel only for the input row. Verify the live composer is not filling white.",
+      "notes": "SUPERSEDED by the three rungs below — kept so old diffs resolve"
+    },
+    {
+      "spec": "composer.attach",
+      "selector": ".mx_MessageComposer_button",
+      "status": "implemented",
+      "visual": "unverified"
+    },
+    {
+      "spec": "composer.footer",
+      "selector": ".mx_MessageComposer_wrapper",
+      "status": "implemented",
+      "visual": "divergent",
+      "visualNote": "TRANSPARENT in the design — the warm --m-paper pane shows through. Only composer.shell is --m-panel. This distinction is what made the earlier 'composer background' reading ambiguous: the footer is transparent AND the input row is panel; both are correct."
+    },
+    {
+      "spec": "composer.hints",
+      "selector": "—",
+      "status": "new",
+      "suggested": ".mj_ComposerHints",
+      "notes": "'/ commands', 'shift+enter for newline', right-aligned live ctx readout (ctxHintPct already computed in components.tsx)",
+      "visual": "n/a — nothing to compare"
+    },
+    {
+      "spec": "composer.input",
+      "selector": ".mx_BasicMessageComposer_input",
+      "status": "implemented",
+      "visual": "unverified",
+      "notes": "transparent, borderless INSIDE the shell — the border belongs to composer.shell, not the textarea"
+    },
+    {
+      "spec": "composer.mic",
+      "selector": "the mic button in .mx_MessageComposer_actions",
+      "status": "implemented",
+      "visual": "unverified"
+    },
+    {
+      "spec": "composer.offline",
+      "selector": "placeholder swap on the composer input",
+      "status": "implemented",
+      "notes": "copy: “Messages will send when reconnected” / online “Send a message…”",
+      "visual": "aligned"
+    },
+    {
+      "spec": "composer.recording",
+      "selector": ".mj_VoiceRecording (+ _action, _stop)",
+      "status": "implemented",
+      "visual": "unverified"
+    },
+    {
+      "spec": "composer.send",
+      "selector": ".mx_MessageComposer_sendMessage",
+      "status": "implemented",
+      "visual": "divergent",
+      "visualNote": "Design send is a FILLED 32×32 --m-accent-deep square, radius 9px, on-accent glyph — not a bare accent-coloured icon."
+    },
+    {
+      "spec": "composer.shell",
+      "selector": ".mx_MessageComposer_row",
+      "status": "implemented",
+      "visual": "divergent",
+      "visualNote": "1px --m-line2, radius 12, --m-panel fill, --m-sh-sm, padding 6px 8px 6px 6px, align-items flex-end."
+    },
+    {
+      "spec": "composer.slashPalette",
+      "selector": ".mx_SlashPalette > .mx_SlashPalette_row(_highlighted)",
+      "status": "implemented",
+      "visual": "unverified"
+    },
+    {
+      "spec": "devtool.stateMatrix",
+      "selector": "—",
+      "status": "devtool",
+      "notes": "handoff affordance in the mock's sidebar footer. DO NOT IMPLEMENT.",
+      "visual": "n/a"
+    },
+    {
+      "spec": "event.diff",
+      "selector": ".mj_DiffCard (_header/_filename/_badge/_body/_link)",
+      "status": "implemented",
+      "visual": "unverified"
+    },
+    {
+      "spec": "event.diff.addRow",
+      "selector": ".mj_DiffLine_add",
+      "status": "implemented",
+      "visual": "divergent",
+      "visualNote": "Design tints the whole row background --m-diff-add; live colours the text only."
+    },
+    {
+      "spec": "event.diff.filename",
+      "selector": ".mj_DiffCard_filename",
+      "status": "implemented",
+      "visual": "unverified"
+    },
+    {
+      "spec": "event.error",
+      "selector": ".mj_Error",
+      "status": "implemented",
+      "visual": "aligned"
+    },
+    {
+      "spec": "event.file",
+      "selector": "a.mj_File + .mj_FileSize + .mj_FileCaption",
+      "status": "implemented",
+      "visual": "unverified"
+    },
+    {
+      "spec": "event.file.loading",
+      "selector": "button.mj_File[disabled] / .mj_MediaLoading",
+      "status": "implemented",
+      "visual": "aligned"
+    },
+    {
+      "spec": "event.image",
+      "selector": "figure.mj_Image > img + figcaption",
+      "status": "implemented",
+      "visual": "unverified"
+    },
+    {
+      "spec": "event.permission_request",
+      "selector": ".mj_PromptCard with permission (label “Permission needed”)",
+      "status": "implemented",
+      "notes": "redesign adds the teal-tinted border + one filled affirmative; only difference from Question",
+      "visual": "divergent",
+      "visualNote": "Class exists (shared PromptCard); design adds the teal-tinted border, accent label, and exactly one filled affirmative."
+    },
+    {
+      "spec": "event.prompt",
+      "selector": ".mj_PromptCard (label “Question”)",
+      "status": "implemented",
+      "visual": "aligned"
+    },
+    {
+      "spec": "event.prompt_reply",
+      "selector": ".mj_MessageText (+ .mj_Answered for the resolved line)",
+      "status": "implemented",
+      "visual": "aligned"
+    },
+    {
+      "spec": "event.prompt.answered",
+      "selector": ".mj_PromptCard .mj_Answered",
+      "status": "implemented",
+      "visual": "divergent",
+      "visualNote": "Released state. Live drops the card and re-emits '📤 Sending 1 queued message:' + a numbered list as bare thread prose — duplicating content that was already on the card and reintroducing payload-emoji-as-chrome one message lower. Design: same card, same rows, resolution line + rule + quote re-inked to tertiary; no reflow, nothing restated."
+    },
+    {
+      "spec": "event.prompt.countChip",
+      "selector": "—",
+      "status": "new",
+      "visual": "n/a — nothing to compare",
+      "suggested": ".mj_PromptCard_count",
+      "notes": "mono count pill on the label row, mirroring .mj_UploadConfirm_count"
+    },
+    {
+      "spec": "event.prompt.queuedItem",
+      "selector": "—",
+      "status": "new",
+      "visual": "n/a — nothing to compare",
+      "suggested": ".mj_PromptCard_queued",
+      "notes": "quoted queued message: 2px --m-line2 left rule, 3-line clamp"
+    },
+    {
+      "spec": "event.prompt.resolution",
+      "selector": ".mj_Answered",
+      "status": "implemented",
+      "visual": "divergent",
+      "visualNote": "Design copy is 'Sent · N message(s) released to the agent' inside the card, in --m-ink2 with a green check."
+    },
+    {
+      "spec": "event.prompt.timestamp",
+      "selector": ".mj_PromptCard .mx_MessageTimestamp",
+      "status": "implemented",
+      "visual": "divergent",
+      "visualNote": "Live floats it bottom-right of the whole card, below the content. Design puts it on the label row, on the shared right edge every message type uses."
+    },
+    {
+      "spec": "event.prompt.unanswered",
+      "selector": ".mj_PromptCard",
+      "status": "implemented",
+      "visual": "divergent",
+      "visualNote": "Queued state. Live renders the payload verbatim, so its leading 📨 sits next to the card's own envelope icon (two envelopes), the count arrives as prose ('Queued (1):') instead of a chip, and the queued message is ellipsed at one line ('…i see a sub agen…') — unreadable, which defeats the card's only purpose. Design: strip the emoji + 'Label (n):' prefix on arrival, count as a chip on the label row, queued text quoted with a 2px left rule and clamped to 3 lines."
+    },
+    {
+      "spec": "event.text",
+      "selector": ".mj_Markdown",
+      "status": "implemented",
+      "visual": "unverified"
+    },
+    {
+      "spec": "event.tool_output",
+      "selector": "details.mj_ToolCard > summary + .mj_ToolCommand + pre",
+      "status": "implemented",
+      "visual": "unverified"
+    },
+    {
+      "spec": "event.tool_output.summary",
+      "selector": "details.mj_ToolCard > summary",
+      "status": "implemented",
+      "visual": "unverified"
+    },
+    {
+      "spec": "event.toolOutput.expired",
+      "selector": ".mj_Expired",
+      "status": "implemented",
+      "notes": "copy: “Output expired after 24 hours.”",
+      "visual": "aligned"
+    },
+    {
+      "spec": "event.toolOutput.failed",
+      "selector": ".mj_ToolCard_failed",
+      "status": "implemented",
+      "visual": "aligned"
+    },
+    {
+      "spec": "event.unknown",
+      "selector": "details.mj_Unknown",
+      "status": "implemented",
+      "notes": "redesign gives it a dashed border on --m-raised so it reads as diagnostic, not content",
+      "visual": "divergent",
+      "visualNote": "Class exists; design adds the dashed --m-line2 border on --m-raised so it reads diagnostic."
+    },
+    {
+      "spec": "gallery",
+      "selector": "—",
+      "status": "devtool",
+      "notes": "the state matrix surface itself. DO NOT IMPLEMENT.",
+      "visual": "n/a"
+    },
+    {
+      "spec": "header",
+      "selector": ".mx_RoomHeader.mj_ChatHeader",
+      "status": "implemented",
+      "visual": "unverified"
+    },
+    {
+      "spec": "header.compact",
+      "selector": ".mj_CompactButton",
+      "status": "implemented",
+      "visual": "unverified"
+    },
+    {
+      "spec": "header.more",
+      "selector": ".mj_ChatHeader .mj_IconButton (⋯)",
+      "status": "implemented",
+      "visual": "unverified",
+      "notes": "Sidebar rows must NOT carry a persistent ⋯ — right-click only (operator decision). The header ⋯ is the only persistent trigger."
+    },
+    {
+      "spec": "header.subagentBadge",
+      "selector": "—",
+      "status": "new",
+      "visual": "n/a — nothing to compare",
+      "suggested": ".mj_HeaderSubagentBadge",
+      "notes": "uppercase SUBAGENT pill beside the header title when the operator is inside a child session; 500 10px/16px, +0.05em, --m-subtle2 on --m-ink2"
+    },
+    {
+      "spec": "header.subtitle",
+      "selector": ".mj_HeaderEmail / the subtitle row in .mj_HeaderTitleCluster",
+      "status": "implemented",
+      "visual": "divergent",
+      "visualNote": "Design subtitle is model · workdir · run-state at 400 11px/14px --m-ink2, with the run-state word in accent.",
+      "notes": "Has a SUBAGENT variant: title becomes '↳ <child name>' + badge, subtitle becomes 'of <parent> · <progress> · <run-state>'. The parent may be stated in the SUBTITLE as hierarchy and is actionable on the back chip; it must never occupy the header TITLE while the chip offers to return there."
+    },
+    {
+      "spec": "header.title",
+      "selector": ".mj_HeaderTitleCluster .mx_RoomHeader_heading",
+      "status": "implemented",
+      "visual": "divergent",
+      "visualNote": "Design title is 600 15px/20px. Verify weight — a 500 title reads as a different hierarchy.",
+      "notes": "Has a SUBAGENT variant: title becomes '↳ <child name>' + badge, subtitle becomes 'of <parent> · <progress> · <run-state>'. The parent may be stated in the SUBTITLE as hierarchy and is actionable on the back chip; it must never occupy the header TITLE while the chip offers to return there."
+    },
+    {
+      "spec": "header.titlePopover",
+      "selector": ".mj_HeaderTitleDisclosure + .mj_HeaderMenu",
+      "status": "implemented",
+      "visual": "unverified"
+    },
+    {
+      "spec": "header.usage",
+      "selector": ".mj_UsageCluster .mj_UsageBars",
+      "status": "implemented",
+      "notes": "the 2×2 grid container; individual rows are header.usage.row",
+      "visual": "unverified",
+      "visualNote": "Labels: design bakes fixed short strings (ctx/fbl/5h/wk) via the relabel map; live derives them heuristically in usageBarLabel(). Values/geometry align."
+    },
+    {
+      "spec": "header.usage.collapsed",
+      "selector": ".mj_UsageCluster_collapsed",
+      "status": "implemented",
+      "visual": "aligned"
+    },
+    {
+      "spec": "header.usage.label",
+      "selector": ".mj_UsageLabel",
+      "status": "implemented",
+      "visual": "divergent",
+      "visualNote": "Fixed short labels via the relabel map; live derives them in usageBarLabel()."
+    },
+    {
+      "spec": "header.usage.row",
+      "selector": ".mj_UsageRow",
+      "status": "implemented",
+      "visual": "unverified",
+      "notes": "grid 24px 1fr 32px, gap 7px; the ctx row is 500 + --m-ink, others 400 + --m-ink2"
+    },
+    {
+      "spec": "header.usagePopover",
+      "selector": ".mj_HeaderMenu.mj_UsagePopover",
+      "status": "implemented",
+      "visual": "unverified"
+    },
+    {
+      "spec": "input.rest|focus|error|disabled",
+      "selector": "composer input, .mj_PromptText input, .mj_UploadConfirm_caption",
+      "status": "implemented",
+      "visual": "aligned"
+    },
+    {
+      "spec": "jumpToBottom",
+      "selector": ".mj_JumpToBottom",
+      "status": "implemented",
+      "visual": "aligned"
+    },
+    {
+      "spec": "menu.conversationActions",
+      "selector": ".mj_RoomItemMenu (sidebar anchor) / .mj_HeaderMenu.mj_RoomItemMenu (header ⋯ anchor)",
+      "status": "implemented",
+      "visual": "aligned",
+      "notes": "CORRECTED from the guessed .mj_ContextMenu. journal.pcss now carries the §10.6 rules verbatim: 4px-padded shell, radius 10, gap 0, hairline on :last-child:not(:only-child), teal focus inset -2px. Width is min(224px, 100vw-16px) where the design specimen is 212px — treat 224 as shipped and fine."
+    },
+    {
+      "spec": "menu.item",
+      "selector": ".mj_RoomItemMenu_item",
+      "status": "implemented",
+      "visual": "divergent",
+      "visualNote": "Shared by both menus. Live: grid 16px 1fr, gap 10, padding 7px 8px, font 500 12.5px/16px, 16px icons. Design specimen: padding 7px 9px, font 400 13px/17px, 15px icons. Live is internally consistent and already shipped — adopt the live values as canonical and I will fold them into the next token regen, OR align to the design; either way pick ONE, do not leave both."
+    },
+    {
+      "spec": "menu.item.archive",
+      "selector": ".mj_RoomItemMenu_item:last-child:not(:only-child)",
+      "status": "implemented",
+      "visual": "aligned",
+      "notes": "hairline + 4px margin-top + 8px padding-top, per §10.7"
+    },
+    {
+      "spec": "menu.item.copy",
+      "selector": ".mj_EventRowMenu .mj_RoomItemMenu_item (copy)",
+      "status": "implemented",
+      "visual": "unverified",
+      "notes": "selector confirmed; icon presence not verifiable from CSS — settle by probe"
+    },
+    {
+      "spec": "menu.item.copyMarkdown",
+      "selector": "—",
+      "status": "new",
+      "visual": "n/a — nothing to compare",
+      "suggested": "a third .mj_RoomItemMenu_item in .mj_EventRowMenu",
+      "notes": "PROPOSAL ONLY — not present at this tree. Drop if the bridge stores rendered text only."
+    },
+    {
+      "spec": "menu.item.viewSource",
+      "selector": ".mj_EventRowMenu .mj_RoomItemMenu_item (view-source)",
+      "status": "implemented",
+      "visual": "unverified"
+    },
+    {
+      "spec": "menu.messageActions",
+      "selector": ".mj_EventRowMenu",
+      "status": "implemented",
+      "visual": "aligned",
+      "notes": "CORRECTED from the guessed '.mj_ContextMenu (message anchor)'. Confirmed in journal.pcss:962 — same shell rules as .mj_RoomItemMenu, items reuse .mj_RoomItemMenu_item, so §10.7's one-component rule is genuinely satisfied. Anchored at the pointer by useRowContextMenu() in context-menu.ts (right-click + 500ms long-press, viewport-clamped, arrow-key roving, Escape restores focus)."
+    },
+    {
+      "spec": "modal.eventSource",
+      "selector": ".mj_EventSource",
+      "status": "implemented",
+      "visual": "divergent",
+      "visualNote": "Selector confirmed (journal.pcss:1403). Live: max-width min(720px,92vw), max-height 80vh, radius 12, --cpd-color-bg-canvas-default, NO border, NO shadow. Design: radius 14, 1px --m-line border, --m-overlay fill, --m-sh-lg, max-height 88vh — i.e. it is not yet on the modal shell the upload dialog uses."
+    },
+    {
+      "spec": "modal.eventSource.actions",
+      "selector": ".mj_EventSource_actions",
+      "status": "implemented",
+      "visual": "divergent",
+      "visualNote": "Live: flex-end, gap 8, padding 8px 16px, no top border, no meta text, and per the screenshot a UA-styled 'Copy' plus a second BLANK button. Design footer: 11px 14px on --m-panel with a 1px --m-line top rule, 'Read-only · N bytes' on the left, Close (secondary) + one filled 'Copy JSON' primary."
+    },
+    {
+      "spec": "modal.eventSource.copy",
+      "selector": ".mj_EventSource_actions button (copy)",
+      "status": "implemented",
+      "visual": "divergent",
+      "visualNote": "Inherits no button styling in .mj_EventSource_actions (unlike .mj_UploadConfirm_actions which styles its children) — hence the UA look. Needs the primary treatment + copy glyph."
+    },
+    {
+      "spec": "modal.eventSource.header",
+      "selector": ".mj_EventSource_header",
+      "status": "implemented",
+      "visual": "divergent",
+      "visualNote": "Live is bare `padding: 12px 16px` with an <h2> and no border-bottom, no icon, no type chip, no close button. Design: 13px 14px 13px 16px, 1px --m-line rule, brackets glyph + 600 14/19 title + mono type chip + X close."
+    },
+    {
+      "spec": "modal.eventSource.json",
+      "selector": ".mj_EventSource_json",
+      "status": "implemented",
+      "visual": "divergent",
+      "visualNote": "Live: bare <pre>, no border, no background, font-family var(--mj-mono) at --cpd-font-size-sm (14px), padding 12px 16px, unstyled native scrollbars. Design: bordered --m-raised well, radius 10, 400 12px/19px 'Fira Code', keys in --m-accent, max-height 46vh, themed scrollbars. This is the surface the operator's screenshot shows as an unstyled scrollbar crossing a dark modal."
+    },
+    {
+      "spec": "modal.eventSource.meta",
+      "selector": "—",
+      "status": "new",
+      "visual": "n/a — nothing to compare",
+      "suggested": ".mj_EventSource_meta",
+      "notes": "not present at this tree"
+    },
+    {
+      "spec": "modal.eventSource.scrim",
+      "selector": ".mj_EventSource_scrim",
+      "status": "implemented",
+      "visual": "divergent",
+      "visualNote": "Correct colour rgb(18 16 14 / 55%) but z-index 100 where every other modal scrim is 50 (.mj_UploadConfirm_scrim). §10 layering says one ladder — bring it to 50 or raise the ladder deliberately."
+    },
+    {
+      "spec": "modal.eventSource.typeChip",
+      "selector": "—",
+      "status": "new",
+      "visual": "n/a — nothing to compare",
+      "suggested": ".mj_EventSource_typeChip",
+      "notes": "not present at this tree"
+    },
+    {
+      "spec": "modal.newSession",
+      "selector": ".mj_NewSessionSheet",
+      "status": "implemented",
+      "visual": "divergent",
+      "visualNote": "Live: title right-aligned with a text 'Close' link, no header rule, section heading 'Start on <agent>' at body size, the workspace field ABOVE the 'Folder path' label (label bound to the wrong field), Start button floating with no footer bar. Design: upload-dialog shell — left title + icon + X close + header rule, 10px uppercase section labels each 6px above THEIR field, 14px section rhythm, footer bar on --m-panel with the resolved /start command + Cancel + Start session."
+    },
+    {
+      "spec": "modal.newSession.checkbox",
+      "selector": ".mj_NewSessionSheet input[type=checkbox]",
+      "status": "implemented",
+      "visual": "divergent",
+      "visualNote": "Live uses the native checkbox (UA white square, browser-blue focus). Design: 18px custom box, --m-accent-deep when checked, 2px teal focus ring, label + helper text in a grid 18px 1fr so the text block shares one edge."
+    },
+    {
+      "spec": "modal.newSession.disabledField",
+      "selector": ".mj_NewSessionSheet input[disabled]",
+      "status": "implemented",
+      "visual": "divergent",
+      "visualNote": "THE DARK-THEME BUG: unstyled native input renders UA white-on-dark. Design sets --m-subtle background + --m-ink3 colour + --m-line border explicitly in both themes; opacity alone does not fix a UA-white field."
+    },
+    {
+      "spec": "modal.newSession.pathField",
+      "selector": ".mj_NewSessionSheet input[type=text]",
+      "status": "implemented",
+      "visual": "divergent",
+      "visualNote": "Design is mono 12.5/18 (it holds a path), --m-panel fill, focus border --m-accent."
+    },
+    {
+      "spec": "modal.newSession.scrim",
+      "selector": ".mj_UploadConfirm_scrim (shared)",
+      "status": "implemented",
+      "visual": "aligned"
+    },
+    {
+      "spec": "modal.upload",
+      "selector": ".mj_UploadConfirm.mj_UploadConfirm_queue",
+      "status": "implemented",
+      "visual": "divergent",
+      "notes": "the CARD. The scrim is modal.upload.scrim.",
+      "visualNote": "Live uses the raw filename as the modal title at heading size, has no 'Send file' header, no file-info row, no thumbnail strip, no n-of-N counter, and an unstyled horizontal scrollbar crossing the body. Design: fixed 'Send file' title + upload glyph, filename in the file-info row under the preview, 34px thumbnail strip (active = 2px teal ring), 'N more file queued', counter chip, themed scrollbars."
+    },
+    {
+      "spec": "modal.upload.caption",
+      "selector": ".mj_UploadConfirm_caption",
+      "status": "implemented",
+      "notes": "focus stays NEUTRAL here, never accent — the dialog autofocuses it",
+      "visual": "unverified"
+    },
+    {
+      "spec": "modal.upload.queue",
+      "selector": "—",
+      "status": "new",
+      "suggested": ".mj_UploadConfirm_queueStrip / _thumb / _thumb_active",
+      "notes": "'n of N' chip, 34px thumbnails, active = 2px accent ring, inactive = 1px --m-line2 on --m-raised (NOT --m-line: invisible in dark)",
+      "visual": "n/a — nothing to compare"
+    },
+    {
+      "spec": "modal.upload.scrim",
+      "selector": ".mj_UploadConfirm_scrim",
+      "status": "implemented",
+      "visual": "aligned",
+      "notes": "rgb(18 16 14 / 55%) both themes"
+    },
+    {
+      "spec": "modal.upload.single",
+      "selector": "—",
+      "status": "new",
+      "visual": "n/a — nothing to compare",
+      "suggested": ".mj_UploadConfirm (single-file variant)",
+      "notes": "N=1 hides the counter chip, thumbnail strip and Cancel all. Title is always 'Send file'; the filename lives in the file-info row under the preview, never as the modal title."
+    },
+    {
+      "spec": "modal.upload.thumb.active",
+      "selector": "—",
+      "status": "new",
+      "visual": "n/a — nothing to compare",
+      "suggested": ".mj_UploadConfirm_thumb_active",
+      "notes": "2px --m-accent ring; inactive is 1px --m-line2 on --m-raised"
+    },
+    {
+      "spec": "round2",
+      "selector": "—",
+      "status": "devtool",
+      "visual": "n/a",
+      "notes": "the round-2 surface gallery. DO NOT IMPLEMENT."
+    },
+    {
+      "spec": "sidebar",
+      "selector": ".mx_LeftPanel_outerWrapper > .mx_RoomListPanel",
+      "status": "implemented",
+      "notes": "width persisted via LEFT_PANEL_SIZE_KEY; drag clamp 240–420",
+      "visual": "unverified"
+    },
+    {
+      "spec": "sidebar.empty.*",
+      "selector": ".mj_RoomListEmpty",
+      "status": "implemented",
+      "notes": "seven distinct copy variants — see design-tokens.json → copy.emptyStates",
+      "visual": "aligned"
+    },
+    {
+      "spec": "sidebar.footer.connection",
+      "selector": ".mj_SidebarFooterStatus_{online|connecting|offline}",
+      "status": "implemented",
+      "notes": "must not be removed — it is the only chrome-level connection signal",
+      "visual": "aligned"
+    },
+    {
+      "spec": "sidebar.list",
+      "selector": ".mj_RoomList",
+      "status": "implemented",
+      "notes": "display:flex; flex-direction:column; gap:1px — the 1px row rhythm is load-bearing",
+      "visual": "unverified"
+    },
+    {
+      "spec": "sidebar.newSession",
+      "selector": "the New session button in .mj_RoomListHeaderActions → opens NewSessionSheet (.mj_UploadConfirm shell)",
+      "status": "implemented",
+      "visual": "divergent",
+      "visualNote": "Live renders a bare pencil icon in the header actions; the design specifies a full-width teal New session button (34px, --m-selected fill, 1px rgb(13 148 136 / 25%) border, 500 13px/16px label + 15px pencil). Functionally present, visually divergent."
+    },
+    {
+      "spec": "sidebar.resizeHandle",
+      "selector": ".mx_ResizeHandle",
+      "status": "implemented",
+      "visual": "aligned"
+    },
+    {
+      "spec": "sidebar.row",
+      "selector": ".mj_RoomListItem",
+      "status": "implemented",
+      "visual": "unverified"
+    },
+    {
+      "spec": "sidebar.row.selected",
+      "selector": ".mj_RoomListItem_selected",
+      "status": "implemented",
+      "notes": "3px accent bar via ::before, inset 8px",
+      "visual": "unverified"
+    },
+    {
+      "spec": "sidebar.row.status",
+      "selector": ".mj_RoomListStatus_running",
+      "status": "implemented",
+      "visual": "unverified"
+    },
+    {
+      "spec": "sidebar.row.unread",
+      "selector": ".mj_UnreadBadge",
+      "status": "implemented",
+      "visual": "unverified",
+      "notes": "tagged on the BADGE, not the row — the row is sidebar.row.unreadRow in the state matrix"
+    },
+    {
+      "spec": "sidebar.row.unreadRow",
+      "selector": ".mj_RoomListItem (unread variant)",
+      "status": "implemented",
+      "visual": "unverified",
+      "notes": "row-level treatment: name weight 600"
+    },
+    {
+      "spec": "sidebar.rowMenuTrigger",
+      "selector": ".mj_RoomItemMenu_trigger",
+      "status": "implemented",
+      "visual": "aligned",
+      "notes": "Implements the operator's call better than the design did: opacity 0 + pointer-events none for pointer users, becoming visible/operable only on :focus-visible — so there is no persistent ⋯ for the mouse, but keyboard/AT keep a discoverable route. Adopt this pattern in the design docs."
+    },
+    {
+      "spec": "sidebar.tab.active",
+      "selector": ".mj_RoomListTab_active",
+      "status": "implemented",
+      "visual": "aligned",
+      "notes": "raised panel chip + --m-sh-sm + primary ink"
+    },
+    {
+      "spec": "sidebar.tabs",
+      "selector": ".mj_RoomListTabs",
+      "status": "implemented",
+      "notes": "Favorites tab exists; count span is .mj_RoomListTab_count",
+      "visual": "unverified"
+    },
+    {
+      "spec": "subagentStrip",
+      "selector": ".mj_SubagentStrip",
+      "status": "implemented",
+      "visual": "divergent",
+      "visualNote": "The whole strip is overflow-x:auto in live (.mj_SubagentStrip), so any pinned child would scroll with the pills. Design splits it: non-scrolling strip -> pinned back chip -> hairline -> inner overflow-x container holding the label + pills."
+    },
+    {
+      "spec": "subagentStrip.back",
+      "selector": "—",
+      "status": "new",
+      "visual": "n/a — nothing to compare",
+      "suggested": ".mj_SubagentBack",
+      "notes": "Pinned escape from a subagent context back to the parent. Same 26px pill geometry as .mj_SubagentPill but accent ink on --m-selected, 1px rgb(13 148 136 / 28%) border, 13px left chevron; carries the PARENT conversation title (ellipsised, max 220px). Must sit OUTSIDE the horizontally-scrolling pill run (flex:0 0 auto in the strip; pills in their own overflow-x container) or it scrolls away exactly when there are many subagents. Hairline divider after it, not a gap. Also bound to Escape."
+    },
+    {
+      "spec": "subagentStrip.enter",
+      "selector": "—",
+      "status": "devtool",
+      "visual": "n/a",
+      "notes": "dashed 'open subagent' chip in the mock only, to make the subagent context reachable by clicking. DO NOT IMPLEMENT."
+    },
+    {
+      "spec": "subagentStrip.pill",
+      "selector": ".mj_SubagentPill",
+      "status": "implemented",
+      "visual": "unverified"
+    },
+    {
+      "spec": "subagentStrip.pillCurrent",
+      "selector": ".mj_SubagentPill_current",
+      "status": "implemented",
+      "visual": "aligned",
+      "notes": "Already in journal.pcss: box-shadow 0 0 0 2px accent + cursor:default. Design uses accent border + 2px --m-selected ring; equivalent in intent — keep live."
+    }
+  ],
+  "visualLegend": {
+    "aligned": "read the source and the design values agree",
+    "divergent": "the class exists but its rendered treatment differs from the design — see note",
+    "unverified": "not determinable from source reading; settle by probing design static vs live computed values"
+  },
+  "autoDiff": {
+    "why": "`implemented` is a statement about code existing, not about pixels matching. The only reliable arbiter is measuring both sides.",
+    "how": "Run tools/probe.js against each static/*.html (design side) and against the live app with the same script (live side), keyed by data-spec → selector from this file. Diff per property.",
+    "compareProps": [
+      "font",
+      "color",
+      "backgroundColor",
+      "borderTopWidth",
+      "borderTopStyle",
+      "borderTopColor",
+      "borderRadius",
+      "padding",
+      "gap",
+      "height",
+      "minHeight",
+      "width",
+      "maxWidth",
+      "opacity",
+      "outline",
+      "outlineOffset",
+      "boxShadow",
+      "letterSpacing",
+      "textTransform"
+    ],
+    "tolerance": "Exact match on colour/weight/size. ±1px on padding/height (subpixel + the app's 15px root). Ignore font-family when a fallback stack is in play.",
+    "expectation": "Every `unverified` above resolves to aligned or divergent on the first run. Treat the output as both the work list and the regression gate."
+  },
+  "granularity": "Each data-spec is tagged on the SAME element the selector resolves to. Where a component needs several rungs (composer footer vs shell vs input; modal scrim vs card; row vs badge) each rung is its own spec/selector pair, so a diff never compares a container against a child. Fixed after the first auto-diff run reported mismatched granularity.",
+  "selectorProvenance": "Every selector below was read from journal.pcss / components.tsx / context-menu.ts at the tree above. Entries whose selector could not be found in source are marked status:new with the name as an explicit `suggested` proposal — never asserted as existing. A previous revision of this file guessed `.mj_ContextMenu` for the menus; no such class exists and those entries are corrected here."
+}

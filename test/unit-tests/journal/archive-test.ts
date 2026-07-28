@@ -56,6 +56,7 @@ interface FakeDatabase {
     outbox(conversationId?: string): Promise<PendingMessage[]>;
     putHistory(events: []): Promise<void>;
     markLocallyRead(conversationId: string, upToSeq: number): Promise<void>;
+    reconcilePersistedOwnMessages(): Promise<string[]>;
     reset(): Promise<void>;
     close(): void;
 }
@@ -102,6 +103,7 @@ function fakeDatabase(conversations = CONVERSATIONS): FakeDatabase {
         outbox: jest.fn().mockResolvedValue([]),
         putHistory: jest.fn().mockResolvedValue(undefined),
         markLocallyRead: jest.fn().mockResolvedValue(undefined),
+        reconcilePersistedOwnMessages: jest.fn().mockResolvedValue([]),
         reset: jest.fn().mockResolvedValue(undefined),
         close: jest.fn(),
     };
@@ -211,11 +213,11 @@ describe("archiving conversations", () => {
         client.archiveConversation("c1");
 
         expect(client.getSnapshot().archivedIds).toBe(before);
-        expect(client.getSnapshot().archiveError).toBe("Couldn't save — device storage is full or unavailable.");
+        expect(client.getSnapshot().controlError).toBe("Couldn't save — device storage is full or unavailable.");
         expect(client.getSnapshot().connectionError).toBeUndefined();
 
         connectionInternals(state.connection!).callbacks.onState("offline", "network unavailable");
-        expect(client.getSnapshot().archiveError).toBe("Couldn't save — device storage is full or unavailable.");
+        expect(client.getSnapshot().controlError).toBe("Couldn't save — device storage is full or unavailable.");
         expect(client.getSnapshot().connectionError).toBe("network unavailable");
         await client.logout();
     });
@@ -233,7 +235,7 @@ describe("archiving conversations", () => {
 
         expect(write).not.toHaveBeenCalled();
         expect(client.getSnapshot().archivedIds).toEqual(new Set());
-        expect(client.getSnapshot().archiveError).toBe("Couldn't read saved archive — device storage unavailable.");
+        expect(client.getSnapshot().controlError).toBe("Couldn't read saved archive — device storage unavailable.");
     });
 
     it("clears selection when archiving the selected conversation", () => {
@@ -257,7 +259,7 @@ describe("archiving conversations", () => {
 
         expect(storedArchivedIds(SESSION)).toEqual(new Set(["c1"]));
         expect(client.getSnapshot().archivedIds).toEqual(new Set(["c1"]));
-        expect(client.getSnapshot().archiveError).toBeUndefined();
+        expect(client.getSnapshot().controlError).toBeUndefined();
     });
 });
 
@@ -357,13 +359,19 @@ describe("archive hydration, selection, and cross-tab synchronization", () => {
         expect(client.getSnapshot().selectedConversationId).toBe("c2");
     });
 
-    it("applies matching non-null storage events and ignores null or non-matching events", async () => {
+    it("re-reads storage on a matching event and ignores non-matching keys", async () => {
         const { client } = await start();
         const key = archivedStorageKey(SESSION);
 
+        // The cross-tab listener now re-reads localStorage via store.read() (exercising the
+        // access boundary) rather than trusting event.newValue, so a real cross-tab write is
+        // simulated by seeding localStorage before dispatching the event.
+        storeArchivedIds(SESSION, new Set(["c2"]));
         window.dispatchEvent(new StorageEvent("storage", { key, newValue: JSON.stringify(["c2"]) }));
         expect(client.getSnapshot().archivedIds).toEqual(new Set(["c2"]));
 
+        // A null (removal) event no longer early-returns; it re-reads. With storage unchanged
+        // the state is unchanged.
         window.dispatchEvent(new StorageEvent("storage", { key, newValue: null }));
         expect(client.getSnapshot().archivedIds).toEqual(new Set(["c2"]));
 
@@ -390,6 +398,10 @@ describe("archive hydration, selection, and cross-tab synchronization", () => {
         const { client } = await start();
 
         await internals(client).replaceSnapshot();
+        // Seed localStorage after the snapshot so the post-snapshot event proves the listener
+        // is still attached (the new listener re-reads via store.read(), so state only moves
+        // to ["c1"] if the listener fired).
+        storeArchivedIds(SESSION, new Set(["c1"]));
         window.dispatchEvent(
             new StorageEvent("storage", {
                 key: archivedStorageKey(SESSION),

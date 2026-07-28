@@ -29,10 +29,38 @@ function Icon({ children, ...props }: IconProps): React.ReactElement {
 }
 
 export function SettingsIcon(props: IconProps): React.ReactElement {
+    // v3 mock uses a sliders/faders glyph (not the cog) for settings.
     return (
         <Icon {...props}>
-            <circle cx="12" cy="12" r="3" />
-            <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-1.42 1.42-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1 1.55V20h-2v-.09A1.7 1.7 0 0 0 12.4 18.4a1.7 1.7 0 0 0-1.88.34l-.06.06-1.42-1.42.06-.06A1.7 1.7 0 0 0 9.44 15a1.7 1.7 0 0 0-1.55-1H8v-2h.09A1.7 1.7 0 0 0 9.6 10.96a1.7 1.7 0 0 0-.34-1.88l-.06-.06L10.62 7.6l.06.06A1.7 1.7 0 0 0 12.56 8a1.7 1.7 0 0 0 1-1.55V6h2v.09a1.7 1.7 0 0 0 1.04 1.51 1.7 1.7 0 0 0 1.88-.34l.06-.06 1.42 1.42-.06.06a1.7 1.7 0 0 0-.34 1.88 1.7 1.7 0 0 0 1.55 1H21v2h-.09A1.7 1.7 0 0 0 19.4 15Z" />
+            <path d="M4 8h9M17 8h3M4 16h3M11 16h9" />
+            <circle cx="15" cy="8" r="2" />
+            <circle cx="9" cy="16" r="2" />
+        </Icon>
+    );
+}
+
+export function SystemThemeIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            <rect x="3" y="4" width="18" height="13" rx="2" />
+            <path d="M8 21h8M12 17v4" />
+        </Icon>
+    );
+}
+
+export function LightThemeIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            <circle cx="12" cy="12" r="4" />
+            <path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.66 6.34l1.41-1.41" />
+        </Icon>
+    );
+}
+
+export function DarkThemeIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            <path d="M20.5 14.2A8.5 8.5 0 0 1 9.8 3.5 8.5 8.5 0 1 0 20.5 14.2Z" />
         </Icon>
     );
 }
@@ -78,6 +106,48 @@ export function MarkReadIcon(props: IconProps): React.ReactElement {
     return (
         <Icon {...props}>
             <path d="m5 12 4 4 10-10" />
+        </Icon>
+    );
+}
+
+export function CheckIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            <path d="m5 12 4 4 10-10" />
+        </Icon>
+    );
+}
+
+export function PinIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            <path d="M9 4h6l-1 6 3 3H7l3-3-1-6Z" />
+            <path d="M12 16v4" />
+        </Icon>
+    );
+}
+
+export function StarIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            <path d="M12 4l2.4 4.9 5.4.8-3.9 3.8.9 5.4L12 16.9 7.2 19l.9-5.4L4.2 9.7l5.4-.8L12 4Z" />
+        </Icon>
+    );
+}
+
+export function StarFilledIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props} fill="currentColor">
+            <path d="M12 4l2.4 4.9 5.4.8-3.9 3.8.9 5.4L12 16.9 7.2 19l.9-5.4L4.2 9.7l5.4-.8L12 4Z" />
+        </Icon>
+    );
+}
+
+export function MarkUnreadIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            <circle cx="17" cy="7" r="3" fill="currentColor" stroke="none" />
+            <path d="M4 7h7M4 12h16M4 17h16" />
         </Icon>
     );
 }
@@ -145,10 +215,102 @@ export function MicOnIcon(props: IconProps): React.ReactElement {
     );
 }
 
+export function StopIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props} fill="currentColor" stroke="none">
+            <rect x="6" y="6" width="12" height="12" rx="1" />
+        </Icon>
+    );
+}
+
+export function TrashIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            <path d="M4 7h16M9 7V4h6v3M6 7l1 14h10l1-14M10 11v6M14 11v6" />
+        </Icon>
+    );
+}
+
 export function SendIcon(props: IconProps): React.ReactElement {
     return (
         <Icon {...props} fill="currentColor" stroke="none">
             <path d="M3.4 3.2 21 11.3a.8.8 0 0 1 0 1.4L3.4 20.8a.8.8 0 0 1-1.1-.9L4 13l9-1-9-1-1.7-6.9a.8.8 0 0 1 1.1-.9Z" />
+        </Icon>
+    );
+}
+
+export function CompactIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            {/* two arrows collapsing inward — compress, matches apple's arrow.down.right.and.arrow.up.left */}
+            <path d="M9 9 4 4M4 8V4h4" />
+            <path d="m15 15 5 5M20 16v4h-4" />
+        </Icon>
+    );
+}
+
+export function ChevronDownIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            <path d="m6 9 6 6 6-6" />
+        </Icon>
+    );
+}
+
+export function CloseIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            <path d="M18 6 6 18M6 6l12 12" />
+        </Icon>
+    );
+}
+
+// Upload-modal header glyph: an up-arrow rising out of a tray (design *-upload-* statics).
+export function UploadTrayIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            <path d="M12 16V4M12 4 7 9M12 4l5 5" />
+            <path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" />
+        </Icon>
+    );
+}
+
+// Document glyph for the upload file-info row (folded-corner sheet, design *-upload-* statics).
+export function FileIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" />
+            <path d="M14 2v6h6" />
+        </Icon>
+    );
+}
+
+// Message-context-menu gutter icons (§10.7: every row carries an icon).
+export function ClipboardIcon(props: IconProps): React.ReactElement {
+    // Plain "Copy" — a clipboard/overlapping-sheets glyph (design light-message-menu).
+    return (
+        <Icon {...props}>
+            <rect x="9" y="9" width="11" height="11" rx="2" />
+            <path d="M15 9V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h4" />
+        </Icon>
+    );
+}
+
+export function MarkdownIcon(props: IconProps): React.ReactElement {
+    // "Copy as Markdown" — a document with the M/V markdown glyph.
+    return (
+        <Icon {...props}>
+            <rect x="3" y="6" width="18" height="12" rx="2" />
+            <path d="M7 15V9l2.5 3L12 9v6M16 9v6M16 15h2.5" />
+        </Icon>
+    );
+}
+
+export function CodeBracketsIcon(props: IconProps): React.ReactElement {
+    // "View source" — code angle-brackets (also the event-source header glyph).
+    return (
+        <Icon {...props}>
+            <path d="m9 8-5 4 5 4M15 8l5 4-5 4" />
         </Icon>
     );
 }

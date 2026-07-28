@@ -35,6 +35,24 @@ export interface LoginResponse {
     user_id: number;
 }
 
+export interface DeviceDTO {
+    device_id: number;
+    kind: string;
+    name?: string;
+    last_seen_at?: number;
+    connected: boolean;
+    is_self: boolean;
+}
+
+export interface DevicesResponse {
+    devices: DeviceDTO[];
+}
+
+export interface RecentFolder {
+    path: string;
+    last_used: number | null;
+}
+
 export interface Conversation {
     id: string;
     title: string;
@@ -43,6 +61,7 @@ export interface Conversation {
     unread_count: number;
     snippet: string;
     created_at: number;
+    parent_convo_id?: string | null; // null/undefined = top-level; set once at child creation, immutable
     last_ts?: number;
     read_up_to_seq: number;
 }
@@ -75,7 +94,31 @@ export interface JournalControlFrame {
     code?: string;
     detail?: string;
     ref?: string;
+    request_id?: string;
 }
+
+export interface JournalRpcFrame {
+    kind: "rpc";
+    response?: {
+        request_id: string;
+        agent_device_id: number;
+        ok: boolean;
+        result?: unknown;
+        error?: {
+            code: string;
+            detail?: string;
+        };
+    };
+}
+
+export type RpcReply =
+    | { ok: true; origin: "agent"; result: unknown }
+    | {
+          ok: false;
+          origin: "agent" | "relay" | "timeout" | "teardown";
+          code: string;
+          detail?: string;
+      };
 
 export interface ToolStreamPayload {
     event: "append" | "sync" | "end";
@@ -104,21 +147,64 @@ export interface JournalEphemeralFrame {
     status?: SessionStatus;
 }
 
-export type ServerFrame = JournalEvent | JournalControlFrame | JournalEphemeralFrame;
+export type ServerFrame = JournalEvent | JournalControlFrame | JournalEphemeralFrame | JournalRpcFrame;
 
 export interface SessionStatus {
     model?: string;
+    // v5 header subtitle: `model · workdir · run-state`. The bridge does not yet
+    // include the session cwd in the status frame — the segment renders only when
+    // present, so it lights up the moment the bridge adds it (tracked follow-up).
+    workdir?: string;
     context?: {
         tokens: number;
         window: number;
         pct: number;
     };
     limits?: Array<{
+        // Stable machine key. The bridge (final #156 contract) emits `session`, `week_all`,
+        // and `week_<model-slug>` (e.g. `week_fable`, `week_sonnet_5`); `context` and the
+        // host meters `host_cpu` / `host_ram` are client-synthesized (from `context` and the
+        // top-level `vitals` below — the bridge never sends host meters inside limits[]).
+        // Absent on older/cached frames — the client falls back to parsing `label`.
+        id?: string;
         label: string;
         percent: number;
+        // Raw used/limit pair (context bar rides these to show e.g. 144k/200k). Optional —
+        // only the synthesized ctx meter carries them today.
+        used?: number;
+        limit?: number;
+        unit?: string;
+        model?: string;
         resets?: string;
-        resets_at?: string;
+        // Final #156 contract: an OPTIONAL ISO-8601 string — omitted when the reset text is
+        // absent or unparseable, never null. resetDisplay still accepts a number here too as
+        // a belt-and-suspenders fallback for any pre-contract frame.
+        resets_at?: string | number;
+        // NOT a wire field: the merged #156 contract has no epoch-ms reset (an early draft
+        // carried `resets_at_ms` and dropped it as redundant — `Date.parse(resets_at)`
+        // recovers it). Kept only as a client-side tolerance; resetDisplay prefers it if a
+        // frame ever carries one.
+        resets_at_ms?: number;
+        // Epoch ms of the last REAL sample for this meter. NOT sent by the bridge inside
+        // limits[] (#156 keeps vitals at top level): the client copies it from
+        // `vitals.sampled_at_ms` onto the host_cpu / host_ram meters it synthesizes. Host
+        // readings only refresh on turn-end and get replayed verbatim to new viewers, so on
+        // an idle conversation the displayed value can be minutes/hours stale while looking
+        // current. When present, the client expires stale readings (renders a muted state
+        // past HOST_VITALS_STALE_MS). Absent → no staleness logic. See status.ts.
+        sampled_at_ms?: number;
     }>;
+    // Host machine vitals (bridge status frame, top-level — NOT a limits[] entry). CPU/RAM
+    // percentages plus the epoch-ms time of their last real sample. Absent on bridges that
+    // don't publish vitals → the CPU/RAM meters simply don't render (graceful degradation).
+    // `sampled_at_ms` drives the same staleness muting as the per-meter field on limits[]:
+    // host readings only refresh on turn-end and get replayed verbatim to new viewers, so an
+    // idle conversation can show a minutes-old reading as live. See status.ts HOST_VITALS_STALE_MS.
+    vitals?: {
+        cpu_pct: number;
+        ram_pct: number;
+        sampled_at_ms: number;
+    };
     email?: string;
 }
 
@@ -136,9 +222,46 @@ export interface PendingMessage {
     convoId: string;
     body: string;
     createdAt: number;
+    kind?: "text" | "image" | "file";
+    filename?: string;
+    size?: number;
+    contentType?: string;
+    caption?: string;
+    blobRef?: string | null;
+    attachState?: "uploading" | "sending" | "error";
+    errorKind?:
+        | "upload_failed"
+        | "send_failed"
+        | "storage_failed"
+        | "too_large"
+        | "empty"
+        | "browser_memory_limit"
+        | "electron_binary_unsupported";
+    errorMessage?: string;
+    canRetry?: boolean;
 }
 
 export type ConnectionState = "offline" | "connecting" | "online";
+
+export interface StagedUploadItem {
+    id: string;
+    file: File;
+    /** Built on first confirm attempt; reused by persist retries so a page has ONE row identity. */
+    message?: PendingMessage;
+}
+
+export interface StagedUploads {
+    convoId: string;
+    items: StagedUploadItem[];
+    /** Cumulative count ever staged into this queue (paste-append increments). Header: "File k of N", k = total - items.length + 1. */
+    total: number;
+    /** P23 transient-submission lock: set synchronously at confirm entry; all modal actions inert while true. */
+    confirming: boolean;
+    /** Terminal invalidation notice (items cleared, error page shown). */
+    error?: "archived";
+    /** Non-terminal persist failure: page kept, inline error shown, Send retries. */
+    persistError?: boolean;
+}
 
 export interface ClientState {
     phase: "loading" | "signed-out" | "signed-in";
@@ -146,18 +269,161 @@ export interface ClientState {
     session?: Session;
     conversations: Conversation[];
     archivedIds: Set<string>;
-    archiveError?: string;
+    pinnedIds: Set<string>;
+    favoriteIds: Set<string>;
+    unreadOverrideIds: Set<string>;
+    controlError?: string;
+    preferencesUnavailable?: boolean;
     selectedConversationId?: string;
     events: JournalEvent[];
     pendingMessages: PendingMessage[];
     connection: ConnectionState;
     connectionError?: string;
+    connectionErrorSeq: number;
     loadingHistory: boolean;
     hasOlderHistory: boolean;
     activity?: JournalEphemeralFrame["activity"];
     sessionStatus?: SessionStatus;
     textStreams: Record<string, string>;
     toolStreams: Record<string, ToolStreamState>;
+    dragActive: boolean;
+    stagedUploads?: StagedUploads;
+    sendTick: number;
+}
+
+export function coerceParentId(x: unknown): string | null {
+    const s = typeof x === "string" ? x.trim() : "";
+    return s || null;
+}
+
+export function isSubChat(c: Pick<Conversation, "parent_convo_id">): boolean {
+    return c.parent_convo_id != null && c.parent_convo_id !== "";
+}
+
+export function childrenOf(conversations: Conversation[], parentId: string | null | undefined): Conversation[] {
+    if (!parentId) return [];
+    return conversations
+        .filter((c) => c.parent_convo_id === parentId)
+        .sort((a, b) => a.created_at - b.created_at || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+}
+
+export function runningChildrenOf(conversations: Conversation[], parentId: string | null | undefined): Conversation[] {
+    return childrenOf(conversations, parentId).filter((c) => c.session_state === "running");
+}
+
+export function parentPresent(c: Conversation, ids: ReadonlySet<string>): boolean {
+    return isSubChat(c) && c.parent_convo_id !== c.id && c.parent_convo_id != null && ids.has(c.parent_convo_id);
+}
+
+export type ChildSidebarPlacement = "nested" | "top-level" | "hidden";
+
+/**
+ * precomputed lookups shared by every sidebar-visibility consumer so the SAME
+ * classification drives rendering, selection, unread aggregation, the desktop badge, and
+ * mark-all. Build it once per derivation from the conversation list + the archived set.
+ * `placement` holds each conversation's fully-resolved Active/Favorites placement (see
+ * buildSidebarIndex) — consumers READ it rather than re-deriving, so no two consumers can
+ * disagree and no approximation of "is the parent a real top-level row" survives.
+ */
+export interface SidebarIndex {
+    /** Every conversation id, archived or not — distinguishes archived-parent from orphan. */
+    allIds: Set<string>;
+    /** id → conversation. */
+    byId: Map<string, Conversation>;
+    /** id → fully-resolved Active/Favorites placement (memoized, cycle-safe). */
+    placement: Map<string, ChildSidebarPlacement>;
+}
+
+/**
+ * resolve EVERY conversation's Active/Favorites placement once, through
+ * the SAME recursive classifier, memoized and cycle-safe. This removes the last
+ * approximation — a running child nests ONLY when its direct parent's ACTUAL resolved
+ * placement is "top-level" (a real, rendered top-level row); if the parent is archived,
+ * hidden, or itself nested, the child cannot nest and follows the transient rule directly
+ * (running → "top-level", done/idle → "hidden"). So a running descendant is always
+ * reachable — nested under a real top-level parent, or top-level itself — never lost, at
+ * any tree depth.
+ *
+ * Placement rules per conversation:
+ *  - not a subchat → "top-level" (its Active presence is gated by archived at call sites).
+ *  - subchat, parent missing / self-referential / cyclic → "top-level" (orphan recovery).
+ *  - subchat, parent present, NOT running → "hidden" (one-shot: a finished child lingers
+ *    nowhere in Active).
+ *  - subchat, parent present, running → "nested" iff the parent is a non-archived row whose
+ *    resolved placement is "top-level"; otherwise "top-level".
+ */
+export function buildSidebarIndex(conversations: Conversation[], archivedIds: ReadonlySet<string>): SidebarIndex {
+    const allIds = new Set<string>();
+    const byId = new Map<string, Conversation>();
+    for (const conversation of conversations) {
+        allIds.add(conversation.id);
+        byId.set(conversation.id, conversation);
+    }
+
+    const placement = new Map<string, ChildSidebarPlacement>();
+    const resolving = new Set<string>(); // in-progress ids → parent-chain cycle guard
+
+    const resolve = (conversation: Conversation): ChildSidebarPlacement => {
+        const cached = placement.get(conversation.id);
+        if (cached) return cached;
+        // Re-entered while its own resolution is in progress → a parent_convo_id cycle. Break
+        // it by treating this node as top-level (recovery) so a running descendant is reachable
+        // and resolution terminates. Not cached here; the outermost call caches the real value.
+        if (resolving.has(conversation.id)) return "top-level";
+
+        if (!isSubChat(conversation)) {
+            placement.set(conversation.id, "top-level");
+            return "top-level";
+        }
+        const parentId = conversation.parent_convo_id;
+        if (parentId == null || parentId === "" || parentId === conversation.id || !allIds.has(parentId)) {
+            placement.set(conversation.id, "top-level"); // orphan / missing parent → recovery
+            return "top-level";
+        }
+        if (conversation.session_state !== "running") {
+            placement.set(conversation.id, "hidden"); // parent present, not running → transient hide
+            return "hidden";
+        }
+        // Running child: nest ONLY under a real top-level row — the parent's ACTUAL resolved
+        // placement, not an approximation. Archived parents are never hosts.
+        resolving.add(conversation.id);
+        const parent = byId.get(parentId);
+        const parentIsTopLevelRow = parent != null && !archivedIds.has(parent.id) && resolve(parent) === "top-level";
+        resolving.delete(conversation.id);
+
+        const result: ChildSidebarPlacement = parentIsTopLevelRow ? "nested" : "top-level";
+        placement.set(conversation.id, result);
+        return result;
+    };
+
+    for (const conversation of conversations) resolve(conversation);
+    return { allIds, byId, placement };
+}
+
+/**
+ * the SINGLE source of truth for where a subagent conversation lands in the Active/
+ * Favorites sidebar — a pure lookup of the placement resolved once in buildSidebarIndex, so
+ * all call sites (rendering, selection, unread, badge, mark-all) stay in lock-step. Defaults
+ * to "top-level" for an id absent from the index (orphan-style recovery).
+ */
+export function childSidebarPlacement(conversation: Conversation, index: SidebarIndex): ChildSidebarPlacement {
+    return index.placement.get(conversation.id) ?? "top-level";
+}
+
+/**
+ * the ONE canonical "does this conversation render as a TOP-LEVEL sidebar row?"
+ * predicate. A non-child always does; a child does only when its resolved placement is
+ * "top-level" (orphan, archived-parent-running, or a running descendant that cannot nest).
+ * Used by rendering, auto-selection, unread aggregation, the desktop badge, and mark-all so
+ * a row that is not rendered can never be silently auto-selected or counted. Callers still
+ * exclude archived ids separately where a tab or aggregate requires it.
+ */
+export function rendersAsTopLevelRow(conversation: Conversation, index: SidebarIndex): boolean {
+    return !isSubChat(conversation) || childSidebarPlacement(conversation, index) === "top-level";
+}
+
+export function isNearBottom(scrollTop: number, scrollHeight: number, clientHeight: number, thresholdPx = 80): boolean {
+    return scrollHeight - scrollTop - clientHeight <= thresholdPx;
 }
 
 export function isObject(value: unknown): value is Record<string, unknown> {
@@ -183,6 +449,8 @@ export function conversationTitle(conversation: Conversation): string {
 
 export function eventSnippet(type: string, payload: EventPayload): string {
     if (type === "text") return asString(payload.body).slice(0, 120);
+    if (type === "file") return `📎 ${asString(payload.caption) || asString(payload.filename, "File")}`.slice(0, 120);
+    if (type === "image") return `🖼 ${asString(payload.caption) || asString(payload.filename, "Image")}`.slice(0, 120);
     if (type === "prompt") return `? ${asString(payload.question).slice(0, 110)}`;
     if (type === "permission_request") return `Permission: ${asString(payload.description).slice(0, 100)}`;
     if (typeof payload.snippet === "string") return payload.snippet.slice(0, 120);

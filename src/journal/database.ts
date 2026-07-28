@@ -6,6 +6,7 @@ Please see LICENSE files in the repository root for full details.
 */
 
 import {
+    coerceParentId,
     type Conversation,
     enforceToolLogTtl,
     eventSnippet,
@@ -17,6 +18,8 @@ import {
 
 const DATABASE_VERSION = 1;
 const CURSOR_KEY = "cursor";
+const BACKFILL_KEY = "subchat_backfill_v1";
+const BACKFILL_ERROR_KEY = "subchat_backfill_error";
 
 function requestResult<T>(request: IDBRequest<T>): Promise<T> {
     return new Promise((resolve, reject) => {
@@ -42,15 +45,33 @@ function emptyConversation(id: string, timestamp: number): Conversation {
         unread_count: 0,
         snippet: "",
         created_at: timestamp,
+        parent_convo_id: null,
         last_ts: timestamp,
         read_up_to_seq: 0,
     };
 }
 
-export class JournalDatabase {
-    private constructor(private readonly database: IDBDatabase) {}
+function matchesOwnPendingMessage(event: JournalEvent, pending: PendingMessage, ownSender: string): boolean {
+    const isText = event.type === "text" && typeof event.payload.body === "string";
+    const isAttachment = event.type === "file" || event.type === "image";
+    const localId = typeof event.payload.local_id === "string" ? event.payload.local_id : undefined;
+    const pendingKind = pending.kind ?? "text";
+    return (
+        (isText || isAttachment) &&
+        event.sender === ownSender &&
+        localId === pending.localId &&
+        event.convo_id === pending.convoId &&
+        pendingKind === event.type
+    );
+}
 
-    public static open(serverUrl: string, userId: number): Promise<JournalDatabase> {
+export class JournalDatabase {
+    private constructor(
+        private readonly database: IDBDatabase,
+        private readonly ownSender: string,
+    ) {}
+
+    public static open(serverUrl: string, userId: number, username: string): Promise<JournalDatabase> {
         const name = `matron-journal:${serverUrl}:${userId}`;
         return new Promise((resolve, reject) => {
             const request = indexedDB.open(name, DATABASE_VERSION);
@@ -69,7 +90,7 @@ export class JournalDatabase {
                     outbox.createIndex("byConversation", "convoId", { unique: false });
                 }
             };
-            request.onsuccess = () => resolve(new JournalDatabase(request.result));
+            request.onsuccess = () => resolve(new JournalDatabase(request.result, `user:${username}`));
             request.onerror = () => reject(request.error ?? new Error("Could not open the local journal"));
             request.onblocked = () => reject(new Error("The local journal is open in another incompatible tab"));
         });
@@ -86,9 +107,87 @@ export class JournalDatabase {
         return typeof value === "number" ? value : undefined;
     }
 
+    public async backfillParentLinks(snapshot: SnapshotResponse): Promise<void> {
+        if (!snapshot || !Array.isArray(snapshot.conversations)) throw new Error("malformed snapshot");
+        const summaries = snapshot.conversations;
+        for (const summary of summaries) {
+            if (!summary || typeof summary.id !== "string") throw new Error("malformed snapshot element");
+        }
+
+        // A malformed freshness field (null/NaN/non-number last_seq) makes the session_state merge
+        // for THAT row unassessable. We must NOT reject the whole snapshot (that would block valid
+        // parent-link repair for every other row; the "parent-link backfill
+        // unchanged" contract). Instead: repair parent links for all rows, skip only the unassessable
+        // session_state write, and DEFER sealing the completion key so the reconcile retries rather
+        // than sealing a possibly-stale state (phase-1 review — P3 Fail Visible / V6 Classify Errors).
+        let deferredForMalformedFreshness = false;
+        const transaction = this.database.transaction(["conversations", "meta"], "readwrite");
+        try {
+            const conversations = transaction.objectStore("conversations");
+            for (const summary of summaries) {
+                const existing = (await requestResult(conversations.get(summary.id))) as Conversation | undefined;
+                if (!existing) continue;
+                // Normalize both sides through coerceParentId, existing-first (immutable link), and reject
+                // a self-parent so the backfill can't persist the invalid state (P33, phase-1 review B2).
+                let link = coerceParentId(existing.parent_convo_id) ?? coerceParentId(summary.parent_convo_id);
+                if (link === summary.id) link = null;
+                existing.parent_convo_id = link;
+                if (typeof summary.session_state === "string") {
+                    if (typeof summary.last_seq === "number" && Number.isFinite(summary.last_seq)) {
+                        // Preserve a locally-newer session_state (cross-tab shared-IndexedDB stale-snapshot guard).
+                        if (summary.last_seq >= existing.last_seq) existing.session_state = summary.session_state;
+                    } else {
+                        deferredForMalformedFreshness = true; // skip this row's state; defer sealing below.
+                    }
+                }
+                conversations.put(existing);
+            }
+            // Seal completion only on a fully-assessable run. If any row had a malformed freshness field,
+            // leave BACKFILL_KEY unset so startup retries (the parent-link puts already committed are idempotent).
+            if (!deferredForMalformedFreshness) transaction.objectStore("meta").put(true, BACKFILL_KEY);
+            await transactionDone(transaction);
+        } catch (error) {
+            try {
+                transaction.abort();
+            } catch {
+                // The transaction is already aborting or complete.
+            }
+            throw error;
+        }
+        if (deferredForMalformedFreshness) {
+            // Durable evidence of the degraded reconcile (P3 Fail Visible); the unset key drives the retry.
+            await this.recordBackfillError("malformed last_seq in snapshot — session_state merge deferred for retry");
+        }
+    }
+
+    public async markBackfillDone(): Promise<void> {
+        const transaction = this.database.transaction("meta", "readwrite");
+        transaction.objectStore("meta").put(true, BACKFILL_KEY);
+        await transactionDone(transaction);
+    }
+
+    public async backfillDone(): Promise<boolean> {
+        const transaction = this.database.transaction("meta", "readonly");
+        const done = Boolean(await requestResult(transaction.objectStore("meta").get(BACKFILL_KEY)));
+        await transactionDone(transaction);
+        return done;
+    }
+
+    public async recordBackfillError(reason: string): Promise<void> {
+        const transaction = this.database.transaction("meta", "readwrite");
+        transaction.objectStore("meta").put({ ts: Date.now(), reason }, BACKFILL_ERROR_KEY);
+        await transactionDone(transaction);
+    }
+
     public async replaceWithSnapshot(snapshot: SnapshotResponse): Promise<void> {
         const transaction = this.database.transaction(["meta", "conversations", "events", "outbox"], "readwrite");
         const conversations = transaction.objectStore("conversations");
+        const existingParents = new Map(
+            ((await requestResult(conversations.getAll())) as Conversation[]).map((conversation) => {
+                const parentId = coerceParentId(conversation.parent_convo_id);
+                return [conversation.id, parentId === conversation.id ? null : parentId] as const;
+            }),
+        );
         conversations.clear();
         transaction.objectStore("events").clear();
         const validConversationIds = new Set(snapshot.conversations.map((conversation) => conversation.id));
@@ -98,8 +197,11 @@ export class JournalDatabase {
             if (!validConversationIds.has(message.convoId)) outbox.delete(message.localId);
         }
         for (const summary of snapshot.conversations) {
+            let incomingParent = coerceParentId(summary.parent_convo_id);
+            if (incomingParent === summary.id) incomingParent = null;
             conversations.put({
                 ...summary,
+                parent_convo_id: existingParents.get(summary.id) ?? incomingParent ?? null,
                 last_ts: summary.last_ts ?? summary.created_at,
                 read_up_to_seq: summary.read_up_to_seq ?? (summary.unread_count === 0 ? summary.last_seq : 0),
             } satisfies Conversation);
@@ -170,8 +272,13 @@ export class JournalDatabase {
         conversation.last_seq = Math.max(conversation.last_seq, event.seq);
         conversation.last_ts = Math.max(conversation.last_ts ?? 0, event.ts);
 
-        if (event.type === "convo_meta" && typeof event.payload.title === "string") {
-            conversation.title = event.payload.title;
+        if (event.type === "convo_meta") {
+            if (typeof event.payload.title === "string") conversation.title = event.payload.title;
+            let incomingParent = coerceParentId(event.payload.parent_convo_id);
+            if (incomingParent === conversation.id) incomingParent = null;
+            if (conversation.parent_convo_id == null && incomingParent) {
+                conversation.parent_convo_id = incomingParent;
+            }
         } else if (event.type === "session_status" && typeof event.payload.state === "string") {
             conversation.session_state = event.payload.state;
         } else if (MESSAGE_EVENT_TYPES.has(event.type)) {
@@ -215,6 +322,20 @@ export class JournalDatabase {
         await transactionDone(transaction);
     }
 
+    public async deleteOutboxRow(localId: string): Promise<void> {
+        const transaction = this.database.transaction("outbox", "readwrite");
+        transaction.objectStore("outbox").delete(localId);
+        await transactionDone(transaction);
+    }
+
+    public async deleteOutboxRows(localIds: string[]): Promise<void> {
+        if (localIds.length === 0) return;
+        const transaction = this.database.transaction("outbox", "readwrite");
+        const outbox = transaction.objectStore("outbox");
+        for (const localId of localIds) outbox.delete(localId);
+        await transactionDone(transaction);
+    }
+
     public async outbox(conversationId?: string): Promise<PendingMessage[]> {
         const transaction = this.database.transaction("outbox", "readonly");
         const store = transaction.objectStore("outbox");
@@ -225,14 +346,36 @@ export class JournalDatabase {
         return values.sort((left, right) => left.createdAt - right.createdAt);
     }
 
-    public async reconcileOwnMessage(event: JournalEvent): Promise<void> {
-        if (event.type !== "text" || !event.sender.startsWith("user:") || typeof event.payload.body !== "string")
-            return;
+    public async reconcileOwnMessage(event: JournalEvent): Promise<string | null> {
         const localId = typeof event.payload.local_id === "string" ? event.payload.local_id : undefined;
-        if (!localId) return;
+        if (!localId) return null;
         const transaction = this.database.transaction("outbox", "readwrite");
-        transaction.objectStore("outbox").delete(localId);
+        const outbox = transaction.objectStore("outbox");
+        const pending = (await requestResult(outbox.get(localId))) as PendingMessage | undefined;
+        const matchesPending = pending ? matchesOwnPendingMessage(event, pending, this.ownSender) : false;
+        if (matchesPending) outbox.delete(localId);
         await transactionDone(transaction);
+        return matchesPending ? localId : null;
+    }
+
+    public async reconcilePersistedOwnMessages(): Promise<string[]> {
+        const transaction = this.database.transaction(["events", "outbox"], "readwrite");
+        const outbox = transaction.objectStore("outbox");
+        const [events, pendingMessages] = await Promise.all([
+            requestResult(transaction.objectStore("events").getAll()) as Promise<JournalEvent[]>,
+            requestResult(outbox.getAll()) as Promise<PendingMessage[]>,
+        ]);
+        const candidates = pendingMessages.filter(
+            (message) => message.attachState === "sending" || message.errorKind === "send_failed",
+        );
+        const removed: string[] = [];
+        for (const pending of candidates) {
+            if (!events.some((event) => matchesOwnPendingMessage(event, pending, this.ownSender))) continue;
+            outbox.delete(pending.localId);
+            removed.push(pending.localId);
+        }
+        await transactionDone(transaction);
+        return removed;
     }
 
     public async expireToolLogs(now = Date.now()): Promise<void> {

@@ -12,3 +12,5 @@
 /src/modules.js
 /webapp/
 package-lock.json
+.codex-session-tmp/
+.fixtures-dist/

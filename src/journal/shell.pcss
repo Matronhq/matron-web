@@ -6,35 +6,182 @@ Please see LICENSE files in the repository root for full details.
 */
 
 :root {
+    /* v5: every agent content block (prose, tool card, diff card, code block, prompt
+       card) shares this width so the column reads uniform. Operator override of the mock's
+       680px cap — content is fluid: it fills the chat pane (minus the wrapper's equal
+       L/R gutters) at any window size. */
+    --mj-content-width: 100%;
+    /* --- v2 warm-neutral surfaces + brighter teal accent (docs/design/primitives-v2.md) --- */
+    --cpd-color-bg-accent: #0f766e;
+    --cpd-color-bg-accent-emphasis: #0d9488;
+    --cpd-color-bg-badge: #7d756b;
+    --cpd-color-bg-diff-add: rgb(52 199 89 / 0.13);
+    --cpd-color-bg-diff-del: rgb(255 59 48 / 0.09);
+    --cpd-color-bg-app: #f4f2ee;
     --cpd-color-bg-canvas-default: #fff;
-    --cpd-color-bg-subtle-primary: #f7f8fa;
-    --cpd-color-bg-subtle-secondary: #f0f2f5;
-    --cpd-color-border-disabled: #d8dadd;
-    --cpd-color-border-interactive-primary: #8f96a0;
-    --cpd-color-border-interactive-secondary: #c7cbd1;
-    --cpd-color-icon-accent-primary: #0dbd8b;
-    --cpd-color-icon-secondary: #656d77;
-    --cpd-color-text-action-accent: #087f6d;
+    --cpd-color-bg-canvas-raised: #faf8f4;
+    --cpd-color-bg-cluster: rgb(250, 248, 244, 0.72);
+    --cpd-color-bg-room-canvas: #efece6;
+    --cpd-color-bg-scrim-auth: rgb(255 255 255 / 82%);
+    --cpd-color-bg-scrim-drag: rgb(255 255 255 / 90%);
+    --cpd-color-bg-self-bubble: #e6f4ef;
+    --cpd-color-bg-subtle-primary: #f2efe9;
+    --cpd-color-bg-subtle-secondary: #eae5dd;
+    --cpd-color-bg-usage-track: rgb(28, 24, 20, 0.12);
+    --cpd-color-border-disabled: #ded8ce;
+    --cpd-color-border-interactive-primary: #b3aa9c;
+    --cpd-color-border-interactive-secondary: #d8d1c5;
+    --cpd-color-border-subtle: #e7e2d9;
+    --cpd-color-border-strong: #d8d1c5;
+    --cpd-color-icon-accent-primary: #0d9488;
+    --cpd-color-icon-secondary: #6b655c;
+    --cpd-color-icon-tertiary: #9a938a;
+    --cpd-color-text-action-accent: #0d9488;
     --cpd-color-text-critical-primary: #bd2020;
-    --cpd-color-text-link-external: #087f6d;
-    --cpd-color-text-primary: #1b1d22;
-    --cpd-color-text-secondary: #656d77;
+    --cpd-color-text-link-external: #0d9488;
+    --cpd-color-text-on-accent: #fff;
+    --cpd-color-text-on-badge: #fff;
+    --cpd-color-text-placeholder: #9a938a;
+    --cpd-color-text-primary: #1b1815;
+    --cpd-color-text-secondary: #6b655c;
+    --cpd-color-text-tertiary: #9a938a;
+    --cpd-color-usage-high: #ff3b30;
+    --cpd-color-usage-low: #34c759;
+    --cpd-color-usage-medium: #ff9500;
+
+    /* --- v2 interaction state layer (Radix 3/4/5 + M3 opacities) --- */
+    --cpd-state-hover: rgb(28 24 20 / 0.05);
+    --cpd-state-active: rgb(28 24 20 / 0.09);
+    --cpd-state-selected: rgb(13 148 136 / 0.1);
+
+    /* §10.4 native chrome: no --cpd tokens exist for selection or scrollbar thumbs, so
+       author them here as accent-tint / neutral-ink values (mirrors the design's
+       --m-selection / --m-scrollbar). Overridden per theme in [data-theme="dark"]. */
+    --mj-selection: rgb(13 148 136 / 0.2);
+    --mj-scrollbar: rgb(28 24 20 / 0.22);
+    --mj-scrollbar-hover: rgb(28 24 20 / 0.34);
+
+    /* --- v2 motion + focus --- */
+    --cpd-focus-ring: 0 0 0 2px var(--cpd-color-bg-canvas-default), 0 0 0 4px var(--cpd-color-text-action-accent);
+    --cpd-dur-fast: 120ms;
+    --cpd-dur-med: 180ms;
+    --cpd-ease: cubic-bezier(0.2, 0, 0, 1);
+
+    /* --- v2 radii --- */
+    --cpd-radius-xs: 4px;
+    --cpd-radius-sm: 6px;
+    --cpd-radius-md: 8px;
+    --cpd-radius-lg: 12px;
+    --cpd-radius-xl: 16px;
+    --cpd-radius-pill: 999px;
+
+    /* --- v2 elevation shadows --- */
+    --cpd-shadow-sm: 0 1px 2px rgb(28 24 20 / 0.06);
+    --cpd-shadow-md: 0 4px 12px rgb(28 24 20 / 0.1);
+    --cpd-shadow-lg: 0 16px 48px rgb(28 24 20 / 0.16);
+
+    /* --- v2 icon sizes --- */
+    --cpd-icon-sm: 14px;
+    --cpd-icon-md: 16px;
+    --cpd-icon-lg: 20px;
+
     --cpd-font-size-root: 16px;
+    --cpd-font-body-2xs-regular: 400 10px/12px Inter, sans-serif;
     --cpd-font-body-xs-regular: 400 12px/16px Inter, sans-serif;
     --cpd-font-body-xs-semibold: 600 12px/16px Inter, sans-serif;
     --cpd-font-body-sm-regular: 400 14px/20px Inter, sans-serif;
+    --cpd-font-body-md-regular: 400 16px/24px Inter, sans-serif;
+    --cpd-font-heading-sm-semibold: 600 18px/28px Inter, sans-serif;
+    --cpd-font-heading-md-semibold: 600 20px/28px Inter, sans-serif;
+
+    /* --- v2 role type ramp (M3 roles, RUI non-linear) --- */
+    --cpd-font-micro: 400 11px/14px Inter, sans-serif;
+    --cpd-font-meta: 400 12px/16px Inter, sans-serif;
+    --cpd-font-body: 400 14px/21px Inter, sans-serif;
+    --cpd-font-body-strong: 500 14px/21px Inter, sans-serif;
+    --cpd-font-label: 500 13px/16px Inter, sans-serif;
+    --cpd-font-title: 600 15px/20px Inter, sans-serif;
+    --cpd-font-heading: 600 18px/24px Inter, sans-serif;
+
+    --cpd-font-size-2xs: 10px;
+    --cpd-font-size-xs: 12px;
+    --cpd-font-size-sm: 14px;
+    --cpd-font-size-md: 16px;
+    --cpd-font-size-lg: 18px;
+    --cpd-font-size-xl: 20px;
+
+    /* --- v2 spacing: 4px base, non-linear ramp (Refactoring UI) --- */
+    --cpd-space-0-5x: 2px;
     --cpd-space-1x: 4px;
     --cpd-space-2x: 8px;
     --cpd-space-3x: 12px;
     --cpd-space-4x: 16px;
     --cpd-space-5x: 20px;
+    --cpd-space-6x: 24px;
+    --cpd-space-8x: 32px;
+    --cpd-space-10x: 40px;
+    --cpd-space-12x: 48px;
+}
+
+[data-theme="dark"] {
+    /* Dark surfaces get progressively LIGHTER for elevation (Material dark research); depth = lightness. */
+    --cpd-color-bg-accent: #0f766e;
+    --cpd-color-bg-accent-emphasis: #14b8a6;
+    --cpd-color-bg-badge: #3a3f46;
+    --cpd-color-bg-diff-add: rgb(52 199 89 / 0.12);
+    --cpd-color-bg-diff-del: rgb(255 107 107 / 0.1);
+    --cpd-color-bg-app: #121316;
+    --cpd-color-bg-canvas-default: #1a1c20;
+    --cpd-color-bg-canvas-raised: #212429;
+    --cpd-color-bg-cluster: rgb(33, 36, 41, 0.72);
+    --cpd-color-bg-room-canvas: #151619;
+    --cpd-color-bg-scrim-auth: rgb(18, 19, 22, 0.86);
+    --cpd-color-bg-scrim-drag: rgb(18, 19, 22, 0.9);
+    --cpd-color-bg-self-bubble: #123530;
+    --cpd-color-bg-subtle-primary: #212429;
+    --cpd-color-bg-subtle-secondary: #282c32;
+    --cpd-color-bg-usage-track: rgb(255, 255, 255, 0.12);
+    --cpd-color-border-disabled: #2a2d33;
+    --cpd-color-border-interactive-primary: #5a5f67;
+    --cpd-color-border-interactive-secondary: #3a3f46;
+    --cpd-color-border-subtle: #2a2d33;
+    --cpd-color-border-strong: #3a3f46;
+    --cpd-color-icon-accent-primary: #2dd4bf;
+    --cpd-color-icon-secondary: #9a948b;
+    --cpd-color-icon-tertiary: #6d675f;
+    --cpd-color-text-action-accent: #2dd4bf;
+    --cpd-color-text-critical-primary: #ff6a6a;
+    --cpd-color-text-link-external: #2dd4bf;
+    --cpd-color-text-on-accent: #0b201c;
+    --cpd-color-text-on-badge: #fff;
+    --cpd-color-text-placeholder: #6d675f;
+    --cpd-color-text-primary: #e7e4df;
+    --cpd-color-text-secondary: #9a948b;
+    --cpd-color-text-tertiary: #6d675f;
+    --cpd-color-usage-high: #ff3b30;
+    --cpd-color-usage-low: #34c759;
+    --cpd-color-usage-medium: #ff9500;
+
+    /* v2 interaction state layer (light-ink overlays on dark) */
+    --cpd-state-hover: rgb(255 255 255 / 0.06);
+    --cpd-state-active: rgb(255 255 255 / 0.1);
+    --cpd-state-selected: rgb(45 212 191 / 0.14);
+
+    /* §10.4 native chrome (dark): accent-tint selection + light-ink scrollbar thumbs. */
+    --mj-selection: rgb(45 212 191 / 0.26);
+    --mj-scrollbar: rgb(255 255 255 / 0.2);
+    --mj-scrollbar-hover: rgb(255 255 255 / 0.32);
+
+    /* In dark, shadows are near-invisible — surface lightness carries elevation; shadows keep shape only. */
+    --cpd-shadow-sm: 0 1px 2px rgb(0 0 0 / 0.3);
+    --cpd-shadow-md: 0 4px 12px rgb(0 0 0 / 0.4);
+    --cpd-shadow-lg: 0 16px 48px rgb(0 0 0 / 0.5);
 }
 
 body {
     background: var(--cpd-color-bg-canvas-default);
     color: var(--cpd-color-text-primary);
     font-family: Inter, "Helvetica Neue", "Segoe UI", Roboto, Ubuntu, "Fira Sans", "Noto Sans", Arial, sans-serif;
-    font-size: 14.0625px;
     font-weight: 400;
     line-height: 1.5;
 }
@@ -86,7 +233,7 @@ button {
 .mx_LeftPanel_outerWrapper {
     position: relative;
     overflow: visible;
-    background: #fff;
+    background: var(--cpd-color-bg-canvas-default);
 }
 
 .mx_LeftPanel_wrapper,
@@ -99,23 +246,45 @@ button {
 
 .mx_RoomListPanel {
     flex-direction: column;
-    background: #fff;
+    background: var(--cpd-color-bg-canvas-default);
 }
 
 .mj_RoomListHeader {
     display: flex;
-    min-height: 46px;
-    align-items: end;
+    align-items: center;
     justify-content: space-between;
-    padding: 0 16px 0 12px;
+    /* 14px top; 12px bottom = the uniform sidebar gap so the logo has clear space above
+       the New session button and every section is evenly spaced. */
+    padding: 14px 16px 12px 14px;
+}
+
+/* v5 sidebar wordmark: logo + brand name (was a bare "Home" text). */
+.mj_Wordmark {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 10px;
+}
+
+.mj_WordmarkLogo {
+    width: 22px;
+    height: 22px;
+    flex: 0 0 auto;
+}
+
+/* The logo mark is dark; render it white in the dark theme so it stays legible on the
+   dark sidebar panel. brightness(0) → solid black silhouette, invert(1) → white. */
+[data-theme="dark"] .mj_WordmarkLogo {
+    filter: brightness(0) invert(1);
 }
 
 .mj_RoomListHeader h1 {
     overflow: hidden;
     margin: 0;
-    font-size: 18px;
+    /* v5 title.lg (sidebar brand): 15px / 600 / 20px. */
+    font-size: 15px;
     font-weight: 600;
-    line-height: 28px;
+    line-height: 20px;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
@@ -126,33 +295,77 @@ button {
     gap: 8px;
 }
 
-.mj_IconButton {
-    display: inline-flex;
-    width: 28px;
-    height: 28px;
+/* v5 sidebar.newSession: full-width teal button in its own row below the wordmark.
+   34px, --m-selected fill, 1px rgb(13 148 136 / 25%) border, accent ink + 15px pencil,
+   label.md 500 13/16; hover deepens the tint to --m-active. */
+.mj_NewSessionRow {
+    flex: none;
+    /* 12px = the uniform sidebar gap (matches wordmark→button, button→tabs, etc.). */
+    padding: 0 12px 12px;
+}
+
+.mj_NewSessionButton {
+    display: flex;
+    width: 100%;
+    height: 34px;
     align-items: center;
     justify-content: center;
-    padding: 4px;
-    border: 0;
+    gap: 8px;
+    border: 1px solid rgb(13 148 136 / 25%);
     border-radius: 8px;
+    background: var(--cpd-state-selected);
+    color: var(--cpd-color-text-action-accent);
+    cursor: pointer;
+    font:
+        500 13px/16px Inter,
+        sans-serif;
+}
+
+.mj_NewSessionButton svg {
+    width: 15px;
+    height: 15px;
+}
+
+.mj_NewSessionButton:hover {
+    background: var(--cpd-state-active);
+}
+
+.mj_NewSessionButton:focus-visible {
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: 2px;
+}
+
+.mj_IconButton {
+    display: inline-flex;
+    width: 32px;
+    height: 32px;
+    align-items: center;
+    justify-content: center;
+    padding: var(--cpd-space-1x);
+    border: 0;
+    border-radius: var(--cpd-radius-md);
     background: transparent;
     color: var(--cpd-color-icon-secondary);
+    transition:
+        background var(--cpd-dur-fast) var(--cpd-ease),
+        color var(--cpd-dur-fast) var(--cpd-ease);
 }
 
 .mj_IconButton:hover {
-    background: #f0f2f5;
+    background: var(--cpd-state-hover);
+    color: var(--cpd-color-text-primary);
 }
 
 .mj_IconButton svg {
-    width: 20px;
-    height: 20px;
+    width: var(--cpd-icon-lg);
+    height: var(--cpd-icon-lg);
 }
 
 .mx_RoomListSearch {
     display: flex;
-    min-height: 56px;
     align-items: center;
-    padding: 0 12px;
+    /* 12px uniform gap below (was a 56px min-height row that over-spaced this section). */
+    padding: 0 12px 12px;
 }
 
 .mx_RoomListSearch_inputWrapper {
@@ -160,9 +373,9 @@ button {
     width: 100%;
     height: 36px;
     align-items: center;
-    gap: 10px;
+    gap: var(--cpd-space-2x);
     border-radius: 8px;
-    background: #f0f2f5;
+    background: var(--cpd-color-bg-subtle-secondary);
     color: var(--cpd-color-text-secondary);
     padding: 0 12px;
 }
@@ -180,7 +393,10 @@ button {
     outline: 0;
     background: transparent;
     color: var(--cpd-color-text-primary);
-    font-size: 14px;
+    /* v4 body.xs (search): 13px / 400 / 16px. */
+    font-size: 13px;
+    font-weight: 400;
+    line-height: 16px;
 }
 
 .mx_RoomListSearch_input::placeholder {
@@ -199,31 +415,83 @@ button {
 }
 
 .mj_RoomListItem {
+    position: relative;
     display: flex;
-    width: calc(100% - 12px);
+    width: calc(100% - var(--cpd-space-3x));
     box-sizing: border-box;
     min-height: 56px;
     align-items: center;
     justify-content: space-between;
-    gap: 8px;
-    margin: 0 4px 4px;
-    padding: 8px 12px 8px 4px;
+    /* v4 row: glyph/status gap 10, padding 9×10, 1px row rhythm. */
+    gap: 10px;
+    margin: 0 var(--cpd-space-2x) 1px;
+    padding: 9px 10px;
     border: 0;
-    border-radius: 8px;
+    border-radius: var(--cpd-radius-md);
     background: transparent;
     color: var(--cpd-color-text-primary);
     text-align: left;
+    transition: background var(--cpd-dur-fast) var(--cpd-ease);
 }
 
-.mj_RoomListItem:hover,
+.mj_RoomListItem:hover {
+    background: var(--cpd-state-hover);
+}
+
 .mj_RoomListItem_selected {
-    background: #f0f2f5;
+    background: var(--cpd-state-selected);
+}
+
+/* subagent child row: indented under its parent, muted name, ↳ connector. The leading
+   glyph (spinner while running / idle dot) sits in the normal status column. */
+.mj_RoomListItem_sub {
+    padding-left: 26px;
+}
+
+.mj_RoomListItem_sub .mj_RoomListName {
+    color: var(--cpd-color-text-secondary);
+}
+
+.mj_RoomListSubArrow {
+    color: var(--cpd-color-text-tertiary);
+}
+
+.mj_RoomListSubSpinner {
+    width: 12px;
+    height: 12px;
+}
+
+.mj_RoomListItem_selected::before {
+    content: "";
+    position: absolute;
+    top: 8px;
+    bottom: 8px;
+    left: 0;
+    width: 3px;
+    border-radius: var(--cpd-radius-pill);
+    background: var(--cpd-color-text-action-accent);
+}
+
+/* Leading 8px status column: running = pulsing teal dot, idle = strong-line dot. */
+.mj_RoomListStatus {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--cpd-color-border-strong);
+}
+
+.mj_RoomListStatus_running {
+    background: var(--cpd-color-text-action-accent);
+    animation: mj-pulse 1.6s ease-in-out infinite;
 }
 
 .mj_RoomListText {
     display: flex;
     min-width: 0;
+    flex: 1 1 0;
     flex-direction: column;
+    gap: 2px;
 }
 
 .mj_RoomListName,
@@ -234,32 +502,68 @@ button {
 }
 
 .mj_RoomListName {
-    font-weight: 600;
-    line-height: 20px;
+    /* v4 label.strong (read): 13px / 500 / 17px. */
+    color: var(--cpd-color-text-primary);
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 17px;
 }
 
 .mj_RoomListPreview {
-    font-size: 14px;
-    line-height: 20px;
+    /* v4 meta.md: 12px / 400 / 16px. */
+    color: var(--cpd-color-text-secondary);
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 16px;
 }
 
-.mj_RoomListText_unread .mj_RoomListName,
-.mj_RoomListText_unread .mj_RoomListPreview {
+/* v4 title.sm (unread session name): 13px / 600. */
+.mj_RoomListText_unread .mj_RoomListName {
     font-weight: 600;
 }
 
 .mj_UnreadBadge {
     display: inline-flex;
-    min-width: 20px;
-    height: 20px;
+    min-width: 18px;
+    height: 18px;
     align-items: center;
     justify-content: center;
-    border-radius: 10px;
-    background: var(--cpd-color-icon-secondary);
-    color: #fff;
+    border-radius: var(--cpd-radius-pill);
+    /* v4: teal count badge, badge.count 600 10px/18px. */
+    background: var(--cpd-color-bg-accent);
+    color: var(--cpd-color-text-on-accent);
     padding: 0 6px;
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 18px;
+}
+
+.mj_RoomListMeta {
+    display: flex;
+    flex: 0 0 auto;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: var(--cpd-space-0-5x);
+}
+
+.mj_RoomListTime {
+    /* v4 meta.xs (timestamp): 11px / 400 / 14px, tertiary ink. */
+    color: var(--cpd-color-text-tertiary);
     font-size: 11px;
-    line-height: 20px;
+    font-weight: 400;
+    line-height: 14px;
+    white-space: nowrap;
+    transition: opacity var(--cpd-dur-fast) var(--cpd-ease);
+}
+
+@media (hover: hover) and (pointer: fine) {
+    .mj_RoomListItem_wrapper:hover .mj_RoomListTime {
+        opacity: 0;
+    }
+}
+
+.mj_RoomListItem_wrapper:focus-within .mj_RoomListMeta {
+    padding-right: var(--cpd-space-5x);
 }
 
 .mj_RoomListEmpty {
@@ -287,7 +591,7 @@ button {
 }
 
 .mx_ResizeHandle:hover::after {
-    background: rgb(13 189 139 / 18%);
+    background: rgb(13 148 136 / 18%);
 }
 
 .mx_RoomView_wrapper,
@@ -305,15 +609,18 @@ button {
 .mx_RoomView_body {
     flex-direction: column;
     overflow: hidden;
-    background: #f1efe9;
+    background: var(--cpd-color-bg-room-canvas);
 }
 
 .mx_RoomHeader {
     width: 100%;
-    min-height: 56px;
+    /* Header band raised to 64px (operator: "a little higher"). At 64 the 36px title
+       block (title+subtitle) and the 36px 2×2 bars block (row-gap 10) both centre to
+       14–50, so title-top == bars-top AND subtitle-bottom == the 5h/wk row bottom. */
+    min-height: 64px;
     box-sizing: border-box;
     padding: 0 12px 0 18px;
-    background: #fff;
+    background: var(--cpd-color-bg-canvas-default);
 }
 
 .mx_RoomView_timeline {
@@ -331,9 +638,13 @@ button {
 
 .mx_RoomView_messageListWrapper {
     display: flex;
+    /* v5 (operator override): fluid — fill the chat pane with equal 20px L/R gutters,
+       no centred max-width cap. Content grows with the window. */
+    width: 100%;
+    box-sizing: border-box;
     flex-direction: column;
     justify-content: flex-end;
-    padding: 0 6px;
+    padding: 0 20px;
 }
 
 .mx_RoomView_MessageList {
@@ -363,11 +674,39 @@ button {
 }
 
 .mx_DisambiguatedProfile {
-    display: block;
-    margin: 0 0 5px 2px;
-    font-size: 14px;
+    display: flex;
+    align-items: center;
+    gap: var(--cpd-space-1x);
+    margin: 0 0 var(--cpd-space-1x) var(--cpd-space-0-5x);
+    color: var(--cpd-color-text-primary);
+    font: var(--cpd-font-meta);
     font-weight: 600;
-    line-height: 16px;
+}
+
+.mx_DisambiguatedProfile > a {
+    flex-shrink: 0;
+    color: inherit;
+    text-decoration: none;
+}
+
+.mx_DisambiguatedProfile_displayName {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_MsgAvatar {
+    width: var(--cpd-icon-md);
+    height: var(--cpd-icon-md);
+    flex-shrink: 0;
+    background-color: var(--cpd-color-icon-secondary);
+    -webkit-mask-position: center;
+    mask-position: center;
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+    -webkit-mask-size: contain;
+    mask-size: contain;
 }
 
 .mx_EventTile_avatar {
@@ -381,19 +720,43 @@ button {
     min-height: 36px;
     box-sizing: border-box;
     position: relative;
-    gap: 5px;
+    gap: var(--cpd-space-1x);
     margin-left: -9px;
-    padding: 10px 60px 10px 10px;
-    border-radius: 6px;
-    background: #fff;
-    box-shadow: 0 1px 2px rgb(18 16 14 / 8%);
-    line-height: 1.2;
+    padding: var(--cpd-space-3x) 56px var(--cpd-space-3x) var(--cpd-space-3x);
+    border: 1px solid var(--cpd-color-border-subtle);
+    border-radius: var(--cpd-radius-lg);
+    background: var(--cpd-color-bg-canvas-default);
+    box-shadow: var(--cpd-shadow-sm);
+    line-height: 1.5;
 }
 
+.mx_EventTile[data-self="false"] .mx_EventTile_line {
+    /* v5: agent content is a block column capped at the shared content width, so every
+       block (prose, tool/diff/code cards) fills the SAME width instead of each sizing to
+       its own content. Wide code/diff scrolls inside its card, not by widening the card. */
+    display: block;
+    width: 100%;
+    max-width: var(--mj-content-width);
+    margin-left: 0;
+    /* No horizontal padding so the agent content's right edge lines up exactly with the
+       own-bubble right edge (both at the tile edge). */
+    padding: var(--cpd-space-1x) 0;
+    border-color: transparent;
+    background: transparent;
+    box-shadow: none;
+}
+
+/* Agent continuation blocks no longer render a per-block timestamp (the section's single
+   timestamp lives on the profile row), so they fill to the same right edge as the first
+   block — no 56px reserve, no first-block spill. */
+
 .mx_EventTile[data-self="true"] .mx_EventTile_line {
-    margin-right: -9px;
+    /* v5: right edge aligns with the agent content column (no -9px overhang), so own
+       bubbles and agent messages share one clean right margin. */
+    margin-right: 0;
     margin-left: auto;
-    background: #dff7ed;
+    border-color: transparent;
+    background: var(--cpd-color-bg-self-bubble);
 }
 
 .mx_EventTile_line > a {
@@ -404,8 +767,9 @@ button {
 
 .mx_MessageTimestamp {
     white-space: nowrap;
-    font-size: 10px !important;
-    line-height: 12px !important;
+    color: var(--cpd-color-text-secondary);
+    font-size: var(--cpd-font-size-2xs);
+    line-height: 14px !important;
 }
 
 .mx_EventTile_content {
@@ -436,22 +800,99 @@ button {
 .mx_MessageComposer {
     min-height: 56px;
     flex: 0 0 auto;
-    background: #fff;
+    /* v5 composer.footer: TRANSPARENT — the warm room-canvas (--m-paper) reading
+       surface shows through. The bordered --m-panel shell is the input row alone. */
+    background: transparent;
 }
 
 .mx_MessageComposer_wrapper {
-    padding: 0 16px;
+    position: relative;
+    /* v4 composer footer padding: 8px top / 16px sides / 12px bottom. */
+    padding: 8px 16px 12px;
+}
+
+.mx_SlashPalette {
+    position: absolute;
+    /* v4 layering: slash palette sits above the composer, below modals. */
+    z-index: 20;
+    right: var(--cpd-space-4x);
+    bottom: calc(100% + var(--cpd-space-2x));
+    left: var(--cpd-space-4x);
+    /* v4 caps the palette at 262px, but never taller than half the dynamic viewport —
+       on short visual viewports (mobile landscape, on-screen keyboard) a fixed 262px
+       would push the top rows off-screen above the absolutely-anchored composer. */
+    max-height: min(262px, 50dvh);
+    overflow-y: auto;
+    box-sizing: border-box;
+    border: 1px solid var(--cpd-color-border-subtle);
+    border-radius: var(--cpd-radius-md);
+    background: var(--cpd-color-bg-canvas-default);
+    box-shadow: var(--cpd-shadow-md);
+    color: var(--cpd-color-text-primary);
+}
+
+.mx_SlashPalette_row {
+    display: grid;
+    grid-template-columns: auto auto minmax(0, 1fr);
+    align-items: baseline;
+    gap: 9px;
+    padding: 7px 12px;
+    cursor: pointer;
+}
+
+/* v4: mouse hover and keyboard highlight are one state (--m-hover). */
+.mx_SlashPalette_row_highlighted {
+    background: var(--cpd-color-bg-subtle-primary);
+}
+
+.mx_SlashPalette_trigger {
+    font:
+        500 12.5px/18px "Fira Code",
+        monospace;
+    white-space: nowrap;
+}
+
+.mx_SlashPalette_argHint {
+    font:
+        400 11px/16px "Fira Code",
+        monospace;
+    color: var(--cpd-color-text-secondary);
+    white-space: nowrap;
+}
+
+.mx_SlashPalette_summary {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    font:
+        400 12px/16px Inter,
+        sans-serif;
+    color: var(--cpd-color-text-secondary);
 }
 
 .mx_MessageComposer_row {
     display: flex;
-    min-height: 55px;
-    align-items: center;
+    align-items: flex-end;
+    /* v5 composer.shell: the input row IS the bordered field — attach (left),
+       textarea (borderless, flex), mic + send (right) all sit inside one shell.
+       1px --m-line2, radius 12, --m-panel fill, --m-sh-sm; gap 6 between controls;
+       padding 6/8/6/6 (textarea carries no vertical margin). */
+    gap: 6px;
+    border: 1px solid var(--cpd-color-border-strong);
+    border-radius: var(--cpd-radius-lg);
+    background: var(--cpd-color-bg-canvas-default);
+    box-shadow: var(--cpd-shadow-sm);
+    padding: 6px 8px 6px 6px;
+    transition: border-color var(--cpd-dur-fast) var(--cpd-ease);
+}
+
+/* v5: focus recolors the shell border to accent (pointer + keyboard). The
+   borderless textarea inside keeps its own :focus-visible ring for a11y. */
+.mx_MessageComposer_row:focus-within {
+    border-color: var(--cpd-color-text-action-accent);
 }
 
 .mx_SendMessageComposer {
     display: flex;
-    margin-right: 6px;
     justify-content: center;
 }
 
@@ -461,39 +902,57 @@ button {
 }
 
 .mx_BasicMessageComposer_input {
-    min-height: 38px;
+    /* v5 composer.input: borderless + transparent — the bordered --m-panel shell
+       (.mx_MessageComposer_row) is the visible field; the textarea just sits inside it.
+       body.md 400 14/22 (fixed, not inherited — root is 15px); padding 6/4. */
+    min-height: 28px;
     box-sizing: border-box;
-    margin: 8.5px 0;
-    padding: 8px 12px;
-    border: 1px solid #f0f2f5;
-    border-radius: 8px;
-    background: #fff;
-    font-size: inherit;
-    line-height: 1.2;
+    margin: 0;
+    padding: 6px 4px;
+    border: 0;
+    background: transparent;
+    font:
+        400 14px/22px Inter,
+        sans-serif;
+}
+
+/* v5: focus is carried ENTIRELY by the shell border recolor
+   (.mx_MessageComposer_row:focus-within → accent). No ring on the textarea — text
+   inputs match :focus-visible on every focus (click included), so a ring there shows
+   a "rectangle" the moment you type. The neutral→accent border change is the visible,
+   design-matching focus indicator. See reference_focus_visible_fires_on_every_text_input_focus. */
+.mx_BasicMessageComposer_input:focus,
+.mx_BasicMessageComposer_input:focus-visible {
+    outline: none;
 }
 
 .mx_BasicMessageComposer_input::placeholder {
-    color: #737983;
+    color: var(--cpd-color-text-tertiary);
 }
 
 .mx_MessageComposer_actions {
     display: flex;
     flex: 0 0 auto;
     align-items: center;
-    gap: 4px;
+    /* v5: 6px to match the shell's uniform control gap (mic ↔ send). */
+    gap: 6px;
 }
 
 .mx_MessageComposer_button,
 .mx_MessageComposer_sendMessage {
     display: inline-flex;
-    width: 22px;
+    width: 32px;
     height: 32px;
     align-items: center;
     justify-content: center;
     padding: 0;
     border: 0;
+    border-radius: var(--cpd-radius-md);
     background: transparent;
-    color: #8090a3;
+    color: var(--cpd-color-icon-tertiary);
+    transition:
+        background var(--cpd-dur-fast) var(--cpd-ease),
+        color var(--cpd-dur-fast) var(--cpd-ease);
 }
 
 .mx_MessageComposer_button svg,
@@ -502,8 +961,65 @@ button {
     height: 19px;
 }
 
+/* v4 icon buttons (attach, mic): rest --m-ink3, hover --m-hover + --m-ink, active --m-active. */
+.mx_MessageComposer_button:hover:not([aria-disabled="true"]):not(:disabled) {
+    background: var(--cpd-color-bg-subtle-primary);
+    color: var(--cpd-color-text-primary);
+}
+
+.mx_MessageComposer_button:active:not([aria-disabled="true"]):not(:disabled) {
+    background: var(--cpd-color-bg-subtle-secondary);
+}
+
+/* v4 send button: 32×32, radius 9px, filled --m-accent-deep, always present.
+   Disabled (empty composer) keeps its footprint at opacity .45; pointer-events kept. */
 .mx_MessageComposer_sendMessage {
-    color: #087f6d;
+    border-radius: 9px;
+    background: var(--cpd-color-bg-accent);
+    color: var(--cpd-color-text-on-accent);
+}
+
+.mx_MessageComposer_sendMessage:hover:not(:disabled) {
+    filter: brightness(1.08);
+}
+
+.mx_MessageComposer_sendMessage:disabled {
+    opacity: 0.45;
+}
+
+.mx_MessageComposer_button:focus-visible,
+.mx_MessageComposer_sendMessage:focus-visible {
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: 2px;
+}
+
+.mx_MessageComposer_button[aria-disabled="true"] {
+    color: var(--cpd-color-icon-tertiary);
+    opacity: 0.5;
+}
+
+.mj_ComposerHint {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--cpd-space-2x);
+    padding: 4px var(--cpd-space-1x) 0 var(--cpd-space-2x);
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-micro);
+}
+
+.mj_ComposerHint_keys {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_ComposerHint_live {
+    flex: 0 0 auto;
+    font-family: "Fira Code", monospace;
+    font-variant-numeric: tabular-nums;
+    color: var(--cpd-color-text-tertiary);
 }
 
 .mx_HomePage {
@@ -511,7 +1027,7 @@ button {
     width: 100%;
     align-items: center;
     justify-content: center;
-    background: #f1efe9;
+    background: var(--cpd-color-bg-room-canvas);
 }
 
 .mx_HomePage_default_wrapper {
@@ -528,21 +1044,21 @@ button {
     height: 100%;
     align-items: center;
     justify-content: center;
-    padding: 24px;
+    padding: calc(var(--cpd-space-5x) + var(--cpd-space-1x));
 }
 
 .mx_AuthPage_modal {
     width: min(440px, 100%);
     overflow: hidden;
     border-radius: 16px;
-    background: rgb(255 255 255 / 82%);
+    background: var(--cpd-color-bg-scrim-auth);
     box-shadow: 0 16px 48px rgb(18 16 14 / 12%);
 }
 
 .mx_AuthPage_modalContent {
     position: relative;
     flex-direction: column;
-    padding: 40px;
+    padding: calc(var(--cpd-space-5x) + var(--cpd-space-5x));
 }
 
 .mx_AuthHeaderLogo {
@@ -562,17 +1078,17 @@ button {
 
 .mx_Field {
     position: relative;
-    margin-bottom: 18px;
+    margin-bottom: var(--cpd-space-5x);
 }
 
 .mx_Field input {
     width: 100%;
     height: 48px;
     padding: 18px 12px 6px;
-    border: 1px solid #c7cbd1;
+    border: 1px solid var(--cpd-color-border-interactive-secondary);
     border-radius: 8px;
     outline: 0;
-    background: #fff;
+    background: var(--cpd-color-bg-canvas-default);
 }
 
 .mx_Field label {
@@ -588,11 +1104,11 @@ button {
 .mx_Field input:not(:placeholder-shown) + label,
 .mx_Field_labelAlwaysTopLeft label {
     top: 4px;
-    font-size: 10px;
+    font-size: var(--cpd-font-size-2xs);
 }
 
 .mx_Field input:focus {
-    border-color: #087f6d;
+    border-color: var(--cpd-color-text-action-accent);
 }
 
 .mx_ErrorMessage {
@@ -603,9 +1119,13 @@ button {
     min-height: 40px;
     border: 0;
     border-radius: 8px;
-    background: #087f6d;
-    color: #fff;
+    background: var(--cpd-color-bg-accent);
+    color: var(--cpd-color-text-on-accent);
     font-weight: 600;
+}
+
+[data-theme="dark"] .mx_Login_submit {
+    color: #f5f7fa;
 }
 
 .mx_Login_submit:disabled {
