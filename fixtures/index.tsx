@@ -245,7 +245,7 @@ const state: ClientState = {
         // stable ids → short tags 5h/fbl/wk/cpu/ram + column-first 3×2 grid order.
         limits: [
             { id: "week_all", label: "Week (all models)", percent: 63, resets: "4d" },
-            { id: "session_5h", label: "Session", percent: 41, resets: "3h20" },
+            { id: "session", label: "Session", percent: 41, resets: "3h20" },
             // host_ram: FRESH sample (10s old) → renders normally. host_cpu: STALE (4m old,
             // past HOST_VITALS_STALE_MS=60s) → renders dimmed with "last sampled 4m ago" in the
             // accessible name. Contact sheet shows the fresh vs stale host-vital states together.

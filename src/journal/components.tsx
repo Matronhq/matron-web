@@ -1638,7 +1638,7 @@ export function UsageCluster({
                     return (
                         <div
                             className={`mj_UsageRow${stale ? " mj_UsageRow_stale" : ""}`}
-                            // Stable machine id (`session_5h`, `host_cpu`, …) keeps a row bound to
+                            // Stable machine id (`session`, `host_cpu`, …) keeps a row bound to
                             // its meter across reorders and staleness re-renders. Fall back to
                             // label:index for id-less frames (older bridge / cached), which stays
                             // duplicate-safe when two meters share a label.
@@ -1811,7 +1811,7 @@ export function HeaderShell({
     // short-tag heuristic as a fallback for older/cached frames that lack ids.
     const ctxMeter = limits?.find((meter) => meter.id === "context" || (!meter.id && usageShortLabel(meter) === "ctx"));
     const sessionMeter = limits?.find(
-        (meter) => meter.id === "session_5h" || (!meter.id && usageShortLabel(meter) === "5h"),
+        (meter) => meter.id === "session" || (!meter.id && usageShortLabel(meter) === "5h"),
     );
     // ctx first, then 5h — pinned by id above. If a degenerate frame carries neither
     // (limits present but no ctx/5h), fall back to the first meter so the collapsed

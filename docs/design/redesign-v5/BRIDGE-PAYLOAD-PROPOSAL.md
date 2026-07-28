@@ -77,20 +77,22 @@ The client currently distinguishes these by reading the copy. Make it declarativ
 
 **Today:** `Session`, `Week (all models)`, `Week (Sonnet 5)` — display strings the client reverse-engineers with a heuristic (`usageBarLabel()` parses parentheses), and which truncate in a 24px column. The relabel map in `design-tokens.json` is a workaround for this.
 
-**Proposed:**
+**Shipped (bridge #156 — the final contract, superseding the original epoch-ms sketch):**
 
 ```json
 { "limits": [
-  { "id": "context",      "used": 144000, "limit": 200000, "unit": "tokens" },
-  { "id": "session_5h",   "pct": 34, "resets_at": 1785045600000 },
-  { "id": "week_all",     "pct": 61, "resets_at": 1785398400000 },
-  { "id": "week_sonnet5", "pct": 18, "resets_at": 1785398400000, "model": "sonnet-5" }
-] }
+  { "id": "session",       "label": "session", "percent": 34,
+    "resets": "Jul 28, 2:00pm (UTC)", "resets_at": "2026-07-28T14:00:00.000Z" },
+  { "id": "week_all",      "label": "week (all models)", "percent": 61,
+    "resets": "Aug 1, 12:00am (UTC)", "resets_at": "2026-08-01T00:00:00.000Z" },
+  { "id": "week_sonnet_5", "label": "week (Sonnet 5)", "percent": 18 }
+],
+  "vitals": { "cpu_pct": 34, "ram_pct": 55, "sampled_at_ms": 1785039420739 } }
 ```
 
-- **`id` is stable and machine-readable**; the client owns both the short label (`ctx` / `5h` / `wk` / `fbl`) and the long accessible name ("context, 72 percent"). Display strings stop being an API.
-- **Send the raw pair (`used`/`limit`) where it exists**, not just a percentage — the client shows `144k/200k` in the popover and computes the bar itself.
-- **`resets_at` as epoch ms**, not "resets in 2h" — a pre-formatted relative time goes stale the moment it's rendered; the client re-derives it every tick.
+- **`id` is stable and machine-readable**: `session`, `week_all` (canonicalized — "all models" with or without parens), and `week_<model-slug>` (e.g. `week_sonnet_5`; slugged from the label, so not durable across relabels). The client owns both the short label (`ctx` / `5h` / `wk` / `fbl`) and the long accessible name. Display strings stop being an API.
+- **`resets_at` is an OPTIONAL ISO-8601 string** — omitted (never null) when the reset text is absent or unparseable; `resets` keeps the raw text as a fallback. There is **no epoch-ms reset field**: an early draft carried a `resets_at_ms` sibling and dropped it as redundant — `Date.parse(resets_at)` recovers the epoch when the client needs a countdown.
+- **Host vitals ride at the TOP LEVEL of the status payload** — `status.vitals = { cpu_pct, ram_pct, sampled_at_ms }`, never inside `limits[]`; absent entirely when the bridge has no sample. The client synthesizes its `host_cpu` / `host_ram` meters (and the `context` meter, from `status.context`) locally.
 - Unknown ids still render via a fallback label, so a new limit appears without a client release. This is the piece that unblocks the `fbl` bar: **the design shows it the moment an id for it arrives, and omits it entirely until then.**
 
 ## 4. Tool output — structured status
@@ -148,7 +150,7 @@ Unified-diff text is fine to keep, but `additions`/`deletions` as integers avoid
 
 ## Two conventions worth adopting wire-wide
 
-1. **Timestamps are always epoch ms.** Never a formatted or relative string. `ts` already does this correctly — extend it to `resets_at`, `expires_at`, `at`.
+1. **Timestamps are always epoch ms.** Never a formatted or relative string. `ts` already does this correctly — extend it to `expires_at`, `at`. (The shipped §3 contract is the one deliberate exception: `resets_at` stayed an ISO-8601 string, omitted when unknown and never null, with `vitals.sampled_at_ms` in epoch ms.)
 2. **Text fields are never pre-truncated and never carry decoration.** Send the full string, unadorned. Clamping, ellipsis, icons, and case are the client's job — and the *only* client that currently wants the emoji version keeps it via `body`.
 
 If you'd rather stage this: **§1 and §3 are where the design is currently paying the most tax** (§1 forces un-rendering, §3 forces a relabel map and blocks the fbl bar). The rest are cleanups that each delete one parsing branch.

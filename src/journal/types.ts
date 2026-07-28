@@ -161,8 +161,10 @@ export interface SessionStatus {
         pct: number;
     };
     limits?: Array<{
-        // Stable machine key from the bridge (v5+): `session_5h`, `week_all`, `week_fable`,
-        // `week_<slug>` (e.g. `week_sonnet_5`), and host meters `host_cpu` / `host_ram`.
+        // Stable machine key. The bridge (final #156 contract) emits `session`, `week_all`,
+        // and `week_<model-slug>` (e.g. `week_fable`, `week_sonnet_5`); `context` and the
+        // host meters `host_cpu` / `host_ram` are client-synthesized (from `context` and the
+        // top-level `vitals` below — the bridge never sends host meters inside limits[]).
         // Absent on older/cached frames — the client falls back to parsing `label`.
         id?: string;
         label: string;
@@ -174,18 +176,22 @@ export interface SessionStatus {
         unit?: string;
         model?: string;
         resets?: string;
-        // ISO string (KEPT — the bridge did not change this). resetDisplay still accepts a
-        // number here too as a belt-and-suspenders fallback for any pre-contract frame.
+        // Final #156 contract: an OPTIONAL ISO-8601 string — omitted when the reset text is
+        // absent or unparseable, never null. resetDisplay still accepts a number here too as
+        // a belt-and-suspenders fallback for any pre-contract frame.
         resets_at?: string | number;
-        // Epoch ms (number, NEW — the bridge adds this alongside the ISO `resets_at`).
-        // resetDisplay PREFERS this when present.
+        // NOT a wire field: the merged #156 contract has no epoch-ms reset (an early draft
+        // carried `resets_at_ms` and dropped it as redundant — `Date.parse(resets_at)`
+        // recovers it). Kept only as a client-side tolerance; resetDisplay prefers it if a
+        // frame ever carries one.
         resets_at_ms?: number;
-        // Epoch ms of the last REAL sample for this meter (host vitals only: host_cpu /
-        // host_ram). Host readings only refresh on turn-end and get replayed verbatim to new
-        // viewers, so on an idle conversation the displayed value can be minutes/hours stale
-        // while looking current. When present, the client expires stale readings (renders a
-        // muted state past HOST_VITALS_STALE_MS). Absent on older bridges / non-host meters →
-        // no staleness logic (current behaviour). See status.ts HOST_VITALS_STALE_MS.
+        // Epoch ms of the last REAL sample for this meter. NOT sent by the bridge inside
+        // limits[] (#156 keeps vitals at top level): the client copies it from
+        // `vitals.sampled_at_ms` onto the host_cpu / host_ram meters it synthesizes. Host
+        // readings only refresh on turn-end and get replayed verbatim to new viewers, so on
+        // an idle conversation the displayed value can be minutes/hours stale while looking
+        // current. When present, the client expires stale readings (renders a muted state
+        // past HOST_VITALS_STALE_MS). Absent → no staleness logic. See status.ts.
         sampled_at_ms?: number;
     }>;
     // Host machine vitals (bridge status frame, top-level — NOT a limits[] entry). CPU/RAM

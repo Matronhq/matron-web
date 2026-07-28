@@ -81,7 +81,7 @@ describe("UsageCluster", () => {
     it("renders id-driven short tags and long accessible names (ctx/5h/fbl/wk/cpu/ram)", async () => {
         await renderUsage([
             { id: "context", label: "context", percent: 72, used: 144_000, limit: 200_000 },
-            { id: "session_5h", label: "Session", percent: 41 },
+            { id: "session", label: "Session", percent: 41 },
             { id: "week_fable", label: "Week (Fable)", percent: 22 },
             { id: "week_all", label: "Week (all models)", percent: 63 },
             { id: "host_cpu", label: "Host CPU", percent: 34 },
@@ -120,7 +120,7 @@ describe("UsageCluster", () => {
     });
 
     it("omits the raw pair for meters without used/limit", async () => {
-        await renderUsage([{ id: "session_5h", label: "Session", percent: 41 }]);
+        await renderUsage([{ id: "session", label: "Session", percent: 41 }]);
         const row = container.querySelector(".mj_UsageRow")!;
         expect(row.classList.contains("mj_UsageRow_raw")).toBe(false);
         expect(row.querySelector(".mj_UsageRaw")).toBeNull();
@@ -161,7 +161,7 @@ describe("UsageCluster", () => {
         const now = 1_000_000_000_000;
         await renderUsage(
             [
-                { id: "session_5h", label: "Session", percent: 41 },
+                { id: "session", label: "Session", percent: 41 },
                 { id: "week_all", label: "Week (all models)", percent: 63 },
             ],
             now,
