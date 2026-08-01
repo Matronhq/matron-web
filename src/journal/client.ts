@@ -69,6 +69,10 @@ export const favoriteStore: IdSetStore = makeIdSetStore(
     "favorite-conversations",
 );
 export const unreadStore: IdSetStore = makeIdSetStore("matron_journal_unread_conversations_v1", "unread-conversations");
+export const collapsedSubagentStore: IdSetStore = makeIdSetStore(
+    "matron_journal_collapsed_subagents_v1",
+    "collapsed-subagents",
+);
 
 interface ConversationHistoryState {
     initialized: boolean;
@@ -122,6 +126,7 @@ function blankState(): ClientState {
         pinnedIds: new Set(),
         favoriteIds: new Set(),
         unreadOverrideIds: new Set(),
+        collapsedSubagentParentIds: new Set(),
         controlError: undefined,
         events: [],
         pendingMessages: [],
@@ -183,11 +188,13 @@ function firstSelectableConversation(
     conversations: Conversation[],
     preferredId: string | undefined,
     archivedIds: Set<string>,
+    collapsedParentIds: ReadonlySet<string>,
 ): Conversation | undefined {
     // auto-selection uses the SAME canonical predicate as rendering — a child that
     // is not a top-level sidebar row (hidden done child, or a nested child) must never be
-    // silently auto-selected on reload; skip to the next selectable top-level row.
-    const index = buildSidebarIndex(conversations, archivedIds);
+    // silently auto-selected on reload; skip to the next selectable top-level row. The collapsed
+    // set matches render/mark-all/badge, so a collapsed (hidden) child is never auto-selected.
+    const index = buildSidebarIndex(conversations, archivedIds, collapsedParentIds);
     const selectable = (conversation: Conversation): boolean =>
         !archivedIds.has(conversation.id) && rendersAsTopLevelRow(conversation, index);
     const preferred = conversations.find((conversation) => conversation.id === preferredId && selectable(conversation));
@@ -254,8 +261,8 @@ export class MatronJournalClient {
     private rpcCreateWatchdogConvo?: string;
     private rpcCreateWatchdogGen?: number;
     private storageListener?: (event: StorageEvent) => void;
-    private storeHydrated = { archive: true, pinned: true, favorite: true, unread: true };
-    private storeWritable = { archive: true, pinned: true, favorite: true, unread: true };
+    private storeHydrated = { archive: true, pinned: true, favorite: true, unread: true, collapsed: true };
+    private storeWritable = { archive: true, pinned: true, favorite: true, unread: true, collapsed: true };
 
     public get sessionGeneration(): number {
         return this.sessionGen;
@@ -527,6 +534,17 @@ export class MatronJournalClient {
         this.setFlag(unreadStore, "unreadOverrideIds", id, true);
     }
 
+    /**
+     * Toggle whether a parent conversation's subagent child rows are collapsed in the sidebar.
+     * Persisted per session/user like the other row flags; the collapsed set is threaded into
+     * every buildSidebarIndex call, so collapsing suppresses the child rows across render,
+     * selection, unread aggregation, the desktop badge, and mark-all in lock-step.
+     */
+    public toggleSubagentCollapse(parentId: string): void {
+        const collapse = !this.state.collapsedSubagentParentIds.has(parentId);
+        this.setFlag(collapsedSubagentStore, "collapsedSubagentParentIds", parentId, collapse);
+    }
+
     public markConversationRead(conversationId: string): boolean {
         const conversation = this.state.conversations.find((candidate) => candidate.id === conversationId);
         if (!conversation) return true;
@@ -540,7 +558,11 @@ export class MatronJournalClient {
         // mark-all targets exactly the rows Active renders as top-level (canonical
         // predicate) — never a hidden done child (no row, no Mark-all button) nor a nested
         // child, both of which would otherwise leave a stuck, untargetable unread badge.
-        const index = buildSidebarIndex(this.state.conversations, this.state.archivedIds);
+        const index = buildSidebarIndex(
+            this.state.conversations,
+            this.state.archivedIds,
+            this.state.collapsedSubagentParentIds,
+        );
         let anyFailed = false;
         for (const conversation of this.state.conversations) {
             if (this.state.archivedIds.has(conversation.id)) continue;
@@ -1144,7 +1166,7 @@ export class MatronJournalClient {
 
     private async startSession(session: Session): Promise<void> {
         this.sessionGen += 1;
-        this.storeHydrated = { archive: true, pinned: true, favorite: true, unread: true };
+        this.storeHydrated = { archive: true, pinned: true, favorite: true, unread: true, collapsed: true };
         const writeProbeKey = `${archiveStore.storageKey(session)}:__wprobe__`;
         let storeWritable = false;
         try {
@@ -1159,6 +1181,7 @@ export class MatronJournalClient {
             pinned: storeWritable,
             favorite: storeWritable,
             unread: storeWritable,
+            collapsed: storeWritable,
         };
         for (const controller of this.inFlightUploads.values()) controller.abort();
         this.inFlightUploads.clear();
@@ -1236,14 +1259,17 @@ export class MatronJournalClient {
         const pinnedRead = pinnedStore.read(session);
         const favoriteRead = favoriteStore.read(session);
         const unreadRead = unreadStore.read(session);
+        const collapsedRead = collapsedSubagentStore.read(session);
         this.storeHydrated.archive = archiveRead.ok;
         this.storeHydrated.pinned = pinnedRead.ok;
         this.storeHydrated.favorite = favoriteRead.ok;
         this.storeHydrated.unread = unreadRead.ok;
+        this.storeHydrated.collapsed = collapsedRead.ok;
         if (!archiveRead.ok) this.logStorageDiag("read_fail", "archive", false);
         if (!pinnedRead.ok) this.logStorageDiag("read_fail", "pinned", false);
         if (!favoriteRead.ok) this.logStorageDiag("read_fail", "favorite", false);
         if (!unreadRead.ok) this.logStorageDiag("read_fail", "unread", false);
+        if (!collapsedRead.ok) this.logStorageDiag("read_fail", "collapsed", false);
         const bootstrapTransitionStore = !archiveRead.ok
             ? "archive"
             : !pinnedRead.ok
@@ -1252,13 +1278,21 @@ export class MatronJournalClient {
                 ? "favorite"
                 : !unreadRead.ok
                   ? "unread"
-                  : "all";
+                  : !collapsedRead.ok
+                    ? "collapsed"
+                    : "all";
         const bootstrapReadFailed = this.storageUnavailable(bootstrapTransitionStore);
         const archivedIds = archiveRead.ids;
         const pinnedIds = pinnedRead.ids;
         const favoriteIds = favoriteRead.ids;
         const unreadOverrideIds = unreadRead.ids;
-        const selectedConversation = firstSelectableConversation(conversations, storedConversationId, archivedIds);
+        const collapsedSubagentParentIds = collapsedRead.ids;
+        const selectedConversation = firstSelectableConversation(
+            conversations,
+            storedConversationId,
+            archivedIds,
+            collapsedSubagentParentIds,
+        );
         this.state = {
             ...blankState(),
             phase: "signed-in",
@@ -1269,6 +1303,7 @@ export class MatronJournalClient {
             pinnedIds,
             favoriteIds,
             unreadOverrideIds,
+            collapsedSubagentParentIds,
             preferencesUnavailable: bootstrapReadFailed,
             selectedConversationId: selectedConversation?.id,
         };
@@ -1314,6 +1349,15 @@ export class MatronJournalClient {
                 this.patch({
                     ...(read.ok ? { unreadOverrideIds: read.ids } : {}),
                     preferencesUnavailable: this.storageUnavailable("unread"),
+                });
+            } else if (event.key === collapsedSubagentStore.storageKey(currentSession)) {
+                const read = collapsedSubagentStore.read(currentSession);
+                this.storeHydrated.collapsed = read.ok;
+                if (read.ok) this.storeWritable.collapsed = true;
+                if (!read.ok) this.logStorageDiag("read_fail", "collapsed", false);
+                this.patch({
+                    ...(read.ok ? { collapsedSubagentParentIds: read.ids } : {}),
+                    preferencesUnavailable: this.storageUnavailable("collapsed"),
                 });
             }
         };
@@ -1370,14 +1414,14 @@ export class MatronJournalClient {
 
     private setFlag(
         store: IdSetStore,
-        stateKey: "pinnedIds" | "favoriteIds" | "unreadOverrideIds",
+        stateKey: "pinnedIds" | "favoriteIds" | "unreadOverrideIds" | "collapsedSubagentParentIds",
         id: string,
         on: boolean,
     ): boolean {
         const session = this.state.session;
         if (!session) return false;
 
-        let storeName: "pinned" | "favorite" | "unread";
+        let storeName: "pinned" | "favorite" | "unread" | "collapsed";
         switch (stateKey) {
             case "pinnedIds":
                 storeName = "pinned";
@@ -1387,6 +1431,9 @@ export class MatronJournalClient {
                 break;
             case "unreadOverrideIds":
                 storeName = "unread";
+                break;
+            case "collapsedSubagentParentIds":
+                storeName = "collapsed";
                 break;
             default: {
                 const _exhaustive: never = stateKey;
@@ -1489,7 +1536,7 @@ export class MatronJournalClient {
         await this.database.replaceWithSnapshot(snapshot);
         await this.reconcilePersistedOwnMessages(this.database);
         const conversations = await this.database.conversations();
-        let { archivedIds, pinnedIds, favoriteIds, unreadOverrideIds } = this.state;
+        let { archivedIds, pinnedIds, favoriteIds, unreadOverrideIds, collapsedSubagentParentIds } = this.state;
         const session = this.state.session;
         if (session) {
             const archiveRead = archiveStore.read(session);
@@ -1508,6 +1555,10 @@ export class MatronJournalClient {
             this.storeHydrated.unread = unreadRead.ok;
             if (!unreadRead.ok) this.logStorageDiag("read_fail", "unread", false);
             if (unreadRead.ok) unreadOverrideIds = unreadRead.ids;
+            const collapsedRead = collapsedSubagentStore.read(session);
+            this.storeHydrated.collapsed = collapsedRead.ok;
+            if (!collapsedRead.ok) this.logStorageDiag("read_fail", "collapsed", false);
+            if (collapsedRead.ok) collapsedSubagentParentIds = collapsedRead.ids;
         }
         const snapshotTransitionStore = !this.storeHydrated.archive
             ? "archive"
@@ -1517,14 +1568,22 @@ export class MatronJournalClient {
                 ? "favorite"
                 : !this.storeHydrated.unread
                   ? "unread"
-                  : "all";
-        const selectedConversation = firstSelectableConversation(conversations, previousSelection, archivedIds);
+                  : !this.storeHydrated.collapsed
+                    ? "collapsed"
+                    : "all";
+        const selectedConversation = firstSelectableConversation(
+            conversations,
+            previousSelection,
+            archivedIds,
+            collapsedSubagentParentIds,
+        );
         this.patch({
             conversations,
             archivedIds,
             pinnedIds,
             favoriteIds,
             unreadOverrideIds,
+            collapsedSubagentParentIds,
             selectedConversationId: selectedConversation?.id,
             preferencesUnavailable: this.storageUnavailable(snapshotTransitionStore),
         });
@@ -1921,7 +1980,11 @@ export class MatronJournalClient {
         // conversations are hidden from the active list and skipped by mark-all-read, so they
         // must not inflate the badge; likewise a hidden done child (no row, no way to clear it)
         // and a nested child both contribute zero, so the badge can never outlive its rows.
-        const index = buildSidebarIndex(this.state.conversations, this.state.archivedIds);
+        const index = buildSidebarIndex(
+            this.state.conversations,
+            this.state.archivedIds,
+            this.state.collapsedSubagentParentIds,
+        );
         const unread = this.state.conversations.reduce(
             (total, conversation) =>
                 total +
