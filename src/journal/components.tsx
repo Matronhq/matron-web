@@ -4587,6 +4587,15 @@ function UploadConfirmDialog({
 }): React.ReactElement {
     useEffect(() => {
         const onPaste = (event: ClipboardEvent): void => {
+            // Ignore the bootstrap paste the composer already consumed. On the first
+            // paste (modal closed) the composer stages + calls preventDefault(), which
+            // opens this dialog; React 19 flushes that mount synchronously, so this
+            // document listener registers WITHIN the same paste dispatch and would stage
+            // the file a second time ("1 of 2"). defaultPrevented is set by the composer's
+            // preventDefault() and is propagation-order-independent, so it holds even
+            // though the listener was added mid-dispatch. Once the dialog is open the
+            // composer is inert (no preventDefault), so subsequent pastes append here.
+            if (event.defaultPrevented) return;
             const files = [...(event.clipboardData?.files ?? [])];
             if (files.length > 0) {
                 event.preventDefault();
