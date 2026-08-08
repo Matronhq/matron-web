@@ -21,7 +21,7 @@
             "type": "image/png"
         },
         {
-            "src": "/vector-icons/152png",
+            "src": "/vector-icons/152.png",
             "sizes": "152x152",
             "type": "image/png"
         },
@@ -51,10 +51,6 @@
             "platform": "f-droid",
             "url": "https://f-droid.org/repository/browse/?fdid=chat.matron.app",
             "id": "chat.matron.app"
-        },
-        {
-            "platform": "itunes",
-            "url": "https://apps.apple.com/app/vector/id1083446067"
         }
     ]
 }
