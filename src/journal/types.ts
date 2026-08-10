@@ -458,6 +458,25 @@ export function parseMediaDims(value: unknown): MediaDims | undefined {
     return width > 0 && height > 0 ? { width, height } : undefined;
 }
 
+// MUST match `.mj_ImageFrame_sized { max-height }` in journal.pcss. A non-replaced <div> sized by
+// CSS `aspect-ratio` does not back-shrink its width when the computed height hits `max-height` (that
+// ratio-preserving back-propagation only happens for replaced elements like a bare <img>). So the
+// cap has to be baked into the seeded width in JS — see imageFrameStyle.
+export const IMAGE_FRAME_MAX_HEIGHT_PX = 520;
+
+// Inline style that reserves an image's box before the blob decodes, so the thread doesn't reflow
+// on load. `aspectRatio` holds the shape; `width` seeds the intrinsic size (further capped by the
+// CSS max-width for the column). The width is pre-shrunk so that when the ratio-derived height
+// would exceed IMAGE_FRAME_MAX_HEIGHT_PX the box shrinks in BOTH dimensions — replicating replaced-
+// element sizing. Without this, portrait/square images get an over-wide frame and the inner
+// object-fit:contain <img> letterboxes with dead margins.
+export function imageFrameStyle(dims: MediaDims): { aspectRatio: string; width: number } {
+    return {
+        aspectRatio: `${dims.width} / ${dims.height}`,
+        width: Math.min(dims.width, dims.width * (IMAGE_FRAME_MAX_HEIGHT_PX / dims.height)),
+    };
+}
+
 // Coarse file buckets used to pick a file-tile affordance from a MIME type. A few sensible
 // buckets plus a generic fallback; deliberately NOT an exhaustive icon library.
 export type FileKind = "image" | "pdf" | "text" | "audio" | "video" | "archive" | "generic";

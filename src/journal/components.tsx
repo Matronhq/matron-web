@@ -117,6 +117,7 @@ import {
     type EventPayload,
     type FileKind,
     fileKindFromMime,
+    imageFrameStyle,
     isNearBottom,
     type MediaDims,
     parseMediaDims,
@@ -2843,13 +2844,11 @@ function AuthenticatedMedia({
 
     if (error) return <div className="mj_Error">{error}</div>;
     if (image) {
-        // Reserve an aspect-ratio box BEFORE the blob decodes so the thread does not reflow
-        // when the image finishes loading. `width` seeds the intrinsic size (capped by the
-        // .mj_Image max-width in CSS); `aspectRatio` holds the height. Absent dims means no
-        // reserved box, current fluid behaviour (fallback for un-measured images).
-        const frameStyle: React.CSSProperties | undefined = dims
-            ? { aspectRatio: `${dims.width} / ${dims.height}`, width: dims.width }
-            : undefined;
+        // Reserve an aspect-ratio box BEFORE the blob decodes so the thread does not reflow when
+        // the image finishes loading. imageFrameStyle pre-shrinks the width so the CSS max-height
+        // cap preserves the aspect ratio (a non-replaced <div> won't back-shrink on its own).
+        // Absent dims means no reserved box, current fluid behaviour (fallback for un-measured).
+        const frameStyle: React.CSSProperties | undefined = dims ? imageFrameStyle(dims) : undefined;
         return (
             <figure className="mj_Image">
                 <div className={`mj_ImageFrame${dims ? " mj_ImageFrame_sized" : ""}`} style={frameStyle}>

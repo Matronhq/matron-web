@@ -2011,9 +2011,11 @@ describe("attachment composer", () => {
         expect(frame).not.toBeNull();
         expect(frame?.classList.contains("mj_ImageFrame_sized")).toBe(true);
         // The reserved box is the inline aspect-ratio + width; this is what holds height
-        // before the blob decodes so the thread does not reflow.
+        // before the blob decodes so the thread does not reflow. The width is pre-shrunk so the
+        // 520px max-height cap preserves the ratio (1200×800 → 780×520), since a non-replaced
+        // <div> won't back-shrink its width on its own.
         expect(frame?.style.aspectRatio).toBe("1200 / 800");
-        expect(frame?.style.width).toBe("1200px");
+        expect(frame?.style.width).toBe("780px");
     });
 
     it("does NOT reserve a box for an image event without dims (fluid fallback)", async () => {
