@@ -611,9 +611,17 @@ describe("subchat conversation list", () => {
         const chip = container.querySelector(".mj_RoomListCollapsedSubs");
         expect(chip).not.toBeNull();
         expect(chip?.textContent).toContain("1");
-        // Unread hidden child → the chip carries the unread accent + an accessible "unread" label.
+        // Visual: the chip carries the unread accent.
         expect(chip?.classList.contains("mj_RoomListCollapsedSubs_unread")).toBe(true);
-        expect(chip?.getAttribute("aria-label") ?? "").toContain("unread");
+        // Accessible: the chip is decorative, so the hidden-child count + unread state are
+        // announced through the containing row button's aria-label (a nested label would be silent).
+        expect(chip?.getAttribute("aria-hidden")).toBe("true");
+        const rootLabel =
+            [...container.querySelectorAll<HTMLButtonElement>(".mj_RoomListItem")]
+                .map((b) => b.getAttribute("aria-label") ?? "")
+                .find((l) => l.startsWith("Open room Root")) ?? "";
+        expect(rootLabel).toContain("1 subagent hidden");
+        expect(rootLabel).toContain("unread");
     });
 
     it("does NOT flag the collapsed hidden-count chip when the hidden child has no unread", async () => {
@@ -637,6 +645,12 @@ describe("subchat conversation list", () => {
         const chip = container.querySelector(".mj_RoomListCollapsedSubs");
         expect(chip).not.toBeNull();
         expect(chip?.classList.contains("mj_RoomListCollapsedSubs_unread")).toBe(false);
-        expect(chip?.getAttribute("aria-label") ?? "").not.toContain("unread");
+        // Button label announces the hidden count but NOT unread when no hidden child is unread.
+        const rootLabel =
+            [...container.querySelectorAll<HTMLButtonElement>(".mj_RoomListItem")]
+                .map((b) => b.getAttribute("aria-label") ?? "")
+                .find((l) => l.startsWith("Open room Root")) ?? "";
+        expect(rootLabel).toContain("1 subagent hidden");
+        expect(rootLabel).not.toContain("unread");
     });
 });

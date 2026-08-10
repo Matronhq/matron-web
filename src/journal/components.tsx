@@ -1069,7 +1069,11 @@ function ConversationList({
                     className={`mj_RoomListItem${selected ? " mj_RoomListItem_selected" : ""}${isSubagent ? " mj_RoomListItem_sub" : ""}`}
                     type="button"
                     aria-current={selected ? "page" : undefined}
-                    aria-label={`Open ${isSubagent ? "subagent" : "room"} ${name}${outcomeStatus ? `, ${outcomeStatus}` : ""}, last activity ${relativeTimestamp}${overrideUnread ? ", marked unread" : ""}`}
+                    aria-label={`Open ${isSubagent ? "subagent" : "room"} ${name}${outcomeStatus ? `, ${outcomeStatus}` : ""}, last activity ${relativeTimestamp}${overrideUnread ? ", marked unread" : ""}${
+                        collapsedSubagentCount > 0
+                            ? `, ${collapsedSubagentCount} subagent${collapsedSubagentCount === 1 ? "" : "s"} hidden${collapsedSubagentUnread ? " (unread)" : ""}`
+                            : ""
+                    }`}
                     onClick={(event) => {
                         if (longPressFiredRef.current) {
                             longPressFiredRef.current = false;
@@ -1157,13 +1161,13 @@ function ConversationList({
                     )}
                     <span className="mj_RoomListMeta">
                         {collapsedSubagentCount > 0 && (
+                            // Decorative: the hidden-child count + unread state are announced via the
+                            // containing row button's aria-label (a nested label here would be silent to AT).
                             <span
                                 className={`mj_RoomListCollapsedSubs${
                                     collapsedSubagentUnread ? " mj_RoomListCollapsedSubs_unread" : ""
                                 }`}
-                                aria-label={`${collapsedSubagentCount} subagent${
-                                    collapsedSubagentCount === 1 ? "" : "s"
-                                } hidden${collapsedSubagentUnread ? ", unread" : ""}`}
+                                aria-hidden="true"
                             >
                                 <ChevronLeftIcon aria-hidden />
                                 {collapsedSubagentCount}
