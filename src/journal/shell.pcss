@@ -577,6 +577,14 @@ button {
     height: 12px;
 }
 
+/* A hidden subagent child under this collapsed parent is unread: lift the chip out of the muted
+   tertiary treatment onto the accent ink and append the shared unread dot, so a streaming child's
+   unread is never silent once its own row is collapsed away (loop: matron-web #13 review). */
+.mj_RoomListCollapsedSubs_unread {
+    color: var(--cpd-color-text-action-accent);
+    font-weight: 600;
+}
+
 .mj_RoomListTime {
     /* v4 meta.xs (timestamp): 11px / 400 / 14px, tertiary ink. */
     color: var(--cpd-color-text-tertiary);

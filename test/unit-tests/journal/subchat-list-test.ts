@@ -585,4 +585,58 @@ describe("subchat conversation list", () => {
         expect(roomNames()).toEqual(["Root"]);
         expect(container.querySelector(".mj_RoomListCollapsedSubs")).toBeNull();
     });
+
+    it("flags the collapsed hidden-count chip as unread when a hidden running child is unread", async () => {
+        // Regression guard: collapsing a parent removes the child's own inline row (which carried
+        // its own unread badge). The replacement "N hidden" chip must not silence a streaming
+        // child's unread — otherwise the unread state surfaces nowhere (row gone, aggregate badge
+        // already excludes nested children, strip pills never show unread).
+        const client = new MatronJournalClient();
+        (client as unknown as ClientInternals).state = {
+            ...client.getSnapshot(),
+            phase: "signed-in",
+            session: SESSION,
+            conversations: [
+                conversation("root", "Root", undefined, "running"),
+                { ...conversation("root:sub:linked", "Linked child", "root", "running"), unread_count: 3 },
+            ],
+            collapsedSubagentParentIds: new Set(["root"]),
+            connection: "online",
+        };
+        container = document.createElement("div");
+        document.body.append(container);
+        root = createRoot(container);
+        await act(async () => root.render(React.createElement(MatronApp, { client })));
+
+        const chip = container.querySelector(".mj_RoomListCollapsedSubs");
+        expect(chip).not.toBeNull();
+        expect(chip?.textContent).toContain("1");
+        // Unread hidden child → the chip carries the unread accent + an accessible "unread" label.
+        expect(chip?.classList.contains("mj_RoomListCollapsedSubs_unread")).toBe(true);
+        expect(chip?.getAttribute("aria-label") ?? "").toContain("unread");
+    });
+
+    it("does NOT flag the collapsed hidden-count chip when the hidden child has no unread", async () => {
+        const client = new MatronJournalClient();
+        (client as unknown as ClientInternals).state = {
+            ...client.getSnapshot(),
+            phase: "signed-in",
+            session: SESSION,
+            conversations: [
+                conversation("root", "Root", undefined, "running"),
+                conversation("root:sub:linked", "Linked child", "root", "running"),
+            ],
+            collapsedSubagentParentIds: new Set(["root"]),
+            connection: "online",
+        };
+        container = document.createElement("div");
+        document.body.append(container);
+        root = createRoot(container);
+        await act(async () => root.render(React.createElement(MatronApp, { client })));
+
+        const chip = container.querySelector(".mj_RoomListCollapsedSubs");
+        expect(chip).not.toBeNull();
+        expect(chip?.classList.contains("mj_RoomListCollapsedSubs_unread")).toBe(false);
+        expect(chip?.getAttribute("aria-label") ?? "").not.toContain("unread");
+    });
 });

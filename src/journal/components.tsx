@@ -1047,14 +1047,22 @@ function ConversationList({
         // children are promoted to top-level), so it is absent from that set → no count, no false
         // "N hidden" even if its collapse state persisted through archival. The set is only populated
         // for real hosts, so the running-child count below always measures exactly what collapse hides.
-        const collapsedSubagentCount =
+        const collapsedSubagentChildren =
             !isSubagent &&
             state.collapsedSubagentParentIds.has(conversation.id) &&
             hasSubagentChildRows(conversation, sidebarIndex)
                 ? childrenOf(state.conversations, conversation.id).filter(
                       (child) => !state.archivedIds.has(child.id) && child.session_state === "running",
-                  ).length
-                : 0;
+                  )
+                : [];
+        const collapsedSubagentCount = collapsedSubagentChildren.length;
+        // Collapse removes each hidden child's own inline row + unread badge. If any hidden child
+        // is still unread, the chip must carry that signal — otherwise a streaming child's unread
+        // surfaces nowhere (the aggregate badge already excludes nested children, and the strip
+        // pills never show unread). Measured over the SAME set the count derives from.
+        const collapsedSubagentUnread = collapsedSubagentChildren.some((child) =>
+            effectiveUnread(child, state.unreadOverrideIds),
+        );
         return (
             <div className="mj_RoomListItem_wrapper" role="listitem" key={conversation.id}>
                 <button
@@ -1150,13 +1158,16 @@ function ConversationList({
                     <span className="mj_RoomListMeta">
                         {collapsedSubagentCount > 0 && (
                             <span
-                                className="mj_RoomListCollapsedSubs"
+                                className={`mj_RoomListCollapsedSubs${
+                                    collapsedSubagentUnread ? " mj_RoomListCollapsedSubs_unread" : ""
+                                }`}
                                 aria-label={`${collapsedSubagentCount} subagent${
                                     collapsedSubagentCount === 1 ? "" : "s"
-                                } hidden`}
+                                } hidden${collapsedSubagentUnread ? ", unread" : ""}`}
                             >
                                 <ChevronLeftIcon aria-hidden />
                                 {collapsedSubagentCount}
+                                {collapsedSubagentUnread && <span className="mj_UnreadDot" aria-hidden />}
                             </span>
                         )}
                         <span className="mj_RoomListTime">{relativeTimestamp}</span>
