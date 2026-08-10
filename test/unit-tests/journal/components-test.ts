@@ -1542,6 +1542,28 @@ describe("attachment composer", () => {
         expect(client.getSnapshot().stagedUploads!.total).toBe(2);
     });
 
+    it("ignores a paste the composer already consumed (defaultPrevented) instead of double-staging", async () => {
+        const client = signedInClient();
+        rendered = await renderClient(client);
+        // Open the upload dialog so its document-level paste listener is mounted.
+        await act(async () => client.stageFiles([new File(["a"], "a.txt", { type: "text/plain" })]));
+        const stageFiles = jest.spyOn(client, "stageFiles");
+        stageFiles.mockClear();
+
+        // The bootstrap paste the composer consumed arrives at the dialog's listener with
+        // defaultPrevented already set (composer called preventDefault()). In a real browser
+        // this is the SAME event that opened the dialog, reaching a listener mounted mid-dispatch;
+        // jsdom can't reproduce that synchronous-mount race, but the guard is what prevents the
+        // second stage, so assert it directly: a defaultPrevented paste must stage nothing.
+        const consumed = Object.assign(new Event("paste", { bubbles: true, cancelable: true }), {
+            clipboardData: { files: [new File(["p"], "p.png", { type: "image/png" })] },
+        });
+        consumed.preventDefault();
+        await act(async () => document.dispatchEvent(consumed));
+
+        expect(stageFiles).not.toHaveBeenCalled();
+    });
+
     it("file drop while the modal is open prevents navigation and stages nothing extra", async () => {
         const client = signedInClient();
         rendered = await renderClient(client);
