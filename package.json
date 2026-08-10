@@ -53,7 +53,7 @@
         "jest-environment-jsdom": "^30.0.0",
         "mini-css-extract-plugin": "^2.10.0",
         "odiff-bin": "^4.5.0",
-        "postcss": "^8.5.0",
+        "postcss": "^8.5.23",
         "postcss-loader": "^8.2.0",
         "postcss-preset-env": "^11.1.0",
         "prettier": "^3.8.0",
