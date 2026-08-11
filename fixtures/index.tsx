@@ -94,7 +94,8 @@ const conversations: Conversation[] = [
 
 // A representative thread that exercises EVERY content renderer so the harness shows the
 // real shapes/fonts/bubbles: fenced code, plain markdown, exec tool_output card, doc-edit
-// diff card, permission card, and own (user) bubbles. ts is epoch-seconds.
+// diff card, permission card, agent-spawn card + its resolved spawn_outcome row, and own
+// (user) bubbles. ts is epoch-seconds.
 const T = 1_782_000_000;
 const DAY_MS = 86_400_000;
 const events: JournalEvent[] = [
@@ -225,6 +226,40 @@ const events: JournalEvent[] = [
         sender: "user:operator",
         type: "prompt_reply",
         payload: { target_seq: 12, choice: "Staging" },
+    },
+    {
+        // Agent-spawn consent card, resolved (see seq 15's spawn_outcome below) — Started +
+        // Open chrome. room_id points at s1, an existing fixture conversation, so the Open
+        // button is a genuine navigable target in the harness.
+        seq: 14,
+        convo_id: "c1",
+        ts: T + 720,
+        sender: "agent:claude",
+        type: "permission_request",
+        payload: {
+            kind: "agent_spawn",
+            request_id: "spawn-fixture-1",
+            from_device_id: 1,
+            from_name: "claude",
+            from_convo_id: "c1",
+            from_convo_title: "matron-web · deploy",
+            target_device_id: 4,
+            target_name: "eric",
+            workdir: "/opt/matron/web-journal",
+            task: "Chase down the flaky upload-timeout test and either fix it or quarantine it with a linked issue.",
+            topic: "Flaky test triage",
+        },
+    },
+    {
+        // Durable resolution of the ask above. Renders twice: the card at seq 14 flips to its
+        // resolved Started+Open state, and this event itself renders the standalone
+        // spawn_outcome timeline row (for once the card has scrolled out of view).
+        seq: 15,
+        convo_id: "c1",
+        ts: T + 780,
+        sender: "journal",
+        type: "spawn_outcome",
+        payload: { request_id: "spawn-fixture-1", outcome: "started", room_id: "s1", child_convo_id: "s1" },
     },
 ];
 

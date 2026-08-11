@@ -487,14 +487,31 @@ export function eventSnippet(type: string, payload: EventPayload): string {
     if (type === "permission_request") {
         // agent_spawn payloads carry no `description` (that's a generic-permission field) — the
         // sidebar row would otherwise read the empty "Permission: " (Task 1 review finding).
-        if (asString(payload.kind) === "agent_spawn") {
-            const topic = asString(payload.topic);
-            const task = asString(payload.task);
-            return `Agent spawn: ${topic || task.split("\n")[0]}`.slice(0, 120);
-        }
+        // Fixed copy, not derived from topic/task: the server mints this same literal string
+        // into the snapshot snippet, and the two must be byte-exact or the sidebar row
+        // flip-flops across a resume (same ruling just applied to the Android client).
+        if (asString(payload.kind) === "agent_spawn") return "🤝 Agent spawn request";
         return `Permission: ${asString(payload.description).slice(0, 100)}`;
     }
-    if (type === "spawn_outcome") return spawnOutcomeSnippet(payload).slice(0, 120);
+    if (type === "spawn_outcome") {
+        // Byte-exact with the server's own snapshot snippet strings — bare, no error-code
+        // suffix, and a terse bracketed fallback for an unrecognised outcome. Deliberately NOT
+        // spawnOutcomeSnippet: that richer copy (error code suffix, "Spawn request resolved")
+        // is for the timeline row only, where local judgement calls don't need to match the
+        // server's minted string.
+        switch (spawnOutcomeKind(payload)) {
+            case "started":
+                return "🚀 Spawned session started";
+            case "declined":
+                return "🚫 Spawn declined";
+            case "expired":
+                return "⌛ Spawn request expired";
+            case "failed":
+                return "❌ Spawn failed";
+            default:
+                return "[spawn_outcome]";
+        }
+    }
     if (typeof payload.snippet === "string") return payload.snippet.slice(0, 120);
     if (type === "tool_output" && typeof payload.command === "string") return `$ ${payload.command}`.slice(0, 120);
     return `[${type}]`;

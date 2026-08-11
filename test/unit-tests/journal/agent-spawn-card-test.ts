@@ -280,13 +280,17 @@ describe("spawn_outcome standalone row", () => {
 });
 
 describe("eventSnippet for spawn_outcome", () => {
+    // Byte-exact with the server's own snapshot snippet strings — bare, no error-code suffix,
+    // and terse for an unrecognised outcome. Deliberately DIFFERENT from the timeline row's
+    // richer copy (spawnOutcomeSnippet, covered in "spawn_outcome standalone row" above), which
+    // keeps the error-code suffix and the "Spawn request resolved" neutral copy.
     it.each([
         ["started", {}, "🚀 Spawned session started"],
         ["declined", {}, "🚫 Spawn declined"],
         ["expired", {}, "⌛ Spawn request expired"],
-        ["failed", { error_code: "boom" }, "❌ Spawn failed — boom"],
-        ["something-new", {}, "Spawn request resolved"],
-    ])("maps outcome %s to its snippet", (outcome, extra, expected) => {
+        ["failed", { error_code: "boom" }, "❌ Spawn failed"],
+        ["something-new", {}, "[spawn_outcome]"],
+    ])("maps outcome %s to its sidebar snippet", (outcome, extra, expected) => {
         expect(eventSnippet("spawn_outcome", { request_id: "spawn-1", outcome, ...extra })).toBe(expected);
     });
 });

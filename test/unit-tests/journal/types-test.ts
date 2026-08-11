@@ -68,23 +68,20 @@ describe("eventSnippet captions", () => {
         );
     });
 
-    it("labels an agent_spawn permission_request by its topic, since it carries no description", () => {
+    it("labels an agent_spawn permission_request with a fixed sidebar snippet, byte-exact with the server's own copy", () => {
+        // Not derived from topic/task — the server mints this same literal string into the
+        // snapshot snippet, and a locally-derived variant would flip-flop the sidebar row
+        // across a resume.
         expect(
             eventSnippet("permission_request", {
                 kind: "agent_spawn",
                 topic: "Flake hunt",
                 task: "Run the suite and fix flakes",
             }),
-        ).toBe("Agent spawn: Flake hunt");
-    });
-
-    it("falls back to the first line of the task when an agent_spawn request has no topic", () => {
-        expect(
-            eventSnippet("permission_request", {
-                kind: "agent_spawn",
-                task: "Line one\nLine two",
-            }),
-        ).toBe("Agent spawn: Line one");
+        ).toBe("🤝 Agent spawn request");
+        expect(eventSnippet("permission_request", { kind: "agent_spawn", task: "Line one\nLine two" })).toBe(
+            "🤝 Agent spawn request",
+        );
     });
 });
 
