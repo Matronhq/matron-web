@@ -84,6 +84,7 @@ interface ClientInternals {
         messages: () => Promise<{ events: [] }>;
         snapshot?: (signal?: AbortSignal) => Promise<{ seq: number; conversations: Conversation[] }>;
         uploadMedia?: (bytes: ArrayBuffer, contentType: string, signal?: AbortSignal) => Promise<{ media_id: string }>;
+        answerAgentSpawn?: (requestId: string, decision: "approve" | "deny") => Promise<void>;
     };
     connection?: {
         send: ReturnType<typeof jest.fn>;
@@ -1095,6 +1096,36 @@ describe("MatronJournalClient state handling", () => {
 
         expect(oldSend).not.toHaveBeenCalled();
         expect(newSend).not.toHaveBeenCalled();
+    });
+});
+
+describe("MatronJournalClient answerAgentSpawn", () => {
+    it("passes the request id and decision straight through to the api", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const answerAgentSpawn = jest.fn().mockResolvedValue(undefined);
+        state.state = signedInState(client);
+        state.api = { messages: jest.fn(), answerAgentSpawn };
+
+        await client.answerAgentSpawn("spawn-1", "approve");
+
+        expect(answerAgentSpawn).toHaveBeenCalledWith("spawn-1", "approve");
+    });
+
+    it("rethrows a JournalApiError from the api unchanged", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const error = new JournalApiError("Already resolved", 409);
+        state.state = signedInState(client);
+        state.api = { messages: jest.fn(), answerAgentSpawn: jest.fn().mockRejectedValue(error) };
+
+        await expect(client.answerAgentSpawn("spawn-1", "approve")).rejects.toBe(error);
+    });
+
+    it("throws when signed out (no api instance)", async () => {
+        const client = new MatronJournalClient();
+
+        await expect(client.answerAgentSpawn("spawn-1", "approve")).rejects.toThrow();
     });
 });
 

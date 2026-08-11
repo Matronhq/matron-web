@@ -8,6 +8,7 @@ Please see LICENSE files in the repository root for full details.
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
+import { JournalApiError } from "../../../src/journal/api";
 import {
     archiveStore,
     favoriteStore,
@@ -15,7 +16,7 @@ import {
     pinnedStore,
     unreadStore,
 } from "../../../src/journal/client";
-import { MatronApp } from "../../../src/journal/components";
+import { EventContent, MatronApp } from "../../../src/journal/components";
 import { eventSnippet } from "../../../src/journal/types";
 import type { ClientState, Conversation, JournalEvent, Session } from "../../../src/journal/types";
 
@@ -287,5 +288,292 @@ describe("eventSnippet for spawn_outcome", () => {
         ["something-new", {}, "Spawn request resolved"],
     ])("maps outcome %s to its snippet", (outcome, extra, expected) => {
         expect(eventSnippet("spawn_outcome", { request_id: "spawn-1", outcome, ...extra })).toBe(expected);
+    });
+});
+
+describe("agent_spawn answer flow", () => {
+    let rendered: { container: HTMLDivElement; root: Root } | undefined;
+
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    afterEach(async () => {
+        if (rendered) {
+            await act(async () => rendered?.root.unmount());
+            rendered.container.remove();
+            rendered = undefined;
+        }
+        jest.useRealTimers();
+        jest.restoreAllMocks();
+    });
+
+    async function renderEventContent(
+        client: MatronJournalClient,
+        event: JournalEvent,
+        spawnOutcomes: ReadonlyMap<string, Record<string, unknown>> = new Map(),
+        isReadOnly = false,
+    ): Promise<{ container: HTMLDivElement; root: Root }> {
+        const container = document.createElement("div");
+        document.body.append(container);
+        const root = createRoot(container);
+        await act(async () => {
+            root.render(
+                React.createElement(EventContent, {
+                    client,
+                    event,
+                    answeredPromptReplies: new Map<string, { choice?: string }>(),
+                    spawnOutcomes,
+                    isReadOnly,
+                }),
+            );
+        });
+        return { container, root };
+    }
+
+    function findButton(container: Element, label: string): HTMLButtonElement | undefined {
+        return [...container.querySelectorAll<HTMLButtonElement>("button")].find(
+            (candidate) => candidate.textContent === label,
+        );
+    }
+
+    it.each([
+        ["Approve", "approve"],
+        ["Deny", "deny"],
+    ])(
+        "tapping %s POSTs the decision via client.answerAgentSpawn and shows Sending… without resolving",
+        async (label, decision) => {
+            const client = signedInClient();
+            const answerAgentSpawn = jest.spyOn(client, "answerAgentSpawn").mockReturnValue(new Promise(() => {}));
+            rendered = await renderEventContent(client, spawnCardEvent());
+            const card = rendered.container.querySelector(".mj_PromptCard_spawn")!;
+
+            await act(async () => findButton(card, label)?.click());
+
+            expect(answerAgentSpawn).toHaveBeenCalledTimes(1);
+            expect(answerAgentSpawn).toHaveBeenCalledWith("spawn-1", decision);
+            expect(card.querySelector(".mj_PromptResolved_pending")?.textContent).toBe("Sending…");
+            expect(card.querySelector(".mj_Answered")).toBeNull();
+            expect(
+                [...card.querySelectorAll<HTMLButtonElement>(".mj_PromptOptions button")].every((b) => b.disabled),
+            ).toBe(true);
+        },
+    );
+
+    it("resolves a pending tap ONLY when the durable spawn_outcome event arrives, not on the POST response", async () => {
+        const client = signedInClient();
+        jest.spyOn(client, "answerAgentSpawn").mockResolvedValue(undefined);
+        const request = spawnCardEvent();
+        rendered = await renderEventContent(client, request);
+        const card = rendered.container.querySelector(".mj_PromptCard_spawn")!;
+
+        await act(async () => findButton(card, "Approve")?.click());
+        expect(card.querySelector(".mj_PromptResolved_pending")?.textContent).toBe("Sending…");
+        expect(card.querySelector(".mj_Answered")).toBeNull();
+
+        await act(async () => {
+            rendered!.root.render(
+                React.createElement(EventContent, {
+                    client,
+                    event: request,
+                    answeredPromptReplies: new Map<string, { choice?: string }>(),
+                    spawnOutcomes: new Map([["spawn-1", { request_id: "spawn-1", outcome: "started", room_id: "r1" }]]),
+                }),
+            );
+        });
+
+        expect(card.querySelector(".mj_PromptResolved_pending")).toBeNull();
+        expect(card.querySelector(".mj_Answered")?.textContent).toBe("Started");
+        expect(card.querySelector(".mj_SpawnOpenButton")).not.toBeNull();
+    });
+
+    it("becomes retryable if no durable outcome arrives within the confirmation window", async () => {
+        jest.useFakeTimers();
+        const client = signedInClient();
+        const answerAgentSpawn = jest.spyOn(client, "answerAgentSpawn").mockResolvedValue(undefined);
+        rendered = await renderEventContent(client, spawnCardEvent());
+        const card = rendered.container.querySelector(".mj_PromptCard_spawn")!;
+
+        await act(async () => findButton(card, "Approve")?.click());
+        expect(card.querySelector(".mj_PromptResolved_pending")?.textContent).toBe("Sending…");
+
+        await act(async () => jest.advanceTimersByTime(10_000));
+
+        expect(card.querySelector(".mj_PromptResolved_pending")).toBeNull();
+        expect(card.querySelector(".mj_PromptResolved_retryable")?.textContent).toBe(
+            "Reply not confirmed — tap to retry",
+        );
+        const buttons = [...card.querySelectorAll<HTMLButtonElement>(".mj_PromptOptions button")];
+        expect(buttons.every((b) => !b.disabled)).toBe(true);
+
+        await act(async () => findButton(card, "Approve")?.click());
+        expect(answerAgentSpawn).toHaveBeenCalledTimes(2);
+    });
+
+    it("shows the resolved-expired copy immediately on a 409 (already answered elsewhere or expired)", async () => {
+        const client = signedInClient();
+        jest.spyOn(client, "answerAgentSpawn").mockRejectedValue(new JournalApiError("conflict", 409));
+        rendered = await renderEventContent(client, spawnCardEvent());
+        const card = rendered.container.querySelector(".mj_PromptCard_spawn")!;
+
+        await act(async () => findButton(card, "Approve")?.click());
+
+        expect(card.querySelector(".mj_PromptResolved_pending")).toBeNull();
+        expect(card.querySelector(".mj_Answered")?.textContent).toBe("Already answered or expired");
+        expect(card.querySelectorAll(".mj_PromptOptions button")).toHaveLength(0);
+    });
+
+    it("shows the gone copy immediately on a 404 (request row no longer exists)", async () => {
+        const client = signedInClient();
+        jest.spyOn(client, "answerAgentSpawn").mockRejectedValue(new JournalApiError("gone", 404));
+        rendered = await renderEventContent(client, spawnCardEvent());
+        const card = rendered.container.querySelector(".mj_PromptCard_spawn")!;
+
+        await act(async () => findButton(card, "Deny")?.click());
+
+        expect(card.querySelector(".mj_PromptResolved_pending")).toBeNull();
+        expect(card.querySelector(".mj_Answered")?.textContent).toBe("That request is no longer on the server.");
+        expect(card.querySelectorAll(".mj_PromptOptions button")).toHaveLength(0);
+    });
+
+    it("goes back to answerable with retry copy on a transport error, and a retry resends", async () => {
+        const client = signedInClient();
+        const answerAgentSpawn = jest
+            .spyOn(client, "answerAgentSpawn")
+            .mockRejectedValueOnce(new JournalApiError("Could not reach the journal server.", 0))
+            .mockResolvedValueOnce(undefined);
+        rendered = await renderEventContent(client, spawnCardEvent());
+        const card = rendered.container.querySelector(".mj_PromptCard_spawn")!;
+
+        await act(async () => findButton(card, "Approve")?.click());
+
+        expect(card.querySelector(".mj_PromptResolved_pending")).toBeNull();
+        expect(card.querySelector(".mj_PromptResolved_retryable")?.textContent).toBe(
+            "Reply not confirmed — tap to retry",
+        );
+        const buttons = [...card.querySelectorAll<HTMLButtonElement>(".mj_PromptOptions button")];
+        expect(buttons.every((b) => !b.disabled)).toBe(true);
+
+        await act(async () => findButton(card, "Approve")?.click());
+        expect(answerAgentSpawn).toHaveBeenCalledTimes(2);
+        expect(card.querySelector(".mj_PromptResolved_pending")?.textContent).toBe("Sending…");
+    });
+
+    it("never sends always_allow — the answer call carries only request_id and decision", async () => {
+        const client = signedInClient();
+        const answerAgentSpawn = jest.spyOn(client, "answerAgentSpawn").mockResolvedValue(undefined);
+        rendered = await renderEventContent(client, spawnCardEvent());
+        const card = rendered.container.querySelector(".mj_PromptCard_spawn")!;
+
+        await act(async () => findButton(card, "Approve")?.click());
+
+        expect(answerAgentSpawn.mock.calls[0]).toEqual(["spawn-1", "approve"]);
+    });
+
+    it("hides Deny/Approve entirely when the card renders read-only (sub-chat transcript)", async () => {
+        const client = signedInClient();
+        rendered = await renderEventContent(client, spawnCardEvent(), new Map(), true);
+        const card = rendered.container.querySelector(".mj_PromptCard_spawn")!;
+
+        expect(card.querySelectorAll(".mj_PromptOptions button")).toHaveLength(0);
+    });
+
+    it("resets its local pending state when reused for a different event identity", async () => {
+        const client = signedInClient();
+        const answerAgentSpawn = jest.spyOn(client, "answerAgentSpawn").mockReturnValue(new Promise(() => {}));
+        const firstRequest = spawnCardEvent();
+        rendered = await renderEventContent(client, firstRequest);
+
+        await act(async () => findButton(rendered!.container, "Approve")?.click());
+        expect(rendered.container.querySelector(".mj_PromptResolved_pending")?.textContent).toBe("Sending…");
+
+        const nextRequest: JournalEvent = {
+            ...firstRequest,
+            seq: 43,
+            payload: { ...firstRequest.payload, request_id: "spawn-2", task: "A different task entirely" },
+        };
+        await act(async () => {
+            rendered!.root.render(
+                React.createElement(EventContent, {
+                    client,
+                    event: nextRequest,
+                    answeredPromptReplies: new Map<string, { choice?: string }>(),
+                    spawnOutcomes: new Map(),
+                }),
+            );
+        });
+
+        const card = rendered.container.querySelector(".mj_PromptCard_spawn")!;
+        expect(card.textContent).toContain("A different task entirely");
+        expect(card.querySelector(".mj_PromptResolved")).toBeNull();
+        expect([...card.querySelectorAll(".mj_PromptOptions button")].map((b) => b.textContent)).toEqual([
+            "Deny",
+            "Approve",
+        ]);
+        expect(answerAgentSpawn).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not let a spawn_outcome missing request_id resolve an unrelated card (memo hygiene)", async () => {
+        const card = spawnCardEvent({ request_id: "undefined" });
+        const malformedOutcome: JournalEvent = {
+            seq: 41,
+            convo_id: "c1",
+            ts: 1700000100,
+            sender: "journal",
+            type: "spawn_outcome",
+            payload: { outcome: "started", room_id: "rX" }, // request_id entirely absent
+        };
+        rendered = await renderClient(signedInClient({ events: [card, malformedOutcome] }));
+
+        const cardEl = rendered.container.querySelector(".mj_PromptCard_spawn");
+        expect(cardEl?.querySelector(".mj_Answered")).toBeNull();
+        expect([...(cardEl?.querySelectorAll(".mj_PromptOptions button") ?? [])].map((b) => b.textContent)).toEqual([
+            "Deny",
+            "Approve",
+        ]);
+    });
+});
+
+describe("agent_spawn Open / deep-link", () => {
+    let rendered: { container: HTMLDivElement; root: Root } | undefined;
+
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    afterEach(async () => {
+        if (rendered) {
+            await act(async () => rendered?.root.unmount());
+            rendered.container.remove();
+            rendered = undefined;
+        }
+        jest.restoreAllMocks();
+    });
+
+    it("Open on a resolved card navigates via selectConversation with fromRpcCreate", async () => {
+        const client = signedInClient({
+            events: [spawnCardEvent(), spawnOutcomeEvent("started", { room_id: "r1", child_convo_id: "cc1" })],
+        });
+        const selectConversation = jest.spyOn(client, "selectConversation").mockResolvedValue(undefined);
+        rendered = await renderClient(client);
+        const card = rendered.container.querySelector(".mj_PromptCard_spawn");
+        const openButton = card?.querySelector<HTMLButtonElement>(".mj_SpawnOpenButton");
+
+        await act(async () => openButton?.click());
+
+        expect(selectConversation).toHaveBeenCalledWith("r1", { fromRpcCreate: true });
+    });
+
+    it("Open on the standalone outcome row navigates via selectConversation with fromRpcCreate", async () => {
+        const client = signedInClient({ events: [spawnOutcomeEvent("started", { room_id: "r1" })] });
+        const selectConversation = jest.spyOn(client, "selectConversation").mockResolvedValue(undefined);
+        rendered = await renderClient(client);
+        const openButton = rendered.container.querySelector<HTMLButtonElement>(
+            ".mj_SpawnOutcomeRow .mj_SpawnOpenButton",
+        );
+
+        await act(async () => openButton?.click());
+
+        expect(selectConversation).toHaveBeenCalledWith("r1", { fromRpcCreate: true });
     });
 });

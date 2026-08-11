@@ -1128,6 +1128,13 @@ export class MatronJournalClient {
         return sent;
     }
 
+    // House pattern: components talk to the client, not JournalApi directly. Errors (notably
+    // JournalApiError with `.status` 409/404) are rethrown unchanged for the card's state machine.
+    public async answerAgentSpawn(requestId: string, decision: "approve" | "deny"): Promise<void> {
+        if (!this.api) throw new Error("Not signed in.");
+        await this.api.answerAgentSpawn(requestId, decision);
+    }
+
     public async mediaUrl(mediaId: string): Promise<string> {
         const cached = this.mediaUrls.get(mediaId);
         if (cached) return cached;

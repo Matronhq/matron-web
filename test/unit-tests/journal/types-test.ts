@@ -9,6 +9,7 @@ import {
     endpointUrl,
     enforceToolLogTtl,
     eventSnippet,
+    MESSAGE_EVENT_TYPES,
     normalizeServerUrl,
     websocketUrl,
 } from "../../../src/journal/types";
@@ -59,5 +60,36 @@ describe("eventSnippet captions", () => {
     it("falls back to the filename when no caption is present", () => {
         expect(eventSnippet("image", { filename: "shot.png" })).toBe("🖼 shot.png");
         expect(eventSnippet("file", { filename: "notes.txt", caption: "" })).toBe("📎 notes.txt");
+    });
+
+    it("labels a generic permission_request with its description", () => {
+        expect(eventSnippet("permission_request", { description: "Restart nginx on prod?" })).toBe(
+            "Permission: Restart nginx on prod?",
+        );
+    });
+
+    it("labels an agent_spawn permission_request by its topic, since it carries no description", () => {
+        expect(
+            eventSnippet("permission_request", {
+                kind: "agent_spawn",
+                topic: "Flake hunt",
+                task: "Run the suite and fix flakes",
+            }),
+        ).toBe("Agent spawn: Flake hunt");
+    });
+
+    it("falls back to the first line of the task when an agent_spawn request has no topic", () => {
+        expect(
+            eventSnippet("permission_request", {
+                kind: "agent_spawn",
+                task: "Line one\nLine two",
+            }),
+        ).toBe("Agent spawn: Line one");
+    });
+});
+
+describe("MESSAGE_EVENT_TYPES", () => {
+    it("counts spawn_outcome as a message event, so it bumps unread and drives the snippet", () => {
+        expect(MESSAGE_EVENT_TYPES.has("spawn_outcome")).toBe(true);
     });
 });

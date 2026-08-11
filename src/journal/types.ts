@@ -13,6 +13,7 @@ export const MESSAGE_EVENT_TYPES = new Set([
     "permission_request",
     "file",
     "image",
+    "spawn_outcome",
 ]);
 
 export interface MatronConfig {
@@ -483,7 +484,16 @@ export function eventSnippet(type: string, payload: EventPayload): string {
     if (type === "file") return `📎 ${asString(payload.caption) || asString(payload.filename, "File")}`.slice(0, 120);
     if (type === "image") return `🖼 ${asString(payload.caption) || asString(payload.filename, "Image")}`.slice(0, 120);
     if (type === "prompt") return `? ${asString(payload.question).slice(0, 110)}`;
-    if (type === "permission_request") return `Permission: ${asString(payload.description).slice(0, 100)}`;
+    if (type === "permission_request") {
+        // agent_spawn payloads carry no `description` (that's a generic-permission field) — the
+        // sidebar row would otherwise read the empty "Permission: " (Task 1 review finding).
+        if (asString(payload.kind) === "agent_spawn") {
+            const topic = asString(payload.topic);
+            const task = asString(payload.task);
+            return `Agent spawn: ${topic || task.split("\n")[0]}`.slice(0, 120);
+        }
+        return `Permission: ${asString(payload.description).slice(0, 100)}`;
+    }
     if (type === "spawn_outcome") return spawnOutcomeSnippet(payload).slice(0, 120);
     if (typeof payload.snippet === "string") return payload.snippet.slice(0, 120);
     if (type === "tool_output" && typeof payload.command === "string") return `$ ${payload.command}`.slice(0, 120);

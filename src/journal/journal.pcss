@@ -2594,6 +2594,15 @@ li.mj_AttachmentChip_error {
     min-width: 0;
 }
 
+/* The base family's fixed 24px glyph column comes from CSS grid (.mj_PromptBody /
+   .mj_PromptResolved), which this flex override drops. An empty .mj_PromptGlyph span (no
+   icon glyph is drawn on this row) then collapses to its intrinsic ~0 width in a flex row,
+   pulling the "Started"/"Denied"/etc. text left of the base family's grid alignment. Pin it
+   back to the same 24px the grid would have given it. */
+.mj_PromptCard_spawn .mj_PromptResolved .mj_PromptGlyph {
+    flex: 0 0 24px;
+}
+
 .mj_SpawnOpenButton {
     flex: 0 0 auto;
     min-height: 30px;

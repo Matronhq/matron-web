@@ -21,6 +21,7 @@ import React, {
 
 import matronLogo from "../../res/matron-logo-simple.svg";
 import { INITIAL_SGR_STATE, parseAnsi, stripLeadingSgrFragment } from "./ansi";
+import { JournalApiError } from "./api";
 import {
     BROWSER_MEMORY_SAFETY_MAX_BYTES,
     errorMessage,
@@ -2752,22 +2753,32 @@ function spawnOutcomeCardLabel(payload: EventPayload): string {
 }
 
 type AgentSpawnDecision = "approve" | "deny";
+type AgentSpawnLocalPhase = "idle" | "sending" | "retryable" | "already-answered" | "gone";
 
-const noopAgentSpawnAnswer = (): void => undefined;
+const noopAgentSpawnAnswer = (): Promise<void> => Promise.resolve();
 const noopAgentSpawnOpen = (): void => undefined;
 
 // Joins the .mj_PromptCard family (§ design "Kind dispatch and components"): same chrome and
-// row order as PromptCard so answering doesn't reflow. Render-only in Task 1 — onAnswer/onOpen
-// default to no-ops; Task 2 wires the real POST /agent-spawn/answer and Open navigation.
+// row order as PromptCard so answering doesn't reflow.
+//
+// Local state machine (§ design "Resolution state"): idle -> sending -> {resolved via the
+// DURABLE spawn_outcome event | retryable after PROMPT_REPLY_CONFIRMATION_TIMEOUT_MS with no
+// durable event, mirroring PromptCard's confirmation-timeout treatment}. A tap's own POST can
+// also fail synchronously: 409 (already answered elsewhere/expired) and 404 (row gone) resolve
+// the card immediately with local copy; any other failure (network/transport) goes straight to
+// the retryable state. The `outcome` prop (derived from journaled events, no local persistence)
+// always wins over local phase — a durable resolution can arrive from another device at any time.
 function AgentSpawnCard({
     event,
     outcome,
+    isReadOnly = false,
     onAnswer = noopAgentSpawnAnswer,
     onOpen = noopAgentSpawnOpen,
 }: {
     event: JournalEvent;
     outcome: EventPayload | null;
-    onAnswer?: (decision: AgentSpawnDecision) => void;
+    isReadOnly?: boolean;
+    onAnswer?: (decision: AgentSpawnDecision) => Promise<void>;
     onOpen?: (roomId: string) => void;
 }): React.ReactElement {
     const payload = event.payload;
@@ -2781,6 +2792,42 @@ function AgentSpawnCard({
     const resolved = outcome !== null;
     const kind = resolved ? spawnOutcomeKind(outcome) : undefined;
     const roomId = resolved ? asString(outcome.room_id) : "";
+
+    const [phase, setPhase] = useState<AgentSpawnLocalPhase>("idle");
+    const phaseRef = useRef(phase);
+    const setLocalPhase = (next: AgentSpawnLocalPhase): void => {
+        phaseRef.current = next;
+        setPhase(next);
+    };
+
+    const handleAnswer = (decision: AgentSpawnDecision): void => {
+        if (resolved || phaseRef.current === "sending") return;
+        setLocalPhase("sending");
+        void onAnswer(decision).then(
+            () => undefined, // ack received; wait for the durable event (or the timeout effect below)
+            (error: unknown) => {
+                if (error instanceof JournalApiError && error.status === 409) setLocalPhase("already-answered");
+                else if (error instanceof JournalApiError && error.status === 404) setLocalPhase("gone");
+                else setLocalPhase("retryable"); // transport/other error -> back to answerable
+            },
+        );
+    };
+
+    useEffect(() => {
+        if (phase !== "sending" || resolved) return;
+        const timer = setTimeout(() => {
+            if (phaseRef.current === "sending") setLocalPhase("retryable");
+        }, PROMPT_REPLY_CONFIRMATION_TIMEOUT_MS);
+        return (): void => clearTimeout(timer);
+    }, [phase, resolved]);
+
+    const pending = !resolved && phase === "sending";
+    const retryable = !resolved && phase === "retryable";
+    const alreadyAnswered = !resolved && phase === "already-answered";
+    const gone = !resolved && phase === "gone";
+    // Hides the action row for the same reasons a durable resolution does — nothing more to
+    // tap — even though these two are local-only, never journaled.
+    const pseudoResolved = resolved || alreadyAnswered || gone;
 
     return (
         <div className="mj_PromptCard mj_PromptCard_spawn">
@@ -2815,14 +2862,45 @@ function AgentSpawnCard({
                 </div>
             </div>
             <pre className="mj_SpawnTask">{task}</pre>
-            {!resolved && (
+            {/* A read-only card (sub-chat transcript viewer) never shows live Approve/Deny — it
+                mirrors PromptCard's own isReadOnly gate (§ Task-1-review scope A). */}
+            {!isReadOnly && !pseudoResolved && (
                 <div className="mj_PromptOptions">
-                    <button type="button" onClick={() => onAnswer("deny")}>
+                    <button type="button" disabled={pending} onClick={() => handleAnswer("deny")}>
                         Deny
                     </button>
-                    <button type="button" className="mj_PromptOption_affirmative" onClick={() => onAnswer("approve")}>
+                    <button
+                        type="button"
+                        className="mj_PromptOption_affirmative"
+                        disabled={pending}
+                        onClick={() => handleAnswer("approve")}
+                    >
                         Approve
                     </button>
+                </div>
+            )}
+            {pending && (
+                <div className="mj_PromptResolved mj_PromptResolved_pending">
+                    <span className="mj_PromptGlyph" aria-hidden="true" />
+                    <span className="mj_Muted">Sending…</span>
+                </div>
+            )}
+            {retryable && (
+                <div className="mj_PromptResolved mj_PromptResolved_retryable">
+                    <span className="mj_PromptGlyph" aria-hidden="true" />
+                    <span className="mj_Muted">Reply not confirmed — tap to retry</span>
+                </div>
+            )}
+            {alreadyAnswered && (
+                <div className="mj_PromptResolved mj_PromptResolved_expired">
+                    <span className="mj_PromptGlyph" aria-hidden="true" />
+                    <span className="mj_Answered">Already answered or expired</span>
+                </div>
+            )}
+            {gone && (
+                <div className="mj_PromptResolved mj_PromptResolved_gone">
+                    <span className="mj_PromptGlyph" aria-hidden="true" />
+                    <span className="mj_Answered">That request is no longer on the server.</span>
                 </div>
             )}
             {resolved && (
@@ -2843,20 +2921,18 @@ function AgentSpawnCard({
 // Minimal standalone row for the durable spawn_outcome event itself (§ design "Timeline
 // rendering of spawn_outcome itself") — keeps the record legible once the card has scrolled
 // away, and stops the default case's raw JSON <details> dump.
-function SpawnOutcomeRow({
-    event,
-    onOpen = noopAgentSpawnOpen,
-}: {
-    event: JournalEvent;
-    onOpen?: (roomId: string) => void;
-}): React.ReactElement {
+function SpawnOutcomeRow({ client, event }: { client: MatronJournalClient; event: JournalEvent }): React.ReactElement {
     const kind = spawnOutcomeKind(event.payload);
     const roomId = asString(event.payload.room_id);
     return (
         <div className={`mj_SpawnOutcomeRow mj_SpawnOutcomeRow_${kind}`}>
             <span className="mj_SpawnOutcomeStatus">{spawnOutcomeSnippet(event.payload)}</span>
             {kind === "started" && roomId && (
-                <button type="button" className="mj_SpawnOpenButton" onClick={() => onOpen(roomId)}>
+                <button
+                    type="button"
+                    className="mj_SpawnOpenButton"
+                    onClick={() => void client.selectConversation(roomId, { fromRpcCreate: true })}
+                >
                     Open
                 </button>
             )}
@@ -3294,6 +3370,9 @@ export function EventContent({
                         key={`${event.convo_id}:${event.seq}`}
                         event={event}
                         outcome={spawnOutcomes.get(requestId) ?? null}
+                        isReadOnly={isReadOnly}
+                        onAnswer={(decision) => client.answerAgentSpawn(requestId, decision)}
+                        onOpen={(roomId) => void client.selectConversation(roomId, { fromRpcCreate: true })}
                     />
                 );
             }
@@ -3316,7 +3395,7 @@ export function EventContent({
                 </div>
             );
         case "spawn_outcome":
-            return <SpawnOutcomeRow event={event} />;
+            return <SpawnOutcomeRow client={client} event={event} />;
         case "tool_output":
             return <ToolOutput client={client} event={event} />;
         case "diff":
@@ -3667,7 +3746,12 @@ function Timeline({
         const outcomes = new Map<string, EventPayload>();
         for (const event of state.events) {
             if (event.type !== "spawn_outcome") continue;
-            outcomes.set(String(event.payload.request_id), event.payload);
+            // A non-string request_id (malformed/missing) must never coerce into the map — a
+            // bare `String(...)` here produces a junk "undefined" key that a card whose own
+            // request_id happens to stringify the same way could spuriously match (Task-1
+            // review scope D).
+            if (typeof event.payload.request_id !== "string") continue;
+            outcomes.set(event.payload.request_id, event.payload);
         }
         return outcomes;
     }, [state.events]);
