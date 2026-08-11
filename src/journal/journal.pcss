@@ -3001,7 +3001,9 @@ button.mj_File {
 
 .mj_ImageFrame_sized {
     max-width: 100%;
-    max-height: 520px;
+    /* Cap is the single JS source IMAGE_FRAME_MAX_HEIGHT_PX, emitted as this custom property on
+       the .mj_Image figure (see AuthenticatedMedia). Do not hardcode the number here. */
+    max-height: var(--mj-image-frame-max-height);
     overflow: hidden;
     border-radius: 6px;
 }
@@ -3028,7 +3030,9 @@ button.mj_File {
 .mj_Image img {
     display: block;
     max-width: 100%;
-    max-height: 520px;
+    /* Same single source as .mj_ImageFrame_sized — the --mj-image-frame-max-height custom property
+       emitted from IMAGE_FRAME_MAX_HEIGHT_PX on the parent .mj_Image figure. */
+    max-height: var(--mj-image-frame-max-height);
     border-radius: 6px;
 }
 

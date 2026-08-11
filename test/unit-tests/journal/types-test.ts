@@ -20,6 +20,14 @@ import {
 describe("matron-journal media payload helpers", () => {
     it("parses positive dims and rejects absent / non-positive / malformed", () => {
         expect(parseMediaDims({ width: 1200, height: 800 })).toEqual({ width: 1200, height: 800 });
+        // Matrix `m.image` `info` spelling (`w`/`h`) — the shape the bridge actually passes through.
+        expect(parseMediaDims({ w: 10, h: 20 })).toEqual({ width: 10, height: 20 });
+        // `{ width, height }` wins when both spellings are present.
+        expect(parseMediaDims({ width: 1200, height: 800, w: 1, h: 1 })).toEqual({ width: 1200, height: 800 });
+        // `{ w, h }` is subject to the same positive / finite guards as `{ width, height }`.
+        expect(parseMediaDims({ w: 0, h: 20 })).toBeUndefined();
+        expect(parseMediaDims({ w: 10, h: -1 })).toBeUndefined();
+        expect(parseMediaDims({ w: "10", h: "20" })).toBeUndefined();
         expect(parseMediaDims(undefined)).toBeUndefined();
         expect(parseMediaDims(null)).toBeUndefined();
         expect(parseMediaDims({})).toBeUndefined();

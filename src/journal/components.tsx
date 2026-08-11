@@ -117,6 +117,7 @@ import {
     type EventPayload,
     type FileKind,
     fileKindFromMime,
+    IMAGE_FRAME_MAX_HEIGHT_PX,
     imageFrameStyle,
     isNearBottom,
     type MediaDims,
@@ -2849,11 +2850,22 @@ function AuthenticatedMedia({
         // cap preserves the aspect ratio (a non-replaced <div> won't back-shrink on its own).
         // Absent dims means no reserved box, current fluid behaviour (fallback for un-measured).
         const frameStyle: React.CSSProperties | undefined = dims ? imageFrameStyle(dims) : undefined;
+        // Emit the JS-authoritative height cap as a CSS custom property so the pcss frame rules
+        // (`.mj_ImageFrame_sized`, `.mj_Image img`) consume it via var() and cannot drift from the
+        // JS constant. Set on the always-present figure so it cascades to both sized and fluid cases.
+        const figureStyle = { "--mj-image-frame-max-height": `${IMAGE_FRAME_MAX_HEIGHT_PX}px` } as React.CSSProperties;
         return (
-            <figure className="mj_Image">
+            <figure className="mj_Image" style={figureStyle}>
                 <div className={`mj_ImageFrame${dims ? " mj_ImageFrame_sized" : ""}`} style={frameStyle}>
                     {url ? (
-                        <img src={url} alt={caption || "Shared image"} />
+                        // onError collapses the reserved frame (figure → mj_Error) when the blob decodes
+                        // to a broken image, so a corrupt image doesn't hold the full reserved box around
+                        // a broken glyph — matching the pre-reserve fluid behaviour.
+                        <img
+                            src={url}
+                            alt={caption || "Shared image"}
+                            onError={() => setError("Image failed to load")}
+                        />
                     ) : (
                         <div className="mj_MediaLoading">{loading ? "Loading image…" : "Image"}</div>
                     )}
@@ -3206,7 +3218,6 @@ export function EventContent({
                     image
                     caption={asString(event.payload.caption)}
                     dims={parseMediaDims(event.payload.dims)}
-                    contentType={asString(event.payload.content_type) || undefined}
                 />
             ) : (
                 <div className="mj_Muted">Image unavailable</div>

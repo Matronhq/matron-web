@@ -2018,6 +2018,60 @@ describe("attachment composer", () => {
         expect(frame?.style.width).toBe("780px");
     });
 
+    it("reserves the box for the Matrix `{ w, h }` dims spelling the bridge actually passes", async () => {
+        const client = signedInClient({
+            events: [
+                {
+                    seq: 2,
+                    convo_id: "c1",
+                    ts: 1,
+                    sender: "user:2",
+                    type: "image",
+                    // The bridge is a pass-through of Matrix `m.image` `info`, which spells the
+                    // dims `w`/`h` — the shape the bridge's own fixtures encode. This is what
+                    // ships in production, so the sized frame MUST render for it.
+                    payload: { blob_ref: "img-wh", content_type: "image/png", dims: { w: 1200, h: 800 } },
+                },
+            ],
+        });
+        jest.spyOn(client, "mediaUrl").mockResolvedValue("data:image/png;base64,AAAA");
+        rendered = await renderClient(client);
+
+        const frame = rendered.container.querySelector<HTMLElement>(".mj_ImageFrame");
+        expect(frame).not.toBeNull();
+        expect(frame?.classList.contains("mj_ImageFrame_sized")).toBe(true);
+        // Same reserved geometry as the `{ width, height }` case: 1200×800 → 780×520.
+        expect(frame?.style.aspectRatio).toBe("1200 / 800");
+        expect(frame?.style.width).toBe("780px");
+    });
+
+    it("collapses the reserved frame when the image blob fails to decode", async () => {
+        const client = signedInClient({
+            events: [
+                {
+                    seq: 2,
+                    convo_id: "c1",
+                    ts: 1,
+                    sender: "user:2",
+                    type: "image",
+                    payload: { blob_ref: "img-broken", content_type: "image/png", dims: { width: 1200, height: 800 } },
+                },
+            ],
+        });
+        jest.spyOn(client, "mediaUrl").mockResolvedValue("data:image/png;base64,AAAA");
+        rendered = await renderClient(client);
+
+        const img = rendered.container.querySelector<HTMLImageElement>(".mj_ImageFrame img");
+        expect(img).not.toBeNull();
+        await act(async () => {
+            img!.dispatchEvent(new Event("error"));
+        });
+        // A corrupt image no longer holds the full reserved 520px box around a broken glyph:
+        // the frame is gone and the tile collapses to the error message.
+        expect(rendered.container.querySelector(".mj_ImageFrame")).toBeNull();
+        expect(rendered.container.querySelector(".mj_Error")).not.toBeNull();
+    });
+
     it("does NOT reserve a box for an image event without dims (fluid fallback)", async () => {
         const client = signedInClient({
             events: [

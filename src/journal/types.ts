@@ -440,28 +440,34 @@ export function asNumber(value: unknown, fallback = 0): number {
     return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
-// Image intrinsic pixel dimensions. The bridge attaches these (client-measured on the
-// common upload path) to image/file payloads as `dims: { width, height }` so the web
-// client can reserve an aspect-ratio box BEFORE the blob decodes, which avoids the thread
-// reflow that otherwise happens as each image finishes loading.
+// Image intrinsic pixel dimensions, normalized to `{ width, height }` for this client. The value
+// is OPTIONAL and originates UPSTREAM of the bridge: the bridge is a pure pass-through and passes
+// Matrix's values when present. Matrix `m.image` `info` spells them `w`/`h`, so `payload.dims` may
+// arrive as `{ w, h }` OR `{ width, height }` — parseMediaDims accepts both. When present, the web
+// client reserves an aspect-ratio box BEFORE the blob decodes, avoiding the thread reflow that
+// otherwise happens as each image finishes loading.
 export interface MediaDims {
     width: number;
     height: number;
 }
 
-// Parse `payload.dims`. Returns undefined when absent or non-positive (bridge-originated
-// images / clients that did not measure) so the caller falls back to the un-reserved render.
+// Parse `payload.dims`, accepting BOTH the Matrix `{ w, h }` spelling and the `{ width, height }`
+// spelling. Returns undefined when absent or non-positive (images with no upstream dims / clients
+// that did not measure) so the caller falls back to the un-reserved render.
 export function parseMediaDims(value: unknown): MediaDims | undefined {
     if (!isObject(value)) return undefined;
-    const width = asNumber(value.width, 0);
-    const height = asNumber(value.height, 0);
+    const width = asNumber(value.width ?? value.w, 0);
+    const height = asNumber(value.height ?? value.h, 0);
     return width > 0 && height > 0 ? { width, height } : undefined;
 }
 
-// MUST match `.mj_ImageFrame_sized { max-height }` in journal.pcss. A non-replaced <div> sized by
-// CSS `aspect-ratio` does not back-shrink its width when the computed height hits `max-height` (that
-// ratio-preserving back-propagation only happens for replaced elements like a bare <img>). So the
-// cap has to be baked into the seeded width in JS — see imageFrameStyle.
+// Single authoritative source for the image-frame height cap. Emitted at runtime as the
+// `--mj-image-frame-max-height` CSS custom property on the `.mj_Image` figure (see AuthenticatedMedia),
+// which BOTH `.mj_ImageFrame_sized` and `.mj_Image img` consume via `var(...)` in journal.pcss — so
+// the JS cap and the CSS caps cannot drift. A non-replaced <div> sized by CSS `aspect-ratio` does not
+// back-shrink its width when the computed height hits `max-height` (that ratio-preserving
+// back-propagation only happens for replaced elements like a bare <img>), so the cap is also baked
+// into the seeded width in JS — see imageFrameStyle.
 export const IMAGE_FRAME_MAX_HEIGHT_PX = 520;
 
 // Inline style that reserves an image's box before the blob decodes, so the thread doesn't reflow
