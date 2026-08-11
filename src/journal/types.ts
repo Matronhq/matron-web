@@ -418,7 +418,12 @@ export function buildSidebarIndex(
         const parentIsTopLevelRow = parent != null && !archivedIds.has(parent.id) && resolve(parent) === "top-level";
         resolving.delete(conversation.id);
 
-        if (parentIsTopLevelRow && parent != null) {
+        // An ARCHIVED child is rendered in the Archived tab, never as a nested Active row, so it
+        // must NOT register its parent as a host — otherwise the parent offers a dead "Collapse
+        // subagents" control that hides nothing (the render splice + the collapsed count already
+        // skip archived children with `!archivedIds.has(child.id)`). Fall through to top-level;
+        // archivedIds filters it out of Active regardless of placement.
+        if (parentIsTopLevelRow && parent != null && !archivedIds.has(conversation.id)) {
             // This is a real subagent child row for `parent` — record the host relationship
             // regardless of collapse (drives the menu gate + the collapsed-count affordance).
             parentsWithChildRows.add(parent.id);

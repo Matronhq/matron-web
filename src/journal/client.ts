@@ -12,6 +12,7 @@ import { JournalDatabase } from "./database";
 import { mergeSessionStatus } from "./status";
 import {
     buildSidebarIndex,
+    childSidebarPlacement,
     type ClientState,
     type Conversation,
     type DeviceDTO,
@@ -542,7 +543,36 @@ export class MatronJournalClient {
      */
     public toggleSubagentCollapse(parentId: string): void {
         const collapse = !this.state.collapsedSubagentParentIds.has(parentId);
-        this.setFlag(collapsedSubagentStore, "collapsedSubagentParentIds", parentId, collapse);
+        const applied = this.setFlag(collapsedSubagentStore, "collapsedSubagentParentIds", parentId, collapse);
+        // Collapsing suppresses the parent's child rows. If the reading pane is pointed at one of
+        // those now-hidden children, leaving selection there lets the next snapshot resync reject it
+        // and swap the pane to an unrelated top-level convo. Fold selection UP to the (still-visible)
+        // host parent — matching the collapse mental model (cf. archive's deselect precedent).
+        if (applied && collapse) this.foldSelectionUnderCollapsedParent();
+    }
+
+    /**
+     * After a subagent parent is collapsed (locally or cross-tab), a RUNNING child that was the
+     * reading-pane selection just became a hidden row. Fold selection up to that child's host
+     * parent so the resync can't yank the pane elsewhere. No-op unless the current selection is a
+     * running child that the canonical index now resolves to "hidden" under a visible parent, so a
+     * done child (hidden for an unrelated reason) is never dragged into its parent.
+     */
+    private foldSelectionUnderCollapsedParent(): void {
+        const selectedId = this.state.selectedConversationId;
+        if (!selectedId) return;
+        const selected = this.state.conversations.find((conversation) => conversation.id === selectedId);
+        if (!selected || selected.session_state !== "running") return;
+        const parentId = selected.parent_convo_id;
+        if (parentId == null || parentId === "") return;
+        const index = buildSidebarIndex(
+            this.state.conversations,
+            this.state.archivedIds,
+            this.state.collapsedSubagentParentIds,
+        );
+        if (childSidebarPlacement(selected, index) !== "hidden") return;
+        const parent = this.state.conversations.find((conversation) => conversation.id === parentId);
+        if (parent && rendersAsTopLevelRow(parent, index)) void this.selectConversation(parentId);
     }
 
     public markConversationRead(conversationId: string): boolean {
@@ -1359,6 +1389,8 @@ export class MatronJournalClient {
                     ...(read.ok ? { collapsedSubagentParentIds: read.ids } : {}),
                     preferencesUnavailable: this.storageUnavailable("collapsed"),
                 });
+                // Mirror the local toggle: a cross-tab collapse can hide the selected child too.
+                if (read.ok) this.foldSelectionUnderCollapsedParent();
             }
         };
         window.addEventListener("storage", this.storageListener);
