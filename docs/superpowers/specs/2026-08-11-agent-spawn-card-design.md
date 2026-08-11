@@ -65,6 +65,23 @@ takes over). On `404`: "That request is no longer on the server." On
 transport error: back to answerable with the retry affordance, mirroring
 `PromptCard`'s `retryable` treatment and its 10s confirmation timeout.
 
+**Attempt-identity guard (required, not optional).** A tap's own POST and the
+10s confirmation timeout can both still be outstanding after the user retries
+— attempt A's request can settle (fulfilled or rejected) after attempt B has
+already started. Every phase transition — the confirmation-timeout callback
+AND every promise-settlement handler (success and failure) — MUST be gated on
+a monotonically increasing attempt id (a ref counter, bumped once per tap):
+capture the id when the attempt starts, and apply the resulting phase change
+only if that captured id still equals the current counter value. Without this
+guard, a late-settling A can silently overwrite B's `sending` with a stale
+`retryable`/`already-answered`/`gone`, re-enabling Approve/Deny while B is
+still in flight and inviting a duplicate POST (found by Bugbot + CodeRabbit on
+PR #23, both independently, as a promoted "deferred minor"). The
+promise-settlement handlers are additionally gated on a mount-tracking ref
+(mirrors the new-session sheet's `agentsRequestIdRef`/`mountedRef` pattern in
+`components.tsx`) — the setTimeout path doesn't need that half, since its own
+cleanup already cancels it on unmount.
+
 ### The answer call — first client-initiated REST POST
 
 `JournalApi` gains a public, typed method (keeping `request()` private):

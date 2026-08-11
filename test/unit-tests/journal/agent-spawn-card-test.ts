@@ -110,6 +110,18 @@ const spawnOutcomeEvent = (outcome: string, extra: Record<string, unknown> = {},
     payload: { request_id: "spawn-1", outcome, ...extra },
 });
 
+// For manually controlling exactly when a mocked client.answerAgentSpawn call settles, so a
+// test can start a second attempt while the first is still in flight (the #23 race).
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (reason: unknown) => void } {
+    let resolve!: (value: T) => void;
+    let reject!: (reason: unknown) => void;
+    const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+        resolve = resolvePromise;
+        reject = rejectPromise;
+    });
+    return { promise, resolve, reject };
+}
+
 describe("agent_spawn card dispatch", () => {
     let rendered: { container: HTMLDivElement; root: Root } | undefined;
 
@@ -460,6 +472,77 @@ describe("agent_spawn answer flow", () => {
 
         await act(async () => findButton(card, "Approve")?.click());
         expect(answerAgentSpawn).toHaveBeenCalledTimes(2);
+        expect(card.querySelector(".mj_PromptResolved_pending")?.textContent).toBe("Sending…");
+    });
+
+    it("a late-settling attempt A transport-error rejection never clobbers attempt B's in-flight sending state", async () => {
+        jest.useFakeTimers();
+        const client = signedInClient();
+        const attemptA = deferred<void>();
+        const attemptB = deferred<void>();
+        const answerAgentSpawn = jest
+            .spyOn(client, "answerAgentSpawn")
+            .mockReturnValueOnce(attemptA.promise)
+            .mockReturnValueOnce(attemptB.promise);
+        rendered = await renderEventContent(client, spawnCardEvent());
+        const card = rendered.container.querySelector(".mj_PromptCard_spawn")!;
+
+        // Attempt A: tap Approve — its POST stays in flight for the rest of the test.
+        await act(async () => findButton(card, "Approve")?.click());
+        expect(card.querySelector(".mj_PromptResolved_pending")?.textContent).toBe("Sending…");
+
+        // A's own confirmation window elapses with no durable event -> retryable, re-enabling the buttons.
+        await act(async () => jest.advanceTimersByTime(10_000));
+        expect(card.querySelector(".mj_PromptResolved_retryable")?.textContent).toBe(
+            "Reply not confirmed — tap to retry",
+        );
+
+        // Attempt B: tap Approve again — a fresh POST fires while A's original one is STILL pending.
+        await act(async () => findButton(card, "Approve")?.click());
+        expect(answerAgentSpawn).toHaveBeenCalledTimes(2);
+        expect(card.querySelector(".mj_PromptResolved_pending")?.textContent).toBe("Sending…");
+
+        // A finally settles, late, with a transport error — must not touch B's state at all.
+        await act(async () => attemptA.reject(new JournalApiError("Could not reach the journal server.", 0)));
+
+        expect(card.querySelector(".mj_PromptResolved_pending")?.textContent).toBe("Sending…");
+        expect(card.querySelector(".mj_PromptResolved_retryable")).toBeNull();
+        expect(card.querySelector(".mj_Answered")).toBeNull();
+        const buttons = [...card.querySelectorAll<HTMLButtonElement>(".mj_PromptOptions button")];
+        expect(buttons.every((b) => b.disabled)).toBe(true);
+    });
+
+    it("a late-settling attempt A 409 never clobbers attempt B's in-flight sending state, resolved or rejected", async () => {
+        jest.useFakeTimers();
+        const client = signedInClient();
+        const attemptA = deferred<void>();
+        const attemptB = deferred<void>();
+        jest.spyOn(client, "answerAgentSpawn")
+            .mockReturnValueOnce(attemptA.promise)
+            .mockReturnValueOnce(attemptB.promise);
+        rendered = await renderEventContent(client, spawnCardEvent());
+        const card = rendered.container.querySelector(".mj_PromptCard_spawn")!;
+
+        await act(async () => findButton(card, "Approve")?.click());
+        await act(async () => jest.advanceTimersByTime(10_000));
+        expect(card.querySelector(".mj_PromptResolved_retryable")?.textContent).toBe(
+            "Reply not confirmed — tap to retry",
+        );
+
+        await act(async () => findButton(card, "Approve")?.click());
+        expect(card.querySelector(".mj_PromptResolved_pending")?.textContent).toBe("Sending…");
+
+        // A finally settles, late, with a 409 (already answered elsewhere/expired) — must not
+        // flip B's card to the resolved-expired copy.
+        await act(async () => attemptA.reject(new JournalApiError("conflict", 409)));
+
+        expect(card.querySelector(".mj_PromptResolved_pending")?.textContent).toBe("Sending…");
+        expect(card.querySelector(".mj_Answered")).toBeNull();
+        const buttons = [...card.querySelectorAll<HTMLButtonElement>(".mj_PromptOptions button")];
+        expect(buttons.every((b) => b.disabled)).toBe(true);
+
+        // B itself still resolves normally once its own POST settles.
+        await act(async () => attemptB.resolve(undefined));
         expect(card.querySelector(".mj_PromptResolved_pending")?.textContent).toBe("Sending…");
     });
 

@@ -2795,17 +2795,38 @@ function AgentSpawnCard({
 
     const [phase, setPhase] = useState<AgentSpawnLocalPhase>("idle");
     const phaseRef = useRef(phase);
+    // Bugbot/CodeRabbit finding on #23: attempt A's POST can still be in flight when the user
+    // retries (attempt B) after A's own confirmation timeout. Every phase transition below is
+    // gated on "is my attemptId still the current one?" so a late-settling A can never clobber
+    // B's `sending` with a stale `retryable`/`already-answered`/`gone` — which would otherwise
+    // re-enable Approve/Deny while B is still pending and invite a duplicate POST. mountedRef
+    // additionally guards the promise-settlement handlers (not the setTimeout below, whose
+    // cleanup already cancels it on unmount) — mirrors the new-session sheet's
+    // agentsRequestIdRef/mountedRef pattern above.
+    const attemptIdRef = useRef(0);
+    const mountedRef = useRef(false);
     const setLocalPhase = (next: AgentSpawnLocalPhase): void => {
         phaseRef.current = next;
         setPhase(next);
     };
 
+    useEffect(() => {
+        mountedRef.current = true;
+        return (): void => {
+            mountedRef.current = false;
+        };
+    }, []);
+
     const handleAnswer = (decision: AgentSpawnDecision): void => {
         if (resolved || phaseRef.current === "sending") return;
+        const attemptId = ++attemptIdRef.current;
         setLocalPhase("sending");
         void onAnswer(decision).then(
             () => undefined, // ack received; wait for the durable event (or the timeout effect below)
             (error: unknown) => {
+                // A newer attempt (retry, or another tab) has already moved the phase on —
+                // this settlement is stale and must not touch state.
+                if (!mountedRef.current || attemptId !== attemptIdRef.current) return;
                 if (error instanceof JournalApiError && error.status === 409) setLocalPhase("already-answered");
                 else if (error instanceof JournalApiError && error.status === 404) setLocalPhase("gone");
                 else setLocalPhase("retryable"); // transport/other error -> back to answerable
@@ -2815,7 +2836,9 @@ function AgentSpawnCard({
 
     useEffect(() => {
         if (phase !== "sending" || resolved) return;
+        const attemptId = attemptIdRef.current;
         const timer = setTimeout(() => {
+            if (attemptId !== attemptIdRef.current) return; // superseded by a newer attempt
             if (phaseRef.current === "sending") setLocalPhase("retryable");
         }, PROMPT_REPLY_CONFIRMATION_TIMEOUT_MS);
         return (): void => clearTimeout(timer);
