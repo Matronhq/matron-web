@@ -449,12 +449,42 @@ export function conversationTitle(conversation: Conversation): string {
     return conversation.title.trim() || conversation.id;
 }
 
+export type SpawnOutcomeKind = "started" | "declined" | "expired" | "failed" | "unknown";
+
+/** Classifies a journaled `spawn_outcome` payload; unrecognised values collapse to "unknown"
+    so a future outcome (or bridge bug) never crashes the timeline (see spawnOutcomeSnippet). */
+export function spawnOutcomeKind(payload: EventPayload): SpawnOutcomeKind {
+    const outcome = asString(payload.outcome);
+    if (outcome === "started" || outcome === "declined" || outcome === "expired" || outcome === "failed") {
+        return outcome;
+    }
+    return "unknown";
+}
+
+export function spawnOutcomeSnippet(payload: EventPayload): string {
+    switch (spawnOutcomeKind(payload)) {
+        case "started":
+            return "🚀 Spawned session started";
+        case "declined":
+            return "🚫 Spawn declined";
+        case "expired":
+            return "⌛ Spawn request expired";
+        case "failed": {
+            const errorCode = asString(payload.error_code);
+            return errorCode ? `❌ Spawn failed — ${errorCode}` : "❌ Spawn failed";
+        }
+        default:
+            return "Spawn request resolved";
+    }
+}
+
 export function eventSnippet(type: string, payload: EventPayload): string {
     if (type === "text") return asString(payload.body).slice(0, 120);
     if (type === "file") return `📎 ${asString(payload.caption) || asString(payload.filename, "File")}`.slice(0, 120);
     if (type === "image") return `🖼 ${asString(payload.caption) || asString(payload.filename, "Image")}`.slice(0, 120);
     if (type === "prompt") return `? ${asString(payload.question).slice(0, 110)}`;
     if (type === "permission_request") return `Permission: ${asString(payload.description).slice(0, 100)}`;
+    if (type === "spawn_outcome") return spawnOutcomeSnippet(payload).slice(0, 120);
     if (typeof payload.snippet === "string") return payload.snippet.slice(0, 120);
     if (type === "tool_output" && typeof payload.command === "string") return `$ ${payload.command}`.slice(0, 120);
     return `[${type}]`;

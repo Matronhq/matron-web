@@ -116,6 +116,9 @@ import {
     rendersAsTopLevelRow,
     isSubChat,
     type SessionStatus,
+    spawnOutcomeKind,
+    type SpawnOutcomeKind,
+    spawnOutcomeSnippet,
     type StagedUploadItem,
     type StagedUploads,
     type ToolStreamState,
@@ -2718,6 +2721,149 @@ function PromptDeniedGlyph(): React.ReactElement {
     );
 }
 
+// A journaled agent_spawn card is unanswerable if the bridge minted a malformed payload
+// (non-string/empty request_id or task) — falls back to the generic PromptCard rather than
+// rendering Approve/Deny buttons nothing can resolve.
+function isAnswerableAgentSpawn(payload: EventPayload): boolean {
+    return (
+        typeof payload.request_id === "string" &&
+        payload.request_id.length > 0 &&
+        typeof payload.task === "string" &&
+        payload.task.length > 0
+    );
+}
+
+const SPAWN_OUTCOME_CARD_LABELS: Record<Exclude<SpawnOutcomeKind, "failed">, string> = {
+    started: "Started",
+    declined: "Denied",
+    expired: "Expired",
+    unknown: "Spawn request resolved",
+};
+
+// Plain-text labels for the card's resolved-state row (§ design "Resolved states"). Distinct
+// from spawnOutcomeSnippet's emoji-prefixed copy, which is for the standalone timeline row.
+function spawnOutcomeCardLabel(payload: EventPayload): string {
+    const kind = spawnOutcomeKind(payload);
+    if (kind === "failed") {
+        const errorCode = asString(payload.error_code);
+        return errorCode ? `Failed — ${errorCode}` : "Failed";
+    }
+    return SPAWN_OUTCOME_CARD_LABELS[kind];
+}
+
+type AgentSpawnDecision = "approve" | "deny";
+
+const noopAgentSpawnAnswer = (): void => undefined;
+const noopAgentSpawnOpen = (): void => undefined;
+
+// Joins the .mj_PromptCard family (§ design "Kind dispatch and components"): same chrome and
+// row order as PromptCard so answering doesn't reflow. Render-only in Task 1 — onAnswer/onOpen
+// default to no-ops; Task 2 wires the real POST /agent-spawn/answer and Open navigation.
+function AgentSpawnCard({
+    event,
+    outcome,
+    onAnswer = noopAgentSpawnAnswer,
+    onOpen = noopAgentSpawnOpen,
+}: {
+    event: JournalEvent;
+    outcome: EventPayload | null;
+    onAnswer?: (decision: AgentSpawnDecision) => void;
+    onOpen?: (roomId: string) => void;
+}): React.ReactElement {
+    const payload = event.payload;
+    const task = asString(payload.task);
+    const topic = asString(payload.topic);
+    const headline = topic || task.split("\n")[0] || "Agent spawn request";
+    const fromConvoTitle = asString(payload.from_convo_title);
+    const fromName = asString(payload.from_name);
+    const targetName = asString(payload.target_name);
+    const workdir = asString(payload.workdir);
+    const resolved = outcome !== null;
+    const kind = resolved ? spawnOutcomeKind(outcome) : undefined;
+    const roomId = resolved ? asString(outcome.room_id) : "";
+
+    return (
+        <div className="mj_PromptCard mj_PromptCard_spawn">
+            <div className="mj_PromptHeader">
+                <span className="mj_PromptLabel">Agent spawn request</span>
+                <time className="mj_PromptTime" dateTime={new Date(event.ts).toISOString()}>
+                    {formatTime(event.ts)}
+                </time>
+            </div>
+            <div className="mj_PromptBody">
+                <span className="mj_PromptGlyph" aria-hidden="true">
+                    <PromptTerminalGlyph />
+                </span>
+                <span className="mj_SpawnHeadline">{headline}</span>
+            </div>
+            <div className="mj_SpawnDetails">
+                <div className="mj_SpawnDetail mj_SpawnDetail_from">
+                    <span className="mj_SpawnDetail_label">From</span>
+                    <span className="mj_SpawnDetail_value">
+                        {fromConvoTitle}
+                        {fromConvoTitle && fromName ? " · " : ""}
+                        {fromName}
+                    </span>
+                </div>
+                <div className="mj_SpawnDetail mj_SpawnDetail_target">
+                    <span className="mj_SpawnDetail_label">Target</span>
+                    <span className="mj_SpawnDetail_value">{targetName}</span>
+                </div>
+                <div className="mj_SpawnDetail mj_SpawnDetail_folder">
+                    <span className="mj_SpawnDetail_label">Folder</span>
+                    <span className="mj_SpawnDetail_value">{workdir}</span>
+                </div>
+            </div>
+            <pre className="mj_SpawnTask">{task}</pre>
+            {!resolved && (
+                <div className="mj_PromptOptions">
+                    <button type="button" onClick={() => onAnswer("deny")}>
+                        Deny
+                    </button>
+                    <button type="button" className="mj_PromptOption_affirmative" onClick={() => onAnswer("approve")}>
+                        Approve
+                    </button>
+                </div>
+            )}
+            {resolved && (
+                <div className={`mj_PromptResolved mj_PromptResolved_${kind}`}>
+                    <span className="mj_PromptGlyph" aria-hidden="true" />
+                    <span className="mj_Answered">{spawnOutcomeCardLabel(outcome)}</span>
+                    {kind === "started" && roomId && (
+                        <button type="button" className="mj_SpawnOpenButton" onClick={() => onOpen(roomId)}>
+                            Open
+                        </button>
+                    )}
+                </div>
+            )}
+        </div>
+    );
+}
+
+// Minimal standalone row for the durable spawn_outcome event itself (§ design "Timeline
+// rendering of spawn_outcome itself") — keeps the record legible once the card has scrolled
+// away, and stops the default case's raw JSON <details> dump.
+function SpawnOutcomeRow({
+    event,
+    onOpen = noopAgentSpawnOpen,
+}: {
+    event: JournalEvent;
+    onOpen?: (roomId: string) => void;
+}): React.ReactElement {
+    const kind = spawnOutcomeKind(event.payload);
+    const roomId = asString(event.payload.room_id);
+    return (
+        <div className={`mj_SpawnOutcomeRow mj_SpawnOutcomeRow_${kind}`}>
+            <span className="mj_SpawnOutcomeStatus">{spawnOutcomeSnippet(event.payload)}</span>
+            {kind === "started" && roomId && (
+                <button type="button" className="mj_SpawnOpenButton" onClick={() => onOpen(roomId)}>
+                    Open
+                </button>
+            )}
+        </div>
+    );
+}
+
 function ToolOutput({ client, event }: { client: MatronJournalClient; event: JournalEvent }): React.ReactElement {
     const payload = event.payload;
     const command = asString(payload.command, asString(payload.tool_name, "Tool output"));
@@ -3094,16 +3240,20 @@ export function isQueuedReleaseReply(
     return legacyQueuePromptSeqs.has(targetSeq) && (choice === "interrupt" || /^cancel:\d+$/.test(choice));
 }
 
+const EMPTY_SPAWN_OUTCOMES: ReadonlyMap<string, EventPayload> = new Map();
+
 export function EventContent({
     client,
     event,
     answeredPromptReplies,
+    spawnOutcomes = EMPTY_SPAWN_OUTCOMES,
     isReadOnly = false,
     resolvedAction,
 }: {
     client: MatronJournalClient;
     event: JournalEvent;
     answeredPromptReplies: ReadonlyMap<string, { choice?: string }>;
+    spawnOutcomes?: ReadonlyMap<string, EventPayload>;
     isReadOnly?: boolean;
     resolvedAction?: (itemId: string) => "send" | "cancel" | undefined;
 }): React.ReactElement {
@@ -3136,7 +3286,17 @@ export function EventContent({
                     isReadOnly={isReadOnly}
                 />
             );
-        case "permission_request":
+        case "permission_request": {
+            if (asString(event.payload.kind) === "agent_spawn" && isAnswerableAgentSpawn(event.payload)) {
+                const requestId = asString(event.payload.request_id);
+                return (
+                    <AgentSpawnCard
+                        key={`${event.convo_id}:${event.seq}`}
+                        event={event}
+                        outcome={spawnOutcomes.get(requestId) ?? null}
+                    />
+                );
+            }
             return (
                 <PromptCard
                     key={`${event.convo_id}:${event.seq}`}
@@ -3148,12 +3308,15 @@ export function EventContent({
                     isReadOnly={isReadOnly}
                 />
             );
+        }
         case "prompt_reply":
             return (
                 <div className="mj_MessageText">
                     {asString(event.payload.choice, asString(event.payload.text, "Answered"))}
                 </div>
             );
+        case "spawn_outcome":
+            return <SpawnOutcomeRow event={event} />;
         case "tool_output":
             return <ToolOutput client={client} event={event} />;
         case "diff":
@@ -3203,6 +3366,7 @@ function EventRow({
     client,
     event,
     answeredPromptReplies,
+    spawnOutcomes,
     isReadOnly = false,
     resolvedAction,
     continuation = false,
@@ -3212,6 +3376,7 @@ function EventRow({
     client: MatronJournalClient;
     event: JournalEvent;
     answeredPromptReplies: ReadonlyMap<string, { choice?: string }>;
+    spawnOutcomes?: ReadonlyMap<string, EventPayload>;
     isReadOnly?: boolean;
     resolvedAction: (itemId: string) => "send" | "cancel" | undefined;
     continuation?: boolean;
@@ -3269,6 +3434,7 @@ function EventRow({
                             client={client}
                             event={event}
                             answeredPromptReplies={answeredPromptReplies}
+                            spawnOutcomes={spawnOutcomes}
                             isReadOnly={isReadOnly}
                             resolvedAction={resolvedAction}
                         />
@@ -3494,6 +3660,17 @@ function Timeline({
         }
         return replies;
     }, [state.events]);
+    // Durable, journaled resolution of an agent_spawn ask — no local persistence (§ design
+    // "Resolution state"). A card whose request_id has an entry here is resolved across
+    // restarts and devices because the spawn_outcome event is journaled, not client state.
+    const spawnOutcomes = useMemo(() => {
+        const outcomes = new Map<string, EventPayload>();
+        for (const event of state.events) {
+            if (event.type !== "spawn_outcome") continue;
+            outcomes.set(String(event.payload.request_id), event.payload);
+        }
+        return outcomes;
+    }, [state.events]);
     const releasedActions = useMemo(() => {
         const actions = new Map<string, "send" | "cancel">();
         for (const event of state.events) {
@@ -3639,6 +3816,7 @@ function Timeline({
                                             client={client}
                                             event={item.event}
                                             answeredPromptReplies={answeredPromptReplies}
+                                            spawnOutcomes={spawnOutcomes}
                                             isReadOnly={isReadOnly}
                                             resolvedAction={resolvedAction}
                                             continuation={
