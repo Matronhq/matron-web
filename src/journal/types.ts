@@ -489,6 +489,68 @@ export function asNumber(value: unknown, fallback = 0): number {
     return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
+// Image intrinsic pixel dimensions, normalized to `{ width, height }` for this client. The value
+// is OPTIONAL and originates UPSTREAM of the bridge: the bridge is a pure pass-through and passes
+// Matrix's values when present. Matrix `m.image` `info` spells them `w`/`h`, so `payload.dims` may
+// arrive as `{ w, h }` OR `{ width, height }` — parseMediaDims accepts both. When present, the web
+// client reserves an aspect-ratio box BEFORE the blob decodes, avoiding the thread reflow that
+// otherwise happens as each image finishes loading.
+export interface MediaDims {
+    width: number;
+    height: number;
+}
+
+// Parse `payload.dims`, accepting BOTH the Matrix `{ w, h }` spelling and the `{ width, height }`
+// spelling. Returns undefined when absent or non-positive (images with no upstream dims / clients
+// that did not measure) so the caller falls back to the un-reserved render.
+export function parseMediaDims(value: unknown): MediaDims | undefined {
+    if (!isObject(value)) return undefined;
+    const width = asNumber(value.width ?? value.w, 0);
+    const height = asNumber(value.height ?? value.h, 0);
+    return width > 0 && height > 0 ? { width, height } : undefined;
+}
+
+// Single authoritative source for the image-frame height cap. Emitted at runtime as the
+// `--mj-image-frame-max-height` CSS custom property on the `.mj_Image` figure (see AuthenticatedMedia),
+// which BOTH `.mj_ImageFrame_sized` and `.mj_Image img` consume via `var(...)` in journal.pcss — so
+// the JS cap and the CSS caps cannot drift. A non-replaced <div> sized by CSS `aspect-ratio` does not
+// back-shrink its width when the computed height hits `max-height` (that ratio-preserving
+// back-propagation only happens for replaced elements like a bare <img>), so the cap is also baked
+// into the seeded width in JS — see imageFrameStyle.
+export const IMAGE_FRAME_MAX_HEIGHT_PX = 520;
+
+// Inline style that reserves an image's box before the blob decodes, so the thread doesn't reflow
+// on load. `aspectRatio` holds the shape; `width` seeds the intrinsic size (further capped by the
+// CSS max-width for the column). The width is pre-shrunk so that when the ratio-derived height
+// would exceed IMAGE_FRAME_MAX_HEIGHT_PX the box shrinks in BOTH dimensions — replicating replaced-
+// element sizing. Without this, portrait/square images get an over-wide frame and the inner
+// object-fit:contain <img> letterboxes with dead margins.
+export function imageFrameStyle(dims: MediaDims): { aspectRatio: string; width: number } {
+    return {
+        aspectRatio: `${dims.width} / ${dims.height}`,
+        width: Math.min(dims.width, dims.width * (IMAGE_FRAME_MAX_HEIGHT_PX / dims.height)),
+    };
+}
+
+// Coarse file buckets used to pick a file-tile affordance from a MIME type. A few sensible
+// buckets plus a generic fallback; deliberately NOT an exhaustive icon library.
+export type FileKind = "image" | "pdf" | "text" | "audio" | "video" | "archive" | "generic";
+
+const ARCHIVE_MIME = /(zip|tar|gzip|x-7z-compressed|x-rar|x-bzip|compress)/;
+
+// Map a MIME (`payload.content_type`) to a coarse FileKind. Absent/blank maps to "generic".
+export function fileKindFromMime(contentType: unknown): FileKind {
+    const mime = asString(contentType).trim().toLowerCase();
+    if (!mime) return "generic";
+    if (mime.startsWith("image/")) return "image";
+    if (mime.startsWith("audio/")) return "audio";
+    if (mime.startsWith("video/")) return "video";
+    if (mime === "application/pdf") return "pdf";
+    if (mime.startsWith("text/")) return "text";
+    if (ARCHIVE_MIME.test(mime)) return "archive";
+    return "generic";
+}
+
 export function displaySender(sender: string): string {
     const separator = sender.indexOf(":");
     return separator === -1 ? sender : sender.slice(separator + 1);
