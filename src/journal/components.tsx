@@ -117,6 +117,7 @@ import {
     type EventPayload,
     type FileKind,
     fileKindFromMime,
+    hasSubagentChildRows,
     IMAGE_FRAME_MAX_HEIGHT_PX,
     imageFrameStyle,
     isNearBottom,
@@ -964,7 +965,7 @@ function ConversationList({
     // "selectable/counted" can never diverge. rendersAsTopLevelRow: a non-child always
     // renders top-level; a child renders top-level only when childSidebarPlacement says so
     // (orphan → always; parent exists → running-only, and then only when it can't nest).
-    const sidebarIndex = buildSidebarIndex(state.conversations, state.archivedIds);
+    const sidebarIndex = buildSidebarIndex(state.conversations, state.archivedIds, state.collapsedSubagentParentIds);
     const isTopLevelRow = (conversation: Conversation): boolean => rendersAsTopLevelRow(conversation, sidebarIndex);
     const conversations = useMemo(() => {
         const normalized = query.trim().toLocaleLowerCase();
@@ -1051,13 +1052,40 @@ function ConversationList({
         const name = conversationTitle(conversation);
         const outcomeStatus = isSubagent ? accessibleOutcome(classifyOutcome(conversation)) : undefined;
         const relativeTimestamp = formatRelativeDay(conversation.last_ts ?? conversation.created_at, renderNow);
+        // When this parent's subagent rows are collapsed, surface a subtle count of the hidden
+        // child rows so the collapse stays discoverable on the row itself. Gate on the CANONICAL
+        // index (hasSubagentChildRows) — NOT an independent running-child count — so it agrees with
+        // the menu and the placement derivation. An archived parent hosts no child rows (its running
+        // children are promoted to top-level), so it is absent from that set → no count, no false
+        // "N hidden" even if its collapse state persisted through archival. The set is only populated
+        // for real hosts, so the running-child count below always measures exactly what collapse hides.
+        const collapsedSubagentChildren =
+            !isSubagent &&
+            state.collapsedSubagentParentIds.has(conversation.id) &&
+            hasSubagentChildRows(conversation, sidebarIndex)
+                ? childrenOf(state.conversations, conversation.id).filter(
+                      (child) => !state.archivedIds.has(child.id) && child.session_state === "running",
+                  )
+                : [];
+        const collapsedSubagentCount = collapsedSubagentChildren.length;
+        // Collapse removes each hidden child's own inline row + unread badge. If any hidden child
+        // is still unread, the chip must carry that signal — otherwise a streaming child's unread
+        // surfaces nowhere (the aggregate badge already excludes nested children, and the strip
+        // pills never show unread). Measured over the SAME set the count derives from.
+        const collapsedSubagentUnread = collapsedSubagentChildren.some((child) =>
+            effectiveUnread(child, state.unreadOverrideIds),
+        );
         return (
             <div className="mj_RoomListItem_wrapper" role="listitem" key={conversation.id}>
                 <button
                     className={`mj_RoomListItem${selected ? " mj_RoomListItem_selected" : ""}${isSubagent ? " mj_RoomListItem_sub" : ""}`}
                     type="button"
                     aria-current={selected ? "page" : undefined}
-                    aria-label={`Open ${isSubagent ? "subagent" : "room"} ${name}${outcomeStatus ? `, ${outcomeStatus}` : ""}, last activity ${relativeTimestamp}${overrideUnread ? ", marked unread" : ""}`}
+                    aria-label={`Open ${isSubagent ? "subagent" : "room"} ${name}${outcomeStatus ? `, ${outcomeStatus}` : ""}, last activity ${relativeTimestamp}${overrideUnread ? ", marked unread" : ""}${
+                        collapsedSubagentCount > 0
+                            ? `, ${collapsedSubagentCount} subagent${collapsedSubagentCount === 1 ? "" : "s"} hidden${collapsedSubagentUnread ? " (unread)" : ""}`
+                            : ""
+                    }`}
                     onClick={(event) => {
                         if (longPressFiredRef.current) {
                             longPressFiredRef.current = false;
@@ -1144,6 +1172,20 @@ function ConversationList({
                         </span>
                     )}
                     <span className="mj_RoomListMeta">
+                        {collapsedSubagentCount > 0 && (
+                            // Decorative: the hidden-child count + unread state are announced via the
+                            // containing row button's aria-label (a nested label here would be silent to AT).
+                            <span
+                                className={`mj_RoomListCollapsedSubs${
+                                    collapsedSubagentUnread ? " mj_RoomListCollapsedSubs_unread" : ""
+                                }`}
+                                aria-hidden="true"
+                            >
+                                <ChevronLeftIcon aria-hidden />
+                                {collapsedSubagentCount}
+                                {collapsedSubagentUnread && <span className="mj_UnreadDot" aria-hidden />}
+                            </span>
+                        )}
                         <span className="mj_RoomListTime">{relativeTimestamp}</span>
                         {conversation.unread_count > 0 ? (
                             <span className="mj_UnreadBadge" aria-label={`${conversation.unread_count} unread`}>
@@ -1510,6 +1552,26 @@ function ConversationList({
                                     Mark as read
                                 </button>
                             )}
+                        {/* Manual collapse/expand of this conversation's subagent child rows —
+                            shown ONLY when it currently hosts child rows (hasSubagentChildRows
+                            stays true while collapsed, so "Show subagents" remains reachable). */}
+                        {hasSubagentChildRows(menuConversation, sidebarIndex) && (
+                            <button
+                                className="mj_RoomItemMenu_item"
+                                type="button"
+                                role="menuitem"
+                                onClick={() => {
+                                    closeRoomMenu();
+                                    client.toggleSubagentCollapse(menuConversation.id);
+                                    restoreFocusAfterMenuAction();
+                                }}
+                            >
+                                <ChevronDownIcon aria-hidden />
+                                {state.collapsedSubagentParentIds.has(menuConversation.id)
+                                    ? "Show subagents"
+                                    : "Collapse subagents"}
+                            </button>
+                        )}
                         {state.archivedIds.has(menuConversation.id) ? (
                             <button
                                 className="mj_RoomItemMenu_item"
