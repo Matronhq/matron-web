@@ -44,12 +44,18 @@ import {
     CodeBracketsIcon,
     CompactIcon,
     ComposeIcon,
+    ArchiveFileIcon,
+    AudioFileIcon,
     FileEditIcon,
     FailedIcon,
     FileIcon,
+    ImageFileIcon,
     InactiveIcon,
     InterruptedIcon,
     KebabIcon,
+    PdfFileIcon,
+    TextFileIcon,
+    VideoFileIcon,
     MarkdownIcon,
     MarkAllReadIcon,
     MarkReadIcon,
@@ -109,7 +115,13 @@ import {
     type DeviceDTO,
     displaySender,
     type EventPayload,
+    type FileKind,
+    fileKindFromMime,
+    IMAGE_FRAME_MAX_HEIGHT_PX,
+    imageFrameStyle,
     isNearBottom,
+    type MediaDims,
+    parseMediaDims,
     type JournalEvent,
     type PendingMessage,
     type RecentFolder,
@@ -2784,18 +2796,33 @@ function ToolOutput({ client, event }: { client: MatronJournalClient; event: Jou
     );
 }
 
+// Pick a file-tile glyph from the coarse MIME bucket. Generic sheet is the fallback.
+const FILE_KIND_ICON: Record<FileKind, (props: React.SVGProps<SVGSVGElement>) => React.ReactElement> = {
+    image: ImageFileIcon,
+    pdf: PdfFileIcon,
+    text: TextFileIcon,
+    audio: AudioFileIcon,
+    video: VideoFileIcon,
+    archive: ArchiveFileIcon,
+    generic: FileIcon,
+};
+
 function AuthenticatedMedia({
     client,
     mediaId,
     image,
     filename,
     caption,
+    dims,
+    contentType,
 }: {
     client: MatronJournalClient;
     mediaId: string;
     image: boolean;
     filename?: string;
     caption?: string;
+    dims?: MediaDims;
+    contentType?: string;
 }): React.ReactElement {
     const [url, setUrl] = useState<string>();
     const [error, setError] = useState<string>();
@@ -2818,22 +2845,46 @@ function AuthenticatedMedia({
 
     if (error) return <div className="mj_Error">{error}</div>;
     if (image) {
-        return url ? (
-            <figure className="mj_Image">
-                <img src={url} alt={caption || "Shared image"} />
+        // Reserve an aspect-ratio box BEFORE the blob decodes so the thread does not reflow when
+        // the image finishes loading. imageFrameStyle pre-shrinks the width so the CSS max-height
+        // cap preserves the aspect ratio (a non-replaced <div> won't back-shrink on its own).
+        // Absent dims means no reserved box, current fluid behaviour (fallback for un-measured).
+        const frameStyle: React.CSSProperties | undefined = dims ? imageFrameStyle(dims) : undefined;
+        // Emit the JS-authoritative height cap as a CSS custom property so the pcss frame rules
+        // (`.mj_ImageFrame_sized`, `.mj_Image img`) consume it via var() and cannot drift from the
+        // JS constant. Set on the always-present figure so it cascades to both sized and fluid cases.
+        const figureStyle = { "--mj-image-frame-max-height": `${IMAGE_FRAME_MAX_HEIGHT_PX}px` } as React.CSSProperties;
+        return (
+            <figure className="mj_Image" style={figureStyle}>
+                <div className={`mj_ImageFrame${dims ? " mj_ImageFrame_sized" : ""}`} style={frameStyle}>
+                    {url ? (
+                        // onError collapses the reserved frame (figure → mj_Error) when the blob decodes
+                        // to a broken image, so a corrupt image doesn't hold the full reserved box around
+                        // a broken glyph — matching the pre-reserve fluid behaviour.
+                        <img
+                            src={url}
+                            alt={caption || "Shared image"}
+                            onError={() => setError("Image failed to load")}
+                        />
+                    ) : (
+                        <div className="mj_MediaLoading">{loading ? "Loading image…" : "Image"}</div>
+                    )}
+                </div>
                 {caption && <figcaption>{caption}</figcaption>}
             </figure>
-        ) : (
-            <div className="mj_MediaLoading">{loading ? "Loading image…" : "Image"}</div>
         );
     }
+    const KindIcon = FILE_KIND_ICON[fileKindFromMime(contentType)];
+    const fileLabel = filename || "Download attachment";
     return url ? (
         <a className="mj_File" href={url} download={filename || "attachment"}>
-            ↓ {filename || "Download attachment"}
+            <KindIcon className="mj_FileIcon" />
+            <span className="mj_FileName">{fileLabel}</span>
         </a>
     ) : (
         <button className="mj_File" onClick={() => void load()} disabled={loading}>
-            ↓ {loading ? "Preparing download…" : filename || "Download attachment"}
+            <KindIcon className="mj_FileIcon" />
+            <span className="mj_FileName">{loading ? "Preparing download…" : fileLabel}</span>
         </button>
     );
 }
@@ -3161,7 +3212,13 @@ export function EventContent({
         case "image": {
             const mediaId = asString(event.payload.blob_ref);
             return mediaId ? (
-                <AuthenticatedMedia client={client} mediaId={mediaId} image caption={asString(event.payload.caption)} />
+                <AuthenticatedMedia
+                    client={client}
+                    mediaId={mediaId}
+                    image
+                    caption={asString(event.payload.caption)}
+                    dims={parseMediaDims(event.payload.dims)}
+                />
             ) : (
                 <div className="mj_Muted">Image unavailable</div>
             );
@@ -3176,6 +3233,7 @@ export function EventContent({
                             mediaId={mediaId}
                             image={false}
                             filename={asString(event.payload.filename, "attachment")}
+                            contentType={asString(event.payload.content_type) || undefined}
                         />
                     ) : (
                         <span className="mj_Muted">File unavailable</span>
