@@ -78,6 +78,15 @@ import {
 } from "./icons";
 import { createLongPressController, type LongPressController } from "./longPress";
 import { MarkdownBody, markdownToPlainText } from "./markdown";
+import {
+    buildMediaCorpus,
+    isRenderableInViewer,
+    type MediaItem,
+    MediaViewer,
+    MediaViewerContext,
+    type MediaViewerContextValue,
+    useMediaViewer,
+} from "./media-viewer";
 import { getSnapshot, nextThemePref, setTheme, subscribe } from "./theme";
 import {
     applyCommand,
@@ -2889,6 +2898,7 @@ function AuthenticatedMedia({
     const [url, setUrl] = useState<string>();
     const [error, setError] = useState<string>();
     const [loading, setLoading] = useState(false);
+    const viewer = useMediaViewer();
 
     const load = useCallback(async (): Promise<void> => {
         setLoading(true);
@@ -2926,6 +2936,21 @@ function AuthenticatedMedia({
                         <img
                             src={url}
                             alt={caption || "Shared image"}
+                            className={viewer ? "mj_Image_zoomable" : undefined}
+                            role={viewer ? "button" : undefined}
+                            tabIndex={viewer ? 0 : undefined}
+                            aria-label={viewer ? `Open image${caption ? `, ${caption}` : ""}` : undefined}
+                            onClick={viewer ? (event) => viewer.openViewer(mediaId, event.currentTarget) : undefined}
+                            onKeyDown={
+                                viewer
+                                    ? (event) => {
+                                          if (event.key === "Enter" || event.key === " ") {
+                                              event.preventDefault();
+                                              viewer.openViewer(mediaId, event.currentTarget);
+                                          }
+                                      }
+                                    : undefined
+                            }
                             onError={() => setError("Image failed to load")}
                         />
                     ) : (
@@ -2938,6 +2963,21 @@ function AuthenticatedMedia({
     }
     const KindIcon = FILE_KIND_ICON[fileKindFromMime(contentType)];
     const fileLabel = filename || "Download attachment";
+    // Renderable files (svg / pdf / video / raster) open the lightbox inline; the viewer
+    // fetches the blob itself and offers Download. Non-renderable types keep the plain
+    // download chip (HTML and unknown never render inline).
+    if (viewer && isRenderableInViewer(contentType, filename)) {
+        return (
+            <button
+                className="mj_File mj_File_preview"
+                onClick={(event) => viewer.openViewer(mediaId, event.currentTarget)}
+                aria-label={`Preview ${fileLabel}`}
+            >
+                <KindIcon className="mj_FileIcon" />
+                <span className="mj_FileName">{fileLabel}</span>
+            </button>
+        );
+    }
     return url ? (
         <a className="mj_File" href={url} download={filename || "attachment"}>
             <KindIcon className="mj_FileIcon" />
@@ -3555,11 +3595,22 @@ function Timeline({
     const [sourceEvent, setSourceEvent] = useState<JournalEvent>();
     const menu = useRowContextMenu<JournalEvent>();
     const sourceOpenerRef = useRef<HTMLElement | null>(null);
+    // Media viewer: the corpus is every image/file event in this conversation;
+    // openViewer is threaded to AuthenticatedMedia via MediaViewerContext.
+    const [viewerMediaId, setViewerMediaId] = useState<string>();
+    const viewerOpenerRef = useRef<HTMLElement | null>(null);
+    const mediaCorpus = useMemo<MediaItem[]>(() => buildMediaCorpus(state.events), [state.events]);
+    const openViewer = useCallback((mediaId: string, opener: HTMLElement | null): void => {
+        viewerOpenerRef.current = opener;
+        setViewerMediaId(mediaId);
+    }, []);
+    const mediaViewerValue = useMemo<MediaViewerContextValue>(() => ({ openViewer }), [openViewer]);
     selectedConversationId.current = state.selectedConversationId;
 
     useEffect(() => {
         menu.close();
         setSourceEvent(undefined);
+        setViewerMediaId(undefined);
     }, [state.selectedConversationId]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const historyScrollAnchor = useRef<
@@ -3722,7 +3773,7 @@ function Timeline({
         void client.loadOlderHistory();
     };
 
-    return (
+    const timelineMain = (
         <main className="mx_RoomView_timeline" data-testid="timeline">
             <div className="mx_RoomView_messagePanel mx_AutoHideScrollbar" ref={scrollRef} onScroll={onScroll}>
                 <div className="mx_RoomView_messageListWrapper">
@@ -3909,8 +3960,19 @@ function Timeline({
                     onClose={() => setSourceEvent(undefined)}
                 />
             )}
+            {viewerMediaId && mediaCorpus.length > 0 && (
+                <MediaViewer
+                    client={client}
+                    items={mediaCorpus}
+                    initialMediaId={viewerMediaId}
+                    opener={viewerOpenerRef.current}
+                    onClose={() => setViewerMediaId(undefined)}
+                />
+            )}
         </main>
     );
+
+    return <MediaViewerContext.Provider value={mediaViewerValue}>{timelineMain}</MediaViewerContext.Provider>;
 }
 
 const SLASH_LISTBOX_ID = "mx_SlashPalette_listbox";
@@ -5250,7 +5312,7 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
             // Any inner overlay still mounted → it owns this press; defer.
             if (
                 document.querySelector(
-                    ".mj_EventSource_scrim, .mj_UploadConfirm_scrim, .mj_NewSessionSheet, .mj_AccountMenu, .mj_EventRowMenu, .mj_RoomItemMenu, .mj_HeaderMenu, [role='menu']",
+                    ".mj_MediaViewer_scrim, .mj_EventSource_scrim, .mj_UploadConfirm_scrim, .mj_NewSessionSheet, .mj_AccountMenu, .mj_EventRowMenu, .mj_RoomItemMenu, .mj_HeaderMenu, [role='menu']",
                 )
             ) {
                 return;
