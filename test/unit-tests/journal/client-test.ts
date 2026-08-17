@@ -81,10 +81,11 @@ interface ClientInternals {
     state: ClientState;
     database?: FakeDatabase;
     api?: {
-        messages: () => Promise<{ events: [] }>;
+        messages?: () => Promise<{ events: [] }>;
         snapshot?: (signal?: AbortSignal) => Promise<{ seq: number; conversations: Conversation[] }>;
         uploadMedia?: (bytes: ArrayBuffer, contentType: string, signal?: AbortSignal) => Promise<{ media_id: string }>;
-        answerAgentSpawn?: (requestId: string, decision: "approve" | "deny") => Promise<void>;
+        media?: (mediaId: string) => Promise<Blob>;
+        answerAgentSpawn?: (requestId: string, decision: "approve" | "deny", signal?: AbortSignal) => Promise<void>;
     };
     connection?: {
         send: ReturnType<typeof jest.fn>;
@@ -3349,5 +3350,54 @@ describe("session creation orchestration", () => {
         expect(state.activities.get("c2")).toBe(activity);
         expect(state.textStreams.get("c2")).toEqual({ ref: "partial" });
         expect(state.toolStreams.get("c2")).toEqual({ ref: { content: "partial" } });
+    });
+});
+
+describe("MatronJournalClient mediaUrl", () => {
+    beforeEach(() => {
+        if (!URL.createObjectURL) URL.createObjectURL = () => "blob:unset";
+        if (!URL.revokeObjectURL) URL.revokeObjectURL = () => undefined;
+    });
+
+    afterEach(() => {
+        jest.restoreAllMocks();
+    });
+
+    function mediaClient(): { client: MatronJournalClient; media: jest.Mock } {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        state.state = signedInState(client);
+        const media = jest.fn().mockResolvedValue(new Blob(["bytes"]));
+        state.api = { media };
+        return { client, media };
+    }
+
+    it("dedupes concurrent requests for the same id into one fetch and one object URL", async () => {
+        const { client, media } = mediaClient();
+        let serial = 0;
+        jest.spyOn(URL, "createObjectURL").mockImplementation(() => `blob:${(serial += 1)}`);
+
+        // The viewer body and its DownloadLink mount in the same commit — two calls, no await
+        // between them. One fetch, one object URL; a second URL for the same bytes would be
+        // overwritten in the cache and leak (nothing ever revokes it).
+        const [first, second] = await Promise.all([client.mediaUrl("m1"), client.mediaUrl("m1")]);
+
+        expect(media).toHaveBeenCalledTimes(1);
+        expect(first).toBe("blob:1");
+        expect(second).toBe("blob:1");
+
+        // Settled requests leave the cache in place: a later call is a pure cache hit.
+        await expect(client.mediaUrl("m1")).resolves.toBe("blob:1");
+        expect(media).toHaveBeenCalledTimes(1);
+    });
+
+    it("a failed fetch clears the in-flight slot so a retry can succeed", async () => {
+        const { client, media } = mediaClient();
+        jest.spyOn(URL, "createObjectURL").mockReturnValue("blob:ok");
+        media.mockRejectedValueOnce(new JournalApiError("boom", 500));
+
+        await expect(client.mediaUrl("m1")).rejects.toThrow("boom");
+        await expect(client.mediaUrl("m1")).resolves.toBe("blob:ok");
+        expect(media).toHaveBeenCalledTimes(2);
     });
 });

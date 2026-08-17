@@ -241,6 +241,7 @@ export class MatronJournalClient {
     private readonly toolStreams = new Map<string, Record<string, ToolStreamState>>();
     private readonly retiredStreamRefs = new Set<string>();
     private readonly mediaUrls = new Map<string, string>();
+    private readonly mediaUrlRequests = new Map<string, Promise<string>>();
     private readonly readHighWater = new Map<string, number>();
     private readonly readTimers = new Map<string, number>();
     private pendingFiles = new Map<string, File>();
@@ -1196,14 +1197,36 @@ export class MatronJournalClient {
         await this.api.answerAgentSpawn(requestId, decision, signal);
     }
 
-    public async mediaUrl(mediaId: string): Promise<string> {
+    // Concurrent callers for the same id (the viewer body and its DownloadLink mount in the
+    // same commit) share one in-flight request: without the dedupe map each miss fetched the
+    // blob again and the loser's object URL was overwritten in the cache — never revoked, a
+    // permanent leak of the whole blob.
+    public mediaUrl(mediaId: string): Promise<string> {
         const cached = this.mediaUrls.get(mediaId);
-        if (cached) return cached;
-        if (!this.api) throw new Error("Not signed in");
-        const blob = await this.api.media(mediaId);
-        const url = URL.createObjectURL(blob);
-        this.mediaUrls.set(mediaId, url);
-        return url;
+        if (cached) return Promise.resolve(cached);
+        const inflight = this.mediaUrlRequests.get(mediaId);
+        if (inflight) return inflight;
+        const api = this.api;
+        if (!api) return Promise.reject(new Error("Not signed in"));
+        const gen = this.sessionGen;
+        const request = (async (): Promise<string> => {
+            try {
+                const blob = await api.media(mediaId);
+                const url = URL.createObjectURL(blob);
+                if (this.sessionGen !== gen) {
+                    // Signed out mid-fetch: the teardown that revokes cached URLs already ran,
+                    // so caching now would leak this one into the next session.
+                    URL.revokeObjectURL(url);
+                    throw new Error("Not signed in");
+                }
+                this.mediaUrls.set(mediaId, url);
+                return url;
+            } finally {
+                this.mediaUrlRequests.delete(mediaId);
+            }
+        })();
+        this.mediaUrlRequests.set(mediaId, request);
+        return request;
     }
 
     public selectedConversation(): Conversation | undefined {
