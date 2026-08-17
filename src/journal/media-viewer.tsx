@@ -612,16 +612,29 @@ function PdfBody({ client, item, registerZoom, registerPage, announce }: BodyPro
         };
     }, [url]);
 
-    // Paint the current page whenever it (or zoom) changes.
+    // Paint the current page whenever it changes. Two hazards guarded here:
+    //  - deps name zoom.onContentMeasured (stable useCallback), NOT the `zoom` object, which is
+    //    rebuilt every render — depending on it re-ran this effect on every wheel/pan and started
+    //    a second render on a canvas pdf.js still owns ("Cannot use the same canvas during
+    //    multiple render() operations").
+    //  - renders are chained through renderChainRef for the same reason: a fast page flip fires
+    //    a new effect run while the previous renderPage is still mid-flight on the same canvas.
+    const { onContentMeasured } = zoom;
+    const renderChainRef = useRef<Promise<void>>(Promise.resolve());
     useEffect(() => {
         const doc = docRef.current;
         const canvas = canvasRef.current;
         if (!doc || !canvas || numPages === 0) return;
         let cancelled = false;
-        doc.renderPage(page, canvas, 1.5)
+        const render = renderChainRef.current.then(async () => {
+            if (cancelled) return; // superseded before it started — don't paint a stale page
+            await doc.renderPage(page, canvas, 1.5);
+        });
+        renderChainRef.current = render.catch(() => undefined);
+        render
             .then(() => {
                 if (cancelled) return;
-                zoom.onContentMeasured(canvas.width, canvas.clientWidth || canvas.width);
+                onContentMeasured(canvas.width, canvas.clientWidth || canvas.width);
                 announce(`Page ${page} of ${numPages}${item.filename ? `, ${item.filename}` : ""}`);
             })
             .catch((error: unknown) => {
@@ -630,7 +643,7 @@ function PdfBody({ client, item, registerZoom, registerPage, announce }: BodyPro
         return () => {
             cancelled = true;
         };
-    }, [page, numPages, item.filename, zoom, announce]);
+    }, [page, numPages, item.filename, onContentMeasured, announce]);
 
     if (urlError || renderError) {
         return (
@@ -706,9 +719,38 @@ function ThumbGlyph({ item }: { item: MediaItem }): React.ReactElement {
     return <FileIcon aria-hidden />;
 }
 
-function ThumbImage({ client, mediaId }: { client: MatronJournalClient; mediaId: string }): React.ReactElement {
+function LoadedThumbImage({ client, mediaId }: { client: MatronJournalClient; mediaId: string }): React.ReactElement {
     const { url } = useObjectUrl(client, mediaId);
     return url ? <img className="mj_MediaViewer_thumbImg" src={url} alt="" /> : <FileIcon aria-hidden />;
+}
+
+// The journal serves no thumbnail variant — a thumb paints the full-resolution blob. Fetch it
+// only once the tile has actually scrolled into view, or opening the viewer in an image-heavy
+// conversation downloads every blob in the strip up front just to draw 38px tiles.
+function ThumbImage({ client, mediaId }: { client: MatronJournalClient; mediaId: string }): React.ReactElement {
+    const holderRef = useRef<HTMLSpanElement>(null);
+    const [visible, setVisible] = useState(false);
+    useEffect(() => {
+        const holder = holderRef.current;
+        if (!holder) return undefined;
+        if (typeof IntersectionObserver === "undefined") {
+            setVisible(true); // jsdom / ancient engines — degrade to eager
+            return undefined;
+        }
+        const observer = new IntersectionObserver((entries) => {
+            if (entries.some((entry) => entry.isIntersecting)) {
+                setVisible(true);
+                observer.disconnect();
+            }
+        });
+        observer.observe(holder);
+        return () => observer.disconnect();
+    }, []);
+    return (
+        <span ref={holderRef} className="mj_MediaViewer_thumbHolder">
+            {visible ? <LoadedThumbImage client={client} mediaId={mediaId} /> : <FileIcon aria-hidden />}
+        </span>
+    );
 }
 
 function ThumbStrip({

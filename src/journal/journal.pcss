@@ -3911,6 +3911,15 @@ button.mj_File {
     border: 2px solid var(--cpd-color-text-action-accent);
 }
 
+/* Sized wrapper so the lazily-mounted thumbImg still fills the 38px tile. */
+.mj_MediaViewer_thumbHolder {
+    display: inline-flex;
+    width: 100%;
+    height: 100%;
+    align-items: center;
+    justify-content: center;
+}
+
 .mj_MediaViewer_thumbImg {
     width: 100%;
     height: 100%;
