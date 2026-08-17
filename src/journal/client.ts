@@ -92,14 +92,10 @@ interface AttachmentOwner {
 }
 
 type PersistPendingAttachmentOutcome =
-    | { kind: "persisted-uploadable" }
-    | { kind: "persisted-terminal" }
-    | { kind: "persist-failed" };
+    { kind: "persisted-uploadable" } | { kind: "persisted-terminal" } | { kind: "persist-failed" };
 
 export type StartOutcome =
-    | { kind: "created"; convoId: string }
-    | { kind: "error"; message: string }
-    | { kind: "uncertain" };
+    { kind: "created"; convoId: string } | { kind: "error"; message: string } | { kind: "uncertain" };
 
 export type WorkerKind = "claude" | "codex";
 
