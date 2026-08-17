@@ -9,10 +9,78 @@ import {
     endpointUrl,
     enforceToolLogTtl,
     eventSnippet,
+    fileKindFromMime,
+    IMAGE_FRAME_MAX_HEIGHT_PX,
+    imageFrameStyle,
     MESSAGE_EVENT_TYPES,
     normalizeServerUrl,
+    parseMediaDims,
     websocketUrl,
 } from "../../../src/journal/types";
+
+describe("matron-journal media payload helpers", () => {
+    it("parses positive dims and rejects absent / non-positive / malformed", () => {
+        expect(parseMediaDims({ width: 1200, height: 800 })).toEqual({ width: 1200, height: 800 });
+        // Matrix `m.image` `info` spelling (`w`/`h`) — the shape the bridge actually passes through.
+        expect(parseMediaDims({ w: 10, h: 20 })).toEqual({ width: 10, height: 20 });
+        // `{ width, height }` wins when both spellings are present.
+        expect(parseMediaDims({ width: 1200, height: 800, w: 1, h: 1 })).toEqual({ width: 1200, height: 800 });
+        // `{ w, h }` is subject to the same positive / finite guards as `{ width, height }`.
+        expect(parseMediaDims({ w: 0, h: 20 })).toBeUndefined();
+        expect(parseMediaDims({ w: 10, h: -1 })).toBeUndefined();
+        expect(parseMediaDims({ w: "10", h: "20" })).toBeUndefined();
+        expect(parseMediaDims(undefined)).toBeUndefined();
+        expect(parseMediaDims(null)).toBeUndefined();
+        expect(parseMediaDims({})).toBeUndefined();
+        expect(parseMediaDims({ width: 0, height: 800 })).toBeUndefined();
+        expect(parseMediaDims({ width: 100, height: -1 })).toBeUndefined();
+        expect(parseMediaDims({ width: "1200", height: "800" })).toBeUndefined();
+        expect(parseMediaDims({ width: Number.NaN, height: 10 })).toBeUndefined();
+    });
+
+    it("pre-shrinks the reserved image frame width so the height cap preserves aspect ratio", () => {
+        const cap = IMAGE_FRAME_MAX_HEIGHT_PX;
+        // Short: natural height at intrinsic width is under the cap (400 < 520) → width unchanged.
+        expect(imageFrameStyle({ width: 1200, height: 400 })).toEqual({
+            aspectRatio: "1200 / 400",
+            width: 1200,
+        });
+        // Landscape but tall enough to exceed the cap (800 > 520) → width shrinks to keep the ratio.
+        expect(imageFrameStyle({ width: 1200, height: 800 })).toEqual({
+            aspectRatio: "1200 / 800",
+            width: 1200 * (cap / 800), // 780 at cap=520 → 780×520 (ratio 1.5 preserved)
+        });
+        // Portrait: height would blow past the cap → width shrinks so the capped height keeps ratio
+        // (a non-replaced <div> won't back-shrink on its own — this is the bug the reserve box hit).
+        expect(imageFrameStyle({ width: 1000, height: 2000 })).toEqual({
+            aspectRatio: "1000 / 2000",
+            width: 1000 * (cap / 2000), // 260 at cap=520 → 260×520, not 1000×520
+        });
+        // Square past the cap also shrinks (1:1 at column width still exceeds max-height).
+        expect(imageFrameStyle({ width: 1000, height: 1000 })).toEqual({
+            aspectRatio: "1000 / 1000",
+            width: cap, // 520×520
+        });
+        // The shrunk width, times the aspect ratio, never exceeds the height cap.
+        const p = imageFrameStyle({ width: 300, height: 1800 });
+        expect(p.width * (1800 / 300)).toBeLessThanOrEqual(cap + 1e-9);
+    });
+
+    it("buckets MIME types into file kinds, falling back to generic", () => {
+        expect(fileKindFromMime("image/png")).toBe("image");
+        expect(fileKindFromMime("application/pdf")).toBe("pdf");
+        expect(fileKindFromMime("text/plain")).toBe("text");
+        expect(fileKindFromMime("audio/mpeg")).toBe("audio");
+        expect(fileKindFromMime("video/mp4")).toBe("video");
+        expect(fileKindFromMime("application/zip")).toBe("archive");
+        expect(fileKindFromMime("application/x-tar")).toBe("archive");
+        expect(fileKindFromMime("APPLICATION/PDF")).toBe("pdf");
+        expect(fileKindFromMime("application/octet-stream")).toBe("generic");
+        expect(fileKindFromMime("")).toBe("generic");
+        expect(fileKindFromMime(undefined)).toBe("generic");
+        expect(fileKindFromMime(42)).toBe("generic");
+    });
+});
 
 describe("matron-journal wire helpers", () => {
     it("normalizes secure and loopback server URLs", () => {

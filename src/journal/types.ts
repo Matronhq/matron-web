@@ -275,6 +275,12 @@ export interface ClientState {
     pinnedIds: Set<string>;
     favoriteIds: Set<string>;
     unreadOverrideIds: Set<string>;
+    /**
+     * Parent conversation ids whose subagent child rows the user has manually collapsed in the
+     * sidebar. Persisted per session/user like the other row flags; default empty = every parent
+     * expanded. Threaded into every buildSidebarIndex call so render/selection/unread/mark-all agree.
+     */
+    collapsedSubagentParentIds: Set<string>;
     controlError?: string;
     preferencesUnavailable?: boolean;
     selectedConversationId?: string;
@@ -320,6 +326,9 @@ export function parentPresent(c: Conversation, ids: ReadonlySet<string>): boolea
 
 export type ChildSidebarPlacement = "nested" | "top-level" | "hidden";
 
+/** Shared empty set — default for the optional collapsed-parents argument (no allocation per call). */
+const EMPTY_ID_SET: ReadonlySet<string> = new Set<string>();
+
 /**
  * precomputed lookups shared by every sidebar-visibility consumer so the SAME
  * classification drives rendering, selection, unread aggregation, the desktop badge, and
@@ -335,6 +344,14 @@ export interface SidebarIndex {
     byId: Map<string, Conversation>;
     /** id → fully-resolved Active/Favorites placement (memoized, cycle-safe). */
     placement: Map<string, ChildSidebarPlacement>;
+    /**
+     * Parent ids that host at least one subagent child row — a running child whose direct parent
+     * is a real, non-archived top-level row (i.e. the child renders nested, or WOULD render nested
+     * if the parent were not collapsed). Independent of the collapsed set, so the sidebar row menu
+     * can gate its "Collapse/Show subagents" item on the child rows EXISTING, even while they are
+     * hidden by an active collapse.
+     */
+    parentsWithChildRows: Set<string>;
 }
 
 /**
@@ -353,9 +370,16 @@ export interface SidebarIndex {
  *  - subchat, parent present, NOT running → "hidden" (one-shot: a finished child lingers
  *    nowhere in Active).
  *  - subchat, parent present, running → "nested" iff the parent is a non-archived row whose
- *    resolved placement is "top-level"; otherwise "top-level".
+ *    resolved placement is "top-level" AND the user has not collapsed that parent; if the parent
+ *    is a valid host but collapsed, the child is "hidden" (suppressed from the sidebar, but the
+ *    parent still hosts it, so it is counted in `parentsWithChildRows`); otherwise (parent not a
+ *    valid host) "top-level".
  */
-export function buildSidebarIndex(conversations: Conversation[], archivedIds: ReadonlySet<string>): SidebarIndex {
+export function buildSidebarIndex(
+    conversations: Conversation[],
+    archivedIds: ReadonlySet<string>,
+    collapsedParentIds: ReadonlySet<string> = EMPTY_ID_SET,
+): SidebarIndex {
     const allIds = new Set<string>();
     const byId = new Map<string, Conversation>();
     for (const conversation of conversations) {
@@ -364,6 +388,7 @@ export function buildSidebarIndex(conversations: Conversation[], archivedIds: Re
     }
 
     const placement = new Map<string, ChildSidebarPlacement>();
+    const parentsWithChildRows = new Set<string>();
     const resolving = new Set<string>(); // in-progress ids → parent-chain cycle guard
 
     const resolve = (conversation: Conversation): ChildSidebarPlacement => {
@@ -394,13 +419,27 @@ export function buildSidebarIndex(conversations: Conversation[], archivedIds: Re
         const parentIsTopLevelRow = parent != null && !archivedIds.has(parent.id) && resolve(parent) === "top-level";
         resolving.delete(conversation.id);
 
-        const result: ChildSidebarPlacement = parentIsTopLevelRow ? "nested" : "top-level";
-        placement.set(conversation.id, result);
-        return result;
+        // An ARCHIVED child is rendered in the Archived tab, never as a nested Active row, so it
+        // must NOT register its parent as a host — otherwise the parent offers a dead "Collapse
+        // subagents" control that hides nothing (the render splice + the collapsed count already
+        // skip archived children with `!archivedIds.has(child.id)`). Fall through to top-level;
+        // archivedIds filters it out of Active regardless of placement.
+        if (parentIsTopLevelRow && parent != null && !archivedIds.has(conversation.id)) {
+            // This is a real subagent child row for `parent` — record the host relationship
+            // regardless of collapse (drives the menu gate + the collapsed-count affordance).
+            parentsWithChildRows.add(parent.id);
+            // Collapse suppresses the row: "hidden" excludes it from EVERY consumer that reads
+            // placement (render/nested-splice, auto-select, unread, badge, mark-all) in lock-step.
+            const result: ChildSidebarPlacement = collapsedParentIds.has(parent.id) ? "hidden" : "nested";
+            placement.set(conversation.id, result);
+            return result;
+        }
+        placement.set(conversation.id, "top-level");
+        return "top-level";
     };
 
     for (const conversation of conversations) resolve(conversation);
-    return { allIds, byId, placement };
+    return { allIds, byId, placement, parentsWithChildRows };
 }
 
 /**
@@ -425,6 +464,16 @@ export function rendersAsTopLevelRow(conversation: Conversation, index: SidebarI
     return !isSubChat(conversation) || childSidebarPlacement(conversation, index) === "top-level";
 }
 
+/**
+ * does this conversation currently host any subagent child rows? True when at least one running
+ * child nests (or would nest, if the parent is collapsed) directly beneath it. Gates the sidebar-
+ * row-menu "Collapse subagents" / "Show subagents" toggle so it appears ONLY for a parent that
+ * actually has child rows — collapse state does not change the answer.
+ */
+export function hasSubagentChildRows(conversation: Pick<Conversation, "id">, index: SidebarIndex): boolean {
+    return index.parentsWithChildRows.has(conversation.id);
+}
+
 export function isNearBottom(scrollTop: number, scrollHeight: number, clientHeight: number, thresholdPx = 80): boolean {
     return scrollHeight - scrollTop - clientHeight <= thresholdPx;
 }
@@ -439,6 +488,68 @@ export function asString(value: unknown, fallback = ""): string {
 
 export function asNumber(value: unknown, fallback = 0): number {
     return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+// Image intrinsic pixel dimensions, normalized to `{ width, height }` for this client. The value
+// is OPTIONAL and originates UPSTREAM of the bridge: the bridge is a pure pass-through and passes
+// Matrix's values when present. Matrix `m.image` `info` spells them `w`/`h`, so `payload.dims` may
+// arrive as `{ w, h }` OR `{ width, height }` — parseMediaDims accepts both. When present, the web
+// client reserves an aspect-ratio box BEFORE the blob decodes, avoiding the thread reflow that
+// otherwise happens as each image finishes loading.
+export interface MediaDims {
+    width: number;
+    height: number;
+}
+
+// Parse `payload.dims`, accepting BOTH the Matrix `{ w, h }` spelling and the `{ width, height }`
+// spelling. Returns undefined when absent or non-positive (images with no upstream dims / clients
+// that did not measure) so the caller falls back to the un-reserved render.
+export function parseMediaDims(value: unknown): MediaDims | undefined {
+    if (!isObject(value)) return undefined;
+    const width = asNumber(value.width ?? value.w, 0);
+    const height = asNumber(value.height ?? value.h, 0);
+    return width > 0 && height > 0 ? { width, height } : undefined;
+}
+
+// Single authoritative source for the image-frame height cap. Emitted at runtime as the
+// `--mj-image-frame-max-height` CSS custom property on the `.mj_Image` figure (see AuthenticatedMedia),
+// which BOTH `.mj_ImageFrame_sized` and `.mj_Image img` consume via `var(...)` in journal.pcss — so
+// the JS cap and the CSS caps cannot drift. A non-replaced <div> sized by CSS `aspect-ratio` does not
+// back-shrink its width when the computed height hits `max-height` (that ratio-preserving
+// back-propagation only happens for replaced elements like a bare <img>), so the cap is also baked
+// into the seeded width in JS — see imageFrameStyle.
+export const IMAGE_FRAME_MAX_HEIGHT_PX = 520;
+
+// Inline style that reserves an image's box before the blob decodes, so the thread doesn't reflow
+// on load. `aspectRatio` holds the shape; `width` seeds the intrinsic size (further capped by the
+// CSS max-width for the column). The width is pre-shrunk so that when the ratio-derived height
+// would exceed IMAGE_FRAME_MAX_HEIGHT_PX the box shrinks in BOTH dimensions — replicating replaced-
+// element sizing. Without this, portrait/square images get an over-wide frame and the inner
+// object-fit:contain <img> letterboxes with dead margins.
+export function imageFrameStyle(dims: MediaDims): { aspectRatio: string; width: number } {
+    return {
+        aspectRatio: `${dims.width} / ${dims.height}`,
+        width: Math.min(dims.width, dims.width * (IMAGE_FRAME_MAX_HEIGHT_PX / dims.height)),
+    };
+}
+
+// Coarse file buckets used to pick a file-tile affordance from a MIME type. A few sensible
+// buckets plus a generic fallback; deliberately NOT an exhaustive icon library.
+export type FileKind = "image" | "pdf" | "text" | "audio" | "video" | "archive" | "generic";
+
+const ARCHIVE_MIME = /(zip|tar|gzip|x-7z-compressed|x-rar|x-bzip|compress)/;
+
+// Map a MIME (`payload.content_type`) to a coarse FileKind. Absent/blank maps to "generic".
+export function fileKindFromMime(contentType: unknown): FileKind {
+    const mime = asString(contentType).trim().toLowerCase();
+    if (!mime) return "generic";
+    if (mime.startsWith("image/")) return "image";
+    if (mime.startsWith("audio/")) return "audio";
+    if (mime.startsWith("video/")) return "video";
+    if (mime === "application/pdf") return "pdf";
+    if (mime.startsWith("text/")) return "text";
+    if (ARCHIVE_MIME.test(mime)) return "archive";
+    return "generic";
 }
 
 export function displaySender(sender: string): string {

@@ -45,12 +45,18 @@ import {
     CodeBracketsIcon,
     CompactIcon,
     ComposeIcon,
+    ArchiveFileIcon,
+    AudioFileIcon,
     FileEditIcon,
     FailedIcon,
     FileIcon,
+    ImageFileIcon,
     InactiveIcon,
     InterruptedIcon,
     KebabIcon,
+    PdfFileIcon,
+    TextFileIcon,
+    VideoFileIcon,
     MarkdownIcon,
     MarkAllReadIcon,
     MarkReadIcon,
@@ -110,7 +116,14 @@ import {
     type DeviceDTO,
     displaySender,
     type EventPayload,
+    type FileKind,
+    fileKindFromMime,
+    hasSubagentChildRows,
+    IMAGE_FRAME_MAX_HEIGHT_PX,
+    imageFrameStyle,
     isNearBottom,
+    type MediaDims,
+    parseMediaDims,
     type JournalEvent,
     type PendingMessage,
     type RecentFolder,
@@ -956,7 +969,7 @@ function ConversationList({
     // "selectable/counted" can never diverge. rendersAsTopLevelRow: a non-child always
     // renders top-level; a child renders top-level only when childSidebarPlacement says so
     // (orphan → always; parent exists → running-only, and then only when it can't nest).
-    const sidebarIndex = buildSidebarIndex(state.conversations, state.archivedIds);
+    const sidebarIndex = buildSidebarIndex(state.conversations, state.archivedIds, state.collapsedSubagentParentIds);
     const isTopLevelRow = (conversation: Conversation): boolean => rendersAsTopLevelRow(conversation, sidebarIndex);
     const conversations = useMemo(() => {
         const normalized = query.trim().toLocaleLowerCase();
@@ -1043,13 +1056,40 @@ function ConversationList({
         const name = conversationTitle(conversation);
         const outcomeStatus = isSubagent ? accessibleOutcome(classifyOutcome(conversation)) : undefined;
         const relativeTimestamp = formatRelativeDay(conversation.last_ts ?? conversation.created_at, renderNow);
+        // When this parent's subagent rows are collapsed, surface a subtle count of the hidden
+        // child rows so the collapse stays discoverable on the row itself. Gate on the CANONICAL
+        // index (hasSubagentChildRows) — NOT an independent running-child count — so it agrees with
+        // the menu and the placement derivation. An archived parent hosts no child rows (its running
+        // children are promoted to top-level), so it is absent from that set → no count, no false
+        // "N hidden" even if its collapse state persisted through archival. The set is only populated
+        // for real hosts, so the running-child count below always measures exactly what collapse hides.
+        const collapsedSubagentChildren =
+            !isSubagent &&
+            state.collapsedSubagentParentIds.has(conversation.id) &&
+            hasSubagentChildRows(conversation, sidebarIndex)
+                ? childrenOf(state.conversations, conversation.id).filter(
+                      (child) => !state.archivedIds.has(child.id) && child.session_state === "running",
+                  )
+                : [];
+        const collapsedSubagentCount = collapsedSubagentChildren.length;
+        // Collapse removes each hidden child's own inline row + unread badge. If any hidden child
+        // is still unread, the chip must carry that signal — otherwise a streaming child's unread
+        // surfaces nowhere (the aggregate badge already excludes nested children, and the strip
+        // pills never show unread). Measured over the SAME set the count derives from.
+        const collapsedSubagentUnread = collapsedSubagentChildren.some((child) =>
+            effectiveUnread(child, state.unreadOverrideIds),
+        );
         return (
             <div className="mj_RoomListItem_wrapper" role="listitem" key={conversation.id}>
                 <button
                     className={`mj_RoomListItem${selected ? " mj_RoomListItem_selected" : ""}${isSubagent ? " mj_RoomListItem_sub" : ""}`}
                     type="button"
                     aria-current={selected ? "page" : undefined}
-                    aria-label={`Open ${isSubagent ? "subagent" : "room"} ${name}${outcomeStatus ? `, ${outcomeStatus}` : ""}, last activity ${relativeTimestamp}${overrideUnread ? ", marked unread" : ""}`}
+                    aria-label={`Open ${isSubagent ? "subagent" : "room"} ${name}${outcomeStatus ? `, ${outcomeStatus}` : ""}, last activity ${relativeTimestamp}${overrideUnread ? ", marked unread" : ""}${
+                        collapsedSubagentCount > 0
+                            ? `, ${collapsedSubagentCount} subagent${collapsedSubagentCount === 1 ? "" : "s"} hidden${collapsedSubagentUnread ? " (unread)" : ""}`
+                            : ""
+                    }`}
                     onClick={(event) => {
                         if (longPressFiredRef.current) {
                             longPressFiredRef.current = false;
@@ -1136,6 +1176,20 @@ function ConversationList({
                         </span>
                     )}
                     <span className="mj_RoomListMeta">
+                        {collapsedSubagentCount > 0 && (
+                            // Decorative: the hidden-child count + unread state are announced via the
+                            // containing row button's aria-label (a nested label here would be silent to AT).
+                            <span
+                                className={`mj_RoomListCollapsedSubs${
+                                    collapsedSubagentUnread ? " mj_RoomListCollapsedSubs_unread" : ""
+                                }`}
+                                aria-hidden="true"
+                            >
+                                <ChevronLeftIcon aria-hidden />
+                                {collapsedSubagentCount}
+                                {collapsedSubagentUnread && <span className="mj_UnreadDot" aria-hidden />}
+                            </span>
+                        )}
                         <span className="mj_RoomListTime">{relativeTimestamp}</span>
                         {conversation.unread_count > 0 ? (
                             <span className="mj_UnreadBadge" aria-label={`${conversation.unread_count} unread`}>
@@ -1502,6 +1556,26 @@ function ConversationList({
                                     Mark as read
                                 </button>
                             )}
+                        {/* Manual collapse/expand of this conversation's subagent child rows —
+                            shown ONLY when it currently hosts child rows (hasSubagentChildRows
+                            stays true while collapsed, so "Show subagents" remains reachable). */}
+                        {hasSubagentChildRows(menuConversation, sidebarIndex) && (
+                            <button
+                                className="mj_RoomItemMenu_item"
+                                type="button"
+                                role="menuitem"
+                                onClick={() => {
+                                    closeRoomMenu();
+                                    client.toggleSubagentCollapse(menuConversation.id);
+                                    restoreFocusAfterMenuAction();
+                                }}
+                            >
+                                <ChevronDownIcon aria-hidden />
+                                {state.collapsedSubagentParentIds.has(menuConversation.id)
+                                    ? "Show subagents"
+                                    : "Collapse subagents"}
+                            </button>
+                        )}
                         {state.archivedIds.has(menuConversation.id) ? (
                             <button
                                 className="mj_RoomItemMenu_item"
@@ -3029,18 +3103,33 @@ function ToolOutput({ client, event }: { client: MatronJournalClient; event: Jou
     );
 }
 
+// Pick a file-tile glyph from the coarse MIME bucket. Generic sheet is the fallback.
+const FILE_KIND_ICON: Record<FileKind, (props: React.SVGProps<SVGSVGElement>) => React.ReactElement> = {
+    image: ImageFileIcon,
+    pdf: PdfFileIcon,
+    text: TextFileIcon,
+    audio: AudioFileIcon,
+    video: VideoFileIcon,
+    archive: ArchiveFileIcon,
+    generic: FileIcon,
+};
+
 function AuthenticatedMedia({
     client,
     mediaId,
     image,
     filename,
     caption,
+    dims,
+    contentType,
 }: {
     client: MatronJournalClient;
     mediaId: string;
     image: boolean;
     filename?: string;
     caption?: string;
+    dims?: MediaDims;
+    contentType?: string;
 }): React.ReactElement {
     const [url, setUrl] = useState<string>();
     const [error, setError] = useState<string>();
@@ -3063,22 +3152,46 @@ function AuthenticatedMedia({
 
     if (error) return <div className="mj_Error">{error}</div>;
     if (image) {
-        return url ? (
-            <figure className="mj_Image">
-                <img src={url} alt={caption || "Shared image"} />
+        // Reserve an aspect-ratio box BEFORE the blob decodes so the thread does not reflow when
+        // the image finishes loading. imageFrameStyle pre-shrinks the width so the CSS max-height
+        // cap preserves the aspect ratio (a non-replaced <div> won't back-shrink on its own).
+        // Absent dims means no reserved box, current fluid behaviour (fallback for un-measured).
+        const frameStyle: React.CSSProperties | undefined = dims ? imageFrameStyle(dims) : undefined;
+        // Emit the JS-authoritative height cap as a CSS custom property so the pcss frame rules
+        // (`.mj_ImageFrame_sized`, `.mj_Image img`) consume it via var() and cannot drift from the
+        // JS constant. Set on the always-present figure so it cascades to both sized and fluid cases.
+        const figureStyle = { "--mj-image-frame-max-height": `${IMAGE_FRAME_MAX_HEIGHT_PX}px` } as React.CSSProperties;
+        return (
+            <figure className="mj_Image" style={figureStyle}>
+                <div className={`mj_ImageFrame${dims ? " mj_ImageFrame_sized" : ""}`} style={frameStyle}>
+                    {url ? (
+                        // onError collapses the reserved frame (figure → mj_Error) when the blob decodes
+                        // to a broken image, so a corrupt image doesn't hold the full reserved box around
+                        // a broken glyph — matching the pre-reserve fluid behaviour.
+                        <img
+                            src={url}
+                            alt={caption || "Shared image"}
+                            onError={() => setError("Image failed to load")}
+                        />
+                    ) : (
+                        <div className="mj_MediaLoading">{loading ? "Loading image…" : "Image"}</div>
+                    )}
+                </div>
                 {caption && <figcaption>{caption}</figcaption>}
             </figure>
-        ) : (
-            <div className="mj_MediaLoading">{loading ? "Loading image…" : "Image"}</div>
         );
     }
+    const KindIcon = FILE_KIND_ICON[fileKindFromMime(contentType)];
+    const fileLabel = filename || "Download attachment";
     return url ? (
         <a className="mj_File" href={url} download={filename || "attachment"}>
-            ↓ {filename || "Download attachment"}
+            <KindIcon className="mj_FileIcon" />
+            <span className="mj_FileName">{fileLabel}</span>
         </a>
     ) : (
         <button className="mj_File" onClick={() => void load()} disabled={loading}>
-            ↓ {loading ? "Preparing download…" : filename || "Download attachment"}
+            <KindIcon className="mj_FileIcon" />
+            <span className="mj_FileName">{loading ? "Preparing download…" : fileLabel}</span>
         </button>
     );
 }
@@ -3426,7 +3539,13 @@ export function EventContent({
         case "image": {
             const mediaId = asString(event.payload.blob_ref);
             return mediaId ? (
-                <AuthenticatedMedia client={client} mediaId={mediaId} image caption={asString(event.payload.caption)} />
+                <AuthenticatedMedia
+                    client={client}
+                    mediaId={mediaId}
+                    image
+                    caption={asString(event.payload.caption)}
+                    dims={parseMediaDims(event.payload.dims)}
+                />
             ) : (
                 <div className="mj_Muted">Image unavailable</div>
             );
@@ -3441,6 +3560,7 @@ export function EventContent({
                             mediaId={mediaId}
                             image={false}
                             filename={asString(event.payload.filename, "attachment")}
+                            contentType={asString(event.payload.content_type) || undefined}
                         />
                     ) : (
                         <span className="mj_Muted">File unavailable</span>
