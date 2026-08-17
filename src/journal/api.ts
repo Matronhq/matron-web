@@ -209,10 +209,15 @@ export class JournalApi {
     // First client-initiated REST POST (§ design "The answer call"). 200 -> {ok:true}, discarded;
     // 409 (already resolved elsewhere/expired) and 404 (row gone) surface as a typed
     // JournalApiError so the card can distinguish them by `.status`. Never sends `always_allow`.
-    public async answerAgentSpawn(requestId: string, decision: "approve" | "deny"): Promise<void> {
+    public async answerAgentSpawn(
+        requestId: string,
+        decision: "approve" | "deny",
+        signal?: AbortSignal,
+    ): Promise<void> {
         await this.json<{ ok: boolean }>("/agent-spawn/answer", {
             method: "POST",
             body: { request_id: requestId, decision },
+            signal,
         });
     }
 

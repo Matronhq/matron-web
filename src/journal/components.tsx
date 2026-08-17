@@ -2797,8 +2797,8 @@ function PromptDeniedGlyph(): React.ReactElement {
 }
 
 // A journaled agent_spawn card is unanswerable if the bridge minted a malformed payload
-// (non-string/empty request_id or task) — falls back to the generic PromptCard rather than
-// rendering Approve/Deny buttons nothing can resolve.
+// (non-string/empty request_id or task) — rendered as a read-only AgentSpawnCard rather than
+// with Approve/Deny buttons nothing can resolve.
 function isAnswerableAgentSpawn(payload: EventPayload): boolean {
     return (
         typeof payload.request_id === "string" &&
@@ -2829,7 +2829,7 @@ function spawnOutcomeCardLabel(payload: EventPayload): string {
 type AgentSpawnDecision = "approve" | "deny";
 type AgentSpawnLocalPhase = "idle" | "sending" | "retryable" | "already-answered" | "gone";
 
-const noopAgentSpawnAnswer = (): Promise<void> => Promise.resolve();
+const noopAgentSpawnAnswer = (_decision: AgentSpawnDecision, _signal?: AbortSignal): Promise<void> => Promise.resolve();
 const noopAgentSpawnOpen = (): void => undefined;
 
 // Joins the .mj_PromptCard family (§ design "Kind dispatch and components"): same chrome and
@@ -2852,7 +2852,7 @@ function AgentSpawnCard({
     event: JournalEvent;
     outcome: EventPayload | null;
     isReadOnly?: boolean;
-    onAnswer?: (decision: AgentSpawnDecision) => Promise<void>;
+    onAnswer?: (decision: AgentSpawnDecision, signal?: AbortSignal) => Promise<void>;
     onOpen?: (roomId: string) => void;
 }): React.ReactElement {
     const payload = event.payload;
@@ -2879,6 +2879,12 @@ function AgentSpawnCard({
     // agentsRequestIdRef/mountedRef pattern above.
     const attemptIdRef = useRef(0);
     const mountedRef = useRef(false);
+    // Aborting the previous attempt's POST before the buttons re-enable narrows the
+    // Deny-races-Approve window: without it, a stalled Approve can still be in flight when the
+    // confirmation timeout re-enables the row, and a user's corrective Deny then loses the
+    // server-side first-arrival race to their own abandoned tap. The abort can't recall bytes the
+    // server already received — the durable outcome event stays authoritative for that case.
+    const abortRef = useRef<AbortController | null>(null);
     const setLocalPhase = (next: AgentSpawnLocalPhase): void => {
         phaseRef.current = next;
         setPhase(next);
@@ -2888,14 +2894,18 @@ function AgentSpawnCard({
         mountedRef.current = true;
         return (): void => {
             mountedRef.current = false;
+            abortRef.current?.abort();
         };
     }, []);
 
     const handleAnswer = (decision: AgentSpawnDecision): void => {
         if (resolved || phaseRef.current === "sending") return;
         const attemptId = ++attemptIdRef.current;
+        abortRef.current?.abort();
+        const controller = new AbortController();
+        abortRef.current = controller;
         setLocalPhase("sending");
-        void onAnswer(decision).then(
+        void onAnswer(decision, controller.signal).then(
             () => undefined, // ack received; wait for the durable event (or the timeout effect below)
             (error: unknown) => {
                 // A newer attempt (retry, or another tab) has already moved the phase on —
@@ -2913,7 +2923,10 @@ function AgentSpawnCard({
         const attemptId = attemptIdRef.current;
         const timer = setTimeout(() => {
             if (attemptId !== attemptIdRef.current) return; // superseded by a newer attempt
-            if (phaseRef.current === "sending") setLocalPhase("retryable");
+            if (phaseRef.current === "sending") {
+                abortRef.current?.abort(); // kill the stalled POST before re-enabling the buttons
+                setLocalPhase("retryable");
+            }
         }, PROMPT_REPLY_CONFIRMATION_TIMEOUT_MS);
         return (): void => clearTimeout(timer);
     }, [phase, resolved]);
@@ -3028,7 +3041,7 @@ function SpawnOutcomeRow({ client, event }: { client: MatronJournalClient; event
                 <button
                     type="button"
                     className="mj_SpawnOpenButton"
-                    onClick={() => void client.selectConversation(roomId, { fromRpcCreate: true })}
+                    onClick={() => void client.selectConversation(roomId, { suppressNotFound: true })}
                 >
                     Open
                 </button>
@@ -3499,16 +3512,25 @@ export function EventContent({
                 />
             );
         case "permission_request": {
-            if (asString(event.payload.kind) === "agent_spawn" && isAnswerableAgentSpawn(event.payload)) {
+            if (asString(event.payload.kind) === "agent_spawn") {
                 const requestId = asString(event.payload.request_id);
+                // A malformed agent_spawn payload (no request_id/task) can never be resolved:
+                // the generic PromptCard's Allow/Deny post through sendPromptReply, a channel the
+                // bridge doesn't listen on for spawns — the buttons would be dead. Render the
+                // spawn card read-only instead so the request is visible but not tappable.
+                const answerable = isAnswerableAgentSpawn(event.payload);
                 return (
                     <AgentSpawnCard
                         key={`${event.convo_id}:${event.seq}`}
                         event={event}
-                        outcome={spawnOutcomes.get(requestId) ?? null}
-                        isReadOnly={isReadOnly}
-                        onAnswer={(decision) => client.answerAgentSpawn(requestId, decision)}
-                        onOpen={(roomId) => void client.selectConversation(roomId, { fromRpcCreate: true })}
+                        outcome={(requestId ? spawnOutcomes.get(requestId) : undefined) ?? null}
+                        isReadOnly={isReadOnly || !answerable}
+                        onAnswer={
+                            answerable
+                                ? (decision, signal) => client.answerAgentSpawn(requestId, decision, signal)
+                                : undefined
+                        }
+                        onOpen={(roomId) => void client.selectConversation(roomId, { suppressNotFound: true })}
                     />
                 );
             }

@@ -1107,9 +1107,10 @@ describe("MatronJournalClient answerAgentSpawn", () => {
         state.state = signedInState(client);
         state.api = { messages: jest.fn(), answerAgentSpawn };
 
-        await client.answerAgentSpawn("spawn-1", "approve");
+        const controller = new AbortController();
+        await client.answerAgentSpawn("spawn-1", "approve", controller.signal);
 
-        expect(answerAgentSpawn).toHaveBeenCalledWith("spawn-1", "approve");
+        expect(answerAgentSpawn).toHaveBeenCalledWith("spawn-1", "approve", controller.signal);
     });
 
     it("rethrows a JournalApiError from the api unchanged", async () => {

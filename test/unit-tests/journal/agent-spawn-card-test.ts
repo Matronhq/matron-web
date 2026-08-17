@@ -167,18 +167,25 @@ describe("agent_spawn card dispatch", () => {
         expect(card?.querySelector(".mj_SpawnTask")?.textContent).toBe("Line one\nLine two");
     });
 
-    it("falls back to the generic permission card when request_id is missing", async () => {
+    // An unanswerable spawn payload must never render live buttons: the generic permission
+    // card's Allow/Deny would post through sendPromptReply, a channel the bridge doesn't listen
+    // on for spawns. It renders as a read-only spawn card instead.
+    it("renders a read-only spawn card (no buttons) when request_id is missing", async () => {
         rendered = await renderClient(signedInClient({ events: [spawnCardEvent({ request_id: undefined })] }));
 
-        expect(rendered.container.querySelector(".mj_PromptCard_spawn")).toBeNull();
-        expect(rendered.container.querySelector(".mj_PromptCard_permission")).not.toBeNull();
+        const card = rendered.container.querySelector(".mj_PromptCard_spawn");
+        expect(card).not.toBeNull();
+        expect(card!.querySelector(".mj_PromptOptions")).toBeNull();
+        expect(rendered.container.querySelector(".mj_PromptCard_permission")).toBeNull();
     });
 
-    it("falls back to the generic permission card when task is empty", async () => {
+    it("renders a read-only spawn card (no buttons) when task is empty", async () => {
         rendered = await renderClient(signedInClient({ events: [spawnCardEvent({ task: "" })] }));
 
-        expect(rendered.container.querySelector(".mj_PromptCard_spawn")).toBeNull();
-        expect(rendered.container.querySelector(".mj_PromptCard_permission")).not.toBeNull();
+        const card = rendered.container.querySelector(".mj_PromptCard_spawn");
+        expect(card).not.toBeNull();
+        expect(card!.querySelector(".mj_PromptOptions")).toBeNull();
+        expect(rendered.container.querySelector(".mj_PromptCard_permission")).toBeNull();
     });
 });
 
@@ -367,7 +374,7 @@ describe("agent_spawn answer flow", () => {
             await act(async () => findButton(card, label)?.click());
 
             expect(answerAgentSpawn).toHaveBeenCalledTimes(1);
-            expect(answerAgentSpawn).toHaveBeenCalledWith("spawn-1", decision);
+            expect(answerAgentSpawn).toHaveBeenCalledWith("spawn-1", decision, expect.any(AbortSignal));
             expect(card.querySelector(".mj_PromptResolved_pending")?.textContent).toBe("Sending…");
             expect(card.querySelector(".mj_Answered")).toBeNull();
             expect(
@@ -424,6 +431,30 @@ describe("agent_spawn answer flow", () => {
 
         await act(async () => findButton(card, "Approve")?.click());
         expect(answerAgentSpawn).toHaveBeenCalledTimes(2);
+    });
+
+    it("aborts the stalled POST when the confirmation window expires, before re-enabling the buttons", async () => {
+        jest.useFakeTimers();
+        const client = signedInClient();
+        // Never settles — models a POST stalled in flight.
+        const answerAgentSpawn = jest.spyOn(client, "answerAgentSpawn").mockReturnValue(new Promise(() => {}));
+        rendered = await renderEventContent(client, spawnCardEvent());
+        const card = rendered.container.querySelector(".mj_PromptCard_spawn")!;
+
+        await act(async () => findButton(card, "Approve")?.click());
+        const firstSignal = answerAgentSpawn.mock.calls[0][2] as AbortSignal;
+        expect(firstSignal.aborted).toBe(false);
+
+        await act(async () => jest.advanceTimersByTime(10_000));
+
+        // The stalled Approve must be dead by the time Deny is tappable again — otherwise the
+        // user's corrective Deny races their own abandoned tap server-side.
+        expect(firstSignal.aborted).toBe(true);
+        expect(card.querySelector(".mj_PromptResolved_retryable")).not.toBeNull();
+
+        await act(async () => findButton(card, "Deny")?.click());
+        const secondSignal = answerAgentSpawn.mock.calls[1][2] as AbortSignal;
+        expect(secondSignal.aborted).toBe(false);
     });
 
     it("shows the resolved-expired copy immediately on a 409 (already answered elsewhere or expired)", async () => {
@@ -554,7 +585,8 @@ describe("agent_spawn answer flow", () => {
 
         await act(async () => findButton(card, "Approve")?.click());
 
-        expect(answerAgentSpawn.mock.calls[0]).toEqual(["spawn-1", "approve"]);
+        expect(answerAgentSpawn.mock.calls[0].slice(0, 2)).toEqual(["spawn-1", "approve"]);
+        expect(answerAgentSpawn.mock.calls[0][2]).toBeInstanceOf(AbortSignal);
     });
 
     it("hides Deny/Approve entirely when the card renders read-only (sub-chat transcript)", async () => {
@@ -637,7 +669,10 @@ describe("agent_spawn Open / deep-link", () => {
         jest.restoreAllMocks();
     });
 
-    it("Open on a resolved card navigates via selectConversation with fromRpcCreate", async () => {
+    // suppressNotFound, NOT fromRpcCreate: Open is tapped long after creation, and fromRpcCreate
+    // would arm the sync watchdog — which only an incoming frame clears — so opening an idle
+    // spawned session would surface a false "not syncing" error.
+    it("Open on a resolved card navigates via selectConversation with suppressNotFound only", async () => {
         const client = signedInClient({
             events: [spawnCardEvent(), spawnOutcomeEvent("started", { room_id: "r1", child_convo_id: "cc1" })],
         });
@@ -648,10 +683,10 @@ describe("agent_spawn Open / deep-link", () => {
 
         await act(async () => openButton?.click());
 
-        expect(selectConversation).toHaveBeenCalledWith("r1", { fromRpcCreate: true });
+        expect(selectConversation).toHaveBeenCalledWith("r1", { suppressNotFound: true });
     });
 
-    it("Open on the standalone outcome row navigates via selectConversation with fromRpcCreate", async () => {
+    it("Open on the standalone outcome row navigates via selectConversation with suppressNotFound only", async () => {
         const client = signedInClient({ events: [spawnOutcomeEvent("started", { room_id: "r1" })] });
         const selectConversation = jest.spyOn(client, "selectConversation").mockResolvedValue(undefined);
         rendered = await renderClient(client);
@@ -661,6 +696,6 @@ describe("agent_spawn Open / deep-link", () => {
 
         await act(async () => openButton?.click());
 
-        expect(selectConversation).toHaveBeenCalledWith("r1", { fromRpcCreate: true });
+        expect(selectConversation).toHaveBeenCalledWith("r1", { suppressNotFound: true });
     });
 });
