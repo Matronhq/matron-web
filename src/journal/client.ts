@@ -473,9 +473,14 @@ export class MatronJournalClient {
 
     public async selectConversation(
         conversationId: string,
-        opts?: { clearUnread?: boolean; fromRpcCreate?: boolean },
+        opts?: { clearUnread?: boolean; fromRpcCreate?: boolean; suppressNotFound?: boolean },
     ): Promise<void> {
         if (!this.database || !this.state.session) return;
+        // fromRpcCreate is for a room created milliseconds ago by this client's own RPC: it arms
+        // the sync watchdog (frames must follow shortly) AND tolerates a young room's 404 on
+        // history. suppressNotFound wants only the latter — opening a spawn-created room long
+        // after the fact must not arm a watchdog that only an incoming frame can clear, or an
+        // idle session reports "not syncing" as an error.
         if (opts?.fromRpcCreate) this.armRpcCreateWatchdog(conversationId);
         if (opts?.clearUnread ?? true) this.clearUnreadOverride(conversationId);
         storeSelectedConversation(this.state.session, conversationId);
@@ -498,7 +503,7 @@ export class MatronJournalClient {
         if (conversation?.unread_count) this.scheduleRead(conversationId, conversation.last_seq, 0);
 
         if (!this.history.get(conversationId)?.initialized) {
-            await this.loadOlderHistory({ suppressNotFound: opts?.fromRpcCreate });
+            await this.loadOlderHistory({ suppressNotFound: opts?.fromRpcCreate || opts?.suppressNotFound });
         }
     }
 
@@ -1179,6 +1184,17 @@ export class MatronJournalClient {
             }) ?? false;
         if (!sent) this.patch({ connectionError: "Reconnect before answering this prompt." });
         return sent;
+    }
+
+    // House pattern: components talk to the client, not JournalApi directly. Errors (notably
+    // JournalApiError with `.status` 409/404) are rethrown unchanged for the card's state machine.
+    public async answerAgentSpawn(
+        requestId: string,
+        decision: "approve" | "deny",
+        signal?: AbortSignal,
+    ): Promise<void> {
+        if (!this.api) throw new Error("Not signed in.");
+        await this.api.answerAgentSpawn(requestId, decision, signal);
     }
 
     // Concurrent callers for the same id (the viewer body and its DownloadLink mount in the

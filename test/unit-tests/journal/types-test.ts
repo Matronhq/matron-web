@@ -12,6 +12,7 @@ import {
     fileKindFromMime,
     IMAGE_FRAME_MAX_HEIGHT_PX,
     imageFrameStyle,
+    MESSAGE_EVENT_TYPES,
     normalizeServerUrl,
     parseMediaDims,
     websocketUrl,
@@ -127,5 +128,33 @@ describe("eventSnippet captions", () => {
     it("falls back to the filename when no caption is present", () => {
         expect(eventSnippet("image", { filename: "shot.png" })).toBe("🖼 shot.png");
         expect(eventSnippet("file", { filename: "notes.txt", caption: "" })).toBe("📎 notes.txt");
+    });
+
+    it("labels a generic permission_request with its description", () => {
+        expect(eventSnippet("permission_request", { description: "Restart nginx on prod?" })).toBe(
+            "Permission: Restart nginx on prod?",
+        );
+    });
+
+    it("labels an agent_spawn permission_request with a fixed sidebar snippet, byte-exact with the server's own copy", () => {
+        // Not derived from topic/task — the server mints this same literal string into the
+        // snapshot snippet, and a locally-derived variant would flip-flop the sidebar row
+        // across a resume.
+        expect(
+            eventSnippet("permission_request", {
+                kind: "agent_spawn",
+                topic: "Flake hunt",
+                task: "Run the suite and fix flakes",
+            }),
+        ).toBe("🤝 Agent spawn request");
+        expect(eventSnippet("permission_request", { kind: "agent_spawn", task: "Line one\nLine two" })).toBe(
+            "🤝 Agent spawn request",
+        );
+    });
+});
+
+describe("MESSAGE_EVENT_TYPES", () => {
+    it("counts spawn_outcome as a message event, so it bumps unread and drives the snippet", () => {
+        expect(MESSAGE_EVENT_TYPES.has("spawn_outcome")).toBe(true);
     });
 });
