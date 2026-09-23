@@ -256,10 +256,12 @@ export class MatronJournalClient {
     private readonly appliedRefreshEpochs = new Map<string, number>();
     // Monotonic guards so only the latest tracker request writes its result — an earlier slow
     // response (out-of-order load, or a superseded selection) can never clobber a newer one.
-    // Bumped on every loadItem/loadInbox call; the resolved response checks it before patching
-    // (F1 stale-response guard).
+    // Bumped on every load* call; the resolved response checks it before patching (F1/F2
+    // stale-response guards).
     private trackerItemGen = 0;
+    private trackerMissionGen = 0;
     private trackerInboxGen = 0;
+    private trackerMissionsGen = 0;
     // Pending marker-driven inbox refetch. A burst of `item` markers (a reconnect replay, a batch of
     // agent writes) coalesces into ONE inbox walk instead of one per marker.
     private trackerInboxRefetchTimer?: number;
@@ -1249,20 +1251,23 @@ export class MatronJournalClient {
         return this.state.conversations.find((conversation) => conversation.id === this.state.selectedConversationId);
     }
 
-    // ── Tracker pane (Decisions / Items inbox) ──────────────────────────────────────
+    // ── Tracker pane (Missions / Milestones / Decisions-Inbox) ──────────────────────
     // The tracker shares the main region with the conversation view — one surface at a
-    // time. `trackerView` is the discriminant; the inbox/detail data is store-resident
+    // time. `trackerView` is the discriminant; the list/detail data is store-resident
     // (loaded lazily by the load* helpers below, invalidated over WS).
 
-    // `itemId`: a number selects that row; `null` explicitly CLEARS the selection;
-    // `undefined` preserves the prev selection. `null ?? prev` would resolve to prev, so the
-    // clear needs the explicit === null arm.
-    public openTrackerView(opts: { view?: "inbox"; itemId?: number | null } = {}): void {
+    // `itemId`/`missionId`: a number selects that row; `null` explicitly CLEARS that selection
+    // (mutual exclusion — see openTrackerItem/openTrackerMission); `undefined` preserves the prev
+    // selection. `null ?? prev` would resolve to prev, so the clear needs the explicit === null arm.
+    public openTrackerView(
+        opts: { view?: "missions" | "inbox"; itemId?: number | null; missionId?: number | null } = {},
+    ): void {
         const prev = this.state.trackerView;
         const next: TrackerViewState = {
             open: true,
             view: opts.view ?? prev?.view ?? "inbox",
             selectedItemId: opts.itemId === null ? undefined : (opts.itemId ?? prev?.selectedItemId),
+            selectedMissionId: opts.missionId === null ? undefined : (opts.missionId ?? prev?.selectedMissionId),
         };
         this.patch({ trackerView: next });
     }
@@ -1276,8 +1281,8 @@ export class MatronJournalClient {
         this.patch({ trackerView: undefined, trackerItem: null });
     }
 
-    // Deep-link / row-tap entry point: select the row (last-tap-wins) and open its inbox detail.
-    // The pane's own effect issues the matching loadItem call when the selection changes.
+    // Deep-link / row-tap entry points: select the row (last-tap-wins) and switch to its view.
+    // The pane's own effect issues the matching load* call when the selection changes.
     // Selecting a DIFFERENT row invalidates the cached detail up front (→ null) so the previously
     // loaded record can never be rendered — nor have its action handlers (reply/close/reopen) fire —
     // against the new selection before the loader replaces it (F1). Re-selecting the same row keeps
@@ -1286,19 +1291,53 @@ export class MatronJournalClient {
         if (this.state.trackerItem && this.state.trackerItem.item.num !== num) {
             this.patch({ trackerItem: null });
         }
-        this.openTrackerView({ view: "inbox", itemId: num });
+        // Item and mission selection are MUTUALLY EXCLUSIVE — the pane shows one detail at a time and
+        // gives the item precedence. Opening an item must clear any prior mission selection AND its
+        // cached detail, or a cross-kind deep link (mission→item) would leave the stale mission
+        // selected/rendered and shadow the item just opened (F3).
+        if (this.state.trackerMission) this.patch({ trackerMission: null });
+        this.openTrackerView({ view: "inbox", itemId: num, missionId: null });
     }
 
-    // One in-app handler for `matron://item/<N>` markdown deep links, shared by the timeline and
-    // every tracker Markdown call site so a valid item link is always activatable (F6) — never
-    // rendered inert or stripped.
-    public openTrackerLink(kind: "item", num: number): void {
+    public openTrackerMission(num: number): void {
+        if (this.state.trackerMission && this.state.trackerMission.mission?.num !== num) {
+            this.patch({ trackerMission: null });
+        }
+        // Symmetric to openTrackerItem — clear any item selection + cache so an item→mission deep
+        // link can't leave the item selected and win the pane's item-first precedence (F3).
+        if (this.state.trackerItem) this.patch({ trackerItem: null });
+        this.openTrackerView({ view: "missions", missionId: num, itemId: null });
+    }
+
+    // One in-app handler for `matron://item/<N>` / `matron://mission/<N>` markdown deep links, shared
+    // by the timeline and every tracker Markdown call site so a valid tracker link is always
+    // activatable (F6) — never rendered inert or stripped.
+    public openTrackerLink(kind: "item" | "mission", num: number): void {
         if (kind === "item") this.openTrackerItem(num);
+        else this.openTrackerMission(num);
     }
 
     // ── Tracker data loaders (fetch → patch, sharing the trackerLoading/trackerError pair). Each
     // guards on the api instance so a response that races a logout / re-login can never write into a
     // newer session's store. ──────────────────────
+
+    public async loadMissions(): Promise<void> {
+        const api = this.api;
+        if (!api) return;
+        // Request-generation guard, matching loadInbox/loadItem/loadMission: the pane primes this on
+        // open and mission markers independently restart it, so a slower earlier request must never
+        // overwrite a newer one's result (else closed missions / obsolete counts reappear) (F2).
+        const gen = ++this.trackerMissionsGen;
+        this.patch({ trackerLoading: true, trackerError: undefined });
+        try {
+            const { missions } = await api.missions();
+            if (this.api !== api || this.trackerMissionsGen !== gen) return;
+            this.patch({ missions, trackerLoading: false });
+        } catch (error) {
+            if (this.api !== api || this.trackerMissionsGen !== gen) return;
+            this.patch({ trackerError: errorMessage(error), trackerLoading: false });
+        }
+    }
 
     public async loadInbox(): Promise<void> {
         const api = this.api;
@@ -1380,6 +1419,21 @@ export class MatronJournalClient {
         }
     }
 
+    public async loadMission(id: number | string): Promise<void> {
+        const api = this.api;
+        if (!api) return;
+        const gen = ++this.trackerMissionGen;
+        this.patch({ trackerLoading: true, trackerError: undefined });
+        try {
+            const detail = await api.mission(id);
+            if (this.api !== api || this.trackerMissionGen !== gen) return;
+            this.patch({ trackerMission: detail, trackerLoading: false });
+        } catch (error) {
+            if (this.api !== api || this.trackerMissionGen !== gen) return;
+            this.patch({ trackerError: errorMessage(error), trackerLoading: false });
+        }
+    }
+
     // ── Tracker mutations (fresh Idempotency-Key per call → refetch the affected row + patch).
     // On failure they surface trackerError but leave the loaded data intact (await-refetch, no
     // optimistic outbox in v1). The inbox is refetched only when already loaded, so a mutation from
@@ -1457,11 +1511,42 @@ export class MatronJournalClient {
         return true;
     }
 
-    // WS invalidation for tracker item markers (`item` journal frames). A marker is a change
-    // connected clients must reflect without re-polling; we refetch ONLY the tracker data the OPEN
-    // pane is showing. A closed pane fetches nothing: reopening it remounts the pane, which reloads
-    // the inbox and the selection itself. The inbox refetch is coalesced (see scheduleInboxRefetch).
-    // Item numbers on the wire are the human #num.
+    public async saveMissionEdits(id: number | string, fields: { title?: string; body?: string }): Promise<boolean> {
+        const api = this.api;
+        if (!api) return false;
+        try {
+            await api.patchMission(id, fields, crypto.randomUUID());
+        } catch (error) {
+            if (this.api === api) this.patch({ trackerError: errorMessage(error) });
+            return false;
+        }
+        if (this.api !== api) return true;
+        await this.loadMission(id);
+        if (this.state.missions) await this.loadMissions();
+        return true;
+    }
+
+    public async closeTrackerMission(id: number | string, summary: string): Promise<boolean> {
+        const api = this.api;
+        if (!api) return false;
+        try {
+            await api.closeMission(id, { summary }, crypto.randomUUID());
+        } catch (error) {
+            if (this.api === api) this.patch({ trackerError: errorMessage(error) });
+            return false;
+        }
+        if (this.api !== api) return true;
+        await this.loadMission(id);
+        if (this.state.missions) await this.loadMissions();
+        return true;
+    }
+
+    // WS invalidation for tracker markers (`item` / `mission` / `milestone` journal frames).
+    // A marker is a change connected clients must reflect without re-polling; we refetch ONLY the
+    // tracker data the OPEN pane is showing. A closed pane fetches nothing: reopening it remounts the
+    // pane, which reloads the lists and the selection itself. The inbox refetch is coalesced (see
+    // scheduleInboxRefetch). `mission` is treated as pure invalidation. Item/mission numbers on the
+    // wire are the human #num; milestone markers carry `mission_num` for their parent mission.
     private handleTrackerMarker(event: JournalEvent): void {
         if (!this.state.trackerView?.open) return;
         if (event.type === "item") {
@@ -1470,6 +1555,22 @@ export class MatronJournalClient {
                 void this.loadItem(num);
             }
             if (this.state.inboxItems) this.scheduleInboxRefetch();
+            return;
+        }
+        if (event.type === "mission") {
+            const num = asNumber(event.payload.num, 0);
+            if (num && this.state.trackerMission && this.state.trackerView?.selectedMissionId === num) {
+                void this.loadMission(num);
+            }
+            if (this.state.missions) void this.loadMissions();
+            return;
+        }
+        if (event.type === "milestone") {
+            const missionNum = asNumber(event.payload.mission_num, 0);
+            if (missionNum && this.state.trackerMission && this.state.trackerView?.selectedMissionId === missionNum) {
+                void this.loadMission(missionNum);
+            }
+            if (this.state.missions) void this.loadMissions();
         }
     }
 
