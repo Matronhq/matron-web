@@ -58,13 +58,14 @@ export function TrackerPane({
             );
         }
         // Until the first inbox load lands there is no list to reason over: an empty one would read
-        // as a false "Nothing needs you". A failed load says so (the error banner above has why).
+        // as a false "Nothing needs you". While an error is showing, the banner above says what failed
+        // (the item and inbox loads share it), so the body stays empty rather than guess which one.
         if (state.inboxItems === undefined) {
-            return (
+            return state.trackerError ? (
+                <div className="mj_TrackerEmpty" />
+            ) : (
                 <div className="mj_TrackerEmpty" role="status">
-                    <p className="mj_TrackerEmpty_title">
-                        {state.trackerError ? "Couldn't load the inbox" : "Loading…"}
-                    </p>
+                    <p className="mj_TrackerEmpty_title">Loading…</p>
                 </div>
             );
         }

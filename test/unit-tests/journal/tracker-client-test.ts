@@ -119,6 +119,22 @@ describe("MatronJournalClient tracker view state", () => {
         expect(client.getSnapshot().trackerView).toBeUndefined();
     });
 
+    // Markers are not followed while the pane is closed, so a cached detail kept across a close
+    // could reopen with a stale status and live actions.
+    it("closeTrackerView drops the cached item detail and orphans its in-flight load", async () => {
+        const { client, state } = makeClient({
+            trackerView: { open: true, view: "inbox", selectedItemId: 7 },
+            trackerItem: { item: item({ num: 7 }), comments: [] },
+        });
+        state.api = { item: jest.fn().mockResolvedValue({ item: item({ num: 7 }), comments: [] }) };
+
+        const inFlight = client.loadItem(7);
+        client.closeTrackerView();
+        await inFlight;
+
+        expect(client.getSnapshot().trackerItem).toBeNull();
+    });
+
     // F1: selecting a DIFFERENT row must invalidate the previously loaded detail up front, so its
     // action handlers (reply/close/reopen) can never fire against the new selection's num.
     it("openTrackerItem clears a cached detail when selecting a different item", () => {

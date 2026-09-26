@@ -107,7 +107,7 @@ describe("TrackerPane inbox", () => {
         expect(container.textContent).not.toContain("Nothing needs you");
     });
 
-    it("says the inbox could not load, not that nothing needs you, when the first load fails", async () => {
+    it("shows the error banner, not that nothing needs you, when a load fails before the inbox lands", async () => {
         const client = fakeClient();
         const { container } = await mount(
             <TrackerPane
@@ -117,9 +117,8 @@ describe("TrackerPane inbox", () => {
         );
 
         expect(container.querySelector("[role=alert]")?.textContent).toBe("offline");
-        expect(container.querySelector(".mj_TrackerPane_body [role=status]")?.textContent).toBe(
-            "Couldn't load the inbox",
-        );
+        // The item and inbox loads share the error, so the body does not guess which one failed.
+        expect(container.querySelector(".mj_TrackerPane_body")?.textContent).toBe("");
         expect(container.textContent).not.toContain("Nothing needs you");
     });
 

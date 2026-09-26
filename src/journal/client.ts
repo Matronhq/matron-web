@@ -493,11 +493,15 @@ export class MatronJournalClient {
         if (opts?.fromRpcCreate) this.armRpcCreateWatchdog(conversationId);
         if (opts?.clearUnread ?? true) this.clearUnreadOverride(conversationId);
         storeSelectedConversation(this.state.session, conversationId);
+        // Selecting a conversation closes the Tracker pane, so it drops the cached item detail the
+        // same way closeTrackerView does.
+        if (this.state.trackerView) this.trackerItemGen += 1;
         this.patch({
             selectedConversationId: conversationId,
             // Selecting a conversation closes the Tracker pane so the chosen room becomes visible
             // (trackerView is a main-region discriminant checked ahead of selectedConversationId).
             trackerView: undefined,
+            ...(this.state.trackerView ? { trackerItem: null } : {}),
             events: [],
             pendingMessages: [],
             loadingHistory: false,
@@ -1263,9 +1267,13 @@ export class MatronJournalClient {
         this.patch({ trackerView: next });
     }
 
+    // Closing drops the cached item detail (and orphans any in-flight load of it): markers are not
+    // followed while the pane is closed, so a record kept across a close could reopen showing a
+    // status, and live actions, that another client has since changed.
     public closeTrackerView(): void {
         if (!this.state.trackerView) return;
-        this.patch({ trackerView: undefined });
+        this.trackerItemGen += 1;
+        this.patch({ trackerView: undefined, trackerItem: null });
     }
 
     // Deep-link / row-tap entry point: select the row (last-tap-wins) and open its inbox detail.
