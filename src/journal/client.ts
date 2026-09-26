@@ -265,6 +265,8 @@ export class MatronJournalClient {
     // Pending marker-driven inbox refetch. A burst of `item` markers (a reconnect replay, a batch of
     // agent writes) coalesces into ONE inbox walk instead of one per marker.
     private trackerInboxRefetchTimer?: number;
+    // Same for `mission` / `milestone` markers and the missions list.
+    private trackerMissionsRefetchTimer?: number;
     private sessionGen = 0;
     private ackTimer?: number;
     private pendingAck = 0;
@@ -497,13 +499,16 @@ export class MatronJournalClient {
         storeSelectedConversation(this.state.session, conversationId);
         // Selecting a conversation closes the Tracker pane, so it drops the cached item detail the
         // same way closeTrackerView does.
-        if (this.state.trackerView) this.trackerItemGen += 1;
+        if (this.state.trackerView) {
+            this.trackerItemGen += 1;
+            this.trackerMissionGen += 1;
+        }
         this.patch({
             selectedConversationId: conversationId,
             // Selecting a conversation closes the Tracker pane so the chosen room becomes visible
             // (trackerView is a main-region discriminant checked ahead of selectedConversationId).
             trackerView: undefined,
-            ...(this.state.trackerView ? { trackerItem: null } : {}),
+            ...(this.state.trackerView ? { trackerItem: null, trackerMission: null } : {}),
             events: [],
             pendingMessages: [],
             loadingHistory: false,
@@ -1272,13 +1277,14 @@ export class MatronJournalClient {
         this.patch({ trackerView: next });
     }
 
-    // Closing drops the cached item detail (and orphans any in-flight load of it): markers are not
-    // followed while the pane is closed, so a record kept across a close could reopen showing a
-    // status, and live actions, that another client has since changed.
+    // Closing drops the cached item and mission details (and orphans any in-flight load of them):
+    // markers are not followed while the pane is closed, so a record kept across a close could reopen
+    // showing a status, and live actions, that another client has since changed.
     public closeTrackerView(): void {
         if (!this.state.trackerView) return;
         this.trackerItemGen += 1;
-        this.patch({ trackerView: undefined, trackerItem: null });
+        this.trackerMissionGen += 1;
+        this.patch({ trackerView: undefined, trackerItem: null, trackerMission: null });
     }
 
     // Deep-link / row-tap entry points: select the row (last-tap-wins) and switch to its view.
@@ -1328,14 +1334,15 @@ export class MatronJournalClient {
         // open and mission markers independently restart it, so a slower earlier request must never
         // overwrite a newer one's result (else closed missions / obsolete counts reappear) (F2).
         const gen = ++this.trackerMissionsGen;
-        this.patch({ trackerLoading: true, trackerError: undefined });
+        this.patch({ trackerLoading: true, trackerError: undefined, missionsError: undefined });
         try {
             const { missions } = await api.missions();
             if (this.api !== api || this.trackerMissionsGen !== gen) return;
             this.patch({ missions, trackerLoading: false });
         } catch (error) {
             if (this.api !== api || this.trackerMissionsGen !== gen) return;
-            this.patch({ trackerError: errorMessage(error), trackerLoading: false });
+            const message = errorMessage(error);
+            this.patch({ trackerError: message, missionsError: message, trackerLoading: false });
         }
     }
 
@@ -1511,6 +1518,19 @@ export class MatronJournalClient {
         return true;
     }
 
+    // Mission counterpart of isSelectedTrackerItem: a mission mutation refetches its detail only while
+    // that mission is still selected, so a late refetch can't supersede a newer selection's load. The
+    // selection is a #num while mission mutators take the mission id, so an id matches through the
+    // cached detail of the selected mission (selecting a different mission clears that cache).
+    private isSelectedTrackerMission(id: number | string): boolean {
+        const selected = this.state.trackerView?.selectedMissionId;
+        if (selected == null) return false;
+        const key = String(id).replace(/^#/, "");
+        if (String(selected) === key) return true;
+        const cached = this.state.trackerMission?.mission;
+        return !!cached && cached.num === selected && cached.id === key;
+    }
+
     public async saveMissionEdits(id: number | string, fields: { title?: string; body?: string }): Promise<boolean> {
         const api = this.api;
         if (!api) return false;
@@ -1521,7 +1541,7 @@ export class MatronJournalClient {
             return false;
         }
         if (this.api !== api) return true;
-        await this.loadMission(id);
+        if (this.isSelectedTrackerMission(id)) await this.loadMission(id);
         if (this.state.missions) await this.loadMissions();
         return true;
     }
@@ -1536,7 +1556,7 @@ export class MatronJournalClient {
             return false;
         }
         if (this.api !== api) return true;
-        await this.loadMission(id);
+        if (this.isSelectedTrackerMission(id)) await this.loadMission(id);
         if (this.state.missions) await this.loadMissions();
         return true;
     }
@@ -1545,7 +1565,7 @@ export class MatronJournalClient {
     // A marker is a change connected clients must reflect without re-polling; we refetch ONLY the
     // tracker data the OPEN pane is showing. A closed pane fetches nothing: reopening it remounts the
     // pane, which reloads the lists and the selection itself. The inbox refetch is coalesced (see
-    // scheduleInboxRefetch). `mission` is treated as pure invalidation. Item/mission numbers on the
+    // scheduleInboxRefetch). The missions list refetch is coalesced the same way. `mission` is treated as pure invalidation. Item/mission numbers on the
     // wire are the human #num; milestone markers carry `mission_num` for their parent mission.
     private handleTrackerMarker(event: JournalEvent): void {
         if (!this.state.trackerView?.open) return;
@@ -1562,7 +1582,7 @@ export class MatronJournalClient {
             if (num && this.state.trackerMission && this.state.trackerView?.selectedMissionId === num) {
                 void this.loadMission(num);
             }
-            if (this.state.missions) void this.loadMissions();
+            if (this.state.missions) this.scheduleMissionsRefetch();
             return;
         }
         if (event.type === "milestone") {
@@ -1570,7 +1590,7 @@ export class MatronJournalClient {
             if (missionNum && this.state.trackerMission && this.state.trackerView?.selectedMissionId === missionNum) {
                 void this.loadMission(missionNum);
             }
-            if (this.state.missions) void this.loadMissions();
+            if (this.state.missions) this.scheduleMissionsRefetch();
         }
     }
 
@@ -1582,6 +1602,14 @@ export class MatronJournalClient {
         this.trackerInboxRefetchTimer = window.setTimeout(() => {
             this.trackerInboxRefetchTimer = undefined;
             if (this.state.trackerView?.open && this.state.inboxItems) void this.loadInbox();
+        }, 250);
+    }
+
+    private scheduleMissionsRefetch(): void {
+        if (this.trackerMissionsRefetchTimer !== undefined) return;
+        this.trackerMissionsRefetchTimer = window.setTimeout(() => {
+            this.trackerMissionsRefetchTimer = undefined;
+            if (this.state.trackerView?.open && this.state.missions) void this.loadMissions();
         }, 250);
     }
 
@@ -2385,6 +2413,8 @@ export class MatronJournalClient {
         if (this.ackTimer !== undefined) window.clearTimeout(this.ackTimer);
         if (this.trackerInboxRefetchTimer !== undefined) window.clearTimeout(this.trackerInboxRefetchTimer);
         this.trackerInboxRefetchTimer = undefined;
+        if (this.trackerMissionsRefetchTimer !== undefined) window.clearTimeout(this.trackerMissionsRefetchTimer);
+        this.trackerMissionsRefetchTimer = undefined;
         this.readTimers.clear();
         this.readHighWater.clear();
         this.ackTimer = undefined;

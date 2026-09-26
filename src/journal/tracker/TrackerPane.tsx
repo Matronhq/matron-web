@@ -124,19 +124,28 @@ export function TrackerPane({
                 />
             );
         }
-        if (view === "missions") {
-            return (
-                <MissionsList missions={state.missions ?? []} onOpenMission={(num) => client.openTrackerMission(num)} />
-            );
-        }
-        // Until the first inbox load lands there is no list to reason over: an empty one would read
-        // as a false "Nothing needs you". A failed load says so and offers a retry; the inbox has its
-        // own error for this, since any other tracker load clears the shared banner.
-        if (state.inboxItems === undefined) {
-            return state.inboxError ? (
+        // Until a list's first load lands there is nothing to reason over: an empty list would read
+        // as a false "No missions yet" / "Nothing needs you". A failed load says so and offers a retry;
+        // each list has its own error for this, since any other tracker load clears the shared banner.
+        const list =
+            view === "missions"
+                ? {
+                      loaded: state.missions,
+                      error: state.missionsError,
+                      noun: "missions",
+                      reload: () => client.loadMissions(),
+                  }
+                : {
+                      loaded: state.inboxItems,
+                      error: state.inboxError,
+                      noun: "the inbox",
+                      reload: () => client.loadInbox(),
+                  };
+        if (list.loaded === undefined) {
+            return list.error ? (
                 <div className="mj_TrackerEmpty" role="status">
-                    <p className="mj_TrackerEmpty_title">Couldn't load the inbox</p>
-                    <button type="button" className="mj_TrackerTextButton" onClick={() => void client.loadInbox()}>
+                    <p className="mj_TrackerEmpty_title">Couldn't load {list.noun}</p>
+                    <button type="button" className="mj_TrackerTextButton" onClick={() => void list.reload()}>
                         Try again
                     </button>
                 </div>
@@ -146,8 +155,17 @@ export function TrackerPane({
                 </div>
             );
         }
+        if (view === "missions") {
+            return (
+                <MissionsList missions={state.missions ?? []} onOpenMission={(num) => client.openTrackerMission(num)} />
+            );
+        }
         return (
-            <ItemsInbox items={state.inboxItems} client={client} onOpenItem={(num) => client.openTrackerItem(num)} />
+            <ItemsInbox
+                items={state.inboxItems ?? []}
+                client={client}
+                onOpenItem={(num) => client.openTrackerItem(num)}
+            />
         );
     })();
 

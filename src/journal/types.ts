@@ -325,6 +325,8 @@ export interface ClientState {
      *  and an in-flight retry, and is cleared only when an item load succeeds, so the pane can keep
      *  offering a retry for the selected item until it actually loads. */
     itemLoadError?: { id: string; message: string };
+    /** Same as inboxError, for the missions list. */
+    missionsError?: string;
 }
 
 // ── Tracker (Missions / Milestones / Decisions-Inbox) ──────────────────────────
