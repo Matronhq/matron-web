@@ -67,6 +67,10 @@ beforeEach(() => {
 let root: Root | undefined;
 let container: HTMLDivElement | undefined;
 
+// Some tests shadow `document.execCommand` with a mock; remember the original own-property
+// descriptor (normally absent: jsdom defines it on Document.prototype) so afterEach can put it back.
+const originalExecCommand = Object.getOwnPropertyDescriptor(document, "execCommand");
+
 async function flush(): Promise<void> {
     await act(async () => {
         for (let i = 0; i < 5; i += 1) await Promise.resolve();
@@ -90,6 +94,8 @@ afterEach(() => {
     root = undefined;
     container = undefined;
     jest.useRealTimers();
+    if (originalExecCommand) Object.defineProperty(document, "execCommand", originalExecCommand);
+    else delete (document as { execCommand?: unknown }).execCommand;
 });
 
 const copyButton = (c: HTMLElement): HTMLButtonElement | null =>

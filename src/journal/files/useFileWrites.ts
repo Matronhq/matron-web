@@ -66,6 +66,9 @@ function newKey(): string {
  */
 class LocalRefusal extends JournalApiError {}
 
+/** LocalRefusal code: the edit's pre-save re-read failed in transit, so no write was issued. */
+const REREAD_FAILED = "reread-failed";
+
 async function perform(
     api: FilesApiLike,
     pending: PendingWrite,
@@ -104,7 +107,21 @@ async function perform(
             if (input.baseline !== undefined) {
                 // Same STRICT read the editor opened with — comparing non-fatally decoded strings
                 // could let two different byte sequences look identical and defeat the guard.
-                const reread = await readEditableText(api, pending.path);
+                let reread: Awaited<ReturnType<typeof readEditableText>>;
+                try {
+                    reread = await readEditableText(api, pending.path);
+                } catch (error) {
+                    // The GET failed before any write was issued. A definite server verdict (a 4xx
+                    // such as the file having been removed) keeps its own uniform copy; a lost or
+                    // timed-out read is otherwise status 0 and would be misread as a write whose
+                    // outcome is unknown. Nothing was sent, so it is a local refusal.
+                    if (!outcomeIsUnknown(error)) throw error;
+                    throw new LocalRefusal(
+                        "Couldn't re-check the file before saving, so nothing was sent. Try again.",
+                        0,
+                        REREAD_FAILED,
+                    );
+                }
                 if (!reread.ok) {
                     throw new LocalRefusal(
                         "This file is no longer valid UTF-8 text on the server, so it can't be saved from here.",
@@ -477,10 +494,17 @@ export function useFileWrites(
                         onWritten();
                         return;
                     }
-                    const unresolved = outcomeIsUnknown(error);
+                    // A retry whose pre-save re-read failed sent nothing, but the EARLIER attempt
+                    // it was replaying is still unresolved: keep that pin (same key, same payload,
+                    // same deadline) rather than letting this local refusal clear it.
+                    const rereadFailedOnReplay =
+                        current.replay !== undefined && error instanceof LocalRefusal && error.code === REREAD_FAILED;
+                    const unresolved = outcomeIsUnknown(error) || rereadFailedOnReplay;
                     dispatch({
                         type: "failed",
-                        message: describeFailure(error),
+                        message: rereadFailedOnReplay
+                            ? "Couldn't re-check the file before retrying, so the retry wasn't sent. The earlier attempt is still unconfirmed."
+                            : describeFailure(error),
                         // Uncertain → keep the key so the retry replays. Definite → mint a new one.
                         idempotencyKey: unresolved ? current.idempotencyKey : newKey(),
                         // ...and a replay needs the same BODY as well as the same key, or the

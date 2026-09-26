@@ -518,7 +518,7 @@ export class MatronJournalClient {
 
     public async selectConversation(
         conversationId: string,
-        opts?: { clearUnread?: boolean; fromRpcCreate?: boolean; suppressNotFound?: boolean },
+        opts?: { clearUnread?: boolean; fromRpcCreate?: boolean; suppressNotFound?: boolean; keepFilesView?: boolean },
     ): Promise<void> {
         if (!this.database || !this.state.session) return;
         // fromRpcCreate is for a room created milliseconds ago by this client's own RPC: it arms
@@ -531,9 +531,12 @@ export class MatronJournalClient {
         storeSelectedConversation(this.state.session, conversationId);
         this.patch({
             selectedConversationId: conversationId,
-            // Selecting a conversation closes the Files pane so the chosen room becomes visible
-            // (filesView is a main-region discriminant checked ahead of selectedConversationId).
-            filesView: undefined,
+            // A user selecting a conversation closes the Files pane so the chosen room becomes
+            // visible (filesView is a main-region discriminant checked ahead of
+            // selectedConversationId). Background re-selections (session restore, snapshot
+            // replacement after a reconnect, folding selection under a collapsed parent) pass
+            // keepFilesView so they never yank the user out of the pane they are browsing.
+            ...(opts?.keepFilesView ? {} : { filesView: undefined }),
             events: [],
             pendingMessages: [],
             loadingHistory: false,
@@ -626,7 +629,8 @@ export class MatronJournalClient {
         );
         if (childSidebarPlacement(selected, index) !== "hidden") return;
         const parent = this.state.conversations.find((conversation) => conversation.id === parentId);
-        if (parent && rendersAsTopLevelRow(parent, index)) void this.selectConversation(parentId);
+        if (parent && rendersAsTopLevelRow(parent, index))
+            void this.selectConversation(parentId, { keepFilesView: true });
     }
 
     public markConversationRead(conversationId: string): boolean {
@@ -1567,7 +1571,9 @@ export class MatronJournalClient {
         };
         window.addEventListener("storage", this.storageListener);
         this.emit();
-        if (selectedConversation) await this.selectConversation(selectedConversation.id, { clearUnread: false });
+        if (selectedConversation) {
+            await this.selectConversation(selectedConversation.id, { clearUnread: false, keepFilesView: true });
+        }
 
         this.connection = new JournalConnection(session.serverUrl, session.token, {
             cursor: async () => (await this.database?.cursor()) ?? cursor ?? 0,
@@ -1795,8 +1801,9 @@ export class MatronJournalClient {
         // Mirror the journal-event path and abort any in-flight upload to a now-child convo so it can't
         // egress to a read-only transcript. Guarded to skip work when idle.
         if (this.uploadConvos.size > 0) this.abortUploadsForChildConvos();
-        if (selectedConversation) await this.selectConversation(selectedConversation.id, { clearUnread: false });
-        else if (this.state.session) storeSelectedConversation(this.state.session, undefined);
+        if (selectedConversation) {
+            await this.selectConversation(selectedConversation.id, { clearUnread: false, keepFilesView: true });
+        } else if (this.state.session) storeSelectedConversation(this.state.session, undefined);
     }
 
     private async handleReady(): Promise<void> {

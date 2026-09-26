@@ -489,6 +489,59 @@ describe("MatronJournalClient state handling", () => {
         });
     });
 
+    describe("Files pane vs conversation re-selection", () => {
+        const FILES_VIEW = { open: true, path: "/srv/docs", targetFile: "/srv/docs/a.md", targetToken: 1 };
+
+        function withFilesOpen(client: MatronJournalClient, overrides: Partial<ClientState> = {}): ClientInternals {
+            const state = internals(client);
+            state.state = { ...signedInState(client), filesView: FILES_VIEW, ...overrides };
+            state.database = fakeDatabase();
+            state.api = {
+                messages: jest.fn().mockResolvedValue({ events: [] }),
+                snapshot: jest.fn().mockResolvedValue({ seq: 30, conversations: CONVERSATIONS }),
+            };
+            state.history.set("c1", { initialized: true, hasMore: false });
+            state.history.set("c2", { initialized: true, hasMore: false });
+            return state;
+        }
+
+        it("closes the Files pane when the user selects a conversation", async () => {
+            const client = new MatronJournalClient();
+            withFilesOpen(client);
+
+            await client.selectConversation("c2");
+
+            expect(client.getSnapshot().selectedConversationId).toBe("c2");
+            expect(client.getSnapshot().filesView).toBeUndefined();
+        });
+
+        it("keeps the Files pane open when a required snapshot re-selects the conversation", async () => {
+            const client = new MatronJournalClient();
+            const state = withFilesOpen(client);
+
+            await state.replaceSnapshot();
+
+            expect(client.getSnapshot().selectedConversationId).toBe("c1");
+            expect(client.getSnapshot().filesView).toEqual(FILES_VIEW);
+        });
+
+        it("keeps the Files pane open when collapsing a parent folds selection up from a hidden child", async () => {
+            const client = new MatronJournalClient();
+            const child: Conversation = { ...CONVERSATIONS[1], id: "c1:sub", parent_convo_id: "c1" };
+            withFilesOpen(client, {
+                conversations: [CONVERSATIONS[0], child],
+                selectedConversationId: "c1:sub",
+                collapsedSubagentParentIds: new Set(["c1"]),
+            });
+
+            (client as unknown as { foldSelectionUnderCollapsedParent(): void }).foldSelectionUnderCollapsedParent();
+            for (let i = 0; i < 5; i += 1) await Promise.resolve();
+
+            expect(client.getSnapshot().selectedConversationId).toBe("c1");
+            expect(client.getSnapshot().filesView).toEqual(FILES_VIEW);
+        });
+    });
+
     it("aborts an in-flight upload when a required snapshot first reveals its convo is a child", async () => {
         const client = new MatronJournalClient();
         const state = internals(client);

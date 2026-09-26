@@ -767,6 +767,72 @@ describe("a LOCAL refusal is definite — nothing was sent", () => {
     });
 });
 
+describe("a failed pre-save re-read sent nothing", () => {
+    it("leaves the editor usable when the re-read times out before the first attempt", async () => {
+        // The staleness re-read runs BEFORE writeFile. A timeout there is status 0 like a lost
+        // write response, but no write was issued, so it must not pin or lock the draft.
+        let readFails = false;
+        const api = mockApi({
+            fileBytes: jest.fn(async () => {
+                if (readFails) throw new JournalApiError("timed out", 0, "timeout");
+                return encode("# notes\n");
+            }) as unknown as FilesApiLike["fileBytes"],
+        });
+        const pane = await mountPane(api);
+        await openEditor(pane);
+        await setValue(document.querySelector(".mj_FileWrite_textarea"), "# edited\n");
+        readFails = true;
+        await click(document.querySelector(".mj_FileWrite_danger"));
+        await flush();
+
+        expect(api.writeFile).not.toHaveBeenCalled();
+        expect((document.querySelector(".mj_FileWrite_textarea") as HTMLTextAreaElement).disabled).toBe(false);
+        expect(dialog()?.querySelector(".mj_FileWrite_bound")).toBeNull();
+        expect(dialog()?.querySelector(".mj_UploadConfirm_error")?.textContent).toMatch(/nothing was sent/i);
+    });
+
+    it("keeps an earlier unresolved attempt pinned when the retry's re-read fails", async () => {
+        // The first write's response was lost (pinned replay). The retry's re-read then times out:
+        // the retry sent nothing, but the FIRST attempt is still unconfirmed, so the pin, its key
+        // and its payload must survive for the next retry.
+        let readFails = false;
+        const writeFile = jest
+            .fn()
+            .mockRejectedValueOnce(new JournalApiError("timed out", 0, "timeout"))
+            .mockResolvedValue({ path: `${DIR}/notes.md`, bytes: 9, dryRun: false });
+        const api = mockApi({
+            fileBytes: jest.fn(async () => {
+                if (readFails) throw new JournalApiError("timed out", 0, "timeout");
+                return encode("# notes\n");
+            }) as unknown as FilesApiLike["fileBytes"],
+            writeFile: writeFile as unknown as FilesApiLike["writeFile"],
+        });
+        const pane = await mountPane(api);
+        await openEditor(pane);
+        await setValue(document.querySelector(".mj_FileWrite_textarea"), "# edited\n");
+        await click(document.querySelector(".mj_FileWrite_danger"));
+        await flush();
+        expect(dialog()?.querySelector(".mj_FileWrite_bound")).not.toBeNull(); // pinned
+
+        readFails = true;
+        await click(document.querySelector(".mj_FileWrite_danger"));
+        await flush();
+        expect(writeFile).toHaveBeenCalledTimes(1); // the retry sent nothing
+        expect(dialog()?.querySelector(".mj_FileWrite_bound")).not.toBeNull(); // still pinned
+        expect((document.querySelector(".mj_FileWrite_textarea") as HTMLTextAreaElement).disabled).toBe(true);
+        expect(dialog()?.querySelector(".mj_UploadConfirm_error")?.textContent).toMatch(/still unconfirmed/i);
+
+        readFails = false;
+        await click(document.querySelector(".mj_FileWrite_danger"));
+        await flush();
+        expect(writeFile).toHaveBeenCalledTimes(2);
+        const first = writeFile.mock.calls[0] as [string, string, { idempotencyKey?: string }];
+        const second = writeFile.mock.calls[1] as [string, string, { idempotencyKey?: string }];
+        expect(second[1]).toBe(first[1]);
+        expect(second[2].idempotencyKey).toBe(first[2].idempotencyKey);
+    });
+});
+
 describe("the reconciling re-read is a barrier, not just a message", () => {
     it("offers no way to start a new write while the reconciling listing is still in flight", async () => {
         // Backing out of an unresolved write must not drop the user into a directory view they

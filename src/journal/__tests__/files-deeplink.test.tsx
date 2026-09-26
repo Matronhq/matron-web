@@ -17,6 +17,7 @@ Please see LICENSE files in the repository root for full details.
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
+import { JournalApiError } from "../api";
 import { MatronJournalClient } from "../client";
 import { FilesPane } from "../files/FilesPane";
 import type { FileEntry, FileListing, FilesApiLike } from "../files/filesApi";
@@ -294,6 +295,29 @@ describe("FilesPane deep-link auto-preview", () => {
         const selectedRow = pane.querySelector(".mj_FilesRow_selected");
         expect(selectedRow).not.toBeNull();
         expect(selectedRow?.textContent).toContain("notes.md");
+    });
+
+    it("keeps the pane on the target dir after its listing fails, and a successful Retry still selects the file", async () => {
+        // A failed target listing must neither retire the invocation (Retry should still land on the
+        // file) nor leave it able to drag the pane anywhere: the pane stays on DIR with its Retry.
+        let failing = true;
+        const api = mockApi({
+            listDir: jest.fn(() =>
+                failing ? Promise.reject(new JournalApiError("gateway", 504)) : Promise.resolve(listing()),
+            ),
+        });
+        const pane = await mountPane(api, { open: true, path: DIR, targetFile: `${DIR}/notes.md`, targetToken: 1 });
+        const retry = pane.querySelector<HTMLButtonElement>(".mj_FilesRetry");
+        expect(retry).not.toBeNull();
+        expect(pane.querySelector(".mj_FilesRow_selected")).toBeNull();
+
+        failing = false;
+        await act(async () => retry!.click());
+        await flush();
+
+        const selectedRow = pane.querySelector(".mj_FilesRow_selected");
+        expect(selectedRow?.textContent).toContain("notes.md");
+        expect((api.listDir as jest.Mock).mock.calls.every(([p]) => p === DIR)).toBe(true);
     });
 
     it("does not auto-select from a STALE listing when the target directory differs (wrong-file guard)", async () => {

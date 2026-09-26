@@ -89,8 +89,8 @@ const PATH_REJECT_REASONS: ReadonlySet<string> = new Set([
     "sensitive",
     "unreadable",
     "bad-workdir",
-    // "too-large" is intercepted by the switch above (folded into the
-    // too-large outcome alongside edit-file's own too_large), not here.
+    // "too-large" is intercepted by the switch in classifyEditFileReply below
+    // (folded into the too-large outcome alongside edit-file's own too_large), not here.
 ]);
 
 /**

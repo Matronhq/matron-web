@@ -214,15 +214,31 @@ export function FilesPane({ client, state }: { client: MatronJournalClient; stat
         () => (targetFile ? targetFile.slice(targetFile.lastIndexOf("/") + 1) : undefined),
         [targetFile],
     );
+    // Two per-token marks. `navigatedTokenRef`: Steps 1-2 are done for this token (we reached the
+    // target dir with its nonce-keyed listing requested). `deepLinkTokenRef`: the token is finished
+    // (target selected, found missing, or abandoned) and must never act again. Keeping them apart
+    // means a token that is still waiting on its listing (loading, or failed and awaiting Retry)
+    // never re-navigates once the user has moved on: leaving the target dir after Steps 1-2 retires
+    // the token instead of dragging the pane back. A failed listing does NOT retire it, so a
+    // successful Retry of the target dir still auto-selects the file.
+    const navigatedTokenRef = useRef<number | undefined>(undefined);
     const deepLinkTokenRef = useRef<number | undefined>(undefined);
     useEffect(() => {
         if (!targetFile || !targetDir || targetToken === undefined) return;
         if (deepLinkTokenRef.current === targetToken) return; // already handled this invocation
-        // Steps 1-2: get to the target dir AND request a fresh listing keyed to this token.
-        if (dir !== targetDir || deepLinkNonce !== targetToken) {
-            setSelected(undefined);
-            if (dir !== targetDir) setDir(targetDir);
-            if (deepLinkNonce !== targetToken) setDeepLinkNonce(targetToken);
+        const atTarget = dir === targetDir && deepLinkNonce === targetToken;
+        if (navigatedTokenRef.current !== targetToken) {
+            // Steps 1-2: get to the target dir AND request a fresh listing keyed to this token.
+            if (!atTarget) {
+                setSelected(undefined);
+                if (dir !== targetDir) setDir(targetDir);
+                if (deepLinkNonce !== targetToken) setDeepLinkNonce(targetToken);
+                return;
+            }
+            navigatedTokenRef.current = targetToken;
+        } else if (!atTarget) {
+            // The user browsed away before the target listing settled: abandon this invocation.
+            deepLinkTokenRef.current = targetToken;
             return;
         }
         // Step 3: consume ONLY the listing produced by the CURRENT request key. After Step 2 re-keys

@@ -56,12 +56,23 @@ function mockApi(meta: FileMeta, overrides: Partial<FilesApiLike> = {}): FilesAp
     } as unknown as FilesApiLike;
 }
 
+// Every root `mount` creates, so afterEach can unmount it and detach its container.
+const mounted: Array<{ container: HTMLDivElement; root: Root }> = [];
+
+afterEach(() => {
+    for (const { container, root } of mounted.splice(0)) {
+        act(() => root.unmount());
+        container.remove();
+    }
+});
+
 async function mount(element: React.ReactElement): Promise<{ container: HTMLDivElement; root: Root }> {
     const container = document.createElement("div");
     document.body.append(container);
     let root!: Root;
     await act(async () => {
         root = createRoot(container);
+        mounted.push({ container, root });
         root.render(element);
     });
     await act(async () => {
