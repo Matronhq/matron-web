@@ -551,7 +551,9 @@ export class MatronJournalClient {
         this.connection?.send({ op: "viewing", convo_id: conversationId });
 
         const conversation = this.state.conversations.find((candidate) => candidate.id === conversationId);
-        if (conversation?.unread_count) this.scheduleRead(conversationId, conversation.last_seq, 0);
+        if (conversation?.unread_count && !this.filesPaneCoversConversation()) {
+            this.scheduleRead(conversationId, conversation.last_seq, 0);
+        }
 
         if (!this.history.get(conversationId)?.initialized) {
             await this.loadOlderHistory({ suppressNotFound: opts?.fromRpcCreate || opts?.suppressNotFound });
@@ -1313,11 +1315,30 @@ export class MatronJournalClient {
     public markFilesUnavailable(): void {
         if (this.state.filesUnavailable && !this.state.filesView) return;
         this.patch({ filesUnavailable: true, filesView: undefined });
+        this.readSelectedConversationIfShown();
     }
 
     public closeFilesView(): void {
         if (!this.state.filesView) return;
         this.patch({ filesView: undefined });
+        this.readSelectedConversationIfShown();
+    }
+
+    // While the Files pane is shown it replaces the conversation in the main region, but the
+    // conversation stays selected so closing the pane returns to it. Messages that arrive (or are
+    // re-selected after a reconnect) in that time have not been seen, so they must not be marked
+    // read. Mirrors the pane's render gate (filesPaneAvailable in components.tsx).
+    private filesPaneCoversConversation(): boolean {
+        if (!this.state.filesView?.open) return false;
+        if (filesRootFromConfig(this.state.config) === undefined || this.state.filesUnavailable) return false;
+        return !(typeof window !== "undefined" && Boolean((window as Window & { electron?: unknown }).electron));
+    }
+
+    // The conversation is visible again: acknowledge what arrived while the pane covered it.
+    private readSelectedConversationIfShown(): void {
+        if (this.filesPaneCoversConversation()) return;
+        const conversation = this.selectedConversation();
+        if (conversation?.unread_count) this.scheduleRead(conversation.id, conversation.last_seq, 0);
     }
 
     // Persist the last-browsed directory so a reopen returns there. No-op when the pane is closed.
@@ -1849,7 +1870,9 @@ export class MatronJournalClient {
         if (this.state.selectedConversationId) {
             connection.send({ op: "viewing", convo_id: this.state.selectedConversationId });
             const conversation = this.selectedConversation();
-            if (conversation?.unread_count) this.scheduleRead(conversation.id, conversation.last_seq, 0);
+            if (conversation?.unread_count && !this.filesPaneCoversConversation()) {
+                this.scheduleRead(conversation.id, conversation.last_seq, 0);
+            }
         }
         for (const [conversationId, upToSeq] of this.readHighWater) {
             this.scheduleRead(conversationId, upToSeq, 0);
@@ -1908,7 +1931,11 @@ export class MatronJournalClient {
         this.abortUploadsForChildConvos();
         if (event.convo_id === this.state.selectedConversationId) {
             await this.refreshSelectedConversation(event.convo_id);
-            if (MESSAGE_EVENT_TYPES.has(event.type) && !event.sender.startsWith("user:")) {
+            if (
+                MESSAGE_EVENT_TYPES.has(event.type) &&
+                !event.sender.startsWith("user:") &&
+                !this.filesPaneCoversConversation()
+            ) {
                 this.scheduleRead(event.convo_id, event.seq);
             }
         }

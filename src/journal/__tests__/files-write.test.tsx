@@ -833,6 +833,34 @@ describe("a failed pre-save re-read sent nothing", () => {
     });
 });
 
+describe("a retry that stops before sending keeps the earlier attempt pinned", () => {
+    it("stays pinned when the retry's re-read is REFUSED (404), not only when it times out", async () => {
+        let readStatus: number | undefined;
+        const writeFile = jest.fn().mockRejectedValueOnce(new JournalApiError("timed out", 0, "timeout"));
+        const api = mockApi({
+            fileBytes: jest.fn(async () => {
+                if (readStatus !== undefined) throw new JournalApiError("not found", readStatus, "not-found");
+                return encode("# notes\n");
+            }) as unknown as FilesApiLike["fileBytes"],
+            writeFile: writeFile as unknown as FilesApiLike["writeFile"],
+        });
+        const pane = await mountPane(api);
+        await openEditor(pane);
+        await setValue(document.querySelector(".mj_FileWrite_textarea"), "# edited\n");
+        await click(document.querySelector(".mj_FileWrite_danger"));
+        await flush();
+        expect(dialog()?.querySelector(".mj_FileWrite_bound")).not.toBeNull();
+
+        readStatus = 404;
+        await click(document.querySelector(".mj_FileWrite_danger"));
+        await flush();
+        expect(writeFile).toHaveBeenCalledTimes(1);
+        expect(dialog()?.querySelector(".mj_FileWrite_bound")).not.toBeNull();
+        expect((document.querySelector(".mj_FileWrite_textarea") as HTMLTextAreaElement).disabled).toBe(true);
+        expect(dialog()?.querySelector(".mj_UploadConfirm_error")?.textContent).toMatch(/still unconfirmed/i);
+    });
+});
+
 describe("the reconciling re-read is a barrier, not just a message", () => {
     it("offers no way to start a new write while the reconciling listing is still in flight", async () => {
         // Backing out of an unresolved write must not drop the user into a directory view they

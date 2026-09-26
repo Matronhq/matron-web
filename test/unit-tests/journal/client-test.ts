@@ -525,6 +525,23 @@ describe("MatronJournalClient state handling", () => {
             expect(client.getSnapshot().filesView).toEqual(FILES_VIEW);
         });
 
+        it("does not mark the covered conversation read until the Files pane closes", async () => {
+            const client = new MatronJournalClient();
+            const unread: Conversation[] = [{ ...CONVERSATIONS[0], unread_count: 3 }, CONVERSATIONS[1]];
+            const state = withFilesOpen(client, {
+                conversations: unread,
+                config: { ...client.getSnapshot().config, files_root: "/srv" },
+            });
+            state.database = fakeDatabase({ conversations: jest.fn().mockResolvedValue(unread) });
+            state.api!.snapshot = jest.fn().mockResolvedValue({ seq: 30, conversations: unread });
+
+            await state.replaceSnapshot();
+            expect(state.readHighWater.has("c1")).toBe(false);
+
+            client.closeFilesView();
+            expect(state.readHighWater.get("c1")).toBe(10);
+        });
+
         it("keeps the Files pane open when collapsing a parent folds selection up from a hidden child", async () => {
             const client = new MatronJournalClient();
             const child: Conversation = { ...CONVERSATIONS[1], id: "c1:sub", parent_convo_id: "c1" };

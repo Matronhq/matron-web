@@ -69,28 +69,41 @@ class LocalRefusal extends JournalApiError {}
 /** LocalRefusal code: the edit's pre-save re-read failed in transit, so no write was issued. */
 const REREAD_FAILED = "reread-failed";
 
+/**
+ * Set to true immediately before `perform` issues its mutating request. A failure while it is still
+ * false stopped BEFORE anything was sent, so it cannot have changed the server — and cannot have
+ * resolved an EARLIER attempt this one was replaying either.
+ */
+interface Dispatched {
+    sent: boolean;
+}
+
 async function perform(
     api: FilesApiLike,
     pending: PendingWrite,
     input: WriteInput,
     idempotencyKey: string,
+    dispatched: Dispatched,
 ): Promise<Outcome> {
     switch (pending.kind) {
         case "mkdir": {
             const name = sanitizeFileName(input.name ?? "");
             if (!name) throw new LocalRefusal("Enter a folder name.", 0, "invalid-name");
+            dispatched.sent = true;
             const result = await api.mkdir(joinPath(pending.dir, name));
             return { notice: result.dryRun ? DRY_RUN_NOTICE : undefined };
         }
         case "rename": {
             const name = sanitizeFileName(input.name ?? "");
             if (!name) throw new LocalRefusal("Enter a name.", 0, "invalid-name");
+            dispatched.sent = true;
             const result = await api.move(pending.path, joinPath(pending.dir, name), { idempotencyKey });
             return { notice: result.dryRun ? DRY_RUN_NOTICE : undefined };
         }
         case "upload": {
             const file = uploadHead(pending);
             if (!file) return {};
+            dispatched.sent = true;
             const result = await api.upload(file, { targetDir: pending.dir, name: input.name, idempotencyKey });
             // A new target gets its own key when it is released; the current one is never reused.
             return { next: advanceUpload(pending), notice: result.dryRun ? DRY_RUN_NOTICE : undefined };
@@ -147,10 +160,12 @@ async function perform(
             }
             // overwrite:true — the edit affordance only exists for a file that is already there,
             // and the server copies the prior version into .matron-trash/ before replacing it.
+            dispatched.sent = true;
             const result = await api.writeFile(pending.path, content, { overwrite: true, idempotencyKey });
             return { notice: result.dryRun ? DRY_RUN_NOTICE : undefined };
         }
         case "delete": {
+            dispatched.sent = true;
             const result = await api.deleteEntry(pending.path, {
                 confirm: true,
                 recursive: pending.isDir,
@@ -462,9 +477,10 @@ export function useFileWrites(
             const sentAt = Date.now();
             const sentAtMono = performance.now();
             dispatch({ type: "submit" });
+            const dispatched: Dispatched = { sent: false };
             void (async () => {
                 try {
-                    const outcome = await perform(api, current.pending, attempt, current.idempotencyKey);
+                    const outcome = await perform(api, current.pending, attempt, current.idempotencyKey, dispatched);
                     if (!alive.current) return;
                     setNotice(outcome.notice);
                     // The rest of the selection goes behind the barrier, exactly like the expiry
@@ -494,16 +510,16 @@ export function useFileWrites(
                         onWritten();
                         return;
                     }
-                    // A retry whose pre-save re-read failed sent nothing, but the EARLIER attempt
-                    // it was replaying is still unresolved: keep that pin (same key, same payload,
-                    // same deadline) rather than letting this local refusal clear it.
-                    const rereadFailedOnReplay =
-                        current.replay !== undefined && error instanceof LocalRefusal && error.code === REREAD_FAILED;
-                    const unresolved = outcomeIsUnknown(error) || rereadFailedOnReplay;
+                    // A retry that failed BEFORE sending anything (e.g. the edit's pre-save re-read
+                    // timed out or was refused) tells us nothing about the EARLIER attempt it was
+                    // replaying, which is still unresolved: keep that pin (same key, same payload,
+                    // same deadline) whatever this error was, rather than letting it clear it.
+                    const stoppedBeforeReplay = current.replay !== undefined && !dispatched.sent;
+                    const unresolved = outcomeIsUnknown(error) || stoppedBeforeReplay;
                     dispatch({
                         type: "failed",
-                        message: rereadFailedOnReplay
-                            ? "Couldn't re-check the file before retrying, so the retry wasn't sent. The earlier attempt is still unconfirmed."
+                        message: stoppedBeforeReplay
+                            ? `${describeFailure(error)} The earlier attempt is still unconfirmed.`
                             : describeFailure(error),
                         // Uncertain → keep the key so the retry replays. Definite → mint a new one.
                         idempotencyKey: unresolved ? current.idempotencyKey : newKey(),
