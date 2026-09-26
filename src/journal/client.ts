@@ -267,6 +267,9 @@ export class MatronJournalClient {
     private trackerInboxRefetchTimer?: number;
     // Same for `mission` / `milestone` markers and the missions list.
     private trackerMissionsRefetchTimer?: number;
+    // Whether the pending missions refetch should also reload the open mission detail: set by item
+    // markers, which don't say which mission the item belongs to.
+    private trackerMissionRefetchPending = false;
     private sessionGen = 0;
     private ackTimer?: number;
     private pendingAck = 0;
@@ -1481,6 +1484,7 @@ export class MatronJournalClient {
         if (this.api !== api) return true;
         if (this.isSelectedTrackerItem(id)) await this.loadItem(id);
         if (this.state.inboxItems) await this.loadInbox();
+        if (this.state.missions) await this.loadMissions();
         return true;
     }
 
@@ -1500,6 +1504,7 @@ export class MatronJournalClient {
         if (this.api !== api) return true;
         if (this.isSelectedTrackerItem(id)) await this.loadItem(id);
         if (this.state.inboxItems) await this.loadInbox();
+        if (this.state.missions) await this.loadMissions();
         return true;
     }
 
@@ -1515,6 +1520,7 @@ export class MatronJournalClient {
         if (this.api !== api) return true;
         if (this.isSelectedTrackerItem(id)) await this.loadItem(id);
         if (this.state.inboxItems) await this.loadInbox();
+        if (this.state.missions) await this.loadMissions();
         return true;
     }
 
@@ -1575,6 +1581,9 @@ export class MatronJournalClient {
                 void this.loadItem(num);
             }
             if (this.state.inboxItems) this.scheduleInboxRefetch();
+            // A mission's open-item and needs-you counts, and its detail's item list, derive from its
+            // items, but an item marker does not carry the mission, so refresh whatever is loaded.
+            if (this.state.missions || this.state.trackerMission) this.scheduleMissionsRefetch({ detail: true });
             return;
         }
         if (event.type === "mission") {
@@ -1605,11 +1614,19 @@ export class MatronJournalClient {
         }, 250);
     }
 
-    private scheduleMissionsRefetch(): void {
+    private scheduleMissionsRefetch(opts: { detail?: boolean } = {}): void {
+        if (opts.detail) this.trackerMissionRefetchPending = true;
         if (this.trackerMissionsRefetchTimer !== undefined) return;
         this.trackerMissionsRefetchTimer = window.setTimeout(() => {
             this.trackerMissionsRefetchTimer = undefined;
-            if (this.state.trackerView?.open && this.state.missions) void this.loadMissions();
+            const detail = this.trackerMissionRefetchPending;
+            this.trackerMissionRefetchPending = false;
+            if (!this.state.trackerView?.open) return;
+            if (this.state.missions) void this.loadMissions();
+            const selected = this.state.trackerView.selectedMissionId;
+            if (detail && selected != null && this.state.trackerMission?.mission?.num === selected) {
+                void this.loadMission(selected);
+            }
         }, 250);
     }
 
@@ -2415,6 +2432,7 @@ export class MatronJournalClient {
         this.trackerInboxRefetchTimer = undefined;
         if (this.trackerMissionsRefetchTimer !== undefined) window.clearTimeout(this.trackerMissionsRefetchTimer);
         this.trackerMissionsRefetchTimer = undefined;
+        this.trackerMissionRefetchPending = false;
         this.readTimers.clear();
         this.readHighWater.clear();
         this.ackTimer = undefined;

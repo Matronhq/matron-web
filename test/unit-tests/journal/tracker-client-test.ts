@@ -576,6 +576,23 @@ describe("MatronJournalClient tracker mutations", () => {
         expect(state.api.postItemComment).toHaveBeenCalledWith(1, { body: "retry me" }, "stable-key-123");
     });
 
+    // Mission rows show item-derived counts, so an item write refreshes a loaded missions list too.
+    it("closeTrackerItem refreshes a loaded missions list", async () => {
+        const { client, state } = makeClient({
+            trackerView: { open: true, view: "inbox", selectedItemId: 1 },
+            missions: [mission()],
+        });
+        state.api = {
+            closeItem: jest.fn().mockResolvedValue({}),
+            item: jest.fn().mockResolvedValue({ item: item({ state: "closed" }), comments: [] }),
+            missions: jest.fn().mockResolvedValue({ missions: [] }),
+        };
+
+        await client.closeTrackerItem(1, "done");
+
+        expect(state.api.missions).toHaveBeenCalledTimes(1);
+    });
+
     it("closeTrackerMission calls the api then refetches the mission and the loaded list", async () => {
         const { client, state } = makeClient({
             trackerView: { open: true, view: "missions", selectedMissionId: 5 },
@@ -862,6 +879,28 @@ describe("MatronJournalClient handleTrackerMarker (WS invalidation)", () => {
         await flush();
 
         expect(state.api.missions).toHaveBeenCalledTimes(1);
+    });
+
+    it("refreshes the missions list and the open mission when an item marker lands", async () => {
+        const { state } = makeClient({
+            trackerView: { open: true, view: "missions", selectedMissionId: 5 },
+            trackerMission: missionDetail({ num: 5 }),
+            missions: [mission()],
+        });
+        state.api = {
+            item: jest.fn(),
+            mission: jest.fn().mockResolvedValue(missionDetail({ num: 5 })),
+            missions: jest.fn().mockResolvedValue({ missions: [] }),
+        };
+
+        state.handleTrackerMarker(marker("item", { num: 3, action: "closed" }));
+        state.handleTrackerMarker(marker("item", { num: 4, action: "commented" }));
+        jest.advanceTimersByTime(250);
+        await flush();
+
+        expect(state.api.missions).toHaveBeenCalledTimes(1);
+        expect(state.api.mission).toHaveBeenCalledTimes(1);
+        expect(state.api.mission).toHaveBeenCalledWith(5);
     });
 
     it("fires the marker refetch through handleJournal", async () => {
