@@ -964,15 +964,24 @@ Please see LICENSE files in the repository root for full details.
     width: 100%;
     box-sizing: border-box;
     text-align: left;
-    cursor: pointer;
 }
 .mj_TrackerCard_needsyou {
     box-shadow: inset 3px 0 0 var(--mj-needsyou);
 }
+/* The header row is the card's open button: reset the native button chrome so it reads as the row. */
 .mj_TrackerCard_row {
     display: flex;
     align-items: center;
     gap: var(--cpd-space-2x);
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
 }
 .mj_TrackerCard_glyph {
     flex: none;
@@ -1029,17 +1038,24 @@ Please see LICENSE files in the repository root for full details.
     width: 100%;
     box-sizing: border-box;
     text-align: left;
-    border: 0;
-    background: transparent;
     padding: var(--cpd-space-1x) 0;
-    cursor: pointer;
     color: var(--cpd-color-text-secondary);
     font: var(--cpd-font-body-sm-regular);
 }
+/* The lead line is the note's open button: reset the native button chrome. */
 .mj_TrackerInlineNote_line {
     display: inline-flex;
     align-items: center;
     gap: var(--cpd-space-1x);
+    align-self: flex-start;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
 }
 .mj_TrackerInlineNote_glyph {
     font-size: 15px;

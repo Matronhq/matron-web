@@ -274,7 +274,10 @@ describe("MatronJournalClient tracker loaders", () => {
 
 describe("MatronJournalClient tracker mutations", () => {
     it("closeTrackerItem calls the api then refetches the item and the loaded inbox", async () => {
-        const { client, state } = makeClient({ inboxItems: [item({ num: 1 })] });
+        const { client, state } = makeClient({
+            trackerView: { open: true, view: "inbox", selectedItemId: 1 },
+            inboxItems: [item({ num: 1 })],
+        });
         state.api = {
             closeItem: jest.fn().mockResolvedValue({}),
             item: jest.fn().mockResolvedValue({ item: item({ state: "closed" }), comments: [] }),
@@ -293,7 +296,7 @@ describe("MatronJournalClient tracker mutations", () => {
     });
 
     it("commentItem posts with a fresh idempotency key and refetches the item", async () => {
-        const { client, state } = makeClient();
+        const { client, state } = makeClient({ trackerView: { open: true, view: "inbox", selectedItemId: 1 } });
         state.api = {
             postItemComment: jest.fn().mockResolvedValue({}),
             item: jest.fn().mockResolvedValue({ item: item(), comments: [] }),
@@ -338,6 +341,52 @@ describe("MatronJournalClient tracker mutations", () => {
         expect(client.getSnapshot().trackerError).toBe("offline");
     });
 
+    // The user can go Back and open another item while a write is in flight. Refetching the mutated
+    // item then would bump the detail generation and drop the newer selection's load.
+    it.each([
+        ["commentItem", (client: MatronJournalClient) => client.commentItem(7, { body: "on it" })],
+        ["closeTrackerItem", (client: MatronJournalClient) => client.closeTrackerItem(7, "done")],
+        ["reopenTrackerItem", (client: MatronJournalClient) => client.reopenTrackerItem(7)],
+    ])("%s does not supersede the load of an item selected while the write was in flight", async (_name, run) => {
+        const { client, state } = makeClient({ trackerView: { open: true, view: "inbox", selectedItemId: 7 } });
+        let landWrite!: () => void;
+        const write = new Promise((resolve) => {
+            landWrite = () => resolve({});
+        });
+        state.api = {
+            postItemComment: jest.fn().mockReturnValue(write),
+            closeItem: jest.fn().mockReturnValue(write),
+            reopenItem: jest.fn().mockReturnValue(write),
+            item: jest.fn().mockResolvedValue({ item: item({ num: 9 }), comments: [] }),
+            items: jest.fn(),
+        };
+
+        const pending = run(client);
+        // Back, then open #9 while the write is still in flight; the pane's effect loads #9.
+        client.openTrackerItem(9);
+        const nine = client.loadItem(9);
+        landWrite();
+
+        await expect(pending).resolves.toBe(true);
+        await nine;
+        expect(state.api.item).toHaveBeenCalledTimes(1);
+        expect(state.api.item).toHaveBeenCalledWith(9);
+        expect(client.getSnapshot().trackerItem?.item.num).toBe(9);
+    });
+
+    it("refetches the mutated item when the selection is written with a leading #", async () => {
+        const { client, state } = makeClient({ trackerView: { open: true, view: "inbox", selectedItemId: 7 } });
+        state.api = {
+            closeItem: jest.fn().mockResolvedValue({}),
+            item: jest.fn().mockResolvedValue({ item: item({ num: 7 }), comments: [] }),
+            items: jest.fn(),
+        };
+
+        await client.closeTrackerItem("#7", "done");
+
+        expect(state.api.item).toHaveBeenCalledWith("#7");
+    });
+
     it("records a tracker error and skips the refetch when the mutation itself rejects", async () => {
         const { client, state } = makeClient({ inboxItems: [item()] });
         state.api = {
@@ -355,8 +404,18 @@ describe("MatronJournalClient tracker mutations", () => {
 });
 
 describe("MatronJournalClient handleTrackerMarker (WS invalidation)", () => {
+    beforeEach(() => {
+        jest.useFakeTimers();
+    });
+    afterEach(() => {
+        jest.useRealTimers();
+    });
+
+    const OPEN = { open: true, view: "inbox" } as const;
+
     it("refetches the open item and the loaded inbox on a matching item marker", async () => {
         const { state } = makeClient({
+            trackerView: OPEN,
             trackerItem: { item: item({ num: 2 }), comments: [] },
             inboxItems: [item({ num: 2 })],
         });
@@ -367,13 +426,15 @@ describe("MatronJournalClient handleTrackerMarker (WS invalidation)", () => {
 
         state.handleTrackerMarker(marker("item", { num: 2, action: "commented" }));
         await flush();
-
         expect(state.api.item).toHaveBeenCalledWith(2);
+
+        jest.advanceTimersByTime(250);
         expect(state.api.items).toHaveBeenCalled();
     });
 
     it("refetches only the inbox when the item marker is for a different open item", async () => {
         const { state } = makeClient({
+            trackerView: OPEN,
             trackerItem: { item: item({ num: 2 }), comments: [] },
             inboxItems: [item({ num: 2 })],
         });
@@ -383,10 +444,28 @@ describe("MatronJournalClient handleTrackerMarker (WS invalidation)", () => {
         };
 
         state.handleTrackerMarker(marker("item", { num: 99, action: "created" }));
+        jest.advanceTimersByTime(250);
         await flush();
 
         expect(state.api.item).not.toHaveBeenCalled();
         expect(state.api.items).toHaveBeenCalled();
+    });
+
+    it("coalesces a burst of item markers into one inbox walk", async () => {
+        const { state } = makeClient({ trackerView: OPEN, inboxItems: [item({ num: 2 })] });
+        state.api = { item: jest.fn(), items: jest.fn().mockResolvedValue({ items: [], next_cursor: null }) };
+
+        for (let num = 1; num <= 5; num += 1) state.handleTrackerMarker(marker("item", { num, action: "created" }));
+        expect(state.api.items).not.toHaveBeenCalled();
+        jest.advanceTimersByTime(250);
+        await flush();
+        expect(state.api.items).toHaveBeenCalledTimes(1);
+
+        // A later marker arms a fresh refetch.
+        state.handleTrackerMarker(marker("item", { num: 6, action: "created" }));
+        jest.advanceTimersByTime(250);
+        await flush();
+        expect(state.api.items).toHaveBeenCalledTimes(2);
     });
 
     it("is a no-op when the pane is closed and nothing is loaded", async () => {
@@ -394,14 +473,47 @@ describe("MatronJournalClient handleTrackerMarker (WS invalidation)", () => {
         state.api = { item: jest.fn(), items: jest.fn() };
 
         state.handleTrackerMarker(marker("item", { num: 2, action: "commented" }));
+        jest.advanceTimersByTime(250);
         await flush();
 
         expect(state.api.item).not.toHaveBeenCalled();
         expect(state.api.items).not.toHaveBeenCalled();
     });
 
+    // Closing the pane leaves the loaded data in the store; it must not keep refetching in the
+    // background for the rest of the session. Reopening remounts the pane, which reloads it.
+    it("fetches nothing once the pane is closed, even with data still loaded", async () => {
+        const { client, state } = makeClient({
+            trackerView: OPEN,
+            trackerItem: { item: item({ num: 2 }), comments: [] },
+            inboxItems: [item({ num: 2 })],
+        });
+        state.api = { item: jest.fn(), items: jest.fn() };
+        client.closeTrackerView();
+
+        state.handleTrackerMarker(marker("item", { num: 2, action: "commented" }));
+        jest.advanceTimersByTime(250);
+        await flush();
+
+        expect(state.api.item).not.toHaveBeenCalled();
+        expect(state.api.items).not.toHaveBeenCalled();
+    });
+
+    it("drops a pending inbox refetch when the pane closes before it fires", async () => {
+        const { client, state } = makeClient({ trackerView: OPEN, inboxItems: [item({ num: 2 })] });
+        state.api = { item: jest.fn(), items: jest.fn() };
+
+        state.handleTrackerMarker(marker("item", { num: 3, action: "created" }));
+        client.closeTrackerView();
+        jest.advanceTimersByTime(250);
+        await flush();
+
+        expect(state.api.items).not.toHaveBeenCalled();
+    });
+
     it("fires the marker refetch through handleJournal", async () => {
         const { client, state } = makeClient({
+            trackerView: OPEN,
             trackerItem: { item: item({ num: 2 }), comments: [] },
             inboxItems: [item({ num: 2 })],
         });

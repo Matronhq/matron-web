@@ -354,3 +354,38 @@ describe("ItemDetail", () => {
         expect(container.textContent).not.toContain("PRIVATE-ELIDED-BODY");
     });
 });
+
+describe("ItemDetail origin line", () => {
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    it("follows a rename of the origin conversation without remounting", async () => {
+        const client = fakeClient();
+        client.getSnapshot.mockReturnValue({
+            selectedConversationId: "c-here",
+            conversations: [{ id: "c-old", title: "Old name" }],
+        });
+        const item = trackerItem({ origin_convo_id: "c-old" });
+        const detail = (): React.ReactElement => (
+            <ItemDetail
+                item={item}
+                comments={[]}
+                client={client as unknown as MatronJournalClient}
+                onBack={jest.fn()}
+            />
+        );
+        const { container, root } = await mount(detail());
+        expect(container.querySelector(".mj_TrackerOrigin")?.textContent).toBe("Opened from Old name");
+
+        // The client replaces its conversation list on a rename and re-renders the pane.
+        client.getSnapshot.mockReturnValue({
+            selectedConversationId: "c-here",
+            conversations: [{ id: "c-old", title: "New name" }],
+        });
+        await act(async () => {
+            root.render(detail());
+        });
+        expect(container.querySelector(".mj_TrackerOrigin")?.textContent).toBe("Opened from New name");
+    });
+});

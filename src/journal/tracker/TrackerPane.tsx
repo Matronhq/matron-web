@@ -39,13 +39,8 @@ export function TrackerPane({
         if (selectedItemId != null) void client.loadItem(selectedItemId);
     }, [client, selectedItemId]);
 
-    // The detail back button clears the open item selection. openTrackerView merges with the previous
-    // view, so it can't clear a selected id on its own; closing first resets the view, then reopening
-    // lands on a clean list.
-    const backToInbox = (): void => {
-        client.closeTrackerView();
-        client.openTrackerView({ view: "inbox" });
-    };
+    // The detail back button clears the open item selection (itemId: null clears it explicitly).
+    const backToInbox = (): void => client.openTrackerView({ view: "inbox", itemId: null });
 
     const body = ((): React.ReactElement => {
         // Render a cached detail ONLY when it belongs to the current selection. A detail loaded for
@@ -62,12 +57,19 @@ export function TrackerPane({
                 />
             );
         }
+        // Until the first inbox load lands there is no list to reason over: an empty one would read
+        // as a false "Nothing needs you". A failed load says so (the error banner above has why).
+        if (state.inboxItems === undefined) {
+            return (
+                <div className="mj_TrackerEmpty" role="status">
+                    <p className="mj_TrackerEmpty_title">
+                        {state.trackerError ? "Couldn't load the inbox" : "Loading…"}
+                    </p>
+                </div>
+            );
+        }
         return (
-            <ItemsInbox
-                items={state.inboxItems ?? []}
-                client={client}
-                onOpenItem={(num) => client.openTrackerItem(num)}
-            />
+            <ItemsInbox items={state.inboxItems} client={client} onOpenItem={(num) => client.openTrackerItem(num)} />
         );
     })();
 

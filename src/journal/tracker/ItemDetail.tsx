@@ -104,10 +104,12 @@ export function ItemDetail({
     const resolutions = item.state === "open" ? availableResolutions(item, hasUserReply) : [];
 
     const selectedConvoId = client.getSnapshot().selectedConversationId;
+    // Keyed on the conversation list (replaced on a rename or load), so the line follows it live.
+    const conversations = client.getSnapshot().conversations;
     const originTitle = useMemo(() => {
-        const convo = client.getSnapshot().conversations.find((candidate) => candidate.id === item.origin_convo_id);
+        const convo = conversations.find((candidate) => candidate.id === item.origin_convo_id);
         return convo?.title.trim() || undefined;
-    }, [client, item.origin_convo_id]);
+    }, [conversations, item.origin_convo_id]);
     const showOrigin = item.origin_convo_id !== selectedConvoId;
 
     const send = async (): Promise<void> => {

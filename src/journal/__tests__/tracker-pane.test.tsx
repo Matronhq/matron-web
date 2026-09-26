@@ -63,6 +63,7 @@ describe("TrackerPane selection/detail matching (F1)", () => {
                 state={paneState({
                     trackerView: { open: true, view: "inbox", selectedItemId: 9 },
                     trackerItem: { item: trackerItem({ num: 7 }), comments: [] },
+                    inboxItems: [],
                 })}
             />,
         );
@@ -84,5 +85,99 @@ describe("TrackerPane selection/detail matching (F1)", () => {
         );
 
         expect(container.querySelector(".mj_TrackerComposer")).not.toBeNull();
+    });
+});
+
+describe("TrackerPane inbox", () => {
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    // Before the first load lands, an empty list would read as a false "Nothing needs you".
+    it("shows a loading status, not an empty inbox, before the first inbox load lands", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <TrackerPane
+                client={client as unknown as MatronJournalClient}
+                state={paneState({ trackerView: { open: true, view: "inbox" }, trackerLoading: true })}
+            />,
+        );
+
+        expect(container.querySelector(".mj_TrackerPane_body [role=status]")?.textContent).toBe("Loading…");
+        expect(container.textContent).not.toContain("Nothing needs you");
+    });
+
+    it("says the inbox could not load, not that nothing needs you, when the first load fails", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <TrackerPane
+                client={client as unknown as MatronJournalClient}
+                state={paneState({ trackerView: { open: true, view: "inbox" }, trackerError: "offline" })}
+            />,
+        );
+
+        expect(container.querySelector("[role=alert]")?.textContent).toBe("offline");
+        expect(container.querySelector(".mj_TrackerPane_body [role=status]")?.textContent).toBe(
+            "Couldn't load the inbox",
+        );
+        expect(container.textContent).not.toContain("Nothing needs you");
+    });
+
+    it("shows the empty inbox once a load has landed with no items", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <TrackerPane
+                client={client as unknown as MatronJournalClient}
+                state={paneState({ trackerView: { open: true, view: "inbox" }, inboxItems: [] })}
+            />,
+        );
+
+        expect(container.textContent).toContain("Nothing needs you");
+    });
+
+    it("goes back to the inbox by clearing the selection in one view update", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <TrackerPane
+                client={client as unknown as MatronJournalClient}
+                state={paneState({
+                    trackerView: { open: true, view: "inbox", selectedItemId: 7 },
+                    trackerItem: { item: trackerItem({ num: 7 }), comments: [] },
+                    inboxItems: [],
+                })}
+            />,
+        );
+
+        await act(async () => {
+            container.querySelector<HTMLButtonElement>(".mj_TrackerBack")!.click();
+        });
+        expect(client.openTrackerView).toHaveBeenCalledWith({ view: "inbox", itemId: null });
+        expect(client.closeTrackerView).not.toHaveBeenCalled();
+    });
+
+    it("follows a conversation rename without remounting", async () => {
+        const client = fakeClient();
+        client.getSnapshot.mockReturnValue({
+            selectedConversationId: "c-here",
+            conversations: [{ id: "c-listed", title: "Listed chat" }],
+        });
+        const state = paneState({
+            trackerView: { open: true, view: "inbox" },
+            inboxItems: [trackerItem({ id: "it_b", num: 2, origin_convo_id: "c-listed" })],
+        });
+        const { container, root } = await mount(
+            <TrackerPane client={client as unknown as MatronJournalClient} state={state} />,
+        );
+        expect(container.querySelector(".mj_TrackerItemRow_origin")?.textContent).toBe("Listed chat");
+
+        // The client replaces its conversation list on a rename and re-renders the pane.
+        client.getSnapshot.mockReturnValue({
+            selectedConversationId: "c-here",
+            conversations: [{ id: "c-listed", title: "Renamed chat" }],
+        });
+        await act(async () => {
+            root.render(<TrackerPane client={client as unknown as MatronJournalClient} state={{ ...state }} />);
+        });
+        expect(container.querySelector(".mj_TrackerItemRow_origin")?.textContent).toBe("Renamed chat");
     });
 });

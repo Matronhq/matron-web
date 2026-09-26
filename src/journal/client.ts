@@ -260,6 +260,9 @@ export class MatronJournalClient {
     // (F1 stale-response guard).
     private trackerItemGen = 0;
     private trackerInboxGen = 0;
+    // Pending marker-driven inbox refetch. A burst of `item` markers (a reconnect replay, a batch of
+    // agent writes) coalesces into ONE inbox walk instead of one per marker.
+    private trackerInboxRefetchTimer?: number;
     private sessionGen = 0;
     private ackTimer?: number;
     private pendingAck = 0;
@@ -1368,6 +1371,15 @@ export class MatronJournalClient {
     // clearing a reply draft) on that flag so a failed mutation never silently drops user input (F2).
     // A write that lands but races a logout still resolves true (the write happened). ──
 
+    // A mutation refetches its item only while that item is still the selected one. The user can go
+    // Back and open another item while the write is in flight; loadItem bumps the request generation,
+    // so an unconditional refetch of the mutated item would discard the newer selection's load and
+    // leave the pane on the inbox with the new selection never loaded.
+    private isSelectedTrackerItem(id: number | string): boolean {
+        const selected = this.state.trackerView?.selectedItemId;
+        return selected != null && String(selected) === String(id).replace(/^#/, "");
+    }
+
     // `idempotencyKey`: callers that can RETRY the same write after an AMBIGUOUS delivery (a comment
     // POST that may have committed before the response was lost) must pass a STABLE key so the retry
     // reuses it and the server dedupes the replay instead of minting a duplicate comment (F1). Omit
@@ -1388,7 +1400,7 @@ export class MatronJournalClient {
             return false;
         }
         if (this.api !== api) return true;
-        await this.loadItem(id);
+        if (this.isSelectedTrackerItem(id)) await this.loadItem(id);
         if (this.state.inboxItems) await this.loadInbox();
         return true;
     }
@@ -1407,7 +1419,7 @@ export class MatronJournalClient {
             return false;
         }
         if (this.api !== api) return true;
-        await this.loadItem(id);
+        if (this.isSelectedTrackerItem(id)) await this.loadItem(id);
         if (this.state.inboxItems) await this.loadInbox();
         return true;
     }
@@ -1422,23 +1434,36 @@ export class MatronJournalClient {
             return false;
         }
         if (this.api !== api) return true;
-        await this.loadItem(id);
+        if (this.isSelectedTrackerItem(id)) await this.loadItem(id);
         if (this.state.inboxItems) await this.loadInbox();
         return true;
     }
 
     // WS invalidation for tracker item markers (`item` journal frames). A marker is a change
-    // connected clients must reflect without re-polling; we refetch ONLY the tracker data currently
-    // loaded/open (a closed pane, or an unloaded inbox, fetches nothing) so badges stay live cheaply.
+    // connected clients must reflect without re-polling; we refetch ONLY the tracker data the OPEN
+    // pane is showing. A closed pane fetches nothing: reopening it remounts the pane, which reloads
+    // the inbox and the selection itself. The inbox refetch is coalesced (see scheduleInboxRefetch).
     // Item numbers on the wire are the human #num.
     private handleTrackerMarker(event: JournalEvent): void {
+        if (!this.state.trackerView?.open) return;
         if (event.type === "item") {
             const num = asNumber(event.payload.num, 0);
             if (num && this.state.trackerItem && this.state.trackerItem.item.num === num) {
                 void this.loadItem(num);
             }
-            if (this.state.inboxItems) void this.loadInbox();
+            if (this.state.inboxItems) this.scheduleInboxRefetch();
         }
+    }
+
+    // Coalesce marker-driven inbox refetches: the first marker arms a short timer and any marker that
+    // lands before it fires rides along, so a burst costs one paginated walk. The conditions are
+    // re-checked when the timer fires, since the pane may have closed (or the session ended) since.
+    private scheduleInboxRefetch(): void {
+        if (this.trackerInboxRefetchTimer !== undefined) return;
+        this.trackerInboxRefetchTimer = window.setTimeout(() => {
+            this.trackerInboxRefetchTimer = undefined;
+            if (this.state.trackerView?.open && this.state.inboxItems) void this.loadInbox();
+        }, 250);
     }
 
     private async startSession(session: Session): Promise<void> {
@@ -1943,7 +1968,7 @@ export class MatronJournalClient {
 
     private async handleJournal(event: JournalEvent): Promise<void> {
         if (!this.database) return;
-        // Tracker markers (item/mission/milestone) drive a live refetch of any loaded tracker
+        // Tracker markers (item/mission/milestone) drive a live refetch of the open tracker pane's
         // data regardless of whether this event is newly applied below — fire-and-forget so it
         // never blocks (or is blocked by) timeline application. Non-tracker types return at once.
         this.handleTrackerMarker(event);
@@ -2239,6 +2264,8 @@ export class MatronJournalClient {
         this.clearRpcCreateWatchdog();
         for (const timer of this.readTimers.values()) window.clearTimeout(timer);
         if (this.ackTimer !== undefined) window.clearTimeout(this.ackTimer);
+        if (this.trackerInboxRefetchTimer !== undefined) window.clearTimeout(this.trackerInboxRefetchTimer);
+        this.trackerInboxRefetchTimer = undefined;
         this.readTimers.clear();
         this.readHighWater.clear();
         this.ackTimer = undefined;
