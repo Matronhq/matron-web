@@ -313,6 +313,10 @@ export interface ClientState {
     trackerLoading?: boolean;
     /** Last tracker fetch/mutation error; cleared on the next successful load. */
     trackerError?: string;
+    /** Error from the last inbox load only. Unlike trackerError, which any tracker load clears, this
+     *  is cleared only by the next inbox load, so a never-loaded inbox can tell "failed" from
+     *  "still loading" while other loads come and go. */
+    inboxError?: string;
 }
 
 // ── Tracker (Decisions / Items inbox) ──────────────────────────────────────────

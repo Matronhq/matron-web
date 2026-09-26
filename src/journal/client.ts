@@ -1308,7 +1308,7 @@ export class MatronJournalClient {
         // is mid-pagination; without this the older walk could finish last and restore rows the newer
         // load already dropped (e.g. items closed meanwhile) (F2).
         const gen = ++this.trackerInboxGen;
-        this.patch({ trackerLoading: true, trackerError: undefined });
+        this.patch({ trackerLoading: true, trackerError: undefined, inboxError: undefined });
         try {
             // App-wide open items; the inbox sorts "needs you" (open && awaiting==user) first
             // client-side, so a single open-state fetch feeds every section. The list is
@@ -1349,7 +1349,8 @@ export class MatronJournalClient {
             });
         } catch (error) {
             if (this.api !== api || this.trackerInboxGen !== gen) return;
-            this.patch({ trackerError: errorMessage(error), trackerLoading: false });
+            const message = errorMessage(error);
+            this.patch({ trackerError: message, inboxError: message, trackerLoading: false });
         }
     }
 

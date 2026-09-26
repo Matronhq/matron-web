@@ -107,19 +107,39 @@ describe("TrackerPane inbox", () => {
         expect(container.textContent).not.toContain("Nothing needs you");
     });
 
-    it("shows the error banner, not that nothing needs you, when a load fails before the inbox lands", async () => {
+    it("says the inbox failed and offers a retry when its first load fails", async () => {
         const client = fakeClient();
         const { container } = await mount(
             <TrackerPane
                 client={client as unknown as MatronJournalClient}
-                state={paneState({ trackerView: { open: true, view: "inbox" }, trackerError: "offline" })}
+                state={paneState({ trackerView: { open: true, view: "inbox" }, inboxError: "offline" })}
             />,
         );
 
-        expect(container.querySelector("[role=alert]")?.textContent).toBe("offline");
-        // The item and inbox loads share the error, so the body does not guess which one failed.
-        expect(container.querySelector(".mj_TrackerPane_body")?.textContent).toBe("");
+        const status = container.querySelector(".mj_TrackerPane_body [role=status]");
+        expect(status?.textContent).toContain("Couldn't load the inbox");
         expect(container.textContent).not.toContain("Nothing needs you");
+
+        client.loadInbox.mockClear();
+        await act(async () => {
+            status!.querySelector<HTMLButtonElement>("button")!.click();
+        });
+        expect(client.loadInbox).toHaveBeenCalledTimes(1);
+    });
+
+    // The shared banner error can come from (and be cleared by) an item load; it must not stand in
+    // for the inbox's own state.
+    it("keeps showing loading when only another tracker load has failed", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <TrackerPane
+                client={client as unknown as MatronJournalClient}
+                state={paneState({ trackerView: { open: true, view: "inbox" }, trackerError: "item gone" })}
+            />,
+        );
+
+        expect(container.querySelector("[role=alert]")?.textContent).toBe("item gone");
+        expect(container.querySelector(".mj_TrackerPane_body [role=status]")?.textContent).toBe("Loading…");
     });
 
     it("shows the empty inbox once a load has landed with no items", async () => {
