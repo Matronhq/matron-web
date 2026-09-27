@@ -22,6 +22,7 @@ import {
     availableResolutions,
     formatRelativeTime,
     humanizeSize,
+    itemOriginTitle,
     itemStatusText,
     kindLabel,
     needsUser,
@@ -152,8 +153,10 @@ export function ItemDetail({
     const conversations = client.getSnapshot().conversations;
     const originTitle = useMemo(() => {
         const convo = conversations.find((candidate) => candidate.id === item.origin_convo_id);
-        return convo?.title.trim() || undefined;
-    }, [conversations, item.origin_convo_id]);
+        // The live conversation list first (it tracks renames), then the title the journal put on
+        // the item: it resolves origins that are not in the loaded list (older or archived chats).
+        return convo?.title.trim() || itemOriginTitle(item) || undefined;
+    }, [conversations, item]);
     const showOrigin = item.origin_convo_id !== selectedConvoId;
 
     const send = async (): Promise<void> => {
