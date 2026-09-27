@@ -151,7 +151,7 @@ describe("TrackerPane inbox", () => {
                     trackerView: { open: true, view: "inbox", selectedItemId: 9 },
                     trackerItem: null,
                     inboxItems: [],
-                    itemLoadError: { id: 9, message: "gone away" },
+                    itemLoadError: { id: "9", message: "gone away" },
                 })}
             />,
         );
@@ -183,13 +183,40 @@ describe("TrackerPane inbox", () => {
                     trackerView: { open: true, view: "inbox", selectedItemId: 9 },
                     trackerItem: null,
                     inboxItems: [],
-                    itemLoadError: { id: 7, message: "gone away" },
+                    itemLoadError: { id: "7", message: "gone away" },
                 })}
             />,
         );
 
         expect(container.textContent).not.toContain("Couldn't load this item");
         expect(container.querySelector(".mj_TrackerInboxToggle")).not.toBeNull();
+    });
+
+    // A failed refresh keeps the loaded record but must not leave it looking current with no way
+    // to retry once another load clears the shared banner.
+    it("keeps a loaded item on a failed refresh, marks it possibly stale and offers a retry", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <TrackerPane
+                client={client as unknown as MatronJournalClient}
+                state={paneState({
+                    trackerView: { open: true, view: "inbox", selectedItemId: 9 },
+                    trackerItem: { item: trackerItem({ num: 9 }), comments: [] },
+                    inboxItems: [],
+                    itemLoadError: { id: "9", message: "gone away" },
+                })}
+            />,
+        );
+
+        expect(container.querySelector(".mj_TrackerComposer")).not.toBeNull();
+        const notice = container.querySelector(".mj_TrackerStaleNotice");
+        expect(notice?.textContent).toContain("may be out of date");
+
+        client.loadItem.mockClear();
+        await act(async () => {
+            notice!.querySelector<HTMLButtonElement>("button")!.click();
+        });
+        expect(client.loadItem).toHaveBeenCalledWith(9);
     });
 
     it("shows the empty inbox once a load has landed with no items", async () => {

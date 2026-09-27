@@ -317,10 +317,11 @@ export interface ClientState {
      *  is cleared only by the next inbox load, so a never-loaded inbox can tell "failed" from
      *  "still loading" while other loads come and go. */
     inboxError?: string;
-    /** Error from the last item-detail load, keyed by the item it was for. Like inboxError it is
-     *  cleared only by the next item load, so the pane can offer a retry for the selected item
-     *  even after another tracker load has cleared the shared banner. */
-    itemLoadError?: { id: number | string; message: string };
+    /** Error from the last item-detail load, keyed by the item it was for (`id` is the item number
+     *  as a string, any leading "#" dropped). Like inboxError it is cleared only by the next item
+     *  load, so the pane can offer a retry for the selected item even after another tracker load
+     *  has cleared the shared banner. */
+    itemLoadError?: { id: string; message: string };
 }
 
 // ── Tracker (Decisions / Items inbox) ──────────────────────────────────────────

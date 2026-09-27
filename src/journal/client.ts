@@ -1368,7 +1368,13 @@ export class MatronJournalClient {
         } catch (error) {
             if (this.api !== api || this.trackerItemGen !== gen) return;
             const message = errorMessage(error);
-            this.patch({ trackerError: message, itemLoadError: { id, message }, trackerLoading: false });
+            this.patch({
+                trackerError: message,
+                // Keyed in the same "#"-free form isSelectedTrackerItem compares on, so a "#7"
+                // refetch still matches a numeric selection of 7.
+                itemLoadError: { id: String(id).replace(/^#/, ""), message },
+                trackerLoading: false,
+            });
         }
     }
 

@@ -279,16 +279,24 @@ describe("MatronJournalClient tracker loaders", () => {
         };
 
         await client.loadItem(7);
-        expect(client.getSnapshot().itemLoadError).toEqual({ id: 7, message: "gone away" });
+        expect(client.getSnapshot().itemLoadError).toEqual({ id: "7", message: "gone away" });
 
         // An inbox load clears the shared banner error but not the item's own.
         await client.loadInbox();
         expect(client.getSnapshot().trackerError).toBeUndefined();
-        expect(client.getSnapshot().itemLoadError).toEqual({ id: 7, message: "gone away" });
+        expect(client.getSnapshot().itemLoadError).toEqual({ id: "7", message: "gone away" });
 
         await client.loadItem(7);
         expect(client.getSnapshot().itemLoadError).toBeUndefined();
         expect(client.getSnapshot().trackerItem?.item.num).toBe(7);
+    });
+
+    it("keys the item load error without a leading #, so it matches a numeric selection", async () => {
+        const { client, state } = makeClient();
+        state.api = { item: jest.fn().mockRejectedValue(new Error("gone away")) };
+
+        await client.loadItem("#7");
+        expect(client.getSnapshot().itemLoadError).toEqual({ id: "7", message: "gone away" });
     });
 
     it("loadItem populates the open item detail", async () => {

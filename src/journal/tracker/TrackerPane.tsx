@@ -42,33 +42,48 @@ export function TrackerPane({
     // The detail back button clears the open item selection (itemId: null clears it explicitly).
     const backToInbox = (): void => client.openTrackerView({ view: "inbox", itemId: null });
 
+    // Did the last load of the selected item fail? The error is keyed to the item, so a failure
+    // for an earlier selection never shows against this one.
+    const selectedItemLoadFailed = selectedItemId != null && state.itemLoadError?.id === String(selectedItemId);
+    const retryItem = (): void => {
+        if (selectedItemId != null) void client.loadItem(selectedItemId);
+    };
+
     const body = ((): React.ReactElement => {
         // Render a cached detail ONLY when it belongs to the current selection. A detail loaded for
         // a previously selected row is cleared to null on selection change (openTrackerItem), but the
         // num match here is the belt-and-braces guard so a stale record can never drive the detail
         // (whose action handlers close/reopen by that record's num) against the new selection (F1).
         if (selectedItemId != null && state.trackerItem && state.trackerItem.item.num === selectedItemId) {
+            // A failed refresh keeps the loaded record (loaders never clear data on failure), but
+            // says it may be out of date and offers a retry, which a later load's banner reset
+            // would otherwise take away.
             return (
-                <ItemDetail
-                    item={state.trackerItem.item}
-                    comments={state.trackerItem.comments}
-                    client={client}
-                    onBack={backToInbox}
-                />
+                <>
+                    {selectedItemLoadFailed ? (
+                        <div className="mj_TrackerStaleNotice" role="status">
+                            Couldn't refresh this item, so it may be out of date.{" "}
+                            <button type="button" className="mj_TrackerTextButton" onClick={retryItem}>
+                                Try again
+                            </button>
+                        </div>
+                    ) : null}
+                    <ItemDetail
+                        item={state.trackerItem.item}
+                        comments={state.trackerItem.comments}
+                        client={client}
+                        onBack={backToInbox}
+                    />
+                </>
             );
         }
-        // The selected item's load failed. Re-tapping its inbox row would not reload it (the
-        // selection doesn't change), so say so here and offer a retry. The error is keyed to the
-        // item, so a failure for an earlier selection never shows against this one.
-        if (selectedItemId != null && state.itemLoadError?.id === selectedItemId) {
+        // The selected item's load failed with nothing loaded to show. Re-tapping its inbox row
+        // would not reload it (the selection doesn't change), so say so here and offer a retry.
+        if (selectedItemLoadFailed) {
             return (
                 <div className="mj_TrackerEmpty" role="status">
                     <p className="mj_TrackerEmpty_title">Couldn't load this item</p>
-                    <button
-                        type="button"
-                        className="mj_TrackerTextButton"
-                        onClick={() => void client.loadItem(selectedItemId)}
-                    >
+                    <button type="button" className="mj_TrackerTextButton" onClick={retryItem}>
                         Try again
                     </button>
                     <button type="button" className="mj_TrackerTextButton" onClick={backToInbox}>
