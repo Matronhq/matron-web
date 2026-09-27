@@ -863,6 +863,12 @@ Please see LICENSE files in the repository root for full details.
     white-space: nowrap;
     text-overflow: ellipsis;
 }
+/* A link whose scheme the client will not open (not http(s), not a valid in-app item link). */
+.mj_TrackerLinkChip_inert {
+    color: var(--cpd-color-text-secondary);
+    border-style: dashed;
+    cursor: default;
+}
 .mj_TrackerItemBody {
     margin-bottom: var(--cpd-space-4x);
 }
