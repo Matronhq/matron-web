@@ -19,7 +19,12 @@ import {
     unreadStore,
 } from "../../../src/journal/client";
 import { makeDraftStore } from "../../../src/journal/composer-drafts";
-import { EventContent, isQueuedReleaseReply, MatronApp } from "../../../src/journal/components";
+import {
+    EventContent,
+    isPermissionDecisionReply,
+    isQueuedReleaseReply,
+    MatronApp,
+} from "../../../src/journal/components";
 import { makeRecentFoldersStore } from "../../../src/journal/slash-palette";
 import type { ClientState, Conversation, JournalEvent, PendingMessage, Session } from "../../../src/journal/types";
 
@@ -891,6 +896,35 @@ describe("isQueuedReleaseReply (queue-prompt provenance suppression)", () => {
         expect(isQueuedReleaseReply(reply({ choice: "send" }), queuedReleasePromptSeqs, legacyQueuePromptSeqs)).toBe(
             false,
         );
+    });
+});
+
+describe("isPermissionDecisionReply (permission-card provenance suppression)", () => {
+    const reply = (payload: JournalEvent["payload"]): JournalEvent => ({
+        seq: 2,
+        convo_id: "c1",
+        ts: 1,
+        sender: "user:fantin",
+        type: "prompt_reply",
+        payload,
+    });
+    const permissionRequestSeqs = new Set([20]);
+
+    it("hides a decision reply targeting a permission_request seq (rendered inline on the card instead)", () => {
+        expect(isPermissionDecisionReply(reply({ choice: "Allow", target_seq: 20 }), permissionRequestSeqs)).toBe(true);
+        expect(isPermissionDecisionReply(reply({ choice: "Deny", target_seq: 20 }), permissionRequestSeqs)).toBe(true);
+    });
+
+    it("keeps an ordinary question reply (target seq is not a permission request)", () => {
+        expect(isPermissionDecisionReply(reply({ choice: "Allow", target_seq: 21 }), permissionRequestSeqs)).toBe(
+            false,
+        );
+    });
+
+    it("keeps non-replies and replies without a numeric target seq", () => {
+        const permReq: JournalEvent = { ...reply({}), type: "permission_request", payload: {} };
+        expect(isPermissionDecisionReply(permReq, permissionRequestSeqs)).toBe(false);
+        expect(isPermissionDecisionReply(reply({ choice: "Allow" }), permissionRequestSeqs)).toBe(false);
     });
 });
 
@@ -3107,6 +3141,49 @@ describe("conversation timestamp midnight invalidation", () => {
             new Date(lastTimestamp),
         );
         expect(container.querySelector(".mj_RoomListTime")?.textContent).toBe(expectedWeekday);
+    });
+});
+
+describe("mobile layout", () => {
+    let rendered: { container: HTMLDivElement; root: Root } | undefined;
+
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    afterEach(async () => {
+        if (rendered) {
+            await act(async () => rendered?.root.unmount());
+            rendered.container.remove();
+            rendered = undefined;
+        }
+    });
+
+    function sidebar(container: HTMLElement): HTMLElement {
+        const wrapper = container.querySelector<HTMLElement>(".mx_LeftPanel_outerWrapper");
+        if (!wrapper) throw new Error("Missing sidebar wrapper");
+        return wrapper;
+    }
+
+    it("shows the sidebar when nothing is selected and the tracker is closed", async () => {
+        const client = signedInClient();
+        internals(client).state = { ...client.getSnapshot(), selectedConversationId: undefined };
+        rendered = await renderClient(client);
+        expect(sidebar(rendered.container).classList.contains("mj_Sidebar_mobileHidden")).toBe(false);
+    });
+
+    it("hides the sidebar at the mobile breakpoint while the tracker pane is open", async () => {
+        // With no conversation selected the tracker pane is the main surface; on a phone it must
+        // take the whole width, exactly as a selected conversation does.
+        const client = signedInClient();
+        internals(client).state = {
+            ...client.getSnapshot(),
+            selectedConversationId: undefined,
+            trackerView: { open: true, view: "inbox" },
+        };
+        rendered = await renderClient(client);
+        expect(rendered.container.querySelector(".mj_TrackerPane")).not.toBeNull();
+        expect(sidebar(rendered.container).classList.contains("mj_Sidebar_mobileHidden")).toBe(true);
     });
 });
 

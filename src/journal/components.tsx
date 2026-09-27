@@ -123,6 +123,7 @@ import {
     childrenOf,
     childSidebarPlacement,
     type ClientState,
+    type MessageSearchState,
     type Conversation,
     conversationTitle,
     type DeviceDTO,
@@ -792,6 +793,90 @@ function OutcomeGlyph({
     return <InactiveIcon className={`${className} mj_InactiveOutcomeGlyph`} />;
 }
 
+// Debounce keystrokes before firing a message-content search request.
+const MESSAGE_SEARCH_DEBOUNCE_MS = 200;
+
+/**
+ * Render a server search snippet, turning its `**…**` match markers into <mark> highlights.
+ * The snippet is plain text (server-escaped), so we only split on the markers — no HTML is
+ * interpreted. Unbalanced markers degrade to literal text rather than swallowing the rest.
+ */
+export function renderSnippet(snippet: string): React.ReactNode[] {
+    const parts = snippet.split("**");
+    return parts.map((part, index) =>
+        // Odd segments sat between a matched pair of markers → highlight. If the count is even
+        // (a dangling marker), the trailing odd segment is still highlighted, which is harmless.
+        index % 2 === 1 ? (
+            <mark key={index} className="mj_SearchHit_mark">
+                {part}
+            </mark>
+        ) : (
+            <React.Fragment key={index}>{part}</React.Fragment>
+        ),
+    );
+}
+
+export function MessageSearchResults({
+    query,
+    search,
+    now,
+    onSelect,
+}: {
+    query: string;
+    search: MessageSearchState | undefined;
+    now: number;
+    onSelect: (conversationId: string) => void;
+}): React.ReactElement | null {
+    // Only surface the section for a live query. `search` can lag the box by a debounce interval
+    // or a stale query, so gate on the current box being non-empty AND the results being for it.
+    const trimmed = query.trim();
+    if (!trimmed || !search || search.query !== trimmed) return null;
+    const { hits, loading, failed } = search;
+    return (
+        <div className="mj_SearchResults" data-testid="message-search-results">
+            <div className="mj_SearchResults_heading" role="presentation">
+                Messages
+            </div>
+            {failed ? (
+                <p className="mj_RoomListEmpty" role="status">
+                    Search is unavailable right now.
+                </p>
+            ) : hits.length === 0 ? (
+                // Hits are bound to their query, so an empty set while loading means the current
+                // query has no results yet — show a searching state, never a prior query's rows.
+                loading ? (
+                    <p className="mj_RoomListEmpty" role="status">
+                        Searching…
+                    </p>
+                ) : (
+                    <p className="mj_RoomListEmpty" role="status">
+                        No messages match your search.
+                    </p>
+                )
+            ) : (
+                <ul className="mj_SearchHitList" role="list" aria-label="Message search results">
+                    {hits.map((hit) => (
+                        <li key={`${hit.convo_id}:${hit.seq}`} role="listitem">
+                            <button
+                                type="button"
+                                className="mj_SearchHit"
+                                onClick={() => onSelect(hit.convo_id)}
+                                aria-label={`Open conversation ${hit.title || "Untitled"}`}
+                            >
+                                <span className="mj_SearchHit_top">
+                                    <span className="mj_SearchHit_title">{hit.title || "Untitled"}</span>
+                                    <span className="mj_SearchHit_time">{formatRelativeDay(hit.ts, now)}</span>
+                                </span>
+                                <span className="mj_SearchHit_snippet">{renderSnippet(hit.snippet)}</span>
+                            </button>
+                        </li>
+                    ))}
+                </ul>
+            )}
+        </div>
+    );
+}
+
 function ConversationList({
     client,
     state,
@@ -860,6 +945,18 @@ function ConversationList({
         const timer = setTimeout(forceDayTick, nextMidnight - now.getTime() + 1000);
         return () => clearTimeout(timer);
     });
+
+    // Message-content search (Apple-parity "Messages" section). The box already filters chat
+    // titles in-memory as you type; here we additionally hit the server's FTS endpoint, debounced
+    // so keystrokes don't each fire a request. Clearing the box drops the section immediately.
+    useEffect(() => {
+        if (!query.trim()) {
+            void client.searchMessages("");
+            return;
+        }
+        const timer = setTimeout(() => void client.searchMessages(query), MESSAGE_SEARCH_DEBOUNCE_MS);
+        return () => clearTimeout(timer);
+    }, [query, client]);
 
     roomMenuRef.current = roomMenu;
     openRoomMenuRef.current = (conversationId, left, top, opener): void => {
@@ -1238,7 +1335,12 @@ function ConversationList({
 
     return (
         <div
-            className={`mx_LeftPanel_outerWrapper ${state.selectedConversationId ? "mj_Sidebar_mobileHidden" : ""}`}
+            className={`mx_LeftPanel_outerWrapper ${
+                // At the phone breakpoint the main region owns the whole width whenever it has a
+                // surface to show: a selected conversation OR the open tracker pane (mirrors the
+                // mj_Chat_mobileHidden test on the main region, so the two never both render).
+                state.trackerView?.open || state.selectedConversationId ? "mj_Sidebar_mobileHidden" : ""
+            }`}
             style={{ "--mj-left-panel-width": `${width}px` } as React.CSSProperties}
         >
             <div className="mx_LeftPanel_wrapper mx_LeftPanel_newRoomList">
@@ -1353,6 +1455,9 @@ function ConversationList({
                                             placeholder="Search"
                                             aria-label="Search"
                                             autoComplete="off"
+                                            // Server rejects message-search queries over 256 chars; cap the shared
+                                            // box so a giant paste can't produce a misleading "unavailable" state.
+                                            maxLength={256}
                                         />
                                     </label>
                                 </div>
@@ -1430,6 +1535,14 @@ function ConversationList({
                                     {tab === "archived" && archivedTotal > 0 && !visibleRows.length && (
                                         <p className="mj_RoomListEmpty">No archived conversations match your search.</p>
                                     )}
+                                    {/* Inside the room-list scroll container so the Messages section
+                                        scrolls with the chat list — a long hit list stays reachable. */}
+                                    <MessageSearchResults
+                                        query={query}
+                                        search={state.messageSearch}
+                                        now={renderNow}
+                                        onSelect={(conversationId) => void client.selectConversation(conversationId)}
+                                    />
                                 </div>
                             </nav>
                         </div>
@@ -3539,6 +3652,19 @@ function isSuppressedTrackerEvent(event: JournalEvent): boolean {
 
 const EMPTY_SPAWN_OUTCOMES: ReadonlyMap<string, EventPayload> = new Map();
 
+// A permission-decision reply is a prompt_reply targeting a permission_request
+// card. The card already renders the decision inline (answered/allowed/denied
+// via answeredPromptReplies), so its reply must NOT also render as a standalone
+// chat bubble — that duplicate reads as if the operator typed "Allow"/"Deny"
+// into the thread. Identified by target-seq provenance, mirroring
+// isQueuedReleaseReply: prompt_reply carries no self-identifying kind, so a
+// permission reply is only distinguishable by the permission_request it targets.
+export function isPermissionDecisionReply(event: JournalEvent, permissionRequestSeqs: ReadonlySet<number>): boolean {
+    if (event.type !== "prompt_reply") return false;
+    const targetSeq = asNumber(event.payload.target_seq, Number.NaN);
+    return permissionRequestSeqs.has(targetSeq);
+}
+
 export function EventContent({
     client,
     event,
@@ -3960,15 +4086,20 @@ function Timeline({
         | undefined
     >(undefined);
     const historyScrollRestored = useRef(false);
-    const { queuedReleasePromptSeqs, legacyQueuePromptSeqs } = useMemo(() => {
+    const { queuedReleasePromptSeqs, legacyQueuePromptSeqs, permissionRequestSeqs } = useMemo(() => {
         const queuedReleasePromptSeqs = new Set<number>();
         const legacyQueuePromptSeqs = new Set<number>();
+        const permissionRequestSeqs = new Set<number>();
         for (const event of state.events) {
+            if (event.type === "permission_request") {
+                permissionRequestSeqs.add(event.seq);
+                continue;
+            }
             if (event.type !== "prompt") continue;
             if (asString(event.payload.kind) === "queued_release") queuedReleasePromptSeqs.add(event.seq);
             else if (isLegacyQueuePrompt(event)) legacyQueuePromptSeqs.add(event.seq);
         }
-        return { queuedReleasePromptSeqs, legacyQueuePromptSeqs };
+        return { queuedReleasePromptSeqs, legacyQueuePromptSeqs, permissionRequestSeqs };
     }, [state.events]);
     const visibleEvents = useMemo(
         () =>
@@ -3976,9 +4107,10 @@ function Timeline({
                 (event) =>
                     !["read_marker", "edit", "session_status", "convo_meta"].includes(event.type) &&
                     !isQueuedReleaseReply(event, queuedReleasePromptSeqs, legacyQueuePromptSeqs) &&
-                    !isSuppressedTrackerEvent(event),
+                    !isSuppressedTrackerEvent(event) &&
+                    !isPermissionDecisionReply(event, permissionRequestSeqs),
             ),
-        [state.events, queuedReleasePromptSeqs, legacyQueuePromptSeqs],
+        [state.events, queuedReleasePromptSeqs, legacyQueuePromptSeqs, permissionRequestSeqs],
     );
     const timeline = useMemo(
         () =>
@@ -4127,10 +4259,12 @@ function Timeline({
         void client.loadOlderHistory();
     };
 
-    // The activity indicator ('Thinking' / 'Running …') rides a fire-and-forget ephemeral
-    // whose turn-end 'idle' frame is never replayed (lib/journal-publisher.js publishActivity),
-    // so a dropped final 'idle' would otherwise strand a stale "Thinking" until the next turn.
-    // Gate on the durable, replayed run-state: only show it while the session is actually running.
+    // The activity indicator ('Thinking' / 'Running …') and the fire-and-forget tool-call cards
+    // both ride ephemeral frames whose turn-end 'idle'/'end' frame is never replayed
+    // (lib/journal-publisher.js publishActivity), so a dropped final frame would otherwise strand
+    // a stale "Thinking" or a dangling 'running' tool card until the next turn. Gate both
+    // on the durable, replayed run-state: only render while the session is actually running; the
+    // model reconcile (refreshConversations) prunes any tool card that lingers in the map.
     const sessionRunning = client.selectedConversation()?.session_state === "running";
 
     const timelineMain = (
@@ -4232,9 +4366,10 @@ function Timeline({
                                 </div>
                             </li>
                         ))}
-                        {Object.values(state.toolStreams).map((stream) => (
-                            <ToolStream key={stream.messageRef} stream={stream} />
-                        ))}
+                        {sessionRunning &&
+                            Object.values(state.toolStreams).map((stream) => (
+                                <ToolStream key={stream.messageRef} stream={stream} />
+                            ))}
                         {state.activity && state.activity.state !== "idle" && sessionRunning && (
                             <li className="mx_WhoIsTypingTile mj_Activity">
                                 <span />
