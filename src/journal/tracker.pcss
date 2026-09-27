@@ -1109,3 +1109,116 @@ button.mj_TrackerCard {
         max-width: 100%;
     }
 }
+
+/* ── Memories (spec 2026-09-27 memories) ─────────────────────────────────────── */
+
+.mj_TrackerMemoriesHead {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 16px;
+}
+
+.mj_TrackerMemoriesHead .mj_TrackerCaption {
+    margin: 0;
+}
+
+.mj_TrackerMemoryRow {
+    display: flex;
+    width: 100%;
+    gap: 10px;
+    padding: 10px 16px;
+    border: 0;
+    border-bottom: 1px solid var(--cpd-color-border-subtle);
+    background: transparent;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.mj_TrackerMemoryRow:hover {
+    background: var(--cpd-color-bg-subtle-secondary);
+}
+
+.mj_TrackerMemoryRow:focus-visible {
+    outline: 2px solid var(--cpd-color-border-focused);
+    outline-offset: -2px;
+}
+
+.mj_TrackerMemoryRow_main {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.mj_TrackerMemoryRow_head {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+}
+
+.mj_TrackerMemoryRow_name {
+    font-family: var(--cpd-font-family-mono, monospace);
+    font-size: var(--cpd-font-size-body-sm);
+    font-weight: var(--cpd-font-weight-semibold);
+}
+
+.mj_TrackerMemoryRow_type {
+    font-size: var(--cpd-font-size-body-xs);
+    color: var(--cpd-color-text-secondary);
+    padding: 0 6px;
+    border-radius: 999px;
+    background: var(--cpd-color-bg-subtle-secondary);
+}
+
+.mj_TrackerMemoryRow_desc {
+    font-size: var(--cpd-font-size-body-md);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_TrackerMemoryRow_meta {
+    font-size: var(--cpd-font-size-body-xs);
+    color: var(--cpd-color-text-secondary);
+}
+
+.mj_TrackerMemoryForm_field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 12px;
+}
+
+.mj_TrackerMemoryForm_label {
+    font-size: var(--cpd-font-size-body-sm);
+    color: var(--cpd-color-text-secondary);
+}
+
+.mj_TrackerInput {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 8px 10px;
+    border: 1px solid var(--cpd-color-border-interactive-secondary);
+    border-radius: 8px;
+    background: var(--cpd-color-bg-canvas-default);
+    color: inherit;
+    font: inherit;
+}
+
+.mj_TrackerInput:focus-visible {
+    outline: 2px solid var(--cpd-color-border-focused);
+    outline-offset: -1px;
+}
+
+.mj_TrackerMemoryForm_error {
+    color: var(--cpd-color-text-critical-primary);
+    font-size: var(--cpd-font-size-body-sm);
+    margin: 0 0 8px;
+}
+
+.mj_TrackerMemoryForm_delete {
+    color: var(--cpd-color-text-critical-primary);
+}

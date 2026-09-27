@@ -80,7 +80,7 @@ import {
 } from "./icons";
 import { createLongPressController, type LongPressController } from "./longPress";
 import { MarkdownBody, markdownToPlainText } from "./markdown";
-import { isRenderableItemMarker, MilestoneCard, MissionNotice, renderItemMarker } from "./tracker/cards";
+import { isRenderableItemMarker, MemoryNotice, MilestoneCard, MissionNotice, renderItemMarker } from "./tracker/cards";
 import { TrackerPane } from "./tracker/TrackerPane";
 import {
     buildMediaCorpus,
@@ -3754,6 +3754,8 @@ export function EventContent({
             return <MilestoneCard client={client} event={event} />;
         case "mission":
             return <MissionNotice client={client} event={event} />;
+        case "memory":
+            return <MemoryNotice client={client} event={event} />;
         case "prompt":
             if (asString(event.payload.kind) === "queued_release") {
                 return (

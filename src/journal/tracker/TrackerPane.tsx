@@ -21,6 +21,8 @@ import { CloseIcon } from "../icons";
 import type { ClientState } from "../types";
 import { ItemDetail } from "./ItemDetail";
 import { ItemsInbox } from "./ItemsInbox";
+import { MemoriesList } from "./MemoriesList";
+import { MemoryDetail } from "./MemoryDetail";
 import { MissionDetail } from "./MissionDetail";
 import { MissionsList } from "./MissionsList";
 
@@ -34,6 +36,7 @@ export function TrackerPane({
     const view = state.trackerView?.view ?? "inbox";
     const selectedItemId = state.trackerView?.selectedItemId;
     const selectedMissionId = state.trackerView?.selectedMissionId;
+    const selectedMemoryName = state.trackerView?.selectedMemoryName;
 
     // Opening the pane primes both list views so the sidebar badges + either tab are ready.
     useEffect(() => {
@@ -49,10 +52,16 @@ export function TrackerPane({
         if (selectedMissionId != null) void client.loadMission(selectedMissionId);
     }, [client, selectedMissionId]);
 
+    // Memories load only when their tab is shown: against a journal that predates /memories the
+    // list 404s, and that must not put an error banner on the inbox and missions tabs.
+    useEffect(() => {
+        if (view === "memories") void client.loadMemories();
+    }, [client, view]);
+
     // The view switch (and the detail back buttons) clear any open detail selection; null clears a
     // selected id explicitly, in one view update.
-    const switchView = (next: "missions" | "inbox"): void =>
-        client.openTrackerView({ view: next, itemId: null, missionId: null });
+    const switchView = (next: "missions" | "inbox" | "memories"): void =>
+        client.openTrackerView({ view: next, itemId: null, missionId: null, memoryName: null });
 
     // Did the last load of the selected item fail? The error is keyed to the item, so a failure
     // for an earlier selection never shows against this one.
@@ -154,6 +163,22 @@ export function TrackerPane({
                 />
             );
         }
+        // The memories view: the editor for the selected name ("" = a new memory) once the list is
+        // loaded, else the list. A name that is no longer in the list (deleted elsewhere) falls back
+        // to the list rather than an editor bound to a stale record.
+        if (view === "memories" && selectedMemoryName !== undefined && state.memories !== undefined) {
+            const memory = selectedMemoryName === "" ? null : state.memories.find((m) => m.name === selectedMemoryName);
+            if (memory !== undefined) {
+                return (
+                    <MemoryDetail
+                        key={selectedMemoryName}
+                        memory={memory}
+                        client={client}
+                        onBack={() => client.closeTrackerMemory()}
+                    />
+                );
+            }
+        }
         // Until a list's first load lands there is nothing to reason over: an empty list would read
         // as a false "No missions yet" / "Nothing needs you". A failed load says so and offers a retry;
         // each list has its own error for this, since any other tracker load clears the shared banner.
@@ -165,12 +190,19 @@ export function TrackerPane({
                       noun: "missions",
                       reload: () => client.loadMissions(),
                   }
-                : {
-                      loaded: state.inboxItems,
-                      error: state.inboxError,
-                      noun: "the inbox",
-                      reload: () => client.loadInbox(),
-                  };
+                : view === "memories"
+                  ? {
+                        loaded: state.memories,
+                        error: state.memoriesError,
+                        noun: "memories",
+                        reload: () => client.loadMemories(),
+                    }
+                  : {
+                        loaded: state.inboxItems,
+                        error: state.inboxError,
+                        noun: "the inbox",
+                        reload: () => client.loadInbox(),
+                    };
         if (list.loaded === undefined) {
             return list.error ? (
                 <div className="mj_TrackerEmpty" role="status">
@@ -188,6 +220,31 @@ export function TrackerPane({
         if (view === "missions") {
             return (
                 <MissionsList missions={state.missions ?? []} onOpenMission={(num) => client.openTrackerMission(num)} />
+            );
+        }
+        if (view === "memories") {
+            // A refresh that failed after a load keeps the list (loaders never clear data on
+            // failure) but says it may be out of date and offers a retry, as the item detail does.
+            return (
+                <>
+                    {state.memoriesError ? (
+                        <div className="mj_TrackerStaleNotice" role="status">
+                            Couldn't refresh memories, so they may be out of date.{" "}
+                            <button
+                                type="button"
+                                className="mj_TrackerTextButton"
+                                onClick={() => void client.loadMemories()}
+                            >
+                                Try again
+                            </button>
+                        </div>
+                    ) : null}
+                    <MemoriesList
+                        memories={state.memories ?? []}
+                        onOpenMemory={(name) => client.openTrackerMemory(name)}
+                        onNewMemory={() => client.openTrackerMemory("")}
+                    />
+                </>
             );
         }
         return (
@@ -229,6 +286,15 @@ export function TrackerPane({
                         onClick={() => switchView("inbox")}
                     >
                         Inbox
+                    </button>
+                    <button
+                        type="button"
+                        role="tab"
+                        aria-selected={view === "memories"}
+                        className={`mj_TrackerViewSwitch_tab${view === "memories" ? " mj_TrackerViewSwitch_tab_active" : ""}`}
+                        onClick={() => switchView("memories")}
+                    >
+                        Memories
                     </button>
                 </div>
                 {state.trackerLoading ? <span className="mj_TrackerPane_spinner" aria-label="Loading" /> : null}
