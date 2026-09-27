@@ -11,24 +11,30 @@ import { createRoot, type Root } from "react-dom/client";
 import type { MatronJournalClient } from "../client";
 import type { ClientState } from "../types";
 import { TrackerPane } from "../tracker/TrackerPane";
-import { trackerItem } from "./tracker-fixtures";
+import { trackerItem, trackerMissionDetail } from "./tracker-fixtures";
 
 interface FakeClient {
+    loadMissions: jest.Mock;
     loadInbox: jest.Mock;
     loadItem: jest.Mock;
+    loadMission: jest.Mock;
     closeTrackerView: jest.Mock;
     openTrackerView: jest.Mock;
     openTrackerItem: jest.Mock;
+    openTrackerMission: jest.Mock;
     getSnapshot: jest.Mock;
 }
 
 function fakeClient(): FakeClient {
     return {
+        loadMissions: jest.fn().mockResolvedValue(undefined),
         loadInbox: jest.fn().mockResolvedValue(undefined),
         loadItem: jest.fn().mockResolvedValue(undefined),
+        loadMission: jest.fn().mockResolvedValue(undefined),
         closeTrackerView: jest.fn(),
         openTrackerView: jest.fn(),
         openTrackerItem: jest.fn(),
+        openTrackerMission: jest.fn(),
         getSnapshot: jest.fn().mockReturnValue({ selectedConversationId: "c1", conversations: [] }),
     };
 }
@@ -86,6 +92,23 @@ describe("TrackerPane selection/detail matching (F1)", () => {
 
         expect(container.querySelector(".mj_TrackerComposer")).not.toBeNull();
     });
+
+    it("does NOT render a cached mission detail whose num differs from the current selection", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <TrackerPane
+                client={client as unknown as MatronJournalClient}
+                state={paneState({
+                    // Selection moved to #8 but the store still holds #5's mission detail.
+                    trackerView: { open: true, view: "missions", selectedMissionId: 8 },
+                    trackerMission: trackerMissionDetail(),
+                })}
+            />,
+        );
+
+        // Falls through to the missions list, not the (stale #5) mission detail head.
+        expect(container.querySelector(".mj_TrackerMissionHead")).toBeNull();
+    });
 });
 
 describe("TrackerPane inbox", () => {
@@ -142,6 +165,37 @@ describe("TrackerPane inbox", () => {
         expect(container.querySelector(".mj_TrackerPane_body [role=status]")?.textContent).toBe("Loading…");
     });
 
+    it("shows a loading status, not an empty missions list, before the first missions load lands", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <TrackerPane
+                client={client as unknown as MatronJournalClient}
+                state={paneState({ trackerView: { open: true, view: "missions" }, inboxItems: [] })}
+            />,
+        );
+
+        expect(container.querySelector(".mj_TrackerPane_body [role=status]")?.textContent).toBe("Loading…");
+        expect(container.textContent).not.toContain("No missions yet");
+    });
+
+    it("says the missions list failed and offers a retry when its first load fails", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <TrackerPane
+                client={client as unknown as MatronJournalClient}
+                state={paneState({ trackerView: { open: true, view: "missions" }, missionsError: "offline" })}
+            />,
+        );
+
+        const status = container.querySelector(".mj_TrackerPane_body [role=status]");
+        expect(status?.textContent).toContain("Couldn't load missions");
+        client.loadMissions.mockClear();
+        await act(async () => {
+            status!.querySelector<HTMLButtonElement>("button")!.click();
+        });
+        expect(client.loadMissions).toHaveBeenCalledTimes(1);
+    });
+
     it("says the selected item failed to load and offers a retry", async () => {
         const client = fakeClient();
         const { container } = await mount(
@@ -170,7 +224,7 @@ describe("TrackerPane inbox", () => {
         await act(async () => {
             back.click();
         });
-        expect(client.openTrackerView).toHaveBeenCalledWith({ view: "inbox", itemId: null });
+        expect(client.openTrackerView).toHaveBeenCalledWith({ view: "inbox", itemId: null, missionId: null });
     });
 
     // A failure recorded for an earlier selection must not stand in for the current one.
@@ -247,7 +301,7 @@ describe("TrackerPane inbox", () => {
         await act(async () => {
             container.querySelector<HTMLButtonElement>(".mj_TrackerBack")!.click();
         });
-        expect(client.openTrackerView).toHaveBeenCalledWith({ view: "inbox", itemId: null });
+        expect(client.openTrackerView).toHaveBeenCalledWith({ view: "inbox", itemId: null, missionId: null });
         expect(client.closeTrackerView).not.toHaveBeenCalled();
     });
 

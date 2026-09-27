@@ -221,24 +221,25 @@ interface MarkdownBodyProps {
     text: string;
     streaming?: boolean;
     label: string;
-    // Optional in-app handler for `matron://item/<N>` deep links. Wired only at the timeline/tracker
-    // call sites; where it is absent such a link renders inert (the custom scheme is never handed to
-    // the browser).
-    onTrackerLink?: (kind: "item", num: number) => void;
+    // Optional in-app handler for `matron://item/<N>` / `matron://mission/<N>` deep links. Wired
+    // only at the timeline/tracker call sites; where it is absent such a link renders inert (the
+    // custom scheme is never handed to the browser).
+    onTrackerLink?: (kind: "item" | "mission", num: number) => void;
 }
 
 /**
- * Strictly parse an in-app tracker deep link: `matron://item/<N>`, where N is a positive
- * ASCII-decimal integer and there is NOTHING else — no query, fragment, port, or extra path
- * segment. Anything non-conforming returns null and is treated as an ordinary link. Shared by the
- * markdown `a()` renderer and the item-detail link chips so both surfaces accept exactly the same set.
+ * Strictly parse an in-app tracker deep link: `matron://item/<N>` or `matron://mission/<N>`, where
+ * N is a positive ASCII-decimal integer and there is NOTHING else — no query, fragment, port, or
+ * extra path segment. Anything non-conforming returns null and is treated as an ordinary link.
+ * Shared by the markdown `a()` renderer and the item-detail link chips so both surfaces accept
+ * exactly the same set.
  */
-export function parseTrackerHref(href: string): { kind: "item"; num: number } | null {
-    const match = /^matron:\/\/(item)\/([0-9]+)$/.exec(href);
+export function parseTrackerHref(href: string): { kind: "item" | "mission"; num: number } | null {
+    const match = /^matron:\/\/(item|mission)\/([0-9]+)$/.exec(href);
     if (!match) return null;
     const num = Number(match[2]);
     if (!Number.isSafeInteger(num) || num <= 0) return null;
-    return { kind: match[1] as "item", num };
+    return { kind: match[1] as "item" | "mission", num };
 }
 
 /**
@@ -334,7 +335,7 @@ function CodeBlock({ node, source, children, ...props }: CodeBlockProps): React.
     );
 }
 
-function componentsFor(source: string, onTrackerLink?: (kind: "item", num: number) => void): Components {
+function componentsFor(source: string, onTrackerLink?: (kind: "item" | "mission", num: number) => void): Components {
     return {
         pre(props) {
             return <CodeBlock {...props} source={source} />;

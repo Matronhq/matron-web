@@ -108,6 +108,20 @@ describe("ItemDetail link chips", () => {
         expect(open).toHaveBeenCalledWith("item", 7);
     });
 
+    it("opens a matron://mission/N link in-app too", async () => {
+        rendered = await renderDetail(item({ links: [{ url: "matron://mission/5", title: "Its mission" }] }));
+        const { client, container } = rendered;
+        const open = jest.spyOn(client, "openTrackerLink").mockImplementation(() => undefined);
+        const [chip] = chips(container);
+        expect(chip).toBeInstanceOf(HTMLAnchorElement);
+        const click = new MouseEvent("click", { bubbles: true, cancelable: true });
+        await act(async () => {
+            chip.dispatchEvent(click);
+        });
+        expect(click.defaultPrevented).toBe(true);
+        expect(open).toHaveBeenCalledWith("mission", 5);
+    });
+
     it("renders any other non-http(s) link as inert text", async () => {
         rendered = await renderDetail(
             item({

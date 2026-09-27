@@ -16,7 +16,7 @@ import React from "react";
 
 import type { TrackerItem } from "../types";
 import { isFromViewedConvo, itemStatusText, kindLabel, needsUser, oneLine, resolutionLabel } from "./format";
-import { CommentBubbleGlyph, ImagePlaceholderGlyph, TrackerGlyph } from "./glyphs";
+import { CommentBubbleGlyph, ImagePlaceholderGlyph, MissionGlyph, TrackerGlyph } from "./glyphs";
 
 export function ItemRow({
     item,
@@ -76,6 +76,11 @@ export function ItemRow({
                 {body ? <span className="mj_TrackerItemRow_body">{body}</span> : null}
                 <span className="mj_TrackerItemRow_meta">
                     {origin ? <span className="mj_TrackerItemRow_origin">from {origin}</span> : null}
+                    {item.mission_num ? (
+                        <span className="mj_TrackerItemRow_missionChip">
+                            <MissionGlyph state="open" aria-hidden="true" />#{item.mission_num}
+                        </span>
+                    ) : null}
                     {statusToken}
                     {item.comment_count > 0 ? (
                         <span className="mj_TrackerItemRow_comments">
