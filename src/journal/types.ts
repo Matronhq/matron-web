@@ -362,6 +362,10 @@ export interface ClientState {
     itemLoadError?: { id: string; message: string };
     /** Same as inboxError, for the missions list. */
     missionsError?: string;
+    /** Same as itemLoadError, for the open mission detail: keyed by the mission number (leading "#"
+     *  dropped), survives other tracker loads and an in-flight retry, and is cleared only when a
+     *  mission load succeeds, so the pane can keep offering a retry until it actually loads. */
+    missionLoadError?: { id: string; message: string };
 }
 
 // ── Tracker (Missions / Milestones / Decisions-Inbox) ──────────────────────────

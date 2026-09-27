@@ -60,6 +60,13 @@ export function TrackerPane({
     const retryItem = (): void => {
         if (selectedItemId != null) void client.loadItem(selectedItemId);
     };
+    // Same for the selected mission: without a keyed error a failed GET /missions/:id left the
+    // list on screen and MissionDetail's own retry branch unreachable.
+    const selectedMissionLoadFailed =
+        selectedMissionId != null && state.missionLoadError?.id === String(selectedMissionId);
+    const retryMission = (): void => {
+        if (selectedMissionId != null) void client.loadMission(selectedMissionId);
+    };
 
     const body = ((): React.ReactElement => {
         // Render a cached detail ONLY when it belongs to the current selection. A detail loaded for
@@ -116,8 +123,31 @@ export function TrackerPane({
             state.trackerMission.mission?.num === selectedMissionId
         ) {
             return (
+                <>
+                    {selectedMissionLoadFailed ? (
+                        <div className="mj_TrackerStaleNotice" role="status">
+                            Couldn't refresh this mission, so it may be out of date.{" "}
+                            <button type="button" className="mj_TrackerTextButton" onClick={retryMission}>
+                                Try again
+                            </button>
+                        </div>
+                    ) : null}
+                    <MissionDetail
+                        detail={state.trackerMission}
+                        client={client}
+                        onOpenItem={(num) => client.openTrackerItem(num)}
+                        onBack={() => switchView("missions")}
+                    />
+                </>
+            );
+        }
+        // The selected mission's load failed with nothing loaded to show. Re-tapping its row would
+        // not reload it (the selection doesn't change), so hand MissionDetail a null record: its
+        // empty state says so and its "Try again" reloads the selected mission.
+        if (view === "missions" && selectedMissionLoadFailed) {
+            return (
                 <MissionDetail
-                    detail={state.trackerMission}
+                    detail={null}
                     client={client}
                     onOpenItem={(num) => client.openTrackerItem(num)}
                     onBack={() => switchView("missions")}

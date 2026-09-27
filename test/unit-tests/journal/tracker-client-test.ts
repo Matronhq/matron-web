@@ -511,6 +511,57 @@ describe("MatronJournalClient tracker loaders", () => {
         expect(client.getSnapshot().trackerMission).toEqual(detail);
     });
 
+    it("loadMission records its own error keyed by mission, which only a successful mission load clears", async () => {
+        const { client, state } = makeClient();
+        state.api = {
+            missions: jest.fn().mockResolvedValue({ missions: [] }),
+            mission: jest
+                .fn()
+                .mockRejectedValueOnce(new Error("gone away"))
+                .mockResolvedValueOnce(missionDetail({ num: 5 })),
+        };
+
+        await client.loadMission(5);
+        expect(client.getSnapshot().missionLoadError).toEqual({ id: "5", message: "gone away" });
+        expect(client.getSnapshot().trackerMission).toBeUndefined();
+
+        // A missions-list load clears the shared banner error but not the mission's own.
+        await client.loadMissions();
+        expect(client.getSnapshot().trackerError).toBeUndefined();
+        expect(client.getSnapshot().missionLoadError).toEqual({ id: "5", message: "gone away" });
+
+        await client.loadMission(5);
+        expect(client.getSnapshot().missionLoadError).toBeUndefined();
+        expect(client.getSnapshot().trackerMission?.mission.num).toBe(5);
+    });
+
+    it("keeps the mission load error while a retry is in flight", async () => {
+        const { client, state } = makeClient();
+        let resolveRetry!: (value: unknown) => void;
+        state.api = {
+            mission: jest
+                .fn()
+                .mockRejectedValueOnce(new Error("gone away"))
+                .mockReturnValueOnce(new Promise((resolve) => (resolveRetry = resolve))),
+        };
+
+        await client.loadMission(5);
+        const retry = client.loadMission(5);
+        expect(client.getSnapshot().missionLoadError).toEqual({ id: "5", message: "gone away" });
+
+        resolveRetry(missionDetail({ num: 5 }));
+        await retry;
+        expect(client.getSnapshot().missionLoadError).toBeUndefined();
+    });
+
+    it("keys the mission load error without a leading #, so it matches a numeric selection", async () => {
+        const { client, state } = makeClient();
+        state.api = { mission: jest.fn().mockRejectedValue(new Error("gone away")) };
+
+        await client.loadMission("#5");
+        expect(client.getSnapshot().missionLoadError).toEqual({ id: "5", message: "gone away" });
+    });
+
     it("surfaces a tracker error and stops loading when a fetch rejects", async () => {
         const { client, state } = makeClient();
         state.api = { missions: jest.fn().mockRejectedValue(new Error("offline")) };

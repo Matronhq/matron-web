@@ -1537,14 +1537,22 @@ export class MatronJournalClient {
         const api = this.api;
         if (!api) return;
         const gen = ++this.trackerMissionGen;
+        // Like itemLoadError, missionLoadError stays until a load succeeds: a retry that stalls
+        // must not take the retry offer off a selection that still has nothing (or stale) to show.
         this.patch({ trackerLoading: true, trackerError: undefined });
         try {
             const detail = await api.mission(id);
             if (this.api !== api || this.trackerMissionGen !== gen) return;
-            this.patch({ trackerMission: detail, trackerLoading: false });
+            this.patch({ trackerMission: detail, trackerLoading: false, missionLoadError: undefined });
         } catch (error) {
             if (this.api !== api || this.trackerMissionGen !== gen) return;
-            this.patch({ trackerError: errorMessage(error), trackerLoading: false });
+            const message = errorMessage(error);
+            this.patch({
+                trackerError: message,
+                // Keyed "#"-free so a "#5" refetch still matches a numeric selection of 5.
+                missionLoadError: { id: String(id).replace(/^#/, ""), message },
+                trackerLoading: false,
+            });
         }
     }
 
