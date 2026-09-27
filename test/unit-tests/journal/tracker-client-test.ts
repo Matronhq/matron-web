@@ -268,7 +268,7 @@ describe("MatronJournalClient tracker loaders", () => {
         expect(client.getSnapshot().inboxItems).toEqual([]);
     });
 
-    it("loadItem records its own error keyed by item, which only the next item load clears", async () => {
+    it("loadItem records its own error keyed by item, which only a successful item load clears", async () => {
         const { client, state } = makeClient();
         state.api = {
             items: jest.fn().mockResolvedValue({ items: [], next_cursor: null }),
@@ -289,6 +289,26 @@ describe("MatronJournalClient tracker loaders", () => {
         await client.loadItem(7);
         expect(client.getSnapshot().itemLoadError).toBeUndefined();
         expect(client.getSnapshot().trackerItem?.item.num).toBe(7);
+    });
+
+    // A stalled retry must not drop the stale note: the record on screen is still the old one.
+    it("keeps the item load error while a retry is in flight", async () => {
+        const { client, state } = makeClient();
+        let resolveRetry!: (value: unknown) => void;
+        state.api = {
+            item: jest
+                .fn()
+                .mockRejectedValueOnce(new Error("gone away"))
+                .mockReturnValueOnce(new Promise((resolve) => (resolveRetry = resolve))),
+        };
+
+        await client.loadItem(7);
+        const retry = client.loadItem(7);
+        expect(client.getSnapshot().itemLoadError).toEqual({ id: "7", message: "gone away" });
+
+        resolveRetry({ item: item({ num: 7 }), comments: [] });
+        await retry;
+        expect(client.getSnapshot().itemLoadError).toBeUndefined();
     });
 
     it("keys the item load error without a leading #, so it matches a numeric selection", async () => {

@@ -1358,13 +1358,15 @@ export class MatronJournalClient {
         const api = this.api;
         if (!api) return;
         const gen = ++this.trackerItemGen;
-        this.patch({ trackerLoading: true, trackerError: undefined, itemLoadError: undefined });
+        // itemLoadError is left in place until a load succeeds: a retry that stalls must not take
+        // the "may be out of date" note (and its retry) off a record that is still stale.
+        this.patch({ trackerLoading: true, trackerError: undefined });
         try {
             const detail = await api.item(id);
             // Guard both API identity (logout/re-login) AND request identity: a superseded/out-of-
             // order response must never patch a newer selection's detail (F1).
             if (this.api !== api || this.trackerItemGen !== gen) return;
-            this.patch({ trackerItem: detail, trackerLoading: false });
+            this.patch({ trackerItem: detail, trackerLoading: false, itemLoadError: undefined });
         } catch (error) {
             if (this.api !== api || this.trackerItemGen !== gen) return;
             const message = errorMessage(error);

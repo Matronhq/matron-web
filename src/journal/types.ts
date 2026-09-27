@@ -318,9 +318,9 @@ export interface ClientState {
      *  "still loading" while other loads come and go. */
     inboxError?: string;
     /** Error from the last item-detail load, keyed by the item it was for (`id` is the item number
-     *  as a string, any leading "#" dropped). Like inboxError it is cleared only by the next item
-     *  load, so the pane can offer a retry for the selected item even after another tracker load
-     *  has cleared the shared banner. */
+     *  as a string, any leading "#" dropped). Unlike trackerError it survives other tracker loads
+     *  and an in-flight retry, and is cleared only when an item load succeeds, so the pane can keep
+     *  offering a retry for the selected item until it actually loads. */
     itemLoadError?: { id: string; message: string };
 }
 
