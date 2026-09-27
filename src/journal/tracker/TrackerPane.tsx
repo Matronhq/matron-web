@@ -57,6 +57,26 @@ export function TrackerPane({
                 />
             );
         }
+        // The selected item's load failed. Re-tapping its inbox row would not reload it (the
+        // selection doesn't change), so say so here and offer a retry. The error is keyed to the
+        // item, so a failure for an earlier selection never shows against this one.
+        if (selectedItemId != null && state.itemLoadError?.id === selectedItemId) {
+            return (
+                <div className="mj_TrackerEmpty" role="status">
+                    <p className="mj_TrackerEmpty_title">Couldn't load this item</p>
+                    <button
+                        type="button"
+                        className="mj_TrackerTextButton"
+                        onClick={() => void client.loadItem(selectedItemId)}
+                    >
+                        Try again
+                    </button>
+                    <button type="button" className="mj_TrackerTextButton" onClick={backToInbox}>
+                        Back to inbox
+                    </button>
+                </div>
+            );
+        }
         // Until the first inbox load lands there is no list to reason over: an empty one would read
         // as a false "Nothing needs you". A failed load says so and offers a retry; the inbox has its
         // own error for this, since any other tracker load clears the shared banner.

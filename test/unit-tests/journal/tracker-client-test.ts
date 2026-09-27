@@ -268,6 +268,29 @@ describe("MatronJournalClient tracker loaders", () => {
         expect(client.getSnapshot().inboxItems).toEqual([]);
     });
 
+    it("loadItem records its own error keyed by item, which only the next item load clears", async () => {
+        const { client, state } = makeClient();
+        state.api = {
+            items: jest.fn().mockResolvedValue({ items: [], next_cursor: null }),
+            item: jest
+                .fn()
+                .mockRejectedValueOnce(new Error("gone away"))
+                .mockResolvedValueOnce({ item: item({ num: 7 }), comments: [] }),
+        };
+
+        await client.loadItem(7);
+        expect(client.getSnapshot().itemLoadError).toEqual({ id: 7, message: "gone away" });
+
+        // An inbox load clears the shared banner error but not the item's own.
+        await client.loadInbox();
+        expect(client.getSnapshot().trackerError).toBeUndefined();
+        expect(client.getSnapshot().itemLoadError).toEqual({ id: 7, message: "gone away" });
+
+        await client.loadItem(7);
+        expect(client.getSnapshot().itemLoadError).toBeUndefined();
+        expect(client.getSnapshot().trackerItem?.item.num).toBe(7);
+    });
+
     it("loadItem populates the open item detail", async () => {
         const { client, state } = makeClient();
         const detail = { item: item({ num: 7 }), comments: [] };

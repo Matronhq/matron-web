@@ -1358,7 +1358,7 @@ export class MatronJournalClient {
         const api = this.api;
         if (!api) return;
         const gen = ++this.trackerItemGen;
-        this.patch({ trackerLoading: true, trackerError: undefined });
+        this.patch({ trackerLoading: true, trackerError: undefined, itemLoadError: undefined });
         try {
             const detail = await api.item(id);
             // Guard both API identity (logout/re-login) AND request identity: a superseded/out-of-
@@ -1367,7 +1367,8 @@ export class MatronJournalClient {
             this.patch({ trackerItem: detail, trackerLoading: false });
         } catch (error) {
             if (this.api !== api || this.trackerItemGen !== gen) return;
-            this.patch({ trackerError: errorMessage(error), trackerLoading: false });
+            const message = errorMessage(error);
+            this.patch({ trackerError: message, itemLoadError: { id, message }, trackerLoading: false });
         }
     }
 

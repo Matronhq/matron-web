@@ -142,6 +142,56 @@ describe("TrackerPane inbox", () => {
         expect(container.querySelector(".mj_TrackerPane_body [role=status]")?.textContent).toBe("Loading…");
     });
 
+    it("says the selected item failed to load and offers a retry", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <TrackerPane
+                client={client as unknown as MatronJournalClient}
+                state={paneState({
+                    trackerView: { open: true, view: "inbox", selectedItemId: 9 },
+                    trackerItem: null,
+                    inboxItems: [],
+                    itemLoadError: { id: 9, message: "gone away" },
+                })}
+            />,
+        );
+
+        const status = container.querySelector(".mj_TrackerPane_body [role=status]");
+        expect(status?.textContent).toContain("Couldn't load this item");
+        const [retry, back] = Array.from(status!.querySelectorAll<HTMLButtonElement>("button"));
+
+        client.loadItem.mockClear();
+        await act(async () => {
+            retry.click();
+        });
+        expect(client.loadItem).toHaveBeenCalledTimes(1);
+        expect(client.loadItem).toHaveBeenCalledWith(9);
+
+        await act(async () => {
+            back.click();
+        });
+        expect(client.openTrackerView).toHaveBeenCalledWith({ view: "inbox", itemId: null });
+    });
+
+    // A failure recorded for an earlier selection must not stand in for the current one.
+    it("does not offer the item retry when the load error belongs to another item", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <TrackerPane
+                client={client as unknown as MatronJournalClient}
+                state={paneState({
+                    trackerView: { open: true, view: "inbox", selectedItemId: 9 },
+                    trackerItem: null,
+                    inboxItems: [],
+                    itemLoadError: { id: 7, message: "gone away" },
+                })}
+            />,
+        );
+
+        expect(container.textContent).not.toContain("Couldn't load this item");
+        expect(container.querySelector(".mj_TrackerInboxToggle")).not.toBeNull();
+    });
+
     it("shows the empty inbox once a load has landed with no items", async () => {
         const client = fakeClient();
         const { container } = await mount(
