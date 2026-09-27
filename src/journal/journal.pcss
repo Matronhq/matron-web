@@ -2372,6 +2372,29 @@ textarea {
     outline-offset: 2px;
 }
 
+/* Box usage under an agent (and above the folder list once one is chosen): the box's last
+   capacity report — limits with reset times, live sessions, disk — and an "as of" caption
+   saying how old the numbers are. Spans, not divs: the agent row is a <button>. */
+.mj_NewSessionSheet_usage {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-top: 4px;
+    color: var(--cpd-color-text-secondary);
+    font:
+        400 12px/16px Inter,
+        sans-serif;
+}
+
+.mj_NewSessionSheet_usageLine {
+    display: block;
+}
+
+.mj_NewSessionSheet_usageAsOf {
+    display: block;
+    color: var(--cpd-color-text-tertiary);
+}
+
 .mj_AttachmentChip {
     display: grid;
     width: fit-content;

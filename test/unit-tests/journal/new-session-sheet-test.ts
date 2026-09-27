@@ -10,7 +10,7 @@ import { createRoot, type Root } from "react-dom/client";
 
 import { MatronJournalClient } from "../../../src/journal/client";
 import { MatronApp, NewSessionSheet } from "../../../src/journal/components";
-import type { ClientState, DeviceDTO, Session } from "../../../src/journal/types";
+import type { BoxStatus, ClientState, DeviceDTO, ServerFrame, Session } from "../../../src/journal/types";
 
 jest.mock("../../../res/matron-logo-simple.svg", () => "matron-logo.svg");
 
@@ -40,6 +40,7 @@ const AGENT_B: DeviceDTO = {
 
 interface ClientInternals {
     state: ClientState;
+    handleFrame(frame: ServerFrame): Promise<void>;
 }
 
 function internals(client: MatronJournalClient): ClientInternals {
@@ -196,6 +197,131 @@ describe("NewSessionSheet", () => {
 
         expect(close).toHaveBeenCalledTimes(1);
         expect(select).not.toHaveBeenCalled();
+    });
+
+    // Box usage (protocol.md "Box status"): the sheet renders each box's last capacity report
+    // from client state — limits with reset times, live sessions, disk, and an "as of" caption.
+    describe("box usage", () => {
+        function statusFor(now: number): BoxStatus {
+            return {
+                reported_at: now - 5 * 60_000,
+                activity: { live_sessions: 5, last_hour: [] },
+                limits: {
+                    as_of: now - 5 * 60_000,
+                    lines: [
+                        {
+                            id: "session",
+                            label: "Session",
+                            percent: 13,
+                            resets: "Sep 28 at 1:10am (Europe/London)",
+                            resets_at: new Date(now + 30.5 * 60_000).toISOString(),
+                        },
+                        { id: "week_all", label: "Week (all models)", percent: 22 },
+                        { id: "week_fable", label: "Week (Fable)", percent: 24, resets: "Oct 1 at 1am" },
+                    ],
+                },
+                disk: { free_bytes: 56_908_316_672, total_bytes: 1_979_120_929_996 },
+                account: { email: "dan@example.com" },
+            };
+        }
+
+        function withStatuses(client: MatronJournalClient, boxStatuses: Record<number, BoxStatus>): void {
+            internals(client).state = { ...client.getSnapshot(), boxStatuses };
+        }
+
+        function listItem(container: HTMLElement, name: string): HTMLElement {
+            const match = [...container.querySelectorAll<HTMLElement>('[role="listitem"]')].find((item) =>
+                item.textContent?.startsWith(name),
+            );
+            if (!match) throw new Error(`Missing list item: ${name}`);
+            return match;
+        }
+
+        it("renders limits, reset times, live sessions, disk and an as-of caption under a box", async () => {
+            const client = new MatronJournalClient();
+            withStatuses(client, { [AGENT_A.device_id]: statusFor(Date.now()) });
+            jest.spyOn(client, "listAgents").mockResolvedValue([AGENT_A, AGENT_B]);
+
+            rendered = await render(React.createElement(NewSessionSheet, { client, onClose: jest.fn() }));
+
+            const boxA = listItem(rendered.container, "Box A");
+            const lines = [...boxA.querySelectorAll(".mj_NewSessionSheet_usageLine")].map((line) => line.textContent);
+            expect(lines).toEqual([
+                "Session 13% · resets 30m",
+                "Week (all models) 22%",
+                "Week (Fable) 24% · resets Oct 1 at 1am",
+                "5 live sessions",
+                "53G free of 1.8T (3% free)",
+            ]);
+            expect(boxA.querySelector(".mj_NewSessionSheet_usageAsOf")?.textContent).toBe("as of 5m ago");
+        });
+
+        it("shows nothing extra for a box with no status", async () => {
+            const client = new MatronJournalClient();
+            withStatuses(client, { [AGENT_A.device_id]: statusFor(Date.now()) });
+            jest.spyOn(client, "listAgents").mockResolvedValue([AGENT_A, AGENT_B]);
+
+            rendered = await render(React.createElement(NewSessionSheet, { client, onClose: jest.fn() }));
+
+            const boxB = listItem(rendered.container, "Box B");
+            expect(boxB.querySelector(".mj_NewSessionSheet_usage")).toBeNull();
+            expect(boxB.textContent).toBe("Box BConnected");
+        });
+
+        it("renders only the blocks a status carries", async () => {
+            const client = new MatronJournalClient();
+            withStatuses(client, {
+                [AGENT_A.device_id]: {
+                    reported_at: Date.now() - 3 * 60 * 60_000,
+                    activity: { live_sessions: 1, last_hour: [] },
+                },
+            });
+            jest.spyOn(client, "listAgents").mockResolvedValue([AGENT_A, AGENT_B]);
+
+            rendered = await render(React.createElement(NewSessionSheet, { client, onClose: jest.fn() }));
+
+            const boxA = listItem(rendered.container, "Box A");
+            expect([...boxA.querySelectorAll(".mj_NewSessionSheet_usageLine")].map((line) => line.textContent)).toEqual(
+                ["1 live session"],
+            );
+            expect(boxA.querySelector(".mj_NewSessionSheet_usageAsOf")?.textContent).toBe("as of 3h ago");
+        });
+
+        it("updates the lines and the as-of caption when a live box_status frame lands", async () => {
+            const client = new MatronJournalClient();
+            withStatuses(client, { [AGENT_A.device_id]: statusFor(Date.now()) });
+            jest.spyOn(client, "listAgents").mockResolvedValue([AGENT_A, AGENT_B]);
+
+            rendered = await render(React.createElement(NewSessionSheet, { client, onClose: jest.fn() }));
+            await act(async () =>
+                internals(client).handleFrame({
+                    kind: "box_status",
+                    device_id: AGENT_A.device_id,
+                    reported_at: Date.now(),
+                    limits: { as_of: Date.now(), lines: [{ id: "session", label: "Session", percent: 14 }] },
+                } as unknown as ServerFrame),
+            );
+
+            const boxA = listItem(rendered.container, "Box A");
+            expect([...boxA.querySelectorAll(".mj_NewSessionSheet_usageLine")].map((line) => line.textContent)).toEqual(
+                ["Session 14%"],
+            );
+            expect(boxA.querySelector(".mj_NewSessionSheet_usageAsOf")?.textContent).toBe("as of just now");
+        });
+
+        it("shows the chosen box's usage on the folder step too", async () => {
+            const client = new MatronJournalClient();
+            withStatuses(client, { [AGENT_A.device_id]: statusFor(Date.now()) });
+            jest.spyOn(client, "listAgents").mockResolvedValue([AGENT_A]);
+            jest.spyOn(client, "recentFolders").mockResolvedValue([]);
+
+            rendered = await render(React.createElement(NewSessionSheet, { client, onClose: jest.fn() }));
+
+            expect(rendered.container.textContent).toContain("Start on Box A");
+            expect(rendered.container.querySelector(".mj_NewSessionSheet_usage")).not.toBeNull();
+            expect(rendered.container.textContent).toContain("Session 13% · resets 30m");
+            expect(rendered.container.textContent).toContain("as of 5m ago");
+        });
     });
 });
 
