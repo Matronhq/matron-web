@@ -38,6 +38,39 @@ export interface LoginResponse {
     user_id: number;
 }
 
+// A box's last capacity report (protocol.md "Box status (`box_status`)"): served as `status`
+// on GET /devices for agent devices that have ever reported, and pushed live to client sockets
+// as `{kind:'box_status', device_id, reported_at, ...blocks}`. Every block is optional — the
+// bridge sends whichever it has — and `reported_at` says how old the numbers are.
+export interface BoxStatusLimitLine {
+    id: string;
+    label: string;
+    percent: number;
+    // Human reset text ("Sep 28 at 1:10am (Europe/London)") and/or an ISO-8601 instant; each
+    // independently optional per line.
+    resets?: string;
+    resets_at?: string;
+}
+
+export interface BoxStatus {
+    reported_at: number;
+    activity?: {
+        live_sessions: number;
+        last_hour: Array<{ path: string; sessions: number }>;
+    };
+    limits?: {
+        as_of: number;
+        lines: BoxStatusLimitLine[];
+    };
+    disk?: {
+        free_bytes: number;
+        total_bytes: number;
+    };
+    account?: {
+        email: string;
+    };
+}
+
 export interface DeviceDTO {
     device_id: number;
     kind: string;
@@ -45,6 +78,7 @@ export interface DeviceDTO {
     last_seen_at?: number;
     connected: boolean;
     is_self: boolean;
+    status?: BoxStatus;
 }
 
 export interface DevicesResponse {
@@ -184,7 +218,20 @@ export interface JournalEphemeralFrame {
     status?: SessionStatus;
 }
 
-export type ServerFrame = JournalEvent | JournalControlFrame | JournalEphemeralFrame | JournalRpcFrame;
+// Live box-status fan-out (client sockets only, never replayed): a full replacement of the
+// stored report for `device_id`. Blocks are validated client-side by `parseBoxStatus`.
+export interface JournalBoxStatusFrame {
+    kind: "box_status";
+    device_id: number;
+    reported_at: number;
+    activity?: unknown;
+    limits?: unknown;
+    disk?: unknown;
+    account?: unknown;
+}
+
+export type ServerFrame =
+    JournalEvent | JournalControlFrame | JournalEphemeralFrame | JournalRpcFrame | JournalBoxStatusFrame;
 
 export interface SessionStatus {
     model?: string;
@@ -327,6 +374,9 @@ export interface ClientState {
     hasOlderHistory: boolean;
     activity?: JournalEphemeralFrame["activity"];
     sessionStatus?: SessionStatus;
+    // Last capacity report per agent device id — seeded from GET /devices, replaced by live
+    // `box_status` frames. Read by the new-session sheet.
+    boxStatuses: Record<number, BoxStatus>;
     textStreams: Record<string, string>;
     toolStreams: Record<string, ToolStreamState>;
     dragActive: boolean;

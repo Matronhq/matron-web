@@ -7,8 +7,8 @@ Please see LICENSE files in the repository root for full details.
 
 import { TextDecoder as NodeTextDecoder, TextEncoder as NodeTextEncoder } from "node:util";
 
-import { JournalApi, JournalApiError } from "../../../src/journal/api";
-import { type DevicesResponse } from "../../../src/journal/types";
+import { JournalApi, JournalApiError, parseBoxStatus } from "../../../src/journal/api";
+import { type BoxStatus, type DevicesResponse } from "../../../src/journal/types";
 
 const fetchMock = jest.fn();
 
@@ -444,5 +444,160 @@ describe("JournalApi search", () => {
         const api = new JournalApi("https://journal.example", "token");
 
         await expect(api.search("", 20)).rejects.toMatchObject({ status: 400 });
+    });
+});
+
+// GET /devices `status` — the box's last capacity report (protocol.md "Box status"):
+// `{reported_at, activity?, limits?, disk?, account?}`. Every block is optional and each is
+// dropped on its own when malformed; the device row itself is never rejected over it.
+describe("JournalApi devices box status", () => {
+    beforeAll(() => {
+        globalThis.TextDecoder = NodeTextDecoder as typeof TextDecoder;
+    });
+
+    beforeEach(() => {
+        fetchMock.mockReset();
+        globalThis.fetch = fetchMock as unknown as typeof fetch;
+        delete (window as Window & { electron?: unknown }).electron;
+    });
+
+    const FULL_STATUS = {
+        reported_at: 1790543772640,
+        activity: { live_sessions: 5, last_hour: [{ path: "/srv/app", sessions: 2 }] },
+        limits: {
+            as_of: 1790543772000,
+            lines: [
+                {
+                    id: "session",
+                    label: "Session",
+                    percent: 13,
+                    resets: "Sep 28 at 1:10am (Europe/London)",
+                    resets_at: "2026-09-28T00:10:00.000Z",
+                },
+                { id: "week_all", label: "Week (all models)", percent: 22 },
+            ],
+        },
+        disk: { free_bytes: 56908316672, total_bytes: 1979120929996 },
+        account: { email: "dan@example.com" },
+    };
+
+    it("parses a full status into a typed BoxStatus on the device", async () => {
+        fetchMock.mockResolvedValue(
+            jsonResponse({
+                devices: [
+                    { device_id: 7, kind: "agent", name: "pat", connected: true, is_self: false, status: FULL_STATUS },
+                ],
+            }),
+        );
+        const api = new JournalApi("https://journal.example", "token");
+
+        const response = await api.devices();
+        const expected: BoxStatus = FULL_STATUS;
+        expect(response.devices[0].status).toEqual(expected);
+    });
+
+    it("keeps a device whose status is missing or not an object, with no status", async () => {
+        fetchMock.mockResolvedValue(
+            jsonResponse({
+                devices: [
+                    { device_id: 7, kind: "agent", connected: true, is_self: false },
+                    { device_id: 8, kind: "agent", connected: true, is_self: false, status: "busy" },
+                    { device_id: 9, kind: "agent", connected: true, is_self: false, status: [1] },
+                ],
+            }),
+        );
+        const api = new JournalApi("https://journal.example", "token");
+
+        const response = await api.devices();
+        expect(response.devices).toHaveLength(3);
+        for (const device of response.devices) expect(device.status).toBeUndefined();
+    });
+
+    it("drops the whole status when reported_at is missing or not a finite number", () => {
+        expect(parseBoxStatus({ ...FULL_STATUS, reported_at: undefined })).toBeUndefined();
+        expect(parseBoxStatus({ ...FULL_STATUS, reported_at: "yesterday" })).toBeUndefined();
+        expect(parseBoxStatus({ ...FULL_STATUS, reported_at: Number.NaN })).toBeUndefined();
+    });
+
+    it("drops only the malformed block and keeps the rest", () => {
+        const parsed = parseBoxStatus({
+            ...FULL_STATUS,
+            activity: { live_sessions: "many" },
+            limits: { as_of: 1, lines: "none" },
+            disk: { free_bytes: 10, total_bytes: 5 },
+            account: { email: 42 },
+        });
+        expect(parsed).toEqual({ reported_at: FULL_STATUS.reported_at });
+    });
+
+    it("drops a malformed limits line but keeps the valid ones", () => {
+        const parsed = parseBoxStatus({
+            reported_at: 1,
+            limits: {
+                as_of: 1,
+                lines: [
+                    { id: "session", label: "Session", percent: 13, resets_at: 5 },
+                    { id: "week_all", label: "Week (all models)", percent: "22" },
+                    null,
+                    { id: "week_fable", label: "Week (Fable)", percent: 24, resets: "Oct 1" },
+                ],
+            },
+        });
+        expect(parsed).toEqual({
+            reported_at: 1,
+            limits: {
+                as_of: 1,
+                lines: [
+                    { id: "session", label: "Session", percent: 13 },
+                    { id: "week_fable", label: "Week (Fable)", percent: 24, resets: "Oct 1" },
+                ],
+            },
+        });
+    });
+
+    it("drops a limits block with no usable lines and a disk block with impossible numbers", () => {
+        expect(parseBoxStatus({ reported_at: 1, limits: { as_of: 1, lines: [] } })).toEqual({ reported_at: 1 });
+        expect(parseBoxStatus({ reported_at: 1, disk: { free_bytes: -1, total_bytes: 10 } })).toEqual({
+            reported_at: 1,
+        });
+        expect(parseBoxStatus({ reported_at: 1, disk: { free_bytes: 0, total_bytes: 0 } })).toEqual({ reported_at: 1 });
+    });
+
+    it("ignores unknown fields at every level without throwing", () => {
+        const parsed = parseBoxStatus({
+            reported_at: 1,
+            weather: "sunny",
+            activity: { live_sessions: 0, last_hour: [], load: 0.4 },
+            limits: { as_of: 1, lines: [{ id: "session", label: "Session", percent: 1, colour: "red" }], model: "x" },
+            disk: { free_bytes: 1, total_bytes: 2, mount: "/" },
+            account: { email: "a@b.c", plan: "max" },
+        });
+        expect(parsed).toEqual({
+            reported_at: 1,
+            activity: { live_sessions: 0, last_hour: [] },
+            limits: { as_of: 1, lines: [{ id: "session", label: "Session", percent: 1 }] },
+            disk: { free_bytes: 1, total_bytes: 2 },
+            account: { email: "a@b.c" },
+        });
+    });
+
+    it("tolerates a malformed last_hour by keeping live_sessions and the valid entries", () => {
+        expect(
+            parseBoxStatus({
+                reported_at: 1,
+                activity: { live_sessions: 2, last_hour: [{ path: "/a", sessions: 1 }, { path: 3 }, "x"] },
+            }),
+        ).toEqual({ reported_at: 1, activity: { live_sessions: 2, last_hour: [{ path: "/a", sessions: 1 }] } });
+        expect(parseBoxStatus({ reported_at: 1, activity: { live_sessions: 2 } })).toEqual({
+            reported_at: 1,
+            activity: { live_sessions: 2, last_hour: [] },
+        });
+    });
+
+    it("returns undefined for non-object input", () => {
+        expect(parseBoxStatus(undefined)).toBeUndefined();
+        expect(parseBoxStatus(null)).toBeUndefined();
+        expect(parseBoxStatus("status")).toBeUndefined();
+        expect(parseBoxStatus([])).toBeUndefined();
     });
 });
