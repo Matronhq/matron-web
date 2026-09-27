@@ -33,6 +33,7 @@ import {
     type Session,
     type SnapshotResponse,
     type TrackerItem,
+    type MemoryWrite,
     type TrackerResolution,
     type TrackerViewState,
     trimUtf8Prefix,
@@ -319,6 +320,8 @@ export class MatronJournalClient {
     private trackerInboxRefetchTimer?: number;
     // Same for `mission` / `milestone` markers and the missions list.
     private trackerMissionsRefetchTimer?: number;
+    private trackerMemoriesGen = 0;
+    private trackerMemoriesRefetchTimer?: number;
     // Whether the pending missions refetch should also reload the open mission detail: set by item
     // markers, which don't say which mission the item belongs to.
     private trackerMissionRefetchPending = false;
@@ -1400,7 +1403,12 @@ export class MatronJournalClient {
     // (mutual exclusion — see openTrackerItem/openTrackerMission); `undefined` preserves the prev
     // selection. `null ?? prev` would resolve to prev, so the clear needs the explicit === null arm.
     public openTrackerView(
-        opts: { view?: "missions" | "inbox"; itemId?: number | null; missionId?: number | null } = {},
+        opts: {
+            view?: "missions" | "inbox" | "memories";
+            itemId?: number | null;
+            missionId?: number | null;
+            memoryName?: string | null;
+        } = {},
     ): void {
         const prev = this.state.trackerView;
         const next: TrackerViewState = {
@@ -1408,8 +1416,22 @@ export class MatronJournalClient {
             view: opts.view ?? prev?.view ?? "inbox",
             selectedItemId: opts.itemId === null ? undefined : (opts.itemId ?? prev?.selectedItemId),
             selectedMissionId: opts.missionId === null ? undefined : (opts.missionId ?? prev?.selectedMissionId),
+            selectedMemoryName: opts.memoryName === null ? undefined : (opts.memoryName ?? prev?.selectedMemoryName),
         };
         this.patch({ trackerView: next });
+    }
+
+    // Memories view entry points: a name opens that memory's editor, "" opens the new-memory form,
+    // and closeTrackerMemory returns to the list. Item and mission selections are cleared so the
+    // pane's item-first precedence cannot shadow the memory (same rule as openTrackerItem).
+    public openTrackerMemory(name: string): void {
+        if (this.state.trackerItem) this.patch({ trackerItem: null });
+        if (this.state.trackerMission) this.patch({ trackerMission: null });
+        this.openTrackerView({ view: "memories", memoryName: name, itemId: null, missionId: null });
+    }
+
+    public closeTrackerMemory(): void {
+        this.openTrackerView({ view: "memories", memoryName: null });
     }
 
     // Closing drops the cached item and mission details (and orphans any in-flight load of them):
@@ -1535,6 +1557,27 @@ export class MatronJournalClient {
         }
     }
 
+    public async loadMemories(): Promise<void> {
+        const api = this.api;
+        if (!api) return;
+        // Same generation guard as loadInbox: a memory marker restarts this while an earlier load
+        // is in flight, and the older answer must never overwrite the newer one.
+        const gen = ++this.trackerMemoriesGen;
+        this.patch({ trackerLoading: true, trackerError: undefined, memoriesError: undefined });
+        try {
+            const { memories } = await api.memories();
+            if (this.api !== api || this.trackerMemoriesGen !== gen) return;
+            this.patch({
+                memories: [...memories].sort((a, b) => a.name.localeCompare(b.name)),
+                trackerLoading: false,
+            });
+        } catch (error) {
+            if (this.api !== api || this.trackerMemoriesGen !== gen) return;
+            const message = errorMessage(error);
+            this.patch({ trackerError: message, memoriesError: message, trackerLoading: false });
+        }
+    }
+
     public async loadItem(id: number | string): Promise<void> {
         const api = this.api;
         if (!api) return;
@@ -1625,6 +1668,38 @@ export class MatronJournalClient {
         if (this.isSelectedTrackerItem(id)) await this.loadItem(id);
         if (this.state.inboxItems) await this.loadInbox();
         if (this.state.missions) await this.loadMissions();
+        return true;
+    }
+
+    // PUT is an upsert by name and idempotent by construction, so no Idempotency-Key: a retried
+    // save writes the same memory again. The list is reloaded rather than patched from the answer
+    // so the row order (by name) and any concurrent edits from an agent stay authoritative.
+    public async saveMemory(name: string, body: MemoryWrite): Promise<boolean> {
+        const api = this.api;
+        if (!api) return false;
+        try {
+            await api.putMemory(name, body);
+        } catch (error) {
+            if (this.api === api) this.patch({ trackerError: errorMessage(error) });
+            return false;
+        }
+        if (this.api !== api) return true;
+        await this.loadMemories();
+        return true;
+    }
+
+    public async deleteMemory(name: string): Promise<boolean> {
+        const api = this.api;
+        if (!api) return false;
+        try {
+            await api.deleteMemory(name);
+        } catch (error) {
+            if (this.api === api) this.patch({ trackerError: errorMessage(error) });
+            return false;
+        }
+        if (this.api !== api) return true;
+        if (this.state.trackerView?.selectedMemoryName === name) this.closeTrackerMemory();
+        await this.loadMemories();
         return true;
     }
 
@@ -1734,6 +1809,13 @@ export class MatronJournalClient {
             if (this.state.missions) this.scheduleMissionsRefetch();
             return;
         }
+        // A memory marker (spec 2026-09-27 memories) is pure invalidation; the journal may append
+        // it to two conversations (the writer's and the Coordinator's), so it is coalesced like the
+        // inbox refetch and a pair costs one GET /memories.
+        if (event.type === "memory") {
+            if (this.state.memories) this.scheduleMemoriesRefetch();
+            return;
+        }
         if (event.type === "milestone") {
             const missionNum = asNumber(event.payload.mission_num, 0);
             if (missionNum && this.state.trackerMission && this.state.trackerView?.selectedMissionId === missionNum) {
@@ -1751,6 +1833,14 @@ export class MatronJournalClient {
         this.trackerInboxRefetchTimer = window.setTimeout(() => {
             this.trackerInboxRefetchTimer = undefined;
             if (this.state.trackerView?.open && this.state.inboxItems) void this.loadInbox();
+        }, 250);
+    }
+
+    private scheduleMemoriesRefetch(): void {
+        if (this.trackerMemoriesRefetchTimer !== undefined) return;
+        this.trackerMemoriesRefetchTimer = window.setTimeout(() => {
+            this.trackerMemoriesRefetchTimer = undefined;
+            if (this.state.trackerView?.open && this.state.memories) void this.loadMemories();
         }, 250);
     }
 

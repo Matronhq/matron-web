@@ -224,7 +224,12 @@ describe("TrackerPane inbox", () => {
         await act(async () => {
             back.click();
         });
-        expect(client.openTrackerView).toHaveBeenCalledWith({ view: "inbox", itemId: null, missionId: null });
+        expect(client.openTrackerView).toHaveBeenCalledWith({
+            view: "inbox",
+            itemId: null,
+            missionId: null,
+            memoryName: null,
+        });
     });
 
     // A failure recorded for an earlier selection must not stand in for the current one.
@@ -301,7 +306,12 @@ describe("TrackerPane inbox", () => {
         await act(async () => {
             container.querySelector<HTMLButtonElement>(".mj_TrackerBack")!.click();
         });
-        expect(client.openTrackerView).toHaveBeenCalledWith({ view: "inbox", itemId: null, missionId: null });
+        expect(client.openTrackerView).toHaveBeenCalledWith({
+            view: "inbox",
+            itemId: null,
+            missionId: null,
+            memoryName: null,
+        });
         expect(client.closeTrackerView).not.toHaveBeenCalled();
     });
 

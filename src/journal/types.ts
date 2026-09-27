@@ -416,6 +416,10 @@ export interface ClientState {
      *  dropped), survives other tracker loads and an in-flight retry, and is cleared only when a
      *  mission load succeeds, so the pane can keep offering a retry until it actually loads. */
     missionLoadError?: { id: string; message: string };
+    /** The Memories view's list, sorted by name. Undefined = never loaded this session. */
+    memories?: Memory[];
+    /** Same as inboxError, for the memories list. */
+    memoriesError?: string;
 }
 
 // ── Tracker (Missions / Milestones / Decisions-Inbox) ──────────────────────────
@@ -427,9 +431,42 @@ export interface ClientState {
 /** Which tracker surface the pane shows; `selected*Id` are #num values (integers). */
 export interface TrackerViewState {
     open: boolean;
-    view?: "missions" | "inbox";
+    view?: "missions" | "inbox" | "memories";
     selectedItemId?: number;
     selectedMissionId?: number;
+    /** Memories view: the open memory's name, or "" for the new-memory form. Undefined = the list. */
+    selectedMemoryName?: string;
+}
+
+// ── Memories (journal /memories, spec 2026-09-27 memories) ─────────────────────
+// The user's shared agent memory: standing rules and facts every agent may save and the
+// Coordinator reads at spawn. Shaped like a Claude Code memory file. `name` is the key
+// (kebab-case, unique per user); PUT /memories/:name overwrites the whole memory.
+
+export type MemoryType = "user" | "feedback" | "project" | "reference";
+
+export interface Memory {
+    id: string;
+    name: string;
+    type: MemoryType;
+    /** One line, ≤200 chars — the line the Coordinator sees at spawn. */
+    description: string;
+    /** Markdown, ≤8192 bytes, may be empty. */
+    body: string;
+    origin_convo_id: string | null;
+    origin_device_id: number | null;
+    origin_private?: boolean;
+    created_by: "user" | "agent";
+    updated_by: "user" | "agent";
+    created_at: number;
+    updated_at: number;
+}
+
+/** PUT /memories/:name body. Omitted `body` clears the stored body; omitted `type` keeps it. */
+export interface MemoryWrite {
+    description: string;
+    body?: string;
+    type?: MemoryType;
 }
 
 export type TrackerItemKind = "task" | "question" | "decision";
