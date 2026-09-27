@@ -1335,7 +1335,12 @@ function ConversationList({
 
     return (
         <div
-            className={`mx_LeftPanel_outerWrapper ${state.selectedConversationId ? "mj_Sidebar_mobileHidden" : ""}`}
+            className={`mx_LeftPanel_outerWrapper ${
+                // At the phone breakpoint the main region owns the whole width whenever it has a
+                // surface to show: a selected conversation OR the open tracker pane (mirrors the
+                // mj_Chat_mobileHidden test on the main region, so the two never both render).
+                state.trackerView?.open || state.selectedConversationId ? "mj_Sidebar_mobileHidden" : ""
+            }`}
             style={{ "--mj-left-panel-width": `${width}px` } as React.CSSProperties}
         >
             <div className="mx_LeftPanel_wrapper mx_LeftPanel_newRoomList">

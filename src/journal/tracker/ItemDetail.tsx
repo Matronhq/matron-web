@@ -16,8 +16,8 @@ import React, { useMemo, useRef, useState } from "react";
 
 import type { MatronJournalClient } from "../client";
 import { ChevronLeftIcon, KebabIcon, SendIcon } from "../icons";
-import { MarkdownBody } from "../markdown";
-import type { TrackerComment, TrackerItem, TrackerResolution } from "../types";
+import { MarkdownBody, parseTrackerHref } from "../markdown";
+import type { TrackerComment, TrackerItem, TrackerLink, TrackerResolution } from "../types";
 import {
     availableResolutions,
     formatRelativeTime,
@@ -76,6 +76,50 @@ function CommentRow({
             ) : null}
             <AttachmentChips comment={comment} />
         </div>
+    );
+}
+
+/**
+ * One `item.links[]` chip. The protocol lets a link carry any URL, including the in-app
+ * `matron://` scheme, so this applies the SAME guard the markdown renderer does (parseTrackerHref):
+ * a valid `matron://item/<N>` opens that item in-app; http(s) opens in a new tab; anything else
+ * (an unknown scheme, a malformed item link, javascript:) renders as inert text — a custom or
+ * unsafe scheme is never handed to the browser as a live href.
+ */
+function LinkChip({
+    link,
+    onTrackerLink,
+}: {
+    link: TrackerLink;
+    onTrackerLink: (kind: "item", num: number) => void;
+}): React.ReactElement {
+    const label = link.title?.trim() || link.url;
+    const tracker = parseTrackerHref(link.url);
+    if (tracker) {
+        return (
+            <a
+                className="mj_TrackerLinkChip mj_TrackerLink"
+                href={link.url}
+                onClick={(event) => {
+                    event.preventDefault();
+                    onTrackerLink(tracker.kind, tracker.num);
+                }}
+            >
+                {label}
+            </a>
+        );
+    }
+    if (!/^https?:\/\//i.test(link.url)) {
+        return (
+            <span className="mj_TrackerLinkChip mj_TrackerLinkChip_inert" title={link.url}>
+                {label}
+            </span>
+        );
+    }
+    return (
+        <a className="mj_TrackerLinkChip" href={link.url} target="_blank" rel="noreferrer noopener">
+            {label}
+        </a>
     );
 }
 
@@ -252,15 +296,7 @@ export function ItemDetail({
                 {item.links.length > 0 ? (
                     <div className="mj_TrackerLinks">
                         {item.links.map((link) => (
-                            <a
-                                key={link.url}
-                                className="mj_TrackerLinkChip"
-                                href={link.url}
-                                target="_blank"
-                                rel="noreferrer noopener"
-                            >
-                                {link.title?.trim() || link.url}
-                            </a>
+                            <LinkChip key={link.url} link={link} onTrackerLink={onTrackerLink} />
                         ))}
                     </div>
                 ) : null}

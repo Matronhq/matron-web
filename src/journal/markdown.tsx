@@ -230,9 +230,10 @@ interface MarkdownBodyProps {
 /**
  * Strictly parse an in-app tracker deep link: `matron://item/<N>`, where N is a positive
  * ASCII-decimal integer and there is NOTHING else — no query, fragment, port, or extra path
- * segment. Anything non-conforming returns null and is treated as an ordinary link.
+ * segment. Anything non-conforming returns null and is treated as an ordinary link. Shared by the
+ * markdown `a()` renderer and the item-detail link chips so both surfaces accept exactly the same set.
  */
-function parseTrackerHref(href: string): { kind: "item"; num: number } | null {
+export function parseTrackerHref(href: string): { kind: "item"; num: number } | null {
     const match = /^matron:\/\/(item)\/([0-9]+)$/.exec(href);
     if (!match) return null;
     const num = Number(match[2]);

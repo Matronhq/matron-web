@@ -3144,6 +3144,49 @@ describe("conversation timestamp midnight invalidation", () => {
     });
 });
 
+describe("mobile layout", () => {
+    let rendered: { container: HTMLDivElement; root: Root } | undefined;
+
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    afterEach(async () => {
+        if (rendered) {
+            await act(async () => rendered?.root.unmount());
+            rendered.container.remove();
+            rendered = undefined;
+        }
+    });
+
+    function sidebar(container: HTMLElement): HTMLElement {
+        const wrapper = container.querySelector<HTMLElement>(".mx_LeftPanel_outerWrapper");
+        if (!wrapper) throw new Error("Missing sidebar wrapper");
+        return wrapper;
+    }
+
+    it("shows the sidebar when nothing is selected and the tracker is closed", async () => {
+        const client = signedInClient();
+        internals(client).state = { ...client.getSnapshot(), selectedConversationId: undefined };
+        rendered = await renderClient(client);
+        expect(sidebar(rendered.container).classList.contains("mj_Sidebar_mobileHidden")).toBe(false);
+    });
+
+    it("hides the sidebar at the mobile breakpoint while the tracker pane is open", async () => {
+        // With no conversation selected the tracker pane is the main surface; on a phone it must
+        // take the whole width, exactly as a selected conversation does.
+        const client = signedInClient();
+        internals(client).state = {
+            ...client.getSnapshot(),
+            selectedConversationId: undefined,
+            trackerView: { open: true, view: "inbox" },
+        };
+        rendered = await renderClient(client);
+        expect(rendered.container.querySelector(".mj_TrackerPane")).not.toBeNull();
+        expect(sidebar(rendered.container).classList.contains("mj_Sidebar_mobileHidden")).toBe(true);
+    });
+});
+
 describe("conversation list tabs", () => {
     let rendered: { container: HTMLDivElement; root: Root } | undefined;
 
