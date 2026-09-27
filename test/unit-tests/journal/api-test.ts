@@ -394,6 +394,59 @@ describe("JournalApi answerAgentSpawn", () => {
     });
 });
 
+describe("JournalApi search", () => {
+    beforeAll(() => {
+        globalThis.TextDecoder = NodeTextDecoder as typeof TextDecoder;
+    });
+
+    beforeEach(() => {
+        fetchMock.mockReset();
+        globalThis.fetch = fetchMock as unknown as typeof fetch;
+        delete (window as Window & { electron?: unknown }).electron;
+    });
+
+    it("requests /search with the url-encoded query + limit and returns the hits", async () => {
+        const hits = [
+            {
+                convo_id: "c1",
+                title: "Deploy notes",
+                seq: 42,
+                ts: 1_700_000_000_000,
+                sender: "agent:dev-1",
+                snippet: "the **rollout** window",
+                live: false,
+            },
+        ];
+        fetchMock.mockResolvedValue(jsonResponse({ hits }));
+        const api = new JournalApi("https://journal.example", "token");
+
+        await expect(api.search("roll out", 20)).resolves.toEqual({ hits });
+        expect(String(fetchMock.mock.calls[0][0])).toBe("https://journal.example/search?q=roll+out&limit=20");
+        expect(fetchMock.mock.calls[0][1]).toEqual(
+            expect.objectContaining({
+                method: "GET",
+                headers: expect.objectContaining({ Authorization: "Bearer token" }),
+            }),
+        );
+    });
+
+    it("forwards an abort signal", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ hits: [] }));
+        const api = new JournalApi("https://journal.example", "token");
+        const controller = new AbortController();
+
+        await api.search("x", 20, controller.signal);
+        expect(fetchMock.mock.calls[0][1]).toEqual(expect.objectContaining({ signal: controller.signal }));
+    });
+
+    it("rejects with a typed 400 when the server rejects the query", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ error: "bad_request" }, 400));
+        const api = new JournalApi("https://journal.example", "token");
+
+        await expect(api.search("", 20)).rejects.toMatchObject({ status: 400 });
+    });
+});
+
 // GET /devices `status` — the box's last capacity report (protocol.md "Box status"):
 // `{reported_at, activity?, limits?, disk?, account?}`. Every block is optional and each is
 // dropped on its own when malformed; the device row itself is never rejected over it.
