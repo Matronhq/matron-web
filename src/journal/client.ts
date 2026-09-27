@@ -5,7 +5,7 @@ SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
 Please see LICENSE files in the repository root for full details.
 */
 
-import { JournalApi, JournalApiError, loadMatronConfig } from "./api";
+import { JournalApi, JournalApiError, loadMatronConfig, parseBoxStatus } from "./api";
 import { JournalConnection } from "./connection";
 import { effectiveUnread, makeIdSetStore, type IdSetStore } from "./conversation-flags";
 import { JournalDatabase } from "./database";
@@ -13,9 +13,11 @@ import { mergeSessionStatus } from "./status";
 import {
     buildSidebarIndex,
     childSidebarPlacement,
+    type BoxStatus,
     type ClientState,
     type Conversation,
     type DeviceDTO,
+    type JournalBoxStatusFrame,
     isSubChat,
     type JournalEphemeralFrame,
     type JournalEvent,
@@ -176,6 +178,7 @@ function blankState(): ClientState {
         hasOlderHistory: false,
         textStreams: {},
         toolStreams: {},
+        boxStatuses: {},
         dragActive: false,
         sendTick: 0,
     };
@@ -435,6 +438,7 @@ export class MatronJournalClient {
     public async listAgents(): Promise<DeviceDTO[]> {
         const response = await this.api?.devices();
         if (!response) throw new Error("Not signed in.");
+        this.rememberBoxStatuses(response.devices);
         return response.devices
             .filter((device) => device.kind === "agent")
             .sort(
@@ -443,6 +447,30 @@ export class MatronJournalClient {
                     (left.name ?? "").localeCompare(right.name ?? "") ||
                     left.device_id - right.device_id,
             );
+    }
+
+    // Seed each box's stored report from the roster, but never regress a row a live
+    // `box_status` frame has already moved past (protocol.md: latest report wins).
+    private rememberBoxStatuses(devices: DeviceDTO[]): void {
+        let next: Record<number, BoxStatus> | undefined;
+        for (const device of devices) {
+            if (!device.status) continue;
+            const current = this.state.boxStatuses[device.device_id];
+            if (current && current.reported_at > device.status.reported_at) continue;
+            next ??= { ...this.state.boxStatuses };
+            next[device.device_id] = device.status;
+        }
+        if (next) this.patch({ boxStatuses: next });
+    }
+
+    // A live report replaces the stored row for that box wholesale — the blocks the frame
+    // omits are gone, not kept (only `box_status` itself carries the full picture).
+    private handleBoxStatus(frame: JournalBoxStatusFrame): void {
+        const deviceId: unknown = frame.device_id;
+        if (typeof deviceId !== "number" || !Number.isFinite(deviceId)) return;
+        const status = parseBoxStatus(frame);
+        if (!status) return;
+        this.patch({ boxStatuses: { ...this.state.boxStatuses, [deviceId]: status } });
     }
 
     public async recentFolders(agentDeviceId: number): Promise<RecentFolder[]> {
@@ -1826,6 +1854,10 @@ export class MatronJournalClient {
         }
         if (frame.kind === "ephemeral") {
             this.handleEphemeral(frame);
+            return;
+        }
+        if (frame.kind === "box_status") {
+            this.handleBoxStatus(frame);
             return;
         }
         if (frame.kind === "control" && frame.op === "error") {

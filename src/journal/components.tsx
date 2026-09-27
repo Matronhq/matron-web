@@ -116,6 +116,7 @@ import {
 import {
     asNumber,
     asString,
+    type BoxStatus,
     buildSidebarIndex,
     childrenOf,
     childSidebarPlacement,
@@ -451,6 +452,52 @@ function agentStatus(agent: DeviceDTO): string {
     return `Offline · last seen ${new Date(timestamp).toLocaleString()}`;
 }
 
+// df -h style size for the disk line: "53G", "1.8T". One decimal below 10, whole numbers above.
+function formatDiskSize(bytes: number): string {
+    const units = ["B", "K", "M", "G", "T", "P"];
+    let value = bytes;
+    let unit = 0;
+    while (value >= 1024 && unit < units.length - 1) {
+        value /= 1024;
+        unit += 1;
+    }
+    const text = unit > 0 && value < 10 ? value.toFixed(1).replace(/\.0$/, "") : String(Math.round(value));
+    return `${text}${units[unit]}`;
+}
+
+// The box's last capacity report under its name: one line per limit (with its reset when the
+// bridge sent one), live sessions, disk, then how old the numbers are. No status → nothing.
+function BoxUsage({ status, now }: { status: BoxStatus | undefined; now: number }): React.ReactElement | null {
+    if (!status) return null;
+    const lines: string[] = [];
+    for (const line of status.limits?.lines ?? []) {
+        const reset = resetDisplay(line.resets_at, line.resets, now);
+        const usage = `${line.label} ${Math.round(line.percent)}%`;
+        lines.push(reset ? `${usage} · resets ${reset}` : usage);
+    }
+    if (status.activity) {
+        const count = status.activity.live_sessions;
+        lines.push(`${count} live session${count === 1 ? "" : "s"}`);
+    }
+    if (status.disk) {
+        const { free_bytes: free, total_bytes: total } = status.disk;
+        const freePercent = Math.round((free / total) * 100);
+        lines.push(`${formatDiskSize(free)} free of ${formatDiskSize(total)} (${freePercent}% free)`);
+    }
+    return (
+        <span className="mj_NewSessionSheet_usage">
+            {lines.map((line, index) => (
+                <span key={index} className="mj_NewSessionSheet_usageLine">
+                    {line}
+                </span>
+            ))}
+            <span className="mj_NewSessionSheet_usageAsOf">
+                as of {formatSampleAge(Math.max(0, now - status.reported_at))}
+            </span>
+        </span>
+    );
+}
+
 export function NewSessionSheet({
     client,
     onClose,
@@ -459,6 +506,8 @@ export function NewSessionSheet({
     onClose: () => void;
 }): React.ReactElement {
     const [sheetState, setSheetState] = useState<SheetState>({ step: "loading-agents" });
+    const boxStatuses = useSyncExternalStore(client.subscribe, () => client.getSnapshot().boxStatuses);
+    const now = useMinuteClock();
     const [workdir, setWorkdir] = useState("");
     const [browserTools, setBrowserTools] = useState(false);
     const [showBack, setShowBack] = useState(false);
@@ -629,6 +678,7 @@ export function NewSessionSheet({
                                     >
                                         <strong>{agentName(agent)}</strong>
                                         <span>{agentStatus(agent)}</span>
+                                        <BoxUsage status={boxStatuses[agent.device_id]} now={now} />
                                     </button>
                                 ))}
                             </div>
@@ -639,6 +689,7 @@ export function NewSessionSheet({
                 {folderState && (
                     <>
                         <p>Start on {agentName(folderState.agent)}</p>
+                        <BoxUsage status={boxStatuses[folderState.agent.device_id]} now={now} />
                         {folderState.folders === undefined ? (
                             <div role="status">
                                 <span className="mj_Spinner" aria-hidden="true" /> Loading recent folders…

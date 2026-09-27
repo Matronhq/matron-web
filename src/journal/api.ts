@@ -6,6 +6,8 @@ Please see LICENSE files in the repository root for full details.
 */
 
 import {
+    type BoxStatus,
+    type BoxStatusLimitLine,
     type DeviceDTO,
     type DevicesResponse,
     endpointUrl,
@@ -54,6 +56,70 @@ function electronBridge(): JournalElectron | undefined {
     return (window as Window & { electron?: JournalElectron }).electron;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isCount(value: unknown): value is number {
+    return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+
+function parseBoxActivity(raw: unknown): BoxStatus["activity"] | undefined {
+    if (!isRecord(raw) || !isCount(raw.live_sessions)) return undefined;
+    const lastHour = Array.isArray(raw.last_hour) ? raw.last_hour : [];
+    const entries = lastHour.flatMap((entry: unknown) => {
+        if (!isRecord(entry) || typeof entry.path !== "string" || !entry.path || !isCount(entry.sessions)) return [];
+        return [{ path: entry.path, sessions: entry.sessions }];
+    });
+    return { live_sessions: raw.live_sessions, last_hour: entries };
+}
+
+function parseBoxLimits(raw: unknown): BoxStatus["limits"] | undefined {
+    if (!isRecord(raw) || !Array.isArray(raw.lines)) return undefined;
+    if (typeof raw.as_of !== "number" || !Number.isFinite(raw.as_of)) return undefined;
+    const lines = raw.lines.flatMap((line: unknown): BoxStatusLimitLine[] => {
+        if (!isRecord(line)) return [];
+        if (typeof line.id !== "string" || !line.id || typeof line.label !== "string" || !line.label) return [];
+        if (typeof line.percent !== "number" || !Number.isFinite(line.percent)) return [];
+        const parsed: BoxStatusLimitLine = { id: line.id, label: line.label, percent: line.percent };
+        if (typeof line.resets === "string" && line.resets) parsed.resets = line.resets;
+        if (typeof line.resets_at === "string" && line.resets_at) parsed.resets_at = line.resets_at;
+        return [parsed];
+    });
+    if (lines.length === 0) return undefined;
+    return { as_of: raw.as_of, lines };
+}
+
+function parseBoxDisk(raw: unknown): BoxStatus["disk"] | undefined {
+    if (!isRecord(raw) || !isCount(raw.free_bytes) || !isCount(raw.total_bytes)) return undefined;
+    if (raw.total_bytes === 0 || raw.free_bytes > raw.total_bytes) return undefined;
+    return { free_bytes: raw.free_bytes, total_bytes: raw.total_bytes };
+}
+
+function parseBoxAccount(raw: unknown): BoxStatus["account"] | undefined {
+    if (!isRecord(raw) || typeof raw.email !== "string" || !raw.email) return undefined;
+    return { email: raw.email };
+}
+
+// A box's capacity report — GET /devices `status`, or a live `box_status` frame (whose extra
+// `kind`/`device_id` fields are simply ignored here). `reported_at` is required; every block is
+// optional and dropped on its own when malformed, so one bad block never hides the others.
+export function parseBoxStatus(raw: unknown): BoxStatus | undefined {
+    if (!isRecord(raw)) return undefined;
+    if (typeof raw.reported_at !== "number" || !Number.isFinite(raw.reported_at)) return undefined;
+    const activity = parseBoxActivity(raw.activity);
+    const limits = parseBoxLimits(raw.limits);
+    const disk = parseBoxDisk(raw.disk);
+    const account = parseBoxAccount(raw.account);
+    return {
+        reported_at: raw.reported_at,
+        ...(activity ? { activity } : {}),
+        ...(limits ? { limits } : {}),
+        ...(disk ? { disk } : {}),
+        ...(account ? { account } : {}),
+    };
+}
+
 type DeviceParseResult = { device: DeviceDTO; reasons: [] } | { reasons: string[] };
 
 function parseDevice(raw: unknown): DeviceParseResult {
@@ -71,6 +137,8 @@ function parseDevice(raw: unknown): DeviceParseResult {
     if (typeof device.is_self !== "boolean") reasons.push("invalid_is_self");
     if (reasons.length > 0) return { reasons };
 
+    // A malformed or missing `status` never rejects the device — the sheet just shows no usage.
+    const status = parseBoxStatus(device.status);
     return {
         device: {
             device_id: device.device_id,
@@ -79,6 +147,7 @@ function parseDevice(raw: unknown): DeviceParseResult {
             last_seen_at: device.last_seen_at,
             connected: device.connected,
             is_self: device.is_self,
+            ...(status ? { status } : {}),
         } as DeviceDTO,
         reasons: [],
     };

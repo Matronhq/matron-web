@@ -17,12 +17,15 @@ import { JournalConnection } from "../../../src/journal/connection";
 import { JournalDatabase } from "../../../src/journal/database";
 import { TextDecoder as NodeTextDecoder, TextEncoder as NodeTextEncoder } from "node:util";
 import {
+    type BoxStatus,
     type ClientState,
     type Conversation,
+    type DeviceDTO,
     type JournalEphemeralFrame,
     type JournalEvent,
     type PendingMessage,
     type SearchHit,
+    type ServerFrame,
     type Session,
 } from "../../../src/journal/types";
 
@@ -88,6 +91,7 @@ interface ClientInternals {
         media?: (mediaId: string) => Promise<Blob>;
         answerAgentSpawn?: (requestId: string, decision: "approve" | "deny", signal?: AbortSignal) => Promise<void>;
         search?: (query: string, limit?: number, signal?: AbortSignal) => Promise<{ hits: SearchHit[] }>;
+        devices?: () => Promise<{ devices: DeviceDTO[] }>;
     };
     connection?: {
         send: ReturnType<typeof jest.fn>;
@@ -119,6 +123,7 @@ interface ClientInternals {
     uploadPendingAttachment(message: PendingMessage, file: File, owner: unknown): Promise<void>;
     handleEphemeral(frame: JournalEphemeralFrame): void;
     handleJournal(event: JournalEvent): Promise<void>;
+    handleFrame(frame: ServerFrame): Promise<void>;
 }
 
 function internals(client: MatronJournalClient): ClientInternals {
@@ -3654,5 +3659,124 @@ describe("MatronJournalClient searchMessages", () => {
         } finally {
             jest.useRealTimers();
         }
+    });
+});
+
+// Box status (protocol.md "Box status (`box_status`)"): the stored per-device capacity report
+// arrives twice — as `status` on GET /devices and as a live `{kind:'box_status'}` client frame.
+// The client keeps one row per device id; the live frame replaces the row wholesale.
+describe("box status", () => {
+    const REPORTED_AT = 1_790_543_772_640;
+    const STATUS: BoxStatus = {
+        reported_at: REPORTED_AT,
+        activity: { live_sessions: 5, last_hour: [{ path: "/srv/app", sessions: 2 }] },
+        limits: {
+            as_of: REPORTED_AT,
+            lines: [{ id: "session", label: "Session", percent: 13, resets_at: "2026-09-28T00:10:00.000Z" }],
+        },
+        disk: { free_bytes: 56_908_316_672, total_bytes: 1_979_120_929_996 },
+        account: { email: "dan@example.com" },
+    };
+    const AGENT: DeviceDTO = { device_id: 10, kind: "agent", name: "pat", connected: true, is_self: false };
+
+    function boxClient(devices: DeviceDTO[]): MatronJournalClient {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        state.state = signedInState(client);
+        state.api = { devices: jest.fn().mockResolvedValue({ devices }) };
+        return client;
+    }
+
+    it("starts with no box statuses", () => {
+        const client = new MatronJournalClient();
+        expect(client.getSnapshot().boxStatuses).toEqual({});
+    });
+
+    it("seeds boxStatuses from the roster's status field, keyed by device id", async () => {
+        const client = boxClient([
+            { ...AGENT, status: STATUS },
+            { device_id: 11, kind: "agent", name: "gene", connected: false, is_self: false },
+            { device_id: 1, kind: "client", connected: true, is_self: true },
+        ]);
+        const listener = jest.fn();
+        client.subscribe(listener);
+
+        await client.listAgents();
+
+        expect(client.getSnapshot().boxStatuses).toEqual({ 10: STATUS });
+        expect(listener).toHaveBeenCalled();
+    });
+
+    it("applies a box_status frame as a full replacement and moves the as-of time forward", async () => {
+        const client = boxClient([{ ...AGENT, status: STATUS }]);
+        await client.listAgents();
+        const listener = jest.fn();
+        client.subscribe(listener);
+
+        await internals(client).handleFrame({
+            kind: "box_status",
+            device_id: 10,
+            reported_at: REPORTED_AT + 60_000,
+            limits: { as_of: REPORTED_AT + 60_000, lines: [{ id: "session", label: "Session", percent: 14 }] },
+        } as unknown as ServerFrame);
+
+        expect(client.getSnapshot().boxStatuses[10]).toEqual({
+            reported_at: REPORTED_AT + 60_000,
+            limits: { as_of: REPORTED_AT + 60_000, lines: [{ id: "session", label: "Session", percent: 14 }] },
+        });
+        expect(client.getSnapshot().boxStatuses[10].disk).toBeUndefined();
+        expect(listener).toHaveBeenCalledTimes(1);
+    });
+
+    it("stores a frame for a box the roster has not listed yet", async () => {
+        const client = boxClient([]);
+
+        await internals(client).handleFrame({
+            kind: "box_status",
+            device_id: 12,
+            reported_at: REPORTED_AT,
+            disk: { free_bytes: 1, total_bytes: 2 },
+        } as unknown as ServerFrame);
+
+        expect(client.getSnapshot().boxStatuses).toEqual({
+            12: { reported_at: REPORTED_AT, disk: { free_bytes: 1, total_bytes: 2 } },
+        });
+    });
+
+    it("ignores a malformed box_status frame without touching state", async () => {
+        const client = boxClient([{ ...AGENT, status: STATUS }]);
+        await client.listAgents();
+        const before = client.getSnapshot();
+
+        await internals(client).handleFrame({
+            kind: "box_status",
+            device_id: "10",
+            reported_at: 1,
+        } as unknown as ServerFrame);
+        await internals(client).handleFrame({ kind: "box_status", device_id: 10 } as unknown as ServerFrame);
+        await internals(client).handleFrame({ kind: "box_status", reported_at: 1 } as unknown as ServerFrame);
+
+        expect(client.getSnapshot()).toBe(before);
+        expect(client.getSnapshot().boxStatuses).toEqual({ 10: STATUS });
+    });
+
+    it("does not let an older roster status overwrite a newer live frame", async () => {
+        const client = boxClient([{ ...AGENT, status: STATUS }]);
+        const newer: BoxStatus = { reported_at: REPORTED_AT + 5_000, activity: { live_sessions: 1, last_hour: [] } };
+
+        await internals(client).handleFrame({ kind: "box_status", device_id: 10, ...newer } as unknown as ServerFrame);
+        await client.listAgents();
+
+        expect(client.getSnapshot().boxStatuses[10]).toEqual(newer);
+    });
+
+    it("clears box statuses on logout", async () => {
+        const client = boxClient([{ ...AGENT, status: STATUS }]);
+        await client.listAgents();
+        expect(client.getSnapshot().boxStatuses[10]).toEqual(STATUS);
+
+        await client.logout();
+
+        expect(client.getSnapshot().boxStatuses).toEqual({});
     });
 });
