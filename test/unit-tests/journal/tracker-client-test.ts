@@ -8,7 +8,7 @@ Please see LICENSE files in the repository root for full details.
 import { webcrypto } from "node:crypto";
 
 import { MatronJournalClient } from "../../../src/journal/client";
-import type { ClientState, JournalEvent, TrackerItem } from "../../../src/journal/types";
+import type { ClientState, JournalEvent, Mission, MissionDetail, TrackerItem } from "../../../src/journal/types";
 
 // ── Fixtures ────────────────────────────────────────────────────────────────────────────────────
 
@@ -41,17 +41,50 @@ function item(over: Partial<TrackerItem> = {}): TrackerItem {
     };
 }
 
+function mission(over: Partial<Mission> = {}): Mission {
+    return {
+        id: "ms_1",
+        num: 5,
+        state: "open",
+        title: "Ship the tracker",
+        body: "",
+        close_summary: null,
+        closed_by: null,
+        closed_over_open_items: 0,
+        origin_convo_id: "c1",
+        created_by: "agent",
+        created_at: 1,
+        updated_at: 1,
+        last_milestone_at: null,
+        closed_at: null,
+        open_items: 0,
+        needs_you: 0,
+        conversations: 0,
+        milestones: 0,
+        last_milestone: null,
+        ...over,
+    };
+}
+
+function missionDetail(over: Partial<Mission> = {}): MissionDetail {
+    return { mission: mission(over), milestones: [], items: [], conversations: [] };
+}
+
 function marker(type: string, payload: Record<string, unknown>): JournalEvent {
     return { kind: "journal", seq: 1, convo_id: "c1", ts: 1, sender: "journal", type, payload };
 }
 
 // Tracker api surface used by the client's loaders/mutators. jest.fn() everything we touch.
 interface TrackerApiMock {
+    missions: jest.Mock;
     items: jest.Mock;
     item: jest.Mock;
+    mission: jest.Mock;
     postItemComment: jest.Mock;
     closeItem: jest.Mock;
     reopenItem: jest.Mock;
+    patchMission: jest.Mock;
+    closeMission: jest.Mock;
 }
 
 interface Internals {
@@ -85,29 +118,31 @@ describe("MatronJournalClient tracker view state", () => {
         }
     });
 
-    it("openTrackerView opens the inbox view", () => {
+    it("openTrackerView sets the requested view", () => {
         const { client } = makeClient();
 
-        client.openTrackerView({ view: "inbox" });
+        client.openTrackerView({ view: "missions" });
 
         expect(client.getSnapshot().trackerView).toEqual({
             open: true,
-            view: "inbox",
+            view: "missions",
             selectedItemId: undefined,
+            selectedMissionId: undefined,
         });
     });
 
-    it("openTrackerView merges the previous selection", () => {
+    it("openTrackerView defaults to the inbox view and merges the previous selection", () => {
         const { client } = makeClient({
-            trackerView: { open: true, view: "inbox", selectedItemId: 9 },
+            trackerView: { open: true, view: "missions", selectedMissionId: 9 },
         });
 
         client.openTrackerView({ itemId: 3 });
 
         expect(client.getSnapshot().trackerView).toEqual({
             open: true,
-            view: "inbox",
+            view: "missions",
             selectedItemId: 3,
+            selectedMissionId: 9,
         });
     });
 
@@ -121,6 +156,20 @@ describe("MatronJournalClient tracker view state", () => {
 
     // Markers are not followed while the pane is closed, so a cached detail kept across a close
     // could reopen with a stale status and live actions.
+    it("closeTrackerView drops the cached mission detail and orphans its in-flight load", async () => {
+        const { client, state } = makeClient({
+            trackerView: { open: true, view: "missions", selectedMissionId: 5 },
+            trackerMission: missionDetail({ num: 5 }),
+        });
+        state.api = { mission: jest.fn().mockResolvedValue(missionDetail({ num: 5 })) };
+
+        const inFlight = client.loadMission(5);
+        client.closeTrackerView();
+        await inFlight;
+
+        expect(client.getSnapshot().trackerMission).toBeNull();
+    });
+
     it("closeTrackerView drops the cached item detail and orphans its in-flight load", async () => {
         const { client, state } = makeClient({
             trackerView: { open: true, view: "inbox", selectedItemId: 7 },
@@ -160,9 +209,89 @@ describe("MatronJournalClient tracker view state", () => {
 
         expect(client.getSnapshot().trackerItem).toEqual(detail);
     });
+
+    it("openTrackerMission clears a cached detail when selecting a different mission", () => {
+        const { client } = makeClient({
+            trackerView: { open: true, view: "missions", selectedMissionId: 5 },
+            trackerMission: missionDetail({ num: 5 }),
+        });
+
+        client.openTrackerMission(8);
+
+        expect(client.getSnapshot().trackerMission).toBeNull();
+        expect(client.getSnapshot().trackerView?.selectedMissionId).toBe(8);
+    });
+
+    // F3: item and mission selection are mutually exclusive. A cross-kind deep link (item→mission)
+    // must clear the item selection AND its cache, or the retained item would win the pane's
+    // precedence and shadow the mission just opened.
+    it("openTrackerMission clears a live item selection and its cached detail", () => {
+        const { client } = makeClient({
+            trackerView: { open: true, view: "inbox", selectedItemId: 7 },
+            trackerItem: { item: item({ num: 7 }), comments: [] },
+        });
+
+        client.openTrackerMission(5);
+
+        const view = client.getSnapshot().trackerView;
+        expect(view?.view).toBe("missions");
+        expect(view?.selectedMissionId).toBe(5);
+        expect(view?.selectedItemId).toBeUndefined();
+        expect(client.getSnapshot().trackerItem).toBeNull();
+    });
+
+    it("openTrackerItem clears a live mission selection and its cached detail", () => {
+        const { client } = makeClient({
+            trackerView: { open: true, view: "missions", selectedMissionId: 5 },
+            trackerMission: missionDetail({ num: 5 }),
+        });
+
+        client.openTrackerItem(7);
+
+        const view = client.getSnapshot().trackerView;
+        expect(view?.view).toBe("inbox");
+        expect(view?.selectedItemId).toBe(7);
+        expect(view?.selectedMissionId).toBeUndefined();
+        expect(client.getSnapshot().trackerMission).toBeNull();
+    });
 });
 
 describe("MatronJournalClient tracker loaders", () => {
+    it("loadMissions writes the mission list into the store", async () => {
+        const { client, state } = makeClient();
+        state.api = { missions: jest.fn().mockResolvedValue({ missions: [mission()] }) };
+
+        await client.loadMissions();
+
+        expect(state.api.missions).toHaveBeenCalled();
+        expect(client.getSnapshot().missions).toEqual([mission()]);
+        expect(client.getSnapshot().trackerLoading).toBe(false);
+    });
+
+    // F2: mission markers restart loadMissions independently of the pane, so a slower earlier request
+    // must not overwrite a newer one — otherwise a closed/obsolete list resurrects.
+    it("loadMissions ignores a superseded concurrent load", async () => {
+        const { client, state } = makeClient();
+        let resolveStale!: (value: { missions: Mission[] }) => void;
+        const stalePending = new Promise<{ missions: Mission[] }>((resolve) => {
+            resolveStale = resolve;
+        });
+        state.api = {
+            missions: jest
+                .fn()
+                .mockReturnValueOnce(stalePending)
+                .mockResolvedValueOnce({ missions: [mission({ num: 9, title: "fresh" })] }),
+        };
+
+        const first = client.loadMissions(); // older request, still pending
+        await client.loadMissions(); // newer request resolves first → wins
+        expect(client.getSnapshot().missions?.map((m) => m.title)).toEqual(["fresh"]);
+
+        resolveStale({ missions: [mission({ num: 1, title: "stale" })] }); // older resolves — ignored
+        await first;
+        expect(client.getSnapshot().missions?.map((m) => m.title)).toEqual(["fresh"]);
+    });
+
     it("loadInbox fetches open items app-wide and writes the inbox", async () => {
         const { client, state } = makeClient();
         state.api = { items: jest.fn().mockResolvedValue({ items: [item()], next_cursor: null }) };
@@ -220,9 +349,9 @@ describe("MatronJournalClient tracker loaders", () => {
         expect(client.getSnapshot().trackerLoading).toBe(false);
     });
 
-    // F2: a slower earlier inbox load must not overwrite a newer one — a marker can restart loadInbox
-    // mid-pagination, and the older walk could otherwise finish last and restore rows the newer load
-    // already dropped.
+    // F2: like loadItem/loadMission, a slower earlier inbox load must not overwrite a newer one — a
+    // marker can restart loadInbox mid-pagination, and the older walk could otherwise finish last
+    // and restore rows the newer load already dropped.
     it("loadInbox ignores a superseded concurrent load", async () => {
         const { client, state } = makeClient();
         let resolveStale!: (value: { items: TrackerItem[]; next_cursor: null }) => void;
@@ -319,6 +448,26 @@ describe("MatronJournalClient tracker loaders", () => {
         expect(client.getSnapshot().itemLoadError).toEqual({ id: "7", message: "gone away" });
     });
 
+    it("loadMissions records its own error, which only the next missions load clears", async () => {
+        const { client, state } = makeClient();
+        state.api = {
+            missions: jest.fn().mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce({ missions: [] }),
+            items: jest.fn().mockResolvedValue({ items: [], next_cursor: null }),
+        };
+
+        await client.loadMissions();
+        expect(client.getSnapshot().missionsError).toBe("offline");
+
+        // A concurrent inbox success clears the shared banner error, not the missions list's own.
+        await client.loadInbox();
+        expect(client.getSnapshot().trackerError).toBeUndefined();
+        expect(client.getSnapshot().missionsError).toBe("offline");
+
+        await client.loadMissions();
+        expect(client.getSnapshot().missionsError).toBeUndefined();
+        expect(client.getSnapshot().missions).toEqual([]);
+    });
+
     it("loadItem populates the open item detail", async () => {
         const { client, state } = makeClient();
         const detail = { item: item({ num: 7 }), comments: [] };
@@ -351,11 +500,73 @@ describe("MatronJournalClient tracker loaders", () => {
         expect(client.getSnapshot().trackerItem).toEqual(current);
     });
 
+    it("loadMission populates the open mission detail", async () => {
+        const { client, state } = makeClient();
+        const detail = missionDetail({ num: 5 });
+        state.api = { mission: jest.fn().mockResolvedValue(detail) };
+
+        await client.loadMission(5);
+
+        expect(state.api.mission).toHaveBeenCalledWith(5);
+        expect(client.getSnapshot().trackerMission).toEqual(detail);
+    });
+
+    it("loadMission records its own error keyed by mission, which only a successful mission load clears", async () => {
+        const { client, state } = makeClient();
+        state.api = {
+            missions: jest.fn().mockResolvedValue({ missions: [] }),
+            mission: jest
+                .fn()
+                .mockRejectedValueOnce(new Error("gone away"))
+                .mockResolvedValueOnce(missionDetail({ num: 5 })),
+        };
+
+        await client.loadMission(5);
+        expect(client.getSnapshot().missionLoadError).toEqual({ id: "5", message: "gone away" });
+        expect(client.getSnapshot().trackerMission).toBeUndefined();
+
+        // A missions-list load clears the shared banner error but not the mission's own.
+        await client.loadMissions();
+        expect(client.getSnapshot().trackerError).toBeUndefined();
+        expect(client.getSnapshot().missionLoadError).toEqual({ id: "5", message: "gone away" });
+
+        await client.loadMission(5);
+        expect(client.getSnapshot().missionLoadError).toBeUndefined();
+        expect(client.getSnapshot().trackerMission?.mission.num).toBe(5);
+    });
+
+    it("keeps the mission load error while a retry is in flight", async () => {
+        const { client, state } = makeClient();
+        let resolveRetry!: (value: unknown) => void;
+        state.api = {
+            mission: jest
+                .fn()
+                .mockRejectedValueOnce(new Error("gone away"))
+                .mockReturnValueOnce(new Promise((resolve) => (resolveRetry = resolve))),
+        };
+
+        await client.loadMission(5);
+        const retry = client.loadMission(5);
+        expect(client.getSnapshot().missionLoadError).toEqual({ id: "5", message: "gone away" });
+
+        resolveRetry(missionDetail({ num: 5 }));
+        await retry;
+        expect(client.getSnapshot().missionLoadError).toBeUndefined();
+    });
+
+    it("keys the mission load error without a leading #, so it matches a numeric selection", async () => {
+        const { client, state } = makeClient();
+        state.api = { mission: jest.fn().mockRejectedValue(new Error("gone away")) };
+
+        await client.loadMission("#5");
+        expect(client.getSnapshot().missionLoadError).toEqual({ id: "5", message: "gone away" });
+    });
+
     it("surfaces a tracker error and stops loading when a fetch rejects", async () => {
         const { client, state } = makeClient();
-        state.api = { items: jest.fn().mockRejectedValue(new Error("offline")) };
+        state.api = { missions: jest.fn().mockRejectedValue(new Error("offline")) };
 
-        await client.loadInbox();
+        await client.loadMissions();
 
         expect(client.getSnapshot().trackerError).toBe("offline");
         expect(client.getSnapshot().trackerLoading).toBe(false);
@@ -414,6 +625,74 @@ describe("MatronJournalClient tracker mutations", () => {
         await client.commentItem(1, { body: "retry me" }, "stable-key-123");
 
         expect(state.api.postItemComment).toHaveBeenCalledWith(1, { body: "retry me" }, "stable-key-123");
+    });
+
+    // Mission rows show item-derived counts, so an item write refreshes a loaded missions list too.
+    it("closeTrackerItem refreshes a loaded missions list", async () => {
+        const { client, state } = makeClient({
+            trackerView: { open: true, view: "inbox", selectedItemId: 1 },
+            missions: [mission()],
+        });
+        state.api = {
+            closeItem: jest.fn().mockResolvedValue({}),
+            item: jest.fn().mockResolvedValue({ item: item({ state: "closed" }), comments: [] }),
+            missions: jest.fn().mockResolvedValue({ missions: [] }),
+        };
+
+        await client.closeTrackerItem(1, "done");
+
+        expect(state.api.missions).toHaveBeenCalledTimes(1);
+    });
+
+    it("closeTrackerMission calls the api then refetches the mission and the loaded list", async () => {
+        const { client, state } = makeClient({
+            trackerView: { open: true, view: "missions", selectedMissionId: 5 },
+            trackerMission: missionDetail(),
+            missions: [mission()],
+        });
+        state.api = {
+            closeMission: jest.fn().mockResolvedValue({}),
+            mission: jest.fn().mockResolvedValue(missionDetail({ state: "closed" })),
+            missions: jest.fn().mockResolvedValue({ missions: [] }),
+        };
+
+        await client.closeTrackerMission("ms_1", "wrapped up");
+
+        expect(state.api.closeMission).toHaveBeenCalledWith("ms_1", { summary: "wrapped up" }, expect.any(String));
+        expect(state.api.mission).toHaveBeenCalledWith("ms_1");
+        expect(state.api.missions).toHaveBeenCalled();
+    });
+
+    it.each([
+        ["saveMissionEdits", (client: MatronJournalClient) => client.saveMissionEdits("ms_1", { title: "t" })],
+        ["closeTrackerMission", (client: MatronJournalClient) => client.closeTrackerMission("ms_1", "done")],
+    ])("%s does not supersede the load of a mission selected while the write was in flight", async (_name, run) => {
+        const { client, state } = makeClient({
+            trackerView: { open: true, view: "missions", selectedMissionId: 5 },
+            trackerMission: missionDetail(),
+        });
+        let landWrite!: () => void;
+        const write = new Promise((resolve) => {
+            landWrite = () => resolve({});
+        });
+        state.api = {
+            patchMission: jest.fn().mockReturnValue(write),
+            closeMission: jest.fn().mockReturnValue(write),
+            mission: jest.fn().mockResolvedValue(missionDetail({ id: "ms_9", num: 9 })),
+            missions: jest.fn(),
+        };
+
+        const pending = run(client);
+        // Back, then open #9 while the write is still in flight; the pane's effect loads #9.
+        client.openTrackerMission(9);
+        const nine = client.loadMission(9);
+        landWrite();
+
+        await expect(pending).resolves.toBe(true);
+        await nine;
+        expect(state.api.mission).toHaveBeenCalledTimes(1);
+        expect(state.api.mission).toHaveBeenCalledWith(9);
+        expect(client.getSnapshot().trackerMission?.mission?.num).toBe(9);
     });
 
     // F2: the draft-preservation contract lives in the return value — true only on a confirmed write,
@@ -599,6 +878,80 @@ describe("MatronJournalClient handleTrackerMarker (WS invalidation)", () => {
         await flush();
 
         expect(state.api.items).not.toHaveBeenCalled();
+    });
+
+    it("refetches the open mission and the loaded list on a matching mission marker", async () => {
+        const { state } = makeClient({
+            trackerView: { open: true, view: "missions", selectedMissionId: 5 },
+            trackerMission: missionDetail({ num: 5 }),
+            missions: [mission()],
+        });
+        state.api = {
+            mission: jest.fn().mockResolvedValue(missionDetail({ num: 5 })),
+            missions: jest.fn().mockResolvedValue({ missions: [] }),
+        };
+
+        state.handleTrackerMarker(marker("mission", { num: 5, action: "updated" }));
+        await flush();
+
+        expect(state.api.mission).toHaveBeenCalledWith(5);
+        jest.advanceTimersByTime(250);
+        expect(state.api.missions).toHaveBeenCalled();
+    });
+
+    it("refetches the parent mission on a milestone marker carrying its mission_num", async () => {
+        const { state } = makeClient({
+            trackerView: { open: true, view: "missions", selectedMissionId: 5 },
+            trackerMission: missionDetail({ num: 5 }),
+            missions: [mission()],
+        });
+        state.api = {
+            mission: jest.fn().mockResolvedValue(missionDetail({ num: 5 })),
+            missions: jest.fn().mockResolvedValue({ missions: [] }),
+        };
+
+        state.handleTrackerMarker(marker("milestone", { num: 12, mission_num: 5, action: "created" }));
+        await flush();
+
+        expect(state.api.mission).toHaveBeenCalledWith(5);
+        jest.advanceTimersByTime(250);
+        expect(state.api.missions).toHaveBeenCalled();
+    });
+
+    it("coalesces a burst of mission and milestone markers into one missions refetch", async () => {
+        const { state } = makeClient({ trackerView: { open: true, view: "missions" }, missions: [mission()] });
+        state.api = { mission: jest.fn(), missions: jest.fn().mockResolvedValue({ missions: [] }) };
+
+        state.handleTrackerMarker(marker("mission", { num: 5, action: "updated" }));
+        state.handleTrackerMarker(marker("milestone", { num: 12, mission_num: 5, action: "created" }));
+        state.handleTrackerMarker(marker("milestone", { num: 13, mission_num: 6, action: "created" }));
+        expect(state.api.missions).not.toHaveBeenCalled();
+        jest.advanceTimersByTime(250);
+        await flush();
+
+        expect(state.api.missions).toHaveBeenCalledTimes(1);
+    });
+
+    it("refreshes the missions list and the open mission when an item marker lands", async () => {
+        const { state } = makeClient({
+            trackerView: { open: true, view: "missions", selectedMissionId: 5 },
+            trackerMission: missionDetail({ num: 5 }),
+            missions: [mission()],
+        });
+        state.api = {
+            item: jest.fn(),
+            mission: jest.fn().mockResolvedValue(missionDetail({ num: 5 })),
+            missions: jest.fn().mockResolvedValue({ missions: [] }),
+        };
+
+        state.handleTrackerMarker(marker("item", { num: 3, action: "closed" }));
+        state.handleTrackerMarker(marker("item", { num: 4, action: "commented" }));
+        jest.advanceTimersByTime(250);
+        await flush();
+
+        expect(state.api.missions).toHaveBeenCalledTimes(1);
+        expect(state.api.mission).toHaveBeenCalledTimes(1);
+        expect(state.api.mission).toHaveBeenCalledWith(5);
     });
 
     it("fires the marker refetch through handleJournal", async () => {
