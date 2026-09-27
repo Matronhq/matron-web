@@ -964,6 +964,14 @@ export function eventSnippet(type: string, payload: EventPayload): string {
         const label = num ? `🏁 Mission #${num}` : "🏁 Mission";
         return (title ? `${label}: ${title}` : label).slice(0, 120);
     }
+    if (type === "memory") {
+        // Memory marker (payload: {memory_id, action, created, by, name?, description?}); the name
+        // is absent across a privacy boundary. Mirrors MemoryNotice's timeline copy.
+        const name = asString(payload.name).trim();
+        const action = asString(payload.action);
+        const verb = action === "deleted" ? "deleted" : payload.created === true ? "saved" : "updated";
+        return (name ? `🧠 Memory ${verb}: ${name}` : `🧠 Memory ${verb}`).slice(0, 120);
+    }
     if (typeof payload.snippet === "string") return payload.snippet.slice(0, 120);
     if (type === "tool_output" && typeof payload.command === "string") return `$ ${payload.command}`.slice(0, 120);
     return `[${type}]`;

@@ -1573,8 +1573,9 @@ export class MatronJournalClient {
             });
         } catch (error) {
             if (this.api !== api || this.trackerMemoriesGen !== gen) return;
-            const message = errorMessage(error);
-            this.patch({ trackerError: message, memoriesError: message, trackerLoading: false });
+            // memoriesError only: the pane-wide banner would follow the user to the Inbox and
+            // Missions tabs, and against a journal that predates /memories the 404 is expected.
+            this.patch({ memoriesError: errorMessage(error), trackerLoading: false });
         }
     }
 

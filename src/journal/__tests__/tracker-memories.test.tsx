@@ -154,6 +154,30 @@ describe("MemoryDetail", () => {
         expect(client.saveMemory).not.toHaveBeenCalled();
     });
 
+    it("refuses a new memory whose name already exists instead of overwriting it", async () => {
+        const client = fakeClient({
+            getSnapshot: jest
+                .fn()
+                .mockReturnValue({ selectedConversationId: "c1", conversations: [], memories: [memory()] }),
+        });
+        const { container } = await mount(<MemoryDetail memory={null} client={client} onBack={jest.fn()} />);
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+        const [nameInput, descriptionInput] = Array.from(
+            container.querySelectorAll("input[type='text']"),
+        ) as HTMLInputElement[];
+        await act(async () => {
+            setter?.call(nameInput, "avoid-eric");
+            nameInput.dispatchEvent(new Event("input", { bubbles: true }));
+            setter?.call(descriptionInput, "Something else.");
+            descriptionInput.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+        await act(async () => {
+            (container.querySelector(".mj_TrackerConfirm_actions .mj_TrackerButton") as HTMLButtonElement).click();
+        });
+        expect(container.querySelector(".mj_TrackerMemoryForm_error")?.textContent).toMatch(/already exists/);
+        expect(client.saveMemory).not.toHaveBeenCalled();
+    });
+
     it("deletes behind a confirm", async () => {
         const client = fakeClient();
         const onBack = jest.fn();
@@ -188,6 +212,15 @@ describe("TrackerPane memories tab", () => {
         const { container: editor } = await mount(<TrackerPane client={client} state={editing} />);
         expect(editor.querySelector(".mj_TrackerMemoryForm")).not.toBeNull();
         expect(editor.querySelector(".mj_TrackerSection_header")?.textContent).toBe("avoid-eric");
+
+        const stale = {
+            ...base,
+            memoriesError: "HTTP 503",
+        } as unknown as ClientState;
+        const { container: withNotice } = await mount(<TrackerPane client={client} state={stale} />);
+        expect(withNotice.querySelector(".mj_TrackerStaleNotice")?.textContent).toMatch(/Couldn't refresh memories/);
+        expect(withNotice.querySelectorAll(".mj_TrackerMemoryRow")).toHaveLength(1);
+        expect(withNotice.querySelector(".mj_TrackerErrorBanner")).toBeNull();
 
         const inbox = { trackerView: { open: true, view: "inbox" }, inboxItems: [] } as unknown as ClientState;
         const fresh = fakeClient();

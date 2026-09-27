@@ -68,6 +68,12 @@ export function MemoryDetail({
             setError(problem);
             return;
         }
+        // PUT is an upsert: a new-memory form must not silently replace a memory (an agent's, say)
+        // that already has this name. Check the loaded list; the editor for it is one tap away.
+        if (isNew && (client.getSnapshot().memories ?? []).some((existing) => existing.name === name)) {
+            setError(`A memory named "${name}" already exists — open it from the list to change it.`);
+            return;
+        }
         setError(null);
         setBusy(true);
         const ok = await client.saveMemory(name, { description: description.trim(), body, type });

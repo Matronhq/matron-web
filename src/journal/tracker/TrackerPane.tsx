@@ -223,12 +223,28 @@ export function TrackerPane({
             );
         }
         if (view === "memories") {
+            // A refresh that failed after a load keeps the list (loaders never clear data on
+            // failure) but says it may be out of date and offers a retry, as the item detail does.
             return (
-                <MemoriesList
-                    memories={state.memories ?? []}
-                    onOpenMemory={(name) => client.openTrackerMemory(name)}
-                    onNewMemory={() => client.openTrackerMemory("")}
-                />
+                <>
+                    {state.memoriesError ? (
+                        <div className="mj_TrackerStaleNotice" role="status">
+                            Couldn't refresh memories, so they may be out of date.{" "}
+                            <button
+                                type="button"
+                                className="mj_TrackerTextButton"
+                                onClick={() => void client.loadMemories()}
+                            >
+                                Try again
+                            </button>
+                        </div>
+                    ) : null}
+                    <MemoriesList
+                        memories={state.memories ?? []}
+                        onOpenMemory={(name) => client.openTrackerMemory(name)}
+                        onNewMemory={() => client.openTrackerMemory("")}
+                    />
+                </>
             );
         }
         return (
