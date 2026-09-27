@@ -3615,6 +3615,19 @@ export function isQueuedReleaseReply(
 
 const EMPTY_SPAWN_OUTCOMES: ReadonlyMap<string, EventPayload> = new Map();
 
+// A permission-decision reply is a prompt_reply targeting a permission_request
+// card. The card already renders the decision inline (answered/allowed/denied
+// via answeredPromptReplies), so its reply must NOT also render as a standalone
+// chat bubble — that duplicate reads as if the operator typed "Allow"/"Deny"
+// into the thread. Identified by target-seq provenance, mirroring
+// isQueuedReleaseReply: prompt_reply carries no self-identifying kind, so a
+// permission reply is only distinguishable by the permission_request it targets.
+export function isPermissionDecisionReply(event: JournalEvent, permissionRequestSeqs: ReadonlySet<number>): boolean {
+    if (event.type !== "prompt_reply") return false;
+    const targetSeq = asNumber(event.payload.target_seq, Number.NaN);
+    return permissionRequestSeqs.has(targetSeq);
+}
+
 export function EventContent({
     client,
     event,
@@ -4021,24 +4034,30 @@ function Timeline({
         | undefined
     >(undefined);
     const historyScrollRestored = useRef(false);
-    const { queuedReleasePromptSeqs, legacyQueuePromptSeqs } = useMemo(() => {
+    const { queuedReleasePromptSeqs, legacyQueuePromptSeqs, permissionRequestSeqs } = useMemo(() => {
         const queuedReleasePromptSeqs = new Set<number>();
         const legacyQueuePromptSeqs = new Set<number>();
+        const permissionRequestSeqs = new Set<number>();
         for (const event of state.events) {
+            if (event.type === "permission_request") {
+                permissionRequestSeqs.add(event.seq);
+                continue;
+            }
             if (event.type !== "prompt") continue;
             if (asString(event.payload.kind) === "queued_release") queuedReleasePromptSeqs.add(event.seq);
             else if (isLegacyQueuePrompt(event)) legacyQueuePromptSeqs.add(event.seq);
         }
-        return { queuedReleasePromptSeqs, legacyQueuePromptSeqs };
+        return { queuedReleasePromptSeqs, legacyQueuePromptSeqs, permissionRequestSeqs };
     }, [state.events]);
     const visibleEvents = useMemo(
         () =>
             state.events.filter(
                 (event) =>
                     !["read_marker", "edit", "session_status", "convo_meta"].includes(event.type) &&
-                    !isQueuedReleaseReply(event, queuedReleasePromptSeqs, legacyQueuePromptSeqs),
+                    !isQueuedReleaseReply(event, queuedReleasePromptSeqs, legacyQueuePromptSeqs) &&
+                    !isPermissionDecisionReply(event, permissionRequestSeqs),
             ),
-        [state.events, queuedReleasePromptSeqs, legacyQueuePromptSeqs],
+        [state.events, queuedReleasePromptSeqs, legacyQueuePromptSeqs, permissionRequestSeqs],
     );
     const timeline = useMemo(
         () =>
@@ -4187,10 +4206,12 @@ function Timeline({
         void client.loadOlderHistory();
     };
 
-    // The activity indicator ('Thinking' / 'Running …') rides a fire-and-forget ephemeral
-    // whose turn-end 'idle' frame is never replayed (lib/journal-publisher.js publishActivity),
-    // so a dropped final 'idle' would otherwise strand a stale "Thinking" until the next turn.
-    // Gate on the durable, replayed run-state: only show it while the session is actually running.
+    // The activity indicator ('Thinking' / 'Running …') and the fire-and-forget tool-call cards
+    // both ride ephemeral frames whose turn-end 'idle'/'end' frame is never replayed
+    // (lib/journal-publisher.js publishActivity), so a dropped final frame would otherwise strand
+    // a stale "Thinking" or a dangling 'running' tool card until the next turn. Gate both
+    // on the durable, replayed run-state: only render while the session is actually running; the
+    // model reconcile (refreshConversations) prunes any tool card that lingers in the map.
     const sessionRunning = client.selectedConversation()?.session_state === "running";
 
     const timelineMain = (
@@ -4292,9 +4313,10 @@ function Timeline({
                                 </div>
                             </li>
                         ))}
-                        {Object.values(state.toolStreams).map((stream) => (
-                            <ToolStream key={stream.messageRef} stream={stream} />
-                        ))}
+                        {sessionRunning &&
+                            Object.values(state.toolStreams).map((stream) => (
+                                <ToolStream key={stream.messageRef} stream={stream} />
+                            ))}
                         {state.activity && state.activity.state !== "idle" && sessionRunning && (
                             <li className="mx_WhoIsTypingTile mj_Activity">
                                 <span />
