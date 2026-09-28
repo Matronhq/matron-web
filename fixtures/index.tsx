@@ -26,12 +26,14 @@ import "@fontsource/inter/latin-600.css";
 
 import { archiveStore, favoriteStore, MatronJournalClient, pinnedStore, unreadStore } from "../src/journal/client";
 import { MatronApp } from "../src/journal/components";
-import type { ClientState, Conversation, JournalEvent, Session } from "../src/journal/types";
+import type { ClientState, Conversation, JournalEvent, Session, SessionStatus } from "../src/journal/types";
 import { SHOW_THE_WORK_KEY } from "../src/journal/show-the-work";
 import { v6Fixture, type V6Scenario } from "./v6-thread";
+import { REAL_STATUS, subagentFixture, type SubagentScenario } from "./subagents";
 import "../src/journal/shell.pcss";
 import "../src/journal/journal.pcss";
 import "../src/journal/tracker.pcss";
+import "../src/journal/subagents.pcss";
 
 const SESSION: Session = {
     serverUrl: "https://journal.example",
@@ -315,8 +317,40 @@ if (v6Scenario) {
     );
 }
 
+// Subagent cards + sidebar child rows: `?sub=thread|child|codex` swaps in a parent session with
+// Claude subagents and a Codex exec child (fixtures/subagents.ts).
+const subScenario = v6Params.get("sub") as SubagentScenario | null;
+if (subScenario) {
+    const fixture = subagentFixture(subScenario);
+    state.conversations = fixture.conversations;
+    state.selectedConversationId = fixture.selected;
+    state.events = fixture.events;
+    state.activity = fixture.activity;
+    state.toolStreams = {};
+    (client as unknown as { conversationEvents: (id: string) => Promise<JournalEvent[]> }).conversationEvents = async (
+        id: string,
+    ) => fixture.childEvents[id] ?? [];
+    (client as unknown as { refreshConversationTail: () => Promise<boolean> }).refreshConversationTail = async () =>
+        false;
+}
+
 // The client keeps its state private; mirror the test harness's internal override.
 (client as unknown as { state: ClientState }).state = state;
+
+// A real helper thread (`?sub=real-*`): the header's context gauge goes through the client's own
+// helper correction (statusFor), from the statuses an older bridge publishes.
+if (subScenario === "real-claude" || subScenario === "real-tests") {
+    const internals = client as unknown as {
+        statuses: Map<string, SessionStatus>;
+        statusFor: (id: string) => SessionStatus | undefined;
+    };
+    internals.statuses.set("p1", REAL_STATUS.parent);
+    internals.statuses.set(state.selectedConversationId!, REAL_STATUS.child);
+    state.sessionStatus =
+        typeof internals.statusFor !== "function" || new URLSearchParams(location.search).has("rawctx")
+            ? REAL_STATUS.child
+            : internals.statusFor.call(client, state.selectedConversationId!);
+}
 
 // Stub the new-session data path so a driver click on "New session" reaches the folders
 // form (agent → recent folders) where the themed inputs / checkbox / Start live.

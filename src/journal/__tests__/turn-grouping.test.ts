@@ -28,6 +28,7 @@ import {
     stepsOf,
     type TurnItem,
     turnIssues,
+    sameCall,
 } from "../turn-grouping";
 
 const S = (id: string, tool: string, input: Step["input"], o: Partial<Step> = {}): Step => ({
@@ -392,5 +393,22 @@ describe("the 210-step stress turn", () => {
             "Updated the branch 3×",
             "Asked 2 helpers",
         ]);
+    });
+});
+
+describe("sameCall", () => {
+    it("matches a live step to the journaled step it stands for, cut-off commands included", () => {
+        const journaled = S("a", "Bash", { command: "pnpm vitest run src/journal/a.test.ts --reporter dot…" });
+        expect(
+            sameCall(
+                journaled,
+                S("live", "Bash", { command: "pnpm vitest run src/journal/a.test.ts --reporter dot --silent" }),
+            ),
+        ).toBe(true);
+        expect(sameCall(journaled, S("live", "Bash", { command: "pnpm tsc --noEmit" }))).toBe(false);
+        expect(
+            sameCall(S("a", "Bash", { command: "pnpm test" }), S("b", "Bash", { command: "pnpm test --watch" })),
+        ).toBe(false);
+        expect(sameCall(S("r", "Read", { path: "/a.ts" }), S("g", "Grep", { pattern: "/a.ts" }))).toBe(false);
     });
 });

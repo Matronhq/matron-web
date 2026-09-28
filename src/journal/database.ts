@@ -15,6 +15,7 @@ import {
     type PendingMessage,
     type SnapshotResponse,
 } from "./types";
+import { eventToStep } from "./turn-assembly";
 
 const DATABASE_VERSION = 1;
 const CURSOR_KEY = "cursor";
@@ -256,11 +257,20 @@ export class JournalDatabase {
         validateSnapshotRows(snapshot);
         const transaction = this.database.transaction(["meta", "conversations", "events", "outbox"], "readwrite");
         const conversations = transaction.objectStore("conversations");
+        const existingRows = (await requestResult(conversations.getAll())) as Conversation[];
         const existingParents = new Map(
-            ((await requestResult(conversations.getAll())) as Conversation[]).map((conversation) => {
+            existingRows.map((conversation) => {
                 const parentId = coerceParentId(conversation.parent_convo_id);
                 return [conversation.id, parentId === conversation.id ? null : parentId] as const;
             }),
+        );
+        // The recorded last step survives a snapshot of the very state it was recorded in (same
+        // last_seq, snippet and last_ts). Anything newer drops it: the preview then reads the
+        // snippet, behind the raw-text guard.
+        const existingSteps = new Map(
+            existingRows
+                .filter((conversation) => conversation.last_step)
+                .map((conversation) => [conversation.id, conversation] as const),
         );
         conversations.clear();
         transaction.objectStore("events").clear();
@@ -273,8 +283,15 @@ export class JournalDatabase {
         for (const summary of snapshot.conversations) {
             let incomingParent = coerceParentId(summary.parent_convo_id);
             if (incomingParent === summary.id) incomingParent = null;
+            const previous = existingSteps.get(summary.id);
+            const keepStep =
+                previous &&
+                previous.last_seq === summary.last_seq &&
+                previous.snippet === summary.snippet &&
+                previous.last_ts === (summary.last_ts ?? summary.created_at);
             conversations.put({
                 ...summary,
+                ...(keepStep ? { last_step: previous.last_step } : {}),
                 parent_convo_id: existingParents.get(summary.id) ?? incomingParent ?? null,
                 last_ts: summary.last_ts ?? summary.created_at,
                 read_up_to_seq: summary.read_up_to_seq ?? (summary.unread_count === 0 ? summary.last_seq : 0),
@@ -377,7 +394,17 @@ export class JournalDatabase {
             // message" line can never dangle out of sync with the row's slot.
             conversation.last_ts = Math.max(conversation.last_ts ?? 0, event.ts);
             conversation.snippet = eventSnippet(event.type, event.payload);
-            if (!event.sender.startsWith("user:")) conversation.unread_count += 1;
+            const step = event.sender.startsWith("user:") ? null : eventToStep(event);
+            if (step) {
+                // Capped: only a sentence is ever derived from it (the last argument of a read).
+                const input = Object.fromEntries(
+                    Object.entries(step.input).map(([key, value]) => [key, String(value ?? "").slice(0, 300)]),
+                );
+                conversation.last_step = { tool: step.tool, input };
+            } else delete conversation.last_step;
+            if (!event.sender.startsWith("user:")) {
+                conversation.unread_count += 1;
+            }
         } else if (event.type === "read_marker") {
             const upToSeq = typeof event.payload.up_to_seq === "number" ? event.payload.up_to_seq : 0;
             conversation.read_up_to_seq = Math.max(conversation.read_up_to_seq, upToSeq);

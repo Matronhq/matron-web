@@ -49,8 +49,8 @@ import {
     ArchiveFileIcon,
     AudioFileIcon,
     FileEditIcon,
-    FailedIcon,
     FileIcon,
+    FailedIcon,
     ImageFileIcon,
     InactiveIcon,
     InterruptedIcon,
@@ -116,7 +116,10 @@ import {
 import { noticeText, TurnCard, type TurnCardMode, TurnErrorRow } from "./turn-card";
 import { V6Icon } from "./v6-icons";
 import { applyPaneBand } from "./pane-width";
-import { type Step, stepsOf } from "./turn-grouping";
+import { sameCall, type Step, stepSentence, stepsOf } from "./turn-grouping";
+import { helperForStep, helpersByTurn, SubagentCard } from "./subagent-card";
+import { HeadlineList } from "./headline-list";
+import { previewLine } from "./activity-text";
 import {
     compactTokens,
     formatSampleAge,
@@ -948,6 +951,28 @@ function OutcomeGlyph({
     return <InactiveIcon className={`${className} mj_InactiveOutcomeGlyph`} />;
 }
 
+/**
+ * A subagent row's status glyph, one per state in the v6 language: the turn card's spinner while
+ * running, a check once completed, a cross when it failed, an amber dot when interrupted, a
+ * muted dot when the state is unknown.
+ */
+function SubRowStatus({ conversation }: { conversation: Conversation }): React.ReactElement {
+    const classification = classifyOutcome(conversation);
+    return (
+        <span className={`mj_RoomListSubStatus mj_RoomListSubStatus_${classification}`} aria-hidden="true">
+            {classification === "running" ? (
+                <span className="mj_TurnCard_spinner" />
+            ) : classification === "completed" ? (
+                <V6Icon name="check" />
+            ) : classification === "failed" ? (
+                <V6Icon name="x" />
+            ) : (
+                <span className="mj_RoomListSubStatus_dot" />
+            )}
+        </span>
+    );
+}
+
 // Debounce keystrokes before firing a message-content search request.
 const MESSAGE_SEARCH_DEBOUNCE_MS = 200;
 
@@ -1041,6 +1066,7 @@ function ConversationList({
     state: ClientState;
     width: number;
 }): React.ReactElement {
+    const [developerView] = useShowTheWork();
     const [query, setQuery] = useState("");
     const [tab, setTab] = useState<"active" | "favorites" | "archived">("active");
     const [accountOpen, setAccountOpen] = useState(false);
@@ -1338,6 +1364,7 @@ function ConversationList({
     const renderConversation = (
         conversation: ClientState["conversations"][number],
         isSubagent = false,
+        isLastSubagent = false,
     ): React.ReactElement => {
         const selected = state.selectedConversationId === conversation.id;
         const overrideUnread = state.unreadOverrideIds.has(conversation.id) && conversation.unread_count === 0;
@@ -1345,6 +1372,12 @@ function ConversationList({
         const name = conversationTitle(conversation);
         const outcomeStatus = isSubagent ? accessibleOutcome(classifyOutcome(conversation)) : undefined;
         const relativeTimestamp = formatRelativeDay(conversation.last_ts ?? conversation.created_at, renderNow);
+        // Developer view off: the preview never shows a command line or markdown source — a tool
+        // call reads as its activity ("Reading paths.py…"), anything else as one line of prose.
+        // Developer view on keeps the server snippet as before.
+        const preview = developerView
+            ? conversation.snippet
+            : previewLine({ ...conversation, worker: workerKind(conversation) });
         // When this parent's subagent rows are collapsed, surface a subtle count of the hidden
         // child rows so the collapse stays discoverable on the row itself. Gate on the CANONICAL
         // index (hasSubagentChildRows) — NOT an independent running-child count — so it agrees with
@@ -1371,7 +1404,9 @@ function ConversationList({
         return (
             <div className="mj_RoomListItem_wrapper" role="listitem" key={conversation.id}>
                 <button
-                    className={`mj_RoomListItem${selected ? " mj_RoomListItem_selected" : ""}${isSubagent ? " mj_RoomListItem_sub" : ""}`}
+                    className={`mj_RoomListItem${selected ? " mj_RoomListItem_selected" : ""}${
+                        isSubagent ? ` mj_RoomListItem_sub${isLastSubagent ? " mj_RoomListItem_subLast" : ""}` : ""
+                    }`}
                     type="button"
                     aria-current={selected ? "page" : undefined}
                     aria-label={`Open ${isSubagent ? "subagent" : "room"} ${name}${outcomeStatus ? `, ${outcomeStatus}` : ""}, last activity ${relativeTimestamp}${overrideUnread ? ", marked unread" : ""}${
@@ -1422,18 +1457,12 @@ function ConversationList({
                         if (event.pointerType === "touch") cancelLongPress();
                     }}
                 >
-                    {/* §118 leading-glyph precedence. Subagent rows identify the worker and its
-                        live/terminal outcome. Parent rows keep the shipped pin-or-status behaviour
-                        (star renders separately before the meta). */}
+                    {/* §118 leading-glyph precedence. Subagent rows show one status glyph (the v6
+                        spinner while running, a check once done) on a tree connector from the
+                        parent. Parent rows keep the shipped pin-or-status behaviour (star renders
+                        separately before the meta). */}
                     {isSubagent ? (
-                        <span className="mj_RoomListWorkerGlyphs" aria-hidden="true">
-                            <WorkerMark conversation={conversation} className="mj_WorkerMark mj_RoomListWorkerMark" />
-                            <OutcomeGlyph
-                                conversation={conversation}
-                                className="mj_RoomListOutcomeGlyph"
-                                spinnerClassName="mj_RoomListSubSpinner"
-                            />
-                        </span>
+                        <SubRowStatus conversation={conversation} />
                     ) : state.pinnedIds.has(conversation.id) ? (
                         <span className="mj_RoomListPinGlyph">
                             <PinIcon aria-hidden />
@@ -1448,15 +1477,10 @@ function ConversationList({
                     )}
                     <span className={`mj_RoomListText${unread ? " mj_RoomListText_unread" : ""}`}>
                         <span className="mj_RoomListName" title={name} data-testid="room-name">
-                            {isSubagent && (
-                                <span className="mj_RoomListSubArrow" aria-hidden="true">
-                                    ↳{" "}
-                                </span>
-                            )}
                             {name}
                         </span>
-                        <span className="mj_RoomListPreview" title={conversation.snippet}>
-                            {conversation.snippet}
+                        <span className="mj_RoomListPreview" title={preview}>
+                            {preview}
                         </span>
                     </span>
                     {state.favoriteIds.has(conversation.id) && (
@@ -1695,7 +1719,9 @@ function ConversationList({
                                                           !state.archivedIds.has(child.id) &&
                                                           childSidebarPlacement(child, sidebarIndex) === "nested",
                                                   )
-                                                  .map((child) => renderConversation(child, true)),
+                                                  .map((child, index, list) =>
+                                                      renderConversation(child, true, index === list.length - 1),
+                                                  ),
                                           ])}
                                     {tab === "active" && !hasAnyActive && archivedTotal === 0 && (
                                         <p className="mj_RoomListEmpty">Your agent conversations will appear here.</p>
@@ -4199,6 +4225,63 @@ export interface TurnLive {
     runningSince?: number;
 }
 
+const NO_HELPERS: readonly Conversation[] = [];
+
+/** A helper thread's newest turns (with steps) whose headlines open expanded. */
+export const EXPANDED_HELPER_TURNS = 3;
+
+/** Developer view: a helper's card in the flat timeline, after the event it started at. */
+function DevHelperRow({ client, child }: { client: MatronJournalClient; child: Conversation }): React.ReactElement {
+    return (
+        <li className="mx_EventTile mx_EventTile_lastInSection mj_HelperTile" data-layout="bubble" data-self="false">
+            <div className="mx_EventTile_line">
+                <div className="mx_MTextBody mx_EventTile_content">
+                    <SubagentCard
+                        child={child}
+                        kind={workerKind(child)}
+                        source={client}
+                        onOpen={(id) => void client.selectConversation(id, { suppressNotFound: true })}
+                        renderDetail={() => null}
+                        renderMarkdown={(text, key) => (
+                            <MarkdownBody
+                                text={text}
+                                label={key}
+                                onTrackerLink={(kind, num) => client.openTrackerLink(kind, num)}
+                            />
+                        )}
+                        developerView
+                    />
+                </div>
+            </div>
+        </li>
+    );
+}
+
+/**
+ * Deep detail of a step the bridge reported as a text line (a subagent's Read / Grep / Bash
+ * indicator, a Codex generic item): its sentence, then — as for every deep detail in the v6
+ * card, the one place monospace appears — the command, path or pattern it ran on.
+ */
+function StepSentenceDetail({ step }: { step: Step }): React.ReactElement {
+    const target =
+        step.input.command ||
+        step.input.path ||
+        step.input.pattern ||
+        step.input.url ||
+        // A narration line that read as machine text (headlines.ts): its text, one click deep.
+        (step.id.startsWith("raw-") ? step.input.description : undefined);
+    return (
+        <div className="mj_TurnCard_detailText mj_StepDetail">
+            <p>{stepSentence(step)}</p>
+            {target && (
+                <div className="mj_StepDetail_target">
+                    <code>{target}</code>
+                </div>
+            )}
+        </div>
+    );
+}
+
 /**
  * One agent tile per operator turn (Show the work OFF): the turn card when the turn
  * has at least one step, then its break-throughs in the order they happened, then a
@@ -4213,10 +4296,22 @@ function AgentTurnRow({
     isReadOnly,
     resolvedAction,
     rowHandlers,
+    helpers = NO_HELPERS,
+    helperThread = null,
+    expandHeadlines = false,
 }: {
     client: MatronJournalClient;
     turn: Turn;
     live: TurnLive;
+    /**
+     * Set inside a helper's own thread (a Claude subagent or a Codex run): the steps read as a
+     * list of headlines instead of one collapsed turn card. The value is the helper's worker.
+     */
+    helperThread?: { worker: "claude" | "codex" | null } | null;
+    /** In a helper thread: open the headlines with the work in view (the newest turns). */
+    expandHeadlines?: boolean;
+    /** Child conversations (subagents, Codex runs) this turn started — one card each. */
+    helpers?: readonly Conversation[];
     answeredPromptReplies: ReadonlyMap<string, { choice?: string }>;
     spawnOutcomes: ReadonlyMap<string, EventPayload>;
     isReadOnly: boolean;
@@ -4227,23 +4322,54 @@ function AgentTurnRow({
     const first =
         turn.events.find((event) => event.sender.startsWith("agent:")) ??
         turn.events.find((event) => !isOperatorEvent(event));
+    const openHelper = useCallback(
+        (id: string) => void client.selectConversation(id, { suppressNotFound: true }),
+        [client],
+    );
     const hasCard = stepsOf(turn.items).length > 0 || Boolean(live.running);
     // A reply the prompt card already shows (a picked option) is not repeated; a free-text
     // reply the card cannot show stays visible, in order among the break-throughs.
     const breaks = [...turn.breaks, ...shownReplies(turn)].sort((left, right) => left.seq - right.seq);
-    const renderDetail = useCallback(
+    const renderStepDetail = useCallback(
         (step: Step): React.ReactNode => {
             const source = step.source as JournalEvent | undefined;
-            if (!source) return null;
+            // A narration line the headlines took for a command (headlines.ts): its own text.
+            if (!source) return step.id.startsWith("raw-") ? <StepSentenceDetail step={step} /> : null;
             if (source.type === "tool_output") return <ToolOutput client={client} event={source} defaultOpen />;
             if (source.type === "diff") return <DiffCard data={parseDiffPayload(source.payload)} />;
-            return (
-                <div className="mj_TurnCard_detailText">
-                    <MarkdownBody text={asString(source.payload.body)} label={String(source.seq)} />
-                </div>
-            );
+            return <StepSentenceDetail step={step} />;
         },
         [client],
+    );
+    const renderMarkdown = useCallback(
+        (text: string, key: string) => (
+            <MarkdownBody text={text} label={key} onTrackerLink={(kind, num) => client.openTrackerLink(kind, num)} />
+        ),
+        [client],
+    );
+    const renderDetail = useCallback(
+        (step: Step): React.ReactNode => {
+            // A helper step opens onto its helper: the same body as the helper's own card.
+            if (step.tool === "Task" || step.tool === "Agent") {
+                const helper = helperForStep(step, helpers);
+                if (helper) {
+                    return (
+                        <SubagentCard
+                            bodyOnly
+                            child={helper}
+                            kind={workerKind(helper)}
+                            source={client}
+                            onOpen={openHelper}
+                            renderDetail={renderStepDetail}
+                            renderMarkdown={renderMarkdown}
+                            developerView={false}
+                        />
+                    );
+                }
+            }
+            return renderStepDetail(step);
+        },
+        [client, helpers, openHelper, renderStepDetail, renderMarkdown],
     );
     const block = (event: JournalEvent): React.ReactElement => (
         <TurnBlock key={event.seq} event={event} rowHandlers={rowHandlers}>
@@ -4257,9 +4383,30 @@ function AgentTurnRow({
             />
         </TurnBlock>
     );
+    // A helper's own thread: a Claude helper publishes each call when it starts, so while it runs
+    // a trailing step (no answer after it) is the one running now. Codex publishes on completion.
+    const headlineRunning = useMemo((): Step | null => {
+        if (!helperThread || live.mode !== "running") return null;
+        if (live.running) return live.running;
+        const last = turn.items.at(-1);
+        if (helperThread.worker === "codex" || turn.answer.length || last?.kind !== "step") return null;
+        // A completed call (its tool_output is in) is not running: never clone it as the live step.
+        if ((last.source as { type?: string } | undefined)?.type === "tool_output") return null;
+        return { ...last, status: "running" };
+    }, [helperThread, live.mode, live.running, turn.items, turn.answer.length]);
+    // The running step is listed once: drop the trailing journaled step it stands for (a Claude
+    // helper journals each call as it starts, and the live activity names the same call). A
+    // completed call (a tool_output) is never dropped: a retry of it is a new call.
+    const headlineItems = useMemo(() => {
+        const last = turn.items.at(-1);
+        if (!headlineRunning || last?.kind !== "step") return turn.items;
+        if ((last.source as { type?: string } | undefined)?.type === "tool_output") return turn.items;
+        if (!live.running || sameCall(last, live.running)) return turn.items.slice(0, -1);
+        return turn.items;
+    }, [headlineRunning, live.running, turn.items]);
     return (
         <li
-            className="mx_EventTile mx_EventTile_lastInSection mj_AgentTurn"
+            className={`mx_EventTile mx_EventTile_lastInSection mj_AgentTurn${helperThread ? " mj_AgentTurn_helper" : ""}`}
             tabIndex={-1}
             data-layout="bubble"
             data-self="false"
@@ -4279,25 +4426,51 @@ function AgentTurnRow({
             <div className="mx_EventTile_line">
                 <div className="mx_MTextBody mx_EventTile_content">
                     <div className="markdown-body mj_AgentTurn_blocks">
-                        {hasCard && (
-                            <TurnCard
-                                turnKey={turn.key}
-                                items={turn.items}
-                                mode={live.mode}
-                                running={live.running}
+                        {helperThread && (hasCard || live.mode === "running") ? (
+                            <HeadlineList
+                                items={headlineItems}
+                                running={headlineRunning}
+                                active={live.mode === "running"}
                                 liveText={live.liveText}
                                 runningSince={live.runningSince}
-                                durationMs={turn.endTs - turn.startTs}
                                 renderDetail={renderDetail}
-                                renderNarration={(text) => (
-                                    <MarkdownBody
-                                        text={text}
-                                        label={`narration-${turn.key}`}
-                                        onTrackerLink={(kind, num) => client.openTrackerLink(kind, num)}
-                                    />
-                                )}
+                                expanded={expandHeadlines}
+                                persistKey={first?.convo_id}
+                                turnKey={turn.key}
                             />
+                        ) : (
+                            hasCard && (
+                                <TurnCard
+                                    turnKey={turn.key}
+                                    items={turn.items}
+                                    mode={live.mode}
+                                    running={live.running}
+                                    liveText={live.liveText}
+                                    runningSince={live.runningSince}
+                                    durationMs={turn.endTs - turn.startTs}
+                                    renderDetail={renderDetail}
+                                    renderNarration={(text) => (
+                                        <MarkdownBody
+                                            text={text}
+                                            label={`narration-${turn.key}`}
+                                            onTrackerLink={(kind, num) => client.openTrackerLink(kind, num)}
+                                        />
+                                    )}
+                                />
+                            )
                         )}
+                        {helpers.map((helper) => (
+                            <SubagentCard
+                                key={helper.id}
+                                child={helper}
+                                kind={workerKind(helper)}
+                                source={client}
+                                onOpen={openHelper}
+                                renderDetail={renderStepDetail}
+                                renderMarkdown={renderMarkdown}
+                                developerView={false}
+                            />
+                        ))}
                         {breaks.map(block)}
                         {turn.errors.map((event) => (
                             <TurnBlock key={event.seq} event={event} rowHandlers={rowHandlers} live={false}>
@@ -4728,11 +4901,57 @@ function Timeline({
     // on the durable, replayed run-state: only render while the session is actually running; the
     // model reconcile (refreshConversations) prunes any tool card that lingers in the map.
     const sessionRunning = client.selectedConversation()?.session_state === "running";
+    // Inside a helper's own thread the turn's steps read as headlines (AgentTurnRow).
+    const selectedForHeadlines = client.selectedConversation();
+    const helperWorker =
+        selectedForHeadlines && isSubChat(selectedForHeadlines) ? workerKind(selectedForHeadlines) : undefined;
+    const helperThread = useMemo(() => (helperWorker === undefined ? null : { worker: helperWorker }), [helperWorker]);
     const sessionState = client.selectedConversation()?.session_state;
 
     // ---- Developer view off: one agent tile per operator turn, with its turn card.
     const turns = useMemo(() => (showTheWork ? [] : assembleTurns(visibleEvents)), [showTheWork, visibleEvents]);
+    // Helpers (subagents, Codex runs) this conversation started: one card each, anchored to the
+    // turn — or, with Developer view on, the event — they were started in.
+    const helperChildren = useMemo(
+        () => childrenOf(state.conversations, state.selectedConversationId),
+        [state.conversations, state.selectedConversationId],
+    );
+    const turnHelpers = useMemo(
+        () =>
+            showTheWork
+                ? new Map<string, Conversation[]>()
+                : helpersByTurn(turns, helperChildren, state.hasOlderHistory),
+        [showTheWork, turns, helperChildren, state.hasOlderHistory],
+    );
+    const eventHelpers = useMemo(() => {
+        const map = new Map<number, Conversation[]>();
+        if (!showTheWork || visibleEvents.length === 0) return map;
+        for (const child of helperChildren) {
+            let anchor: JournalEvent | undefined;
+            for (const event of visibleEvents) if (event.ts <= child.created_at) anchor = event;
+            if (!anchor) {
+                if (state.hasOlderHistory) continue;
+                anchor = visibleEvents[0];
+            }
+            map.set(anchor.seq, [...(map.get(anchor.seq) ?? []), child]);
+        }
+        return map;
+    }, [showTheWork, visibleEvents, helperChildren, state.hasOlderHistory]);
     const lastTurn = turns[turns.length - 1];
+    // Inside a helper's thread the newest turns open with their work in view; older ones keep
+    // the compact list, which bounds the DOM on a long thread (EXPANDED_HELPER_TURNS).
+    const expandedHelperTurns = useMemo(
+        () =>
+            new Set(
+                helperThread
+                    ? turns
+                          .filter((turn) => stepsOf(turn.items).length > 0)
+                          .slice(-EXPANDED_HELPER_TURNS)
+                          .map((turn) => turn.key)
+                    : [],
+            ),
+        [helperThread, turns],
+    );
     // First-seen time of each live step, so the elapsed counter and slow state survive re-renders.
     const liveSeenRef = useRef(new Map<string, number>());
     const liveStreams = useMemo(
@@ -4881,6 +5100,9 @@ function Timeline({
                         isReadOnly={isReadOnly}
                         resolvedAction={resolvedAction}
                         rowHandlers={menu.rowHandlers}
+                        helpers={turnHelpers.get(row.turn.key)}
+                        helperThread={helperThread}
+                        expandHeadlines={expandedHelperTurns.has(row.turn.key)}
                     />
                 </React.Fragment>
             );
@@ -4947,6 +5169,9 @@ function Timeline({
                         lastInSection={next?.kind !== "event" || next.event.sender !== item.event.sender}
                         rowHandlers={menu.rowHandlers}
                     />
+                    {eventHelpers.get(item.event.seq)?.map((child) => (
+                        <DevHelperRow key={`h-${child.id}`} client={client} child={child} />
+                    ))}
                 </React.Fragment>
             );
         }

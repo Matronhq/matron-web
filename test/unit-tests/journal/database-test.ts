@@ -50,6 +50,58 @@ describe("JournalDatabase", () => {
         database.close();
     });
 
+    it("records the last message's tool call for the plain-English sidebar preview", async () => {
+        const database = await JournalDatabase.open("https://last-step.example", 12, "dan");
+        await database.replaceWithSnapshot({
+            seq: 0,
+            conversations: [
+                {
+                    id: "c1",
+                    title: "Agent",
+                    session_state: "running",
+                    last_seq: 0,
+                    unread_count: 0,
+                    snippet: "",
+                    created_at: 1,
+                },
+            ],
+        });
+        await database.applyJournal(
+            event(1, "agent:dev", "tool_output", { command: "pnpm tsc --noEmit", snippet: "error TS2322" }),
+        );
+        expect((await database.conversations())[0]).toMatchObject({
+            snippet: "error TS2322",
+            last_step: { tool: "Bash", input: { command: "pnpm tsc --noEmit" } },
+        });
+        await database.applyJournal(event(2, "agent:dev", "text", { body: "📖 /repo/a.ts" }));
+        expect((await database.conversations())[0].last_step).toEqual({ tool: "Read", input: { path: "/repo/a.ts" } });
+        await database.applyJournal(event(3, "agent:dev", "text", { body: "All done." }));
+        expect((await database.conversations())[0].last_step).toBeUndefined();
+        database.close();
+    });
+
+    it("keeps the recorded last step across a snapshot of the same state, and only then", async () => {
+        const database = await JournalDatabase.open("https://last-step-snapshot.example", 12, "dan");
+        const row = (last_seq: number, snippet: string, last_ts: number) => ({
+            id: "c1",
+            title: "Agent",
+            session_state: "running",
+            last_seq,
+            unread_count: 0,
+            snippet,
+            created_at: 1,
+            last_ts,
+        });
+        await database.replaceWithSnapshot({ seq: 0, conversations: [row(0, "", 1)] });
+        await database.applyJournal(event(1, "agent:dev", "text", { body: "📖 /repo/a.ts" }));
+        await database.replaceWithSnapshot({ seq: 1, conversations: [row(1, "📖 /repo/a.ts", 1_000)] });
+        expect((await database.conversations())[0].last_step).toEqual({ tool: "Read", input: { path: "/repo/a.ts" } });
+        // A newer message with the same snippet and time: the step is not carried over.
+        await database.replaceWithSnapshot({ seq: 2, conversations: [row(2, "📖 /repo/a.ts", 1_000)] });
+        expect((await database.conversations())[0].last_step).toBeUndefined();
+        database.close();
+    });
+
     it("counts a journaled spawn_outcome as a message event — bumps unread and sets the snippet", async () => {
         const database = await JournalDatabase.open("https://journal.example", 10, "dan");
         await database.replaceWithSnapshot({

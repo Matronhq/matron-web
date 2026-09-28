@@ -72,6 +72,7 @@ Please see LICENSE files in the repository root for full details.
     --mj-critical-tint: rgb(189 32 32 / 10%);
     --mj-critical-border: rgb(189 32 32 / 45%);
     --mj-font-label-sm: 500 12px/16px Inter, sans-serif;
+    --mj-font-mono: 400 12px/18px "Fira Code", monospace;
     --mj-live-xfade: 240ms;
     --mj-card-expand: var(--cpd-dur-fast);
     --mj-group-expand: var(--cpd-dur-fast);
@@ -466,35 +467,10 @@ button {
     background: var(--cpd-state-selected);
 }
 
-/* subagent child row: indented under its parent, muted name, ↳ connector. The leading
-   glyph (spinner while running / idle dot) sits in the normal status column. */
-.mj_RoomListItem_sub {
-    padding-left: 26px;
-}
-
+/* subagent child row: indented under its parent with a muted name. The rail, elbow and
+   status glyph live in subagents.pcss. */
 .mj_RoomListItem_sub .mj_RoomListName {
     color: var(--cpd-color-text-secondary);
-}
-
-.mj_RoomListSubArrow {
-    color: var(--cpd-color-text-tertiary);
-}
-
-.mj_RoomListWorkerGlyphs {
-    display: inline-flex;
-    width: 28px;
-    height: 12px;
-    flex: 0 0 28px;
-    align-items: center;
-    gap: 4px;
-}
-
-.mj_RoomListWorkerMark,
-.mj_RoomListOutcomeGlyph,
-.mj_RoomListSubSpinner {
-    width: 12px;
-    height: 12px;
-    flex: 0 0 12px;
 }
 
 .mj_RoomListItem_selected::before {

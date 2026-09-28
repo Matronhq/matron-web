@@ -126,6 +126,31 @@ export function commandOf(step: Pick<Step, "tool" | "input">): string {
     return isShellStep(step) ? normalizeCommand(String(step.input.command ?? "")) : "";
 }
 
+/**
+ * Two steps that name the same call: the same kind of tool and the same target. Only a command
+ * the bridge cut short (a trailing "…") may match the longer one it starts.
+ */
+export function sameCall(a: Step, b: Step): boolean {
+    if (isShellStep(a) !== isShellStep(b)) return false;
+    if (!isShellStep(a) && a.tool !== b.tool) return false;
+    const target = (step: Step): string =>
+        String(
+            step.input.command ??
+                step.input.path ??
+                step.input.pattern ??
+                step.input.url ??
+                step.input.description ??
+                "",
+        ).trim();
+    const left = target(a);
+    const right = target(b);
+    if (left === right) return true;
+    const cut = (text: string): string | null => (text.endsWith("…") ? text.slice(0, -1) : null);
+    const leftCut = cut(left);
+    const rightCut = cut(right);
+    return Boolean((leftCut && right.startsWith(leftCut)) || (rightCut && left.startsWith(rightCut)));
+}
+
 export function basename(path: string | undefined): string {
     return (
         String(path ?? "")
@@ -223,6 +248,7 @@ export function stepSentence(step: Step): string {
     }
     if (c === "helper") return `Asked a helper to ${i.description ?? "help"}`;
     if (step.tool === "Browser") return `Took a screenshot of ${host(i.url)}`;
+    if (step.tool === "WebSearch") return i.pattern ? `Searched the web for ${i.pattern}` : "Searched the web";
     if (c === "web") return `Opened ${host(i.url)}`;
     if (c === "look") return `Read ${basename(i.path ?? lastArg(commandOf(step)))}`;
     if (c === "search") return "Searched the code";
@@ -230,9 +256,14 @@ export function stepSentence(step: Step): string {
     return "Did a step";
 }
 
-/** The last whitespace-separated argument of a command (the file of `cat x` / `head -n 5 x`). */
+/**
+ * The last whitespace-separated argument of a command's first stage (the file of `cat x` /
+ * `head -n 5 x` / `sed -n 1,60p x | grep -n y`): a pipe or `&&` ends the read, so the argument of
+ * the filter after it is never mistaken for the file.
+ */
 function lastArg(cmd: string): string {
-    const parts = cmd.split(/\s+/).filter((part) => part && !part.startsWith("-"));
+    const stage = cmd.split(/\s(?:\|\|?|&&|;)\s/)[0] ?? "";
+    const parts = stage.split(/\s+/).filter((part) => part && !part.startsWith("-"));
     return parts.length > 1 ? parts[parts.length - 1] : "";
 }
 
@@ -251,6 +282,7 @@ export function liveLine(step: Step): string {
     if (c === "history") return "Checking the history…";
     if (c === "git") return "Updating the branch…";
     if (c === "helper") return `Asking a helper to ${i.description ?? "help"}…`;
+    if (step.tool === "WebSearch") return "Searching the web…";
     if (c === "web") return "Looking at a web page…";
     return "Working…";
 }
