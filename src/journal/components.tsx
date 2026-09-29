@@ -258,6 +258,9 @@ export function ThemeToggle(): React.ReactElement {
     );
 }
 
+/** The Settings menu root, which the sidebar Settings button names in aria-controls while it is open. */
+const SETTINGS_MENU_ID = "mj-settings-menu";
+
 /**
  * The Settings menu: opened by the sliders icon, the last action in the
  * sidebar header; a bottom sheet on the phone. Contents: identity (username + server) · Theme ·
@@ -301,6 +304,7 @@ export function SettingsMenu({
     };
     return (
         <div
+            id={SETTINGS_MENU_ID}
             className="mj_HeaderMenu mj_RoomItemMenu mj_AccountMenu"
             role="menu"
             aria-label="Settings"
@@ -1559,6 +1563,7 @@ function ConversationList({
                                             aria-label="Settings"
                                             aria-haspopup="menu"
                                             aria-expanded={accountOpen}
+                                            aria-controls={accountOpen ? SETTINGS_MENU_ID : undefined}
                                             onClick={() => {
                                                 setNewSessionOpen(false);
                                                 setAccountOpen((open) => !open);

@@ -82,6 +82,17 @@ describe("Settings menu", () => {
         expect(document.activeElement?.textContent).toContain("Theme");
     });
 
+    it("points the Settings button at the menu while it is open", async () => {
+        expect(settingsButton().hasAttribute("aria-controls")).toBe(false);
+        await act(async () => settingsButton().click());
+        const id = settingsButton().getAttribute("aria-controls");
+        expect(id).toBeTruthy();
+        expect(document.getElementById(id!)).toBe(menu());
+        await act(async () => settingsButton().click());
+        expect(menu()).toBeNull();
+        expect(settingsButton().hasAttribute("aria-controls")).toBe(false);
+    });
+
     it("toggles Developer view as a checked menu item backed by the shared preference", async () => {
         await act(async () => settingsButton().click());
         const item = menu()!.querySelector<HTMLButtonElement>('[role="menuitemcheckbox"]')!;
