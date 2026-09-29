@@ -90,7 +90,13 @@ export function subagentView(
         const lastItem = items.at(-1);
         // A Claude helper publishes each call as it starts, so a trailing step is the one running
         // now. Codex publishes a command when it finishes, so its last step is already done.
-        if (lastItem?.kind === "step" && kind !== "codex" && lastAnswer === undefined) {
+        // A completed call (its tool_output is in) is not running either.
+        if (
+            lastItem?.kind === "step" &&
+            kind !== "codex" &&
+            lastAnswer === undefined &&
+            (lastItem.source as { type?: string } | undefined)?.type !== "tool_output"
+        ) {
             items.pop();
             running = { ...lastItem, status: "running" };
         }

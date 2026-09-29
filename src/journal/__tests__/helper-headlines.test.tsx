@@ -103,6 +103,17 @@ describe("step categoriser on helper traffic", () => {
         for (const [command, expected] of cases) expect(describeCommand(command).past).toBe(expected);
     });
 
+    it("names a package script by its most specific rule", () => {
+        const cases: Array<[string, string]> = [
+            ["pnpm lint", "Checked the code style"],
+            ["npm run lint:fix", "Formatted the code"],
+            ["pnpm lint:fix", "Formatted the code"],
+            ["pnpm lint:types", "Checked the types"],
+            ["pnpm lint:css", "Checked the code style"],
+        ];
+        for (const [command, expected] of cases) expect(describeCommand(command).past).toBe(expected);
+    });
+
     it("never describes a database write as a query", () => {
         expect(describeCommand("sqlite3 app.db 'DROP TABLE users'").past).toBe("Changed a database");
         expect(describeCommand('psql "$DATABASE_URL" -c "delete from sessions where id = 1"').past).toBe(

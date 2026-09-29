@@ -87,6 +87,13 @@ describe("tool-indicator lines → steps", () => {
         expect(indicatorStep("🔀 Nested subtask: dig deeper")).toMatchObject({ tool: "Task" });
     });
 
+    it("tells a legacy file-glob line from a code search (the bridge prints both as 🔍)", () => {
+        for (const glob of ["**/*.ts", "src/**/*.{ts,tsx}", "*.md", "src/*.test.ts"])
+            expect(indicatorStep(`🔍 ${glob}`)).toMatchObject({ tool: "Glob", input: { pattern: glob } });
+        for (const grep of ["WORKSPACE_ROOT", "foo.*bar", "TODO|FIXME", "^import", "TODO*", "docs/*"])
+            expect(indicatorStep(`🔍 ${grep}`)).toMatchObject({ tool: "Grep", input: { pattern: grep } });
+    });
+
     it("never swallows prose or a command cut short (unless reading a snippet)", () => {
         expect(indicatorStep("I'll start with the paths module.")).toBeNull();
         expect(indicatorStep("🔧 fixed the build, then ran the tests")).toBeNull();
@@ -148,6 +155,14 @@ describe("sidebar preview (Developer view off)", () => {
         );
         expect(previewLine(row("🔍 WORKSPACE_ROOT", "done"))).toBe("Searched the code for “WORKSPACE_ROOT”");
         expect(previewLine(row("$ pnpm vitest run", "running"))).toBe("Running the tests…");
+    });
+
+    it("reads a finished command in the past tense while the helper still runs", () => {
+        const finished = { tool: "Bash", input: { command: "pnpm vitest run" }, done: true };
+        expect(previewLine(row("FAIL src/a.test.ts", "running", finished))).toBe("Ran the tests");
+        expect(previewLine(row("FAIL src/a.test.ts", "running", { ...finished, done: undefined }))).toBe(
+            "Running the tests…",
+        );
     });
 
     it("prefers the client-recorded last step (a Codex run's snippet is command output)", () => {
@@ -242,6 +257,16 @@ describe("subagent card model", () => {
         const view = subagentView(child, events, "codex", T0 + 40_000);
         expect(view.running).toBeNull();
         expect(view.steps).toHaveLength(1);
+    });
+
+    it("never shows a Claude helper's finished command as running", () => {
+        const events = [
+            text(child.id, "Starting.", 11),
+            ev(child.id, "tool_output", { command: "pnpm jest", exit_code: 1 }, "agent:box", 14),
+        ];
+        const view = subagentView(child, events, "claude", T0 + 40_000);
+        expect(view.running).toBeNull();
+        expect(view.steps.at(-1)).toMatchObject({ tool: "Bash", status: "failed" });
     });
 
     it("takes the final message as the result once finished", () => {

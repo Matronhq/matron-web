@@ -400,7 +400,10 @@ export class JournalDatabase {
                 const input = Object.fromEntries(
                     Object.entries(step.input).map(([key, value]) => [key, String(value ?? "").slice(0, 300)]),
                 );
-                conversation.last_step = { tool: step.tool, input };
+                // A tool_output reports a finished command. A diff does not: the bridge publishes it
+                // when the edit starts.
+                const done = event.type === "tool_output";
+                conversation.last_step = { tool: step.tool, input, ...(done ? { done } : {}) };
             } else delete conversation.last_step;
             if (!event.sender.startsWith("user:")) {
                 conversation.unread_count += 1;

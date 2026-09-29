@@ -36,6 +36,15 @@ const PATH = /^(?:\/|~\/|[A-Za-z]:\\)\S*$/;
  * A search pattern: one token, or one carrying regex syntax prose does not use (an escape, an
  * alternation, `.*`, a character class, an anchor).
  */
+/**
+ * The bridge prints a Glob and a Grep call the same way (`🔍 pattern`). A pattern of path
+ * characters reads as a file glob only in a form a code search would not use: a leading `*`
+ * (not a valid regex), `**`, or a `*.ext` ending (`*.md`, `src/*.{ts,tsx}`). Anything else
+ * stays a code search.
+ */
+const FILE_GLOB = /^(?!.*\.\*)[\w./@{},~-]*\*[\w./*@{},~-]*$/;
+const GLOB_FORM = /^\*|\*\*|\*\.[\w.{},]+$/;
+
 const PATTERN = (value: string): boolean => !/\s/.test(value) || /\\|\||\.\*|\[[^\]]*\]|^\^|\$$/.test(value);
 
 /**
@@ -65,7 +74,8 @@ export function indicatorStep(body: string, id = "indicator", partial = false): 
     if (text.includes("\n")) return null;
     if ((match = /^🔧 (\S+)$/u.exec(text)) && TOOL_NAME.test(match[1])) return make(match[1], {});
     if ((match = /^📖 (\S.*)$/u.exec(text)) && PATH.test(match[1])) return make("Read", { path: match[1] });
-    if ((match = /^🔍 (\S.*)$/u.exec(text)) && PATTERN(match[1])) return make("Grep", { pattern: match[1] });
+    if ((match = /^🔍 (\S.*)$/u.exec(text)) && PATTERN(match[1]))
+        return make(FILE_GLOB.test(match[1]) && GLOB_FORM.test(match[1]) ? "Glob" : "Grep", { pattern: match[1] });
     if ((match = /^🌐 (https?:\/\/\S+)$/u.exec(text))) return make("WebFetch", { url: match[1] });
     // A web search's free-text query stays prose: it cannot be told apart from a sentence
     // ("🌐 The docs say otherwise"); a newer bridge marks it with payload.step.
@@ -151,7 +161,7 @@ export interface PreviewSource {
     snippet: string;
     session_state: string;
     /** Client-side: the last message event's step, when it was one (database.ts). */
-    last_step?: { tool: string; input: Step["input"] } | null;
+    last_step?: { tool: string; input: Step["input"]; done?: boolean } | null;
     /** Which backend runs it (client.workerKind), when known. */
     worker?: "claude" | "codex" | null;
 }
@@ -166,7 +176,8 @@ export function previewLine(conversation: PreviewSource): string {
     if (known && typeof known.tool === "string") {
         return activitySentence(
             { kind: "step", id: "last", tool: known.tool, input: known.input ?? {}, status: "ok" },
-            running,
+            // A call reported when it finished (a Codex command, a tool_output) is done, not running.
+            running && !known.done,
         );
     }
     const snippet = conversation.snippet ?? "";

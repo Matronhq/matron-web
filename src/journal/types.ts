@@ -104,8 +104,9 @@ export interface Conversation {
     read_up_to_seq: number;
     /** Client-only (never sent by the server): the tool call the last message event reported,
         when it was one — the sidebar reads it as plain English with Developer view off. Absent
-        after a snapshot replace; the preview then falls back to the server snippet. */
-    last_step?: { tool: string; input: Record<string, string | undefined> } | null;
+        after a snapshot replace; the preview then falls back to the server snippet. `done` marks a
+        call reported when it finished (a tool_output), which never reads as running. */
+    last_step?: { tool: string; input: Record<string, string | undefined>; done?: boolean } | null;
 }
 
 export interface SnapshotResponse {

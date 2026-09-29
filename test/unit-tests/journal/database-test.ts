@@ -71,11 +71,16 @@ describe("JournalDatabase", () => {
         );
         expect((await database.conversations())[0]).toMatchObject({
             snippet: "error TS2322",
-            last_step: { tool: "Bash", input: { command: "pnpm tsc --noEmit" } },
+            last_step: { tool: "Bash", input: { command: "pnpm tsc --noEmit" }, done: true },
         });
         await database.applyJournal(event(2, "agent:dev", "text", { body: "📖 /repo/a.ts" }));
         expect((await database.conversations())[0].last_step).toEqual({ tool: "Read", input: { path: "/repo/a.ts" } });
-        await database.applyJournal(event(3, "agent:dev", "text", { body: "All done." }));
+        // A diff is published when the edit starts: it is not a finished call.
+        await database.applyJournal(
+            event(3, "agent:dev", "diff", { tool: "Edit", display_path: "src/a.ts", diff: "" }),
+        );
+        expect((await database.conversations())[0].last_step).toEqual({ tool: "Edit", input: { path: "src/a.ts" } });
+        await database.applyJournal(event(4, "agent:dev", "text", { body: "All done." }));
         expect((await database.conversations())[0].last_step).toBeUndefined();
         database.close();
     });

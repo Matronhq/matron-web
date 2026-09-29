@@ -652,12 +652,13 @@ const SCRIPT_EXT = /\.(py|mjs|cjs|js|ts|sh|bash|rb|pl)$/;
 
 const NPM_SCRIPT: Array<[RegExp, () => Phrase]> = [
     [/^(test|test:.*|vitest|jest|e2e|spec)$/, () => phrase("test", "Ran the tests", "Running the tests")],
-    [/^(lint|lint:.*|eslint)$/, () => phrase("check", "Checked the code style", "Checking the code style")],
+    // The named scripts come before the broad lint:* rule, which would otherwise take them.
     [
         /^(typecheck|type-check|tsc|lint:types|types|check|check:.*)$/,
         () => phrase("check", "Checked the types", "Checking the types"),
     ],
     [/^(format|fmt|prettier|lint:fix)$/, () => phrase("format", "Formatted the code", "Formatting the code")],
+    [/^(lint|lint:.*|eslint)$/, () => phrase("check", "Checked the code style", "Checking the code style")],
     [/^(build|build:.*|compile|bundle)$/, () => phrase("build", "Built the app", "Building the app")],
     [/^(dev|start|serve|preview)$/, () => phrase("process", "Started the dev server", "Starting the dev server")],
     [/^(deploy|release)$/, () => phrase("deploy", "Deployed", "Deploying")],
