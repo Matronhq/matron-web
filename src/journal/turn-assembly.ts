@@ -273,23 +273,42 @@ export function assembleTurns(events: readonly JournalEvent[]): Turn[] {
     return turns;
 }
 
+/** The operator's free-text answers. A picked option (`choice` or `label`) shows on its prompt card instead. */
+function freeTextReplies(turn: Turn): JournalEvent[] {
+    return turn.replies.filter(
+        (event) => !asString(event.payload.choice) && !asString(event.payload.label) && asString(event.payload.text),
+    );
+}
+
+function hasAgentContent(turn: Turn): boolean {
+    return Boolean(turn.items.length || turn.breaks.length || turn.answer.length || turn.errors.length);
+}
+
+/**
+ * The operator's replies the agent tile shows: free-text answers, in a tile that has agent content
+ * of its own. A turn holding nothing else shows its answers as operator rows (threadRows).
+ */
+export function shownReplies(turn: Turn): JournalEvent[] {
+    return hasAgentContent(turn) ? freeTextReplies(turn) : [];
+}
+
 /**
  * The thread as rows: each turn's operator bubble, then its agent tile (only when it has
- * anything to show), then its notices in the order they happened.
+ * anything to show), then its notices in the order they happened. A free-text answer in a
+ * turn with no agent content (the operator answered an older question after a new message)
+ * is an operator row of its own, not an agent tile.
  */
 export function threadRows(turns: readonly Turn[], options: { liveLastTurn?: boolean } = {}): ThreadRow[] {
     const rows: ThreadRow[] = [];
     for (const turn of turns) {
         if (turn.operator) rows.push({ kind: "operator", event: turn.operator });
+        const agentContent = hasAgentContent(turn);
+        if (!agentContent) for (const event of freeTextReplies(turn)) rows.push({ kind: "operator", event });
         if (
             // A live last turn gets its tile before anything is journaled: the running step
             // (a command publishes only when it completes) shows as the card's live line.
             (options.liveLastTurn && turn === turns[turns.length - 1]) ||
-            turn.items.length ||
-            turn.breaks.length ||
-            turn.replies.length ||
-            turn.answer.length ||
-            turn.errors.length
+            agentContent
         ) {
             rows.push({ kind: "turn", turn });
         }

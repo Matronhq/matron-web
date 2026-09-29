@@ -5,7 +5,7 @@ SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
 Please see LICENSE files in the repository root for full details.
 */
 
-import { assembleTurns, bridgeTextKind, eventToStep, threadRows } from "../turn-assembly";
+import { assembleTurns, bridgeTextKind, eventToStep, shownReplies, threadRows } from "../turn-assembly";
 import { groupRowText, groupTurn, stepsOf } from "../turn-grouping";
 import { type JournalEvent } from "../types";
 
@@ -119,6 +119,47 @@ describe("assembleTurns", () => {
     it("omits the agent tile when a turn holds only notices", () => {
         const rows = threadRows(assembleTurns([user("/restart --browser"), say("🔄 Restarting Claude session...")]));
         expect(rows.map((row) => row.kind)).toEqual(["operator", "notice"]);
+    });
+
+    it("omits the agent tile when a turn holds only a picked-option reply", () => {
+        // The question arrives in one turn; the operator answers it after sending a new message.
+        const events = [
+            user("push it when green"),
+            ev("prompt", { question: "Open a PR as well?", options: ["Open PR", "Not yet"] }),
+            user("also bump the version"),
+            ev("prompt_reply", { target_seq: 2, choice: "Open PR" }, { sender: "user:op" }),
+        ];
+        const turns = assembleTurns(events);
+        expect(turns[1].replies).toHaveLength(1);
+        expect(shownReplies(turns[1])).toEqual([]);
+        expect(threadRows(turns).map((row) => row.kind)).toEqual(["operator", "turn", "operator"]);
+    });
+
+    it("shows a free-text reply as an operator row when the turn holds nothing else", () => {
+        const events = [
+            user("push it when green"),
+            ev("prompt", { question: "Which branch?", allows_free_text: true }),
+            user("also bump the version"),
+            ev("prompt_reply", { target_seq: 2, text: "release/2.1" }, { sender: "user:op" }),
+        ];
+        const turns = assembleTurns(events);
+        expect(shownReplies(turns[1])).toEqual([]);
+        const rows = threadRows(turns);
+        expect(rows.map((row) => row.kind)).toEqual(["operator", "turn", "operator", "operator"]);
+        expect(rows[3].kind === "operator" && rows[3].event.payload.text).toBe("release/2.1");
+    });
+
+    it("keeps a free-text reply in the agent tile once the agent answers", () => {
+        const events = [
+            user("push it when green"),
+            ev("prompt", { question: "Which branch?", allows_free_text: true }),
+            user("also bump the version"),
+            ev("prompt_reply", { target_seq: 2, text: "release/2.1" }, { sender: "user:op" }),
+            say("Bumped it on release/2.1."),
+        ];
+        const turns = assembleTurns(events);
+        expect(shownReplies(turns[1]).map((event) => event.payload.text)).toEqual(["release/2.1"]);
+        expect(threadRows(turns).map((row) => row.kind)).toEqual(["operator", "turn", "operator", "turn"]);
     });
 });
 

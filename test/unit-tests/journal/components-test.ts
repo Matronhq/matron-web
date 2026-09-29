@@ -493,7 +493,8 @@ describe("permission request cards", () => {
         rendered = await renderClient(signedInClient({ events: [request, reply] }));
 
         const resolved = rendered.container.querySelector(".mj_PromptCard .mj_PromptResolved");
-        expect(resolved?.textContent).toBe("Answered");
+        // The pick is shown as given; a question answered "deny" is not a denied permission.
+        expect(resolved?.textContent).toBe("Answered: deny");
         expect(resolved?.classList.contains("mj_PromptResolved_allowed")).toBe(false);
         expect(resolved?.classList.contains("mj_PromptResolved_denied")).toBe(false);
     });

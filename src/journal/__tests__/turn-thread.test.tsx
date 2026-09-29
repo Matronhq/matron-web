@@ -320,6 +320,54 @@ describe("Show the work OFF (default)", () => {
         expect(container.querySelectorAll('[data-self="true"]')).toHaveLength(1);
     });
 
+    it("shows the picked option on the answered question card", async () => {
+        const question = {
+            question: "Open a PR as well?",
+            options: [
+                { label: "Open PR", value: "open" },
+                { label: "Not yet", value: "later" },
+            ],
+        };
+        const events = [user("ship it", 0), ev("prompt", question, "agent:box", 1)];
+        events.push(ev("prompt_reply", { target_seq: events[1].seq, choice: "open" }, "user:op", 2));
+        await render(client(events));
+        expect(container.querySelector(".mj_PromptCard .mj_Answered")?.textContent).toBe("Answered: Open PR");
+    });
+
+    it("draws no empty agent tile for a turn that holds only a picked reply", async () => {
+        const question = { question: "Open a PR as well?", options: ["Open PR", "Not yet"] };
+        const events = [user("ship it", 0), ev("prompt", question, "agent:box", 1), user("and bump the version", 2)];
+        events.push(ev("prompt_reply", { target_seq: events[1].seq, choice: "Open PR" }, "user:op", 3));
+        await render(client(events));
+        expect(container.querySelectorAll(".mj_AgentTurn")).toHaveLength(1);
+        expect(container.querySelector(".mj_PromptCard .mj_Answered")?.textContent).toBe("Answered: Open PR");
+    });
+
+    it("shows a free-text answer given after a new message as the operator's own row", async () => {
+        const question = { question: "Which branch?", allows_free_text: true };
+        const events = [user("ship it", 0), ev("prompt", question, "agent:box", 1), user("and bump the version", 2)];
+        events.push(ev("prompt_reply", { target_seq: events[1].seq, text: "release/2.1" }, "user:op", 3));
+        await render(client(events));
+        expect(container.querySelectorAll(".mj_AgentTurn")).toHaveLength(1);
+        const mine = [...container.querySelectorAll('[data-self="true"]')].map((node) => node.textContent ?? "");
+        expect(mine).toHaveLength(3);
+        expect(mine[2]).toContain("release/2.1");
+    });
+
+    it("never labels the agent tile with the operator's name", async () => {
+        const question = { question: "Which branch?", allows_free_text: true };
+        const events = [user("ship it", 0), ev("prompt", question, "agent:box", 1), user("and bump the version", 2)];
+        events.push(ev("prompt_reply", { target_seq: events[1].seq, text: "release/2.1" }, "user:op", 3));
+        events.push(say("Bumped it.", 4));
+        await render(client(events));
+        const names = [...container.querySelectorAll(".mj_AgentTurn .mx_DisambiguatedProfile_displayName")].map(
+            (node) => node.textContent,
+        );
+        expect(names).toHaveLength(2);
+        expect(names).not.toContain("op");
+        expect(container.querySelectorAll(".mj_AgentTurn")[1].textContent).toContain("release/2.1");
+    });
+
     it("renders today's per-event thread when Show the work is ON, and switches back instantly", async () => {
         localStorage.setItem(SHOW_THE_WORK_KEY, "true");
         await render(client(sheetTurn()));

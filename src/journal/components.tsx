@@ -104,7 +104,7 @@ import {
     recentFolderArgument,
 } from "./slash-palette";
 import { useShowTheWork } from "./show-the-work";
-import { assembleTurns, type Turn, threadRows, type ThreadRow } from "./turn-assembly";
+import { assembleTurns, isOperatorEvent, shownReplies, type Turn, threadRows, type ThreadRow } from "./turn-assembly";
 import { noticeText, TurnCard, type TurnCardMode, TurnErrorRow } from "./turn-card";
 import { V6Icon } from "./v6-icons";
 import { applyPaneBand } from "./pane-width";
@@ -2919,6 +2919,11 @@ function PromptCard({
     const normalizedAnsweredChoice = answeredChoice?.trim().toLocaleLowerCase();
     const durablyDenied = permission && resolved && normalizedAnsweredChoice === "deny";
     const durablyAllowed = permission && resolved && !durablyDenied;
+    // The picked option, by its label when the reply names one of ours. With Developer view off
+    // the reply row is hidden, so this line is where the operator's pick stays visible.
+    const pickedLabel = answeredChoice
+        ? (options.find((option) => option.value === answeredChoice)?.label ?? answeredChoice)
+        : undefined;
 
     useEffect(() => {
         if (!permission || resolved || expiresAt === undefined || advisoryExpired) return;
@@ -3034,7 +3039,13 @@ function PromptCard({
                                   : undefined
                         }
                     >
-                        {durablyDenied ? "Denied" : durablyAllowed ? "Allowed" : "Answered"}
+                        {durablyDenied
+                            ? "Denied"
+                            : durablyAllowed
+                              ? "Allowed"
+                              : pickedLabel
+                                ? `Answered: ${pickedLabel}`
+                                : "Answered"}
                     </span>
                 </div>
             )}
@@ -4204,14 +4215,12 @@ function AgentTurnRow({
     resolvedAction: (itemId: string) => "send" | "cancel" | undefined;
     rowHandlers: RowContextMenu<JournalEvent>["rowHandlers"];
 }): React.ReactElement {
-    const first = turn.events[0];
+    // The tile speaks for the agent: its header never takes the operator's own reply.
+    const first = turn.events.find((event) => !isOperatorEvent(event));
     const hasCard = stepsOf(turn.items).length > 0 || Boolean(live.running);
     // A reply the prompt card already shows (a picked option) is not repeated; a free-text
     // reply the card cannot show stays visible, in order among the break-throughs.
-    const shownReplies = turn.replies.filter(
-        (event) => !asString(event.payload.choice) && !asString(event.payload.label) && asString(event.payload.text),
-    );
-    const breaks = [...turn.breaks, ...shownReplies].sort((left, right) => left.seq - right.seq);
+    const breaks = [...turn.breaks, ...shownReplies(turn)].sort((left, right) => left.seq - right.seq);
     const renderDetail = useCallback(
         (step: Step): React.ReactNode => {
             const source = step.source as JournalEvent | undefined;
