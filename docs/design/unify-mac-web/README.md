@@ -185,7 +185,7 @@ Phase 2 suggestion: adopt the Mac row (13 pt medium title, 11 pt snippet, meta l
 **Type.** Mission page title 26 pt versus the web's ~24 px; the Mac's section labels are small caps-style tracking, the web uses a plain "OPEN" caps label.
 **Colour.** Mac mission page uses its own palette (question red, task blue, decision orange, milestone purple/blue) which differs from the rest of the Mac app (question orange, decision purple). The web uses the tracker's amber/teal.
 
-Phase 2 suggestion: this is the largest gap. Adopt the dashboard grid and the mission page layout on the web (with the Mac's card chrome and section labels), and pick one item-kind palette for both clients.
+Phase 2 suggestion: this is the largest gap, but it is **on hold** (Dan, 29 Sep 2026): the Mac's card dashboard is not yet a settled design, so the web should not copy it yet. When it is settled, adopt the dashboard grid and the mission page layout on the web (with the Mac's card chrome and section labels), and pick one item-kind palette for both clients.
 
 ## 7. Memories — `11-memories-*.jpg`, `12-memory-detail-*.jpg`
 
@@ -232,7 +232,7 @@ Both clients support both themes, so every pair above exists in light and dark. 
 2. **Sign-in**: smallest screen, biggest visual gap, and it already has a bug to fix.
 3. **Sidebar**: rail, badges, box chips, row density, date groups.
 4. **Chat cards and composer**: card chrome, terminal block, tool-card glyphs, composer geometry.
-5. **Tracker**: item rows and detail, then the missions dashboard and mission page.
+5. **Tracker**: item rows and detail. **Missions are on hold**: Dan is not yet sure about the Mac's card dashboard, so the web's missions list and mission page stay as they are until the Mac design is settled.
 6. **Settings** and memories.
 
 Open decisions for Dan, in the order they block the work: accent (teal everywhere, or the Mac's blue), agent turns (bubble or flat), diff bodies (terminal block or tinted rows), font (system stack or Inter), and one item-kind colour set.
