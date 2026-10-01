@@ -489,6 +489,8 @@ describe("the bridge's structured flags", () => {
         expect(bridgeEventKind(flagged("Anything at all", "crash_restart"))).toBe("notice");
         expect(bridgeEventKind(flagged("Anything at all", "slow_tool"))).toBe("notice");
         expect(bridgeEventKind(flagged("Anything at all", "a_kind_from_the_future"))).toBe("notice");
+        expect(bridgeEventKind(flagged("Anything at all", "constructor"))).toBe("notice");
+        expect(bridgeEventKind(flagged("Anything at all", "__proto__"))).toBe("notice");
         expect(bridgeEventKind(flagged("Anything at all", "delivery_failed"))).toBe("error");
         // Absent: the wording decides, as before.
         expect(bridgeEventKind(say("Claude Code session restarted."))).toBe("notice");
@@ -558,7 +560,7 @@ describe("journal markers in the turn view", () => {
         expect(turn.notices).toEqual([]);
     });
 
-    it("shows routine and consent markers as one compact line, and hides a routine's fire", () => {
+    it("shows routine and consent markers as one compact line each", () => {
         const saved = ev(
             "routine",
             { routine_id: "r1", name: "morning", action: "saved", created: true },
@@ -573,11 +575,16 @@ describe("journal markers in the turn view", () => {
         );
         const [turn] = assembleTurns([user("go"), cmd("ls"), saved, deleted, fired, consent, say("Done.")]);
         expect(turn.breaks).toEqual([]);
-        expect(turn.notices).toEqual([saved, deleted, consent]);
+        // No bridge line announces this fire, so its marker stays visible.
+        expect(turn.notices).toEqual([saved, deleted, fired, consent]);
         expect(noticeBody(saved)).toBe("Routine “morning” created");
         expect(noticeBody(deleted)).toBe("Routine “morning” deleted");
         expect(noticeBody(consent)).toBe("The Coordinator approved this request: fits the rules");
-        expect(noticeBody(ev("consent_decision", { decision: "deny" }))).toBe("The Coordinator declined this request");
+        // The journal's values (CONSENT_DECISIONS): approve | decline. Anything else claims neither.
+        expect(noticeBody(ev("consent_decision", { decision: "decline" }))).toBe(
+            "The Coordinator declined this request",
+        );
+        expect(noticeBody(ev("consent_decision", {}))).toBe("The Coordinator answered this request");
     });
 
     it("shows a Coordinator role change the operator made as a compact line, not a raw bubble", () => {
@@ -590,5 +597,31 @@ describe("journal markers in the turn view", () => {
         expect(noticeBody(ev("coordinator", { role: "released" }))).toBe(
             "This conversation is no longer the Coordinator",
         );
+        expect(noticeBody(ev("coordinator", {}))).toBe("The Coordinator role changed");
+    });
+});
+
+describe("a routine's fire marker", () => {
+    const fired = (): JournalEvent =>
+        ev("routine", { routine_id: "r1", name: "morning", action: "fired" }, { sender: "journal" });
+
+    it("is hidden when the bridge's own line for that routine follows", () => {
+        const marker = fired();
+        const turns = assembleTurns([
+            user("go"),
+            say("Done."),
+            marker,
+            say("🔔 Routine morning: Morning brief"),
+            cmd("ls"),
+        ]);
+        expect(turns.flatMap((turn) => turn.notices)).not.toContain(marker);
+        expect(turns[1].opener?.payload.body).toBe("🔔 Routine morning: Morning brief");
+    });
+
+    it("stays visible as a compact line when no bridge line announces it", () => {
+        const marker = fired();
+        const [turn] = assembleTurns([user("go"), say("Done."), marker]);
+        expect(turn.notices).toEqual([marker]);
+        expect(noticeBody(marker)).toBe("Routine “morning” fired");
     });
 });

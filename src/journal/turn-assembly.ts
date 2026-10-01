@@ -89,14 +89,12 @@ export function bridgeTextKind(body: string): BridgeTextKind | null {
     return null;
 }
 
-/** `payload.notice` kinds that are not a plain notice; any other value (a newer kind too) is one. */
-const NOTICE_FLAG_KINDS: Readonly<Record<string, BridgeTextKind>> = { delivery_failed: "error" };
-
 /** How an agent text reads: by the bridge's `payload.notice` when it carries one, else its wording. */
 export function bridgeEventKind(event: JournalEvent): BridgeTextKind | null {
     if (event.type !== "text" || isOperatorEvent(event)) return null;
     const notice = asString(event.payload.notice);
-    if (notice) return NOTICE_FLAG_KINDS[notice] ?? "notice";
+    // A delivery failure ends the turn; any other kind, a newer one too, is a plain notice.
+    if (notice) return notice === "delivery_failed" ? "error" : "notice";
     return bridgeTextKind(agentText(event));
 }
 
@@ -242,8 +240,8 @@ type Classified =
 /**
  * Journal bookkeeping markers. A `summary` and a Coordinator role event (other than the operator's
  * own change, which opens a turn) have nothing to say in a tile; a routine change and a consent
- * decision read as one compact notice line (noticeBody). A routine's fire is hidden: the bridge's
- * own 🔔 line announces it. Developer view still shows every one of them as it is.
+ * decision read as one compact notice line (noticeBody). Developer view still shows every one of
+ * them as it is.
  */
 function markerBucket(event: JournalEvent): "notice" | "hidden" | null {
     switch (event.type) {
@@ -251,7 +249,6 @@ function markerBucket(event: JournalEvent): "notice" | "hidden" | null {
         case "coordinator":
             return "hidden";
         case "routine":
-            return asString(event.payload.action) === "fired" ? "hidden" : "notice";
         case "consent_decision":
             return "notice";
         default:
@@ -269,6 +266,28 @@ function classifyAgentEvent(event: JournalEvent, previousTs: number | undefined)
     return { bucket: "break" };
 }
 
+/** How far after a routine's fire marker the bridge's own 🔔 line for it is looked for. */
+const FIRE_ANNOUNCE_WINDOW = 8;
+
+/**
+ * The fire markers the bridge's own line announces ("🔔 Routine <name>: …" shortly after): those
+ * are hidden so the fire reads once. A fire nothing announces stays visible.
+ */
+function announcedFires(events: readonly JournalEvent[]): Set<number> {
+    const announced = new Set<number>();
+    events.forEach((event, index) => {
+        if (event.type !== "routine" || asString(event.payload.action) !== "fired") return;
+        const name = asString(event.payload.name);
+        const line = events
+            .slice(index + 1, index + 1 + FIRE_ANNOUNCE_WINDOW)
+            .some(
+                (next) => /^🔔\s*Routines? /u.test(agentText(next).trim()) && (!name || agentText(next).includes(name)),
+            );
+        if (line) announced.add(event.seq);
+    });
+    return announced;
+}
+
 /** The text of a notice row: the bridge's line, or a compact sentence for a journal marker. */
 export function noticeBody(event: JournalEvent): string {
     const payload = event.payload;
@@ -279,14 +298,18 @@ export function noticeBody(event: JournalEvent): string {
             return `Routine “${asString(payload.name) || "a routine"}” ${verb}`;
         }
         case "consent_decision": {
-            const verdict = asString(payload.decision) === "approve" ? "approved" : "declined";
+            // The journal's CONSENT_DECISIONS: approve | decline. Anything else claims neither.
+            const decision = asString(payload.decision);
+            const verdict = decision === "approve" ? "approved" : decision === "decline" ? "declined" : "answered";
             const reason = asString(payload.reason).trim();
             return `The Coordinator ${verdict} this request${reason ? `: ${reason}` : ""}`;
         }
-        case "coordinator":
-            return asString(payload.role) === "released"
-                ? "This conversation is no longer the Coordinator"
-                : "This conversation is now the Coordinator";
+        case "coordinator": {
+            const role = asString(payload.role);
+            if (role === "assigned") return "This conversation is now the Coordinator";
+            if (role === "released") return "This conversation is no longer the Coordinator";
+            return "The Coordinator role changed";
+        }
         default:
             return asString(payload.body);
     }
@@ -311,6 +334,7 @@ function emptyTurn(first: JournalEvent, operator?: JournalEvent): Turn {
 /** Group visible journal events (already filtered by the timeline) into operator turns. */
 export function assembleTurns(events: readonly JournalEvent[]): Turn[] {
     const turns: Turn[] = [];
+    const announced = announcedFires(events);
     let current: Turn | null = null;
     // Per turn: the text events in order with their position relative to the steps, resolved
     // into narration vs answer once the turn's last step is known.
@@ -370,7 +394,7 @@ export function assembleTurns(events: readonly JournalEvent[]): Turn[] {
         // Duration ends at the turn's last own event: bridge notices and markers don't extend it.
         if (!marker && bridgeEventKind(event) !== "notice") turn.endTs = Math.max(turn.endTs, event.ts);
         if (marker) {
-            const bucket = markerBucket(event);
+            const bucket = announced.has(event.seq) ? "hidden" : markerBucket(event);
             if (bucket === "notice") turn.notices.push(event);
             else if (bucket === null) turn.breaks.push(event);
             continue;
