@@ -491,7 +491,8 @@ describe("the bridge's structured flags", () => {
         expect(bridgeEventKind(flagged("Anything at all", "a_kind_from_the_future"))).toBe("notice");
         expect(bridgeEventKind(flagged("Anything at all", "constructor"))).toBe("notice");
         expect(bridgeEventKind(flagged("Anything at all", "__proto__"))).toBe("notice");
-        expect(bridgeEventKind(flagged("Anything at all", "delivery_failed"))).toBe("error");
+        // A delivery failure can be recoverable (a room inbox): a notice, not a turn-ending error.
+        expect(bridgeEventKind(flagged("Anything at all", "delivery_failed"))).toBe("notice");
         // Absent: the wording decides, as before.
         expect(bridgeEventKind(say("Claude Code session restarted."))).toBe("notice");
         expect(bridgeEventKind(say("Plain prose."))).toBeNull();
@@ -605,17 +606,31 @@ describe("a routine's fire marker", () => {
     const fired = (): JournalEvent =>
         ev("routine", { routine_id: "r1", name: "morning", action: "fired" }, { sender: "journal" });
 
-    it("is hidden when the bridge's own line for that routine follows", () => {
-        const marker = fired();
-        const turns = assembleTurns([
-            user("go"),
-            say("Done."),
-            marker,
-            say("🔔 Routine morning: Morning brief"),
-            cmd("ls"),
-        ]);
-        expect(turns.flatMap((turn) => turn.notices)).not.toContain(marker);
-        expect(turns[1].opener?.payload.body).toBe("🔔 Routine morning: Morning brief");
+    it("is hidden when the bridge's own line for that routine announces it", () => {
+        // The producer order: the bridge posts its line, then the journal records the fire.
+        const line = say("🔔 Routine morning: Morning brief");
+        const marker = ev(
+            "routine",
+            { routine_id: "r1", name: "morning", action: "fired", outcome: "applied now" },
+            { sender: "journal" },
+        );
+        const turns = assembleTurns([user("go"), say("Done."), line, marker, cmd("ls")]);
+        expect(turns.flatMap((turn) => [...turn.notices, ...turn.breaks])).not.toContain(marker);
+        expect(turns[1].opener).toBe(line);
+        // Either order reads once.
+        const swapped = assembleTurns([user("go"), say("Done."), fired(), say("🔔 Routine morning: Morning brief")]);
+        expect(swapped.flatMap((turn) => turn.notices)).toEqual([]);
+    });
+
+    it("always shows a fire that failed to reach the Coordinator", () => {
+        const marker = ev(
+            "routine",
+            { routine_id: "r1", name: "morning", action: "fired", outcome: "failed agent_unreachable" },
+            { sender: "journal" },
+        );
+        const turns = assembleTurns([user("go"), say("Done."), say("🔔 Routine morning: Morning brief"), marker]);
+        expect(turns.flatMap((turn) => turn.notices)).toEqual([marker]);
+        expect(noticeBody(marker)).toBe("Routine “morning” didn't run: agent_unreachable");
     });
 
     it("stays visible as a compact line when no bridge line announces it", () => {

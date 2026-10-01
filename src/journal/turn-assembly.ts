@@ -93,8 +93,9 @@ export function bridgeTextKind(body: string): BridgeTextKind | null {
 export function bridgeEventKind(event: JournalEvent): BridgeTextKind | null {
     if (event.type !== "text" || isOperatorEvent(event)) return null;
     const notice = asString(event.payload.notice);
-    // A delivery failure ends the turn; any other kind, a newer one too, is a plain notice.
-    if (notice) return notice === "delivery_failed" ? "error" : "notice";
+    // Any kind, a newer one too, is a plain notice: a delivery failure can be recoverable (a room
+    // inbox), so only the wording of a terminal one makes a turn-ending error.
+    if (notice) return "notice";
     return bridgeTextKind(agentText(event));
 }
 
@@ -269,17 +270,23 @@ function classifyAgentEvent(event: JournalEvent, previousTs: number | undefined)
 /** How far after a routine's fire marker the bridge's own 🔔 line for it is looked for. */
 const FIRE_ANNOUNCE_WINDOW = 8;
 
+/** A fire the journal could not deliver: its marker's outcome reads "failed <code>". */
+const failedFire = (event: JournalEvent): string | null =>
+    /^failed\b\s*(.*)$/.exec(asString(event.payload.outcome))?.[1].trim() ?? null;
+
 /**
- * The fire markers the bridge's own line announces ("🔔 Routine <name>: …" shortly after): those
- * are hidden so the fire reads once. A fire nothing announces stays visible.
+ * The fire markers the bridge's own line announces ("🔔 Routine <name>: …", posted just before the
+ * journal records the fire): those are hidden so the fire reads once. A fire nothing announces,
+ * or one that failed, stays visible.
  */
 function announcedFires(events: readonly JournalEvent[]): Set<number> {
     const announced = new Set<number>();
     events.forEach((event, index) => {
         if (event.type !== "routine" || asString(event.payload.action) !== "fired") return;
+        if (failedFire(event) !== null) return;
         const name = asString(event.payload.name);
         const line = events
-            .slice(index + 1, index + 1 + FIRE_ANNOUNCE_WINDOW)
+            .slice(Math.max(0, index - FIRE_ANNOUNCE_WINDOW), index + 1 + FIRE_ANNOUNCE_WINDOW)
             .some(
                 (next) => /^🔔\s*Routines? /u.test(agentText(next).trim()) && (!name || agentText(next).includes(name)),
             );
@@ -294,6 +301,9 @@ export function noticeBody(event: JournalEvent): string {
     switch (event.type) {
         case "routine": {
             const action = asString(payload.action);
+            const failed = action === "fired" ? failedFire(event) : null;
+            if (failed !== null)
+                return `Routine “${asString(payload.name) || "a routine"}” didn't run${failed ? `: ${failed}` : ""}`;
             const verb = action === "saved" ? (payload.created === true ? "created" : "updated") : action || "changed";
             return `Routine “${asString(payload.name) || "a routine"}” ${verb}`;
         }
