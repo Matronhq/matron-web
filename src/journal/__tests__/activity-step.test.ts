@@ -33,6 +33,11 @@ describe("activityStep (the live line's step)", () => {
         });
     });
 
+    it("reads Codex's unquoted live command as a command, even a single word", () => {
+        expect(activityStep("🔧 pytest", "x")).toMatchObject({ tool: "Bash", input: { command: "pytest" } });
+        expect(activityStep("🔧 ls -la", "x")).toMatchObject({ tool: "Bash", input: { command: "ls -la" } });
+    });
+
     it("keeps its fallbacks for live lines no durable line has", () => {
         expect(activityStep("✏️ src/a.ts, src/b.ts", "x")).toMatchObject({
             tool: "apply_patch",

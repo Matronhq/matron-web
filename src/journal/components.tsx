@@ -4156,7 +4156,9 @@ function EventRow({
 export function activityStep(detail: string, id = "activity"): Step | null {
     const text = detail.trim();
     if (!text) return null;
-    const known = indicatorStep(text, id, true);
+    // Live activity is Claude's Bash (`🔧 \`cmd\``) or a Codex indicator, whose command is never
+    // backticked: a bare `🔧 word` here is Codex's command, not a tool name.
+    const known = /^🔧 [^`]/u.test(text) ? null : indicatorStep(text, id, true);
     if (known) return { ...known, status: "running" };
     const make = (tool: string, input: Step["input"]): Step => ({ kind: "step", id, tool, input, status: "running" });
     let match: RegExpExecArray | null;
