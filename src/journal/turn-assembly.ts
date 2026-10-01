@@ -141,6 +141,11 @@ export function isInjectedTurnStart(event: JournalEvent): boolean {
 /** A Codex generic completed item the bridge publishes as a one-token code span. */
 const CODEX_ITEM_TEXT = /^`([A-Z][A-Za-z0-9 ]{0,79})`$/;
 
+/** A Codex generic item line: the bridge publishes it when the item has completed. */
+export function isCodexItemLine(event: JournalEvent): boolean {
+    return CODEX_ITEM_TEXT.test(agentText(event).trim());
+}
+
 /** Body of an agent text event, or "" when it is not a plain agent text. */
 function agentText(event: JournalEvent): string {
     if (event.type !== "text" || isOperatorEvent(event)) return "";

@@ -80,7 +80,10 @@ describe("JournalDatabase", () => {
             event(3, "agent:dev", "diff", { tool: "Edit", display_path: "src/a.ts", diff: "" }),
         );
         expect((await database.conversations())[0].last_step).toEqual({ tool: "Edit", input: { path: "src/a.ts" } });
-        await database.applyJournal(event(4, "agent:dev", "text", { body: "All done." }));
+        // A Codex generic item line is published when the item completes: a finished call.
+        await database.applyJournal(event(4, "agent:dev", "text", { body: "`Web search`" }));
+        expect((await database.conversations())[0].last_step).toEqual({ tool: "WebSearch", input: {}, done: true });
+        await database.applyJournal(event(5, "agent:dev", "text", { body: "All done." }));
         expect((await database.conversations())[0].last_step).toBeUndefined();
         database.close();
     });
