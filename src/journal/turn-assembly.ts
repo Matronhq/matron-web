@@ -8,7 +8,9 @@ Please see LICENSE files in the repository root for full details.
 /*
  * Journal events → operator turns (Developer view off).
  *
- * A turn is the ordered journal events between one operator message and the next. Inside a turn every event lands in exactly one bucket:
+ * A turn is the ordered journal events between one operator message and the next. A turn the bridge
+ * injects (a routine, a reminder, a room message …) starts at the bridge's line for it, and another
+ * agent speaking (an agent chat room) starts its own. Inside a turn every event lands in exactly one bucket:
  *
  *   steps      tool_output and diff events — the agent's own work (the card's rows)
  *   narration  agent text that arrives BEFORE the turn's last step (inside the card)
@@ -32,22 +34,50 @@ export type BridgeTextKind = "notice" | "error";
 /** The bridge's own session notices, recognised by their fixed wordings. */
 const NOTICE_PATTERNS: readonly RegExp[] = [
     /^🗜️?\s*(Context compacted|\/compact is already queued)/u,
-    /^✅\s*Compacted\b/u,
-    /^⏳\s*(Session was idle|A restart is pending)/u,
+    /^✅\s*(Compacted|Context compacted)\b/u,
+    /^⏳\s*(Session was idle|A restart is pending|This session was asleep|Queued — this chat is mid-turn|The usage limit has reset|Still working —|`[^`\n]+` is STILL running)/u,
     /^[⚡📬]\s*(Sending \d+ queued messages?|Sending \/compact|No queued messages)/u,
     /^🔄\s*Restarting\b/u,
-    /^(Claude|Codex) session restarted\./,
+    /^(Claude Code|Codex) session restarted\./,
+    /^\[Session crashed \(exit (-?\d+|null)\), restarted automatically — attempt \d+\/3\]$/,
     /^Waiting for turn to finish before restarting\b/,
     /^Session stopped\.$/,
     /^\[Session ended \(exit 0\)\]$/,
     /^👋\s*Logged out\b/u,
     /^✅\s*(Allowed once|Always allowing)\b/u,
+    /^🛠️?\s*(Coordinator\b|The model this session was on)/u,
+    /^⚠️?\s*(Coordinator\b|Routines? |[^\n]* alert\b)[^\n]* — refused: /u,
+    /^(✅|⏳|⏰|⚠️?)\s*Session (compact|model switch|carry-on|alert|routine|session control)\b[^\n]*\b(applied|parked|scheduled|failed)\b/u,
+    /^⏰\s*(Timer #\d+ (set|fired)|Timers for this conversation|The agent set itself)/u,
+    /^⚠️?\s*Couldn't deliver \d+ queued messages? to this chat\b/u,
+    /^🔇\s*Not delivered — this chat is muted\./u,
 ];
+
+/**
+ * The bridge's line in front of a turn it injected itself — no operator message comes first, so
+ * the line has to open the turn. A routine, journal alert or unseen nudge (🔔), a Coordinator
+ * carry-on (🛠), a usage-limit carry-on (🕒), a reminder or timer (⏰), a consent or chat request
+ * (🤝), a room message (💬, 📨) and a spawn outcome.
+ */
+const TURN_START_PATTERNS: readonly RegExp[] = [
+    /^🔔\s*(Routines? \S|\d+ important things? ha(s|ve) gone unseen|[^:\n]{1,80}: )/u,
+    /^🛠️?\s*Coordinator\b[^:\n]*: carry on(?! once the usage limit resets)/u,
+    /^🕒\s*(The usage limit has reset — (sending|carrying)|Model switched — carrying on)/u,
+    /^⏰\s*(Reminder #\d+ \(set by the agent|Timer #\d+: sending )/u,
+    /^🤝\s*(A consent request is waiting for the user|.+ (asks to join the chat|started a chat with this session|requests a chat with this session))/u,
+    /^💬\s*[^\n]+ in "[^\n]*": /u,
+    /^📨\s*Delivered \d+ queued messages?\./u,
+    /^(🚀|🚫|⌛|❌)\s*Spawn \S+: /u,
+];
+
+/** A control line parked while the session is busy: it opens nothing until the turn ends. */
+const DEFERRED_TAIL = / once this turn finishes( — |$)/u;
 
 /** Turn-ending errors the bridge reports as text. */
 const ERROR_PATTERNS: readonly RegExp[] = [
     /^\[Session ended \(exit (?!0\))-?\d+\)\]$/,
     /^⚠️?\s*(That conversation can no longer be found or resumed|Could not carry on|Could not deliver your (message|answer))/u,
+    /^⚠️?\s*Couldn't deliver (your queued message|\d+ queued messages) — the session ended/u,
 ];
 
 export function bridgeTextKind(body: string): BridgeTextKind | null {
@@ -55,6 +85,7 @@ export function bridgeTextKind(body: string): BridgeTextKind | null {
     if (!text) return null;
     if (ERROR_PATTERNS.some((pattern) => pattern.test(text))) return "error";
     if (NOTICE_PATTERNS.some((pattern) => pattern.test(text))) return "notice";
+    if (TURN_START_PATTERNS.some((pattern) => pattern.test(text))) return "notice";
     return null;
 }
 
@@ -65,12 +96,32 @@ export function isOperatorEvent(event: JournalEvent): boolean {
 }
 
 /**
+ * What the operator sends (the journal's CLIENT_SEND_TYPES), plus the user markers the bridge turns
+ * into a turn of their own: an item reply (lib/items-turn.js) and a Coordinator role change.
+ */
+const TURN_OPENING_TYPES: ReadonlySet<string> = new Set(["text", "image", "file", "item", "coordinator"]);
+
+/**
  * An operator event that opens a new turn. An answer to the agent's own question
  * (`prompt_reply`) does not: the agent carries on with the same turn after it, so its steps stay
- * in the same card.
+ * in the same card. Nor does a marker the journal writes under the user's name (a routine saved,
+ * a mission, a memory): the operator didn't say anything to the agent.
  */
 export function isTurnBoundary(event: JournalEvent): boolean {
-    return isOperatorEvent(event) && event.type !== "prompt_reply";
+    return isOperatorEvent(event) && TURN_OPENING_TYPES.has(event.type) && !asString(event.payload.fallback_for);
+}
+
+/**
+ * A bridge text that starts a turn the bridge injected (a routine, reminder, nudge, room message …).
+ * Text the bridge mirrors on the user's behalf (`from: "user"`, e.g. a self-restart's carry-on)
+ * opens one too. A control line parked until the turn ends ("… once this turn finishes") does not.
+ */
+export function isInjectedTurnStart(event: JournalEvent): boolean {
+    const body = agentText(event).trim();
+    if (!body) return false;
+    if (event.payload.from === "user") return true;
+    const first = body.split("\n")[0];
+    return TURN_START_PATTERNS.some((pattern) => pattern.test(first)) && !DEFERRED_TAIL.test(first);
 }
 
 /** A Codex generic completed item the bridge publishes as a one-token code span. */
@@ -151,6 +202,8 @@ export interface Turn {
     key: string;
     /** The operator event that opened the turn; absent for events before the first message. */
     operator?: JournalEvent;
+    /** The bridge line that opened an injected turn (isInjectedTurnStart); shown as a notice row. */
+    opener?: JournalEvent;
     /** Every non-operator event of the turn, in order (the Show-the-work-ON rendering). */
     events: JournalEvent[];
     /** Card content: steps and narration, in order. */
@@ -209,8 +262,11 @@ export function assembleTurns(events: readonly JournalEvent[]): Turn[] {
     // into narration vs answer once the turn's last step is known.
     let texts: Array<{ event: JournalEvent; text: string; itemIndex: number }> = [];
     let lastTs: number | undefined;
+    // The agent the turn's tile speaks for: another agent speaking (an agent chat room) gets its own.
+    let turnAgent: string | undefined;
 
     const finish = (): void => {
+        turnAgent = undefined;
         if (!current) return;
         const turn = current;
         const steps = stepsOf(turn.items);
@@ -237,12 +293,28 @@ export function assembleTurns(events: readonly JournalEvent[]): Turn[] {
             lastTs = event.ts;
             continue;
         }
+        if (isInjectedTurnStart(event)) {
+            finish();
+            current = { ...emptyTurn(event), opener: event };
+            turnAgent = event.sender;
+            lastTs = event.ts;
+            continue;
+        }
+        const isAgent = event.sender.startsWith("agent:");
+        if (isAgent && turnAgent !== undefined && event.sender !== turnAgent) finish();
+        if (isAgent && turnAgent === undefined) turnAgent = event.sender;
         if (!current) current = emptyTurn(event);
         const turn = current;
         turn.events.push(event);
-        // Duration ends at the turn's last own event: bridge notices don't extend it.
-        if (!(event.type === "text" && bridgeTextKind(agentText(event)) === "notice"))
+        // A marker the journal writes under the user's name: shown in the turn, not as the operator.
+        const marker = isOperatorEvent(event) && event.type !== "prompt_reply";
+        // Duration ends at the turn's last own event: bridge notices and markers don't extend it.
+        if (!marker && !(event.type === "text" && bridgeTextKind(agentText(event)) === "notice"))
             turn.endTs = Math.max(turn.endTs, event.ts);
+        if (marker) {
+            turn.breaks.push(event);
+            continue;
+        }
         if (isOperatorEvent(event)) {
             turn.replies.push(event);
             lastTs = event.ts;
@@ -302,6 +374,7 @@ export function threadRows(turns: readonly Turn[], options: { liveLastTurn?: boo
     const rows: ThreadRow[] = [];
     for (const turn of turns) {
         if (turn.operator) rows.push({ kind: "operator", event: turn.operator });
+        if (turn.opener) rows.push({ kind: "notice", event: turn.opener });
         const agentContent = hasAgentContent(turn);
         if (!agentContent) for (const event of freeTextReplies(turn)) rows.push({ kind: "operator", event });
         if (

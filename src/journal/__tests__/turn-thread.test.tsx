@@ -135,6 +135,9 @@ describe("Show the work OFF (default)", () => {
     it("expands to narration + groups, opens a group, and deep detail opens in place with Back", async () => {
         await render(client(sheetTurn()));
         await click(toggle());
+        // Open, the toggle names the region it controls; a closed group names none.
+        expect(document.getElementById(toggle().getAttribute("aria-controls") ?? "")).not.toBeNull();
+        expect(container.querySelector(".mj_TurnCard_groupRow")?.hasAttribute("aria-controls")).toBe(false);
         const rows = [...container.querySelectorAll(".mj_TurnCard_groupRow")].map(
             (row) => row.querySelector(".mj_TurnCard_sentence")?.textContent,
         );
@@ -148,6 +151,8 @@ describe("Show the work OFF (default)", () => {
         );
 
         await click(container.querySelectorAll(".mj_TurnCard_groupRow")[2]);
+        const openGroup = container.querySelectorAll(".mj_TurnCard_groupRow")[2];
+        expect(document.getElementById(openGroup.getAttribute("aria-controls") ?? "")).not.toBeNull();
         const steps = [...container.querySelectorAll(".mj_TurnCard_step .mj_TurnCard_name")].map((s) => s.textContent);
         expect(steps).toEqual(["Checked the types", "Checked the types again"]);
 
@@ -261,9 +266,14 @@ describe("Show the work OFF (default)", () => {
         expect(container.querySelector(".mj_TurnCard_metaVisible")?.textContent).toBe("Running the tests…");
         expect(container.querySelector(".mj_LiveTool")).toBeNull();
         expect(container.querySelector(".mj_Activity")).toBeNull();
-        expect(container.querySelector('.mj_TurnCard_statusRegion[role="status"]')?.textContent).toContain(
+        // The toggle describes the running step; the live region announces only the phase.
+        expect(container.querySelector(".mj_TurnCard_statusRegion")?.textContent).toContain(
             "Working: Running the tests…",
         );
+        expect(container.querySelector('.mj_TurnCard [role="status"]')?.textContent).toBe("Working");
+        expect(container.querySelector(".mj_TurnCard_toggle [role='status']")).toBeNull();
+        // Collapsed: the steps the toggle would control are not in the document.
+        expect(container.querySelector(".mj_TurnCard_toggle")?.hasAttribute("aria-controls")).toBe(false);
     });
 
     it("shows the card for a turn whose first step is still running (nothing journaled yet)", async () => {
@@ -366,6 +376,30 @@ describe("Show the work OFF (default)", () => {
         expect(names).toHaveLength(2);
         expect(names).not.toContain("op");
         expect(container.querySelectorAll(".mj_AgentTurn")[1].textContent).toContain("release/2.1");
+    });
+
+    it("heads a turn the bridge injected with its line, and each agent in a room with its own tile", async () => {
+        const events = [
+            user("why is CI red?", 0),
+            cmd("gh run view", 0, 1),
+            say("A flaky test; rerun it.", 2),
+            say("🔔 Routine morning-sweep: Morning sweep", 86_400),
+            cmd("gh pr list", 0, 86_401),
+            say("Two PRs need you.", 86_402),
+            ev("text", { body: "Can you rebase?", from: "agent" }, "agent:alpha", 86_500),
+            ev("text", { body: "Rebased.", from: "agent" }, "agent:beta", 86_501),
+        ];
+        await render(client(events));
+        const notices = [...container.querySelectorAll(".mj_SystemNotice")].map((node) => node.textContent);
+        expect(notices).toEqual(["Routine morning-sweep: Morning sweep"]);
+        const tiles = [...container.querySelectorAll(".mj_AgentTurn")];
+        expect(tiles).toHaveLength(4);
+        // Yesterday's answer stays in yesterday's tile; the routine's card times its own work.
+        expect(tiles[0].textContent).toContain("A flaky test; rerun it.");
+        expect(tiles[1].textContent).not.toContain("A flaky test");
+        expect(tiles[1].querySelector(".mj_TurnCard_metaVisible")?.textContent).toBe("1 step·2s");
+        const names = tiles.map((tile) => tile.querySelector(".mx_DisambiguatedProfile_displayName")?.textContent);
+        expect(names.slice(2)).toEqual(["alpha", "beta"]);
     });
 
     it("renders today's per-event thread when Show the work is ON, and switches back instantly", async () => {

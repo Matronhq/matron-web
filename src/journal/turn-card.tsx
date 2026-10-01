@@ -347,6 +347,8 @@ export function TurnCard({
         srStatus = issues ? `Done with a problem along the way, ${stepCount(n)}` : `Done, ${stepCount(n)}`;
     }
     const showElapsed = (visualMode === "running" || visualMode === "slow") && elapsedS > LIVE_ELAPSED_AFTER_S;
+    // The live region announces the phase only: the running step's text changes every few seconds.
+    const srPhase = visualMode === "running" || visualMode === "slow" ? "Working" : srStatus;
 
     const row = (
         <div className="mj_TurnCard_row">
@@ -357,14 +359,14 @@ export function TurnCard({
                 aria-label={open ? "Hide steps" : "Show steps"}
                 aria-describedby={statusId}
                 aria-expanded={open}
-                aria-controls={bodyId}
+                aria-controls={open ? bodyId : undefined}
                 onClick={() => setOpen((current) => !current)}
             >
                 <span className="mj_TurnCard_glyph" aria-hidden="true">
                     {glyph}
                 </span>
                 <span className="mj_TurnCard_meta">
-                    <span className="mj_TurnCard_statusRegion" role="status" aria-live="polite" aria-atomic="true">
+                    <span className="mj_TurnCard_statusRegion">
                         <span className="mj_SrOnly" id={statusId}>
                             {srStatus}.{" "}
                         </span>
@@ -381,6 +383,9 @@ export function TurnCard({
                 </span>
                 <V6Icon name="chev" className="mj_TurnCard_chevron" />
             </button>
+            <span className="mj_SrOnly" role="status" aria-live="polite" aria-atomic="true">
+                {srPhase}
+            </span>
         </div>
     );
 
@@ -575,7 +580,7 @@ function GroupBlock({
                 type="button"
                 className="mj_TurnCard_groupRow"
                 aria-expanded={open}
-                aria-controls={listId}
+                aria-controls={open ? listId : undefined}
                 onClick={() => onToggle(group.id, listRef.current)}
             >
                 <span className="mj_TurnCard_icon" aria-hidden="true">
