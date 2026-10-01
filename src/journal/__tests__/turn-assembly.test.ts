@@ -496,6 +496,10 @@ describe("the bridge's structured flags", () => {
         // Absent: the wording decides, as before.
         expect(bridgeEventKind(say("Claude Code session restarted."))).toBe("notice");
         expect(bridgeEventKind(say("Plain prose."))).toBeNull();
+        // A terminal failure's wording still makes a turn-ending error, flag or not.
+        expect(bridgeEventKind(flagged("⚠️ Could not deliver your message: session closed", "delivery_failed"))).toBe(
+            "error",
+        );
         // Never on the operator's own text.
         expect(bridgeEventKind(ev("text", { body: "x", notice: "control" }, { sender: "user:op" }))).toBeNull();
     });
@@ -620,6 +624,17 @@ describe("a routine's fire marker", () => {
         // Either order reads once.
         const swapped = assembleTurns([user("go"), say("Done."), fired(), say("🔔 Routine morning: Morning brief")]);
         expect(swapped.flatMap((turn) => turn.notices)).toEqual([]);
+    });
+
+    it("shows any fire whose outcome is not applied, as the journal records it", () => {
+        const marker = ev(
+            "routine",
+            { routine_id: "r1", name: "morning", action: "fired", outcome: "no_coordinator" },
+            { sender: "journal" },
+        );
+        const turns = assembleTurns([user("go"), say("🔔 Routine morning: Morning brief"), marker]);
+        expect(turns.flatMap((turn) => turn.notices)).toEqual([marker]);
+        expect(noticeBody(marker)).toBe("Routine “morning” didn't run: no_coordinator");
     });
 
     it("always shows a fire that failed to reach the Coordinator", () => {

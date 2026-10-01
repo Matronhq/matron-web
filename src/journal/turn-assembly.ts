@@ -95,7 +95,7 @@ export function bridgeEventKind(event: JournalEvent): BridgeTextKind | null {
     const notice = asString(event.payload.notice);
     // Any kind, a newer one too, is a plain notice: a delivery failure can be recoverable (a room
     // inbox), so only the wording of a terminal one makes a turn-ending error.
-    if (notice) return "notice";
+    if (notice) return bridgeTextKind(agentText(event)) === "error" ? "error" : "notice";
     return bridgeTextKind(agentText(event));
 }
 
@@ -270,9 +270,15 @@ function classifyAgentEvent(event: JournalEvent, previousTs: number | undefined)
 /** How far after a routine's fire marker the bridge's own 🔔 line for it is looked for. */
 const FIRE_ANNOUNCE_WINDOW = 8;
 
-/** A fire the journal could not deliver: its marker's outcome reads "failed <code>". */
-const failedFire = (event: JournalEvent): string | null =>
-    /^failed\b\s*(.*)$/.exec(asString(event.payload.outcome))?.[1].trim() ?? null;
+/**
+ * A fire the journal did not deliver: its marker's outcome is anything but "applied …" ("failed
+ * <code>", "no_coordinator"). Returns the reason, "" when there is none, null for a delivered fire.
+ */
+const failedFire = (event: JournalEvent): string | null => {
+    const outcome = asString(event.payload.outcome).trim();
+    if (!outcome || /^applied\b/.test(outcome)) return null;
+    return outcome.replace(/^failed\b\s*/, "");
+};
 
 /**
  * The fire markers the bridge's own line announces ("🔔 Routine <name>: …", posted just before the
