@@ -282,7 +282,7 @@ export function liveLine(step: Step): string {
     if (c === "history") return "Checking the history…";
     if (c === "git") return "Updating the branch…";
     if (c === "helper") return `Asking a helper to ${i.description ?? "help"}…`;
-    if (step.tool === "WebSearch") return "Searching the web…";
+    if (step.tool === "WebSearch") return i.pattern ? `Searching the web for ${i.pattern}…` : "Searching the web…";
     if (c === "web") return "Looking at a web page…";
     return "Working…";
 }

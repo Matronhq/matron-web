@@ -119,7 +119,7 @@ import { applyPaneBand } from "./pane-width";
 import { sameCall, type Step, stepSentence, stepsOf } from "./turn-grouping";
 import { helperForStep, helpersByTurn, SubagentCard } from "./subagent-card";
 import { HeadlineList } from "./headline-list";
-import { rowPreviewLine } from "./activity-text";
+import { indicatorStep, rowPreviewLine } from "./activity-text";
 import {
     compactTokens,
     formatSampleAge,
@@ -4149,11 +4149,15 @@ function EventRow({
 /**
  * The step an activity detail names (the bridge's ephemeral "tool" activity): a Bash command
  * from Claude, or one of Codex's tool indicators. Drives the live line when no tool stream is
- * open for the running step.
+ * open for the running step. Reads a line the way the durable one is read (indicatorStep), with
+ * fallbacks for the live-only forms: a live `🌐` line is always a tool call, so a free-text one is
+ * a web search and keeps its query.
  */
 export function activityStep(detail: string, id = "activity"): Step | null {
     const text = detail.trim();
     if (!text) return null;
+    const known = indicatorStep(text, id, true);
+    if (known) return { ...known, status: "running" };
     const make = (tool: string, input: Step["input"]): Step => ({ kind: "step", id, tool, input, status: "running" });
     let match: RegExpExecArray | null;
     if ((match = /^🔧\s*`?([\s\S]*?)`?$/u.exec(text))) return make("Bash", { command: match[1] });
@@ -4162,7 +4166,9 @@ export function activityStep(detail: string, id = "activity"): Step | null {
         return make("apply_patch", { path: match[1].split(", ")[0] });
     if ((match = /^🔍\s*(.+)$/u.exec(text))) return make("Grep", { pattern: match[1] });
     if ((match = /^🌐\s*(.+)$/u.exec(text)))
-        return make(/^https?:/.test(match[1]) ? "WebFetch" : "WebSearch", { url: match[1] });
+        return /^https?:/.test(match[1])
+            ? make("WebFetch", { url: match[1] })
+            : make("WebSearch", { pattern: match[1] });
     if ((match = /^🔀\s*Subtask:\s*(.+)$/u.exec(text))) return make("Task", { description: match[1] });
     if (/^\p{Extended_Pictographic}/u.test(text)) return make("tool", {});
     return make("Bash", { command: text });
