@@ -312,6 +312,11 @@ export function HeadlineList({
                                                     type="button"
                                                     className="mj_TurnCard_step"
                                                     aria-expanded={stepRunning ? undefined : deep === step.id}
+                                                    aria-controls={
+                                                        deep === step.id && !stepRunning
+                                                            ? `${listId}-${step.id}`
+                                                            : undefined
+                                                    }
                                                     disabled={stepRunning}
                                                     onClick={() => setDeep(deep === step.id ? null : step.id)}
                                                 >
@@ -335,7 +340,10 @@ export function HeadlineList({
                                                     )}
                                                 </button>
                                                 {deep === step.id && !stepRunning && (
-                                                    <div className="mj_TurnCard_deep mj_Headline_deep">
+                                                    <div
+                                                        id={`${listId}-${step.id}`}
+                                                        className="mj_TurnCard_deep mj_Headline_deep"
+                                                    >
                                                         {renderDetail(step)}
                                                     </div>
                                                 )}

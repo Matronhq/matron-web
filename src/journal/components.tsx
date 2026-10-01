@@ -119,7 +119,7 @@ import { applyPaneBand } from "./pane-width";
 import { sameCall, type Step, stepSentence, stepsOf } from "./turn-grouping";
 import { helperForStep, helpersByTurn, SubagentCard } from "./subagent-card";
 import { HeadlineList } from "./headline-list";
-import { previewLine } from "./activity-text";
+import { rowPreviewLine } from "./activity-text";
 import {
     compactTokens,
     formatSampleAge,
@@ -1371,13 +1371,15 @@ function ConversationList({
         const unread = effectiveUnread(conversation, state.unreadOverrideIds);
         const name = conversationTitle(conversation);
         const outcomeStatus = isSubagent ? accessibleOutcome(classifyOutcome(conversation)) : undefined;
+        // The row's mark shows the worker; the label says it too ("Open Codex subagent …").
+        const worker = isSubagent ? workerKind(conversation) : null;
         const relativeTimestamp = formatRelativeDay(conversation.last_ts ?? conversation.created_at, renderNow);
         // Developer view off: the preview never shows a command line or markdown source — a tool
         // call reads as its activity ("Reading paths.py…"), anything else as one line of prose.
         // Developer view on keeps the server snippet as before.
         const preview = developerView
             ? conversation.snippet
-            : previewLine({ ...conversation, worker: workerKind(conversation) });
+            : rowPreviewLine(conversation.id, { ...conversation, worker: workerKind(conversation) });
         // When this parent's subagent rows are collapsed, surface a subtle count of the hidden
         // child rows so the collapse stays discoverable on the row itself. Gate on the CANONICAL
         // index (hasSubagentChildRows) — NOT an independent running-child count — so it agrees with
@@ -1409,7 +1411,7 @@ function ConversationList({
                     }`}
                     type="button"
                     aria-current={selected ? "page" : undefined}
-                    aria-label={`Open ${isSubagent ? "subagent" : "room"} ${name}${outcomeStatus ? `, ${outcomeStatus}` : ""}, last activity ${relativeTimestamp}${overrideUnread ? ", marked unread" : ""}${
+                    aria-label={`Open ${isSubagent ? `${worker === "codex" ? "Codex " : worker === "claude" ? "Claude " : ""}subagent` : "room"} ${name}${outcomeStatus ? `, ${outcomeStatus}` : ""}, last activity ${relativeTimestamp}${overrideUnread ? ", marked unread" : ""}${
                         collapsedSubagentCount > 0
                             ? `, ${collapsedSubagentCount} subagent${collapsedSubagentCount === 1 ? "" : "s"} hidden${collapsedSubagentUnread ? " (unread)" : ""}`
                             : ""

@@ -200,3 +200,19 @@ export function previewLine(conversation: PreviewSource): string {
     if (looksRaw(snippet) || looksRaw(text)) return running ? "Working…" : "Worked on a step";
     return text;
 }
+
+const previews = new Map<string, { key: string; line: string }>();
+
+/**
+ * previewLine for one sidebar row, recomputed only when its inputs change: the list re-renders
+ * on every streamed patch, and describing a command parses its shell.
+ */
+export function rowPreviewLine(id: string, conversation: PreviewSource): string {
+    const { snippet, session_state, last_step, worker } = conversation;
+    const key = JSON.stringify([snippet, session_state, last_step ?? null, worker ?? null]);
+    const cached = previews.get(id);
+    if (cached?.key === key) return cached.line;
+    const line = previewLine(conversation);
+    previews.set(id, { key, line });
+    return line;
+}

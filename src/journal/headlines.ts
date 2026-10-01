@@ -23,6 +23,7 @@ Please see LICENSE files in the repository root for full details.
 import { indicatorStep } from "./activity-text";
 import {
     describeStep,
+    exitSpeaksFor,
     fileLabel,
     folderLabel,
     legacyWebQuery,
@@ -104,6 +105,20 @@ function stepOutput(step: Step): string {
     return typeof output === "string" ? output : "";
 }
 
+/** A failure a run printed: jest's "FAIL src/a.test.ts", tsc's "error TS2322", eslint's "3:1  error". */
+const FAILURE_LINE = /^\s*FAIL(?:ED)?\b|\berror TS\d+\b|^\s*\d+:\d+\s+error\b|^\s*error(?:\[\w+\])?:/m;
+
+/**
+ * Whether exit 0 means the tests passed (or the check came back clean): the test program must
+ * be the command's last stage (not `| tail`, `|| true`, `; echo`), and the output must not show
+ * a failure. A non-shell step reports its own status.
+ */
+function exitVouches(step: Step, key: PhraseKey): boolean {
+    const command = step.input.command;
+    if (command !== undefined && !exitSpeaksFor(command, key)) return false;
+    return !FAILURE_LINE.test(stepOutput(step).slice(-4000));
+}
+
 function testOutcome(steps: Step[]): string {
     // The latest run is authoritative: an earlier run's counts never speak for a later retry.
     const last = steps[steps.length - 1];
@@ -119,7 +134,7 @@ function testOutcome(steps: Step[]): string {
     }
     if (last.status === "failed") return "failed";
     if (last.status === "stopped") return "stopped";
-    return last.status === "ok" && last.exit === 0 ? "passed" : "";
+    return last.status === "ok" && last.exit === 0 && exitVouches(last, "test") ? "passed" : "";
 }
 
 function status(steps: Step[]): GroupStatus {
@@ -395,7 +410,7 @@ function checkOutcome(steps: Step[]): string {
     const last = steps[steps.length - 1];
     if (last.status === "failed") return "problems found";
     if (last.status === "stopped") return "stopped";
-    return last.exit === 0 ? "clean" : "";
+    return last.exit === 0 && exitVouches(last, "check") ? "clean" : "";
 }
 
 /** The row text: the sentence, then ": outcome" when there is one. */

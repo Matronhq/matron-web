@@ -76,7 +76,11 @@ export function subagentView(
     now: number,
 ): SubagentView {
     const status = subagentStatus(child);
-    const own = events.filter((event) => event.convo_id === child.id);
+    // A tracker fallback text (payload.fallback_for) mirrors an item for old clients: it is
+    // never the helper's own words, so it never becomes its result.
+    const own = events.filter(
+        (event) => event.convo_id === child.id && !(event.type === "text" && asString(event.payload.fallback_for)),
+    );
     const turns = assembleTurns(own);
     const items: TurnItem[] = turns.flatMap((turn) => turn.items);
     const lastTurn = turns.at(-1);

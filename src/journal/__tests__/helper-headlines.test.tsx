@@ -254,6 +254,42 @@ describe("helper thread headlines", () => {
         expect(entry.type === "headline" && headlineRowText(entry)).toBe("Ran the tests: failed");
     });
 
+    it("exit 0 reads as passed only when the tests' own exit code is the command's", () => {
+        const row = (command: string, output = ""): string | false => {
+            const [entry] = buildHeadlines([
+                {
+                    kind: "step",
+                    id: "t",
+                    tool: "Bash",
+                    input: { command },
+                    status: "ok",
+                    exit: 0,
+                    source: {
+                        seq: 1,
+                        convo_id: "c",
+                        ts: 0,
+                        sender: "agent:x",
+                        type: "tool_output",
+                        payload: { output },
+                    },
+                },
+            ]);
+            return entry.type === "headline" && headlineRowText(entry);
+        };
+        expect(row("npm test")).toBe("Ran the tests: passed");
+        expect(row("cd app && npm test 2>&1")).toBe("Ran the tests: passed");
+        // `| tail` exits with tail, `|| true` with true: the run may have failed.
+        expect(row("npm test 2>&1 | tail -3", "FAIL src/a.test.ts\n  ● saves the settings")).toBe("Ran the tests");
+        expect(row("npm test || true")).toBe("Ran the tests");
+        expect(row("bash -lc 'npm test | tail -3'")).toBe("Ran the tests");
+        expect(row("pnpm tsc --noEmit 2>&1 | head -20", "src/a.ts(3,7): error TS2322: Type 'string'")).toBe(
+            "Checked the types",
+        );
+        expect(row("pnpm tsc --noEmit")).toBe("Checked the types: clean");
+        // A failure in the output outweighs exit 0.
+        expect(row("npm test", "FAIL src/a.test.ts")).toBe("Ran the tests");
+    });
+
     it("keeps a sentence that names a few files as prose", () => {
         expect(looksRaw("Updated src/a.ts, src/b.ts, and src/c.ts.")).toBe(false);
         expect(previewLine({ snippet: "Updated src/a.ts, src/b.ts, and src/c.ts.", session_state: "done" })).toBe(
@@ -326,6 +362,11 @@ describe("HeadlineList (rendered, Developer view off)", () => {
         );
         expect(inner.length).toBeGreaterThan(1);
         for (const text of inner) expect(rawReason(text ?? "")).toBeNull();
+        // A step opens its detail, and names it for assistive tech.
+        const step = container.querySelector<HTMLButtonElement>(".mj_TurnCard_steps .mj_TurnCard_step")!;
+        await act(async () => step.click());
+        expect(step.getAttribute("aria-expanded")).toBe("true");
+        expect(document.getElementById(step.getAttribute("aria-controls") ?? "")).not.toBeNull();
     });
 });
 

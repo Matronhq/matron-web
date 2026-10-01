@@ -13,7 +13,7 @@ Please see LICENSE files in the repository root for full details.
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
-import { indicatorStep, payloadStep, plainLine, previewLine } from "../activity-text";
+import { indicatorStep, payloadStep, plainLine, previewLine, rowPreviewLine } from "../activity-text";
 import { archiveStore, favoriteStore, MatronJournalClient, pinnedStore, unreadStore } from "../client";
 import { MatronApp } from "../components";
 import { helperForStep, helpersByTurn, subagentStatus, subagentView } from "../subagent-card";
@@ -224,6 +224,15 @@ describe("sidebar preview (Developer view off)", () => {
         );
         expect(plainLine("Fixed `paths.py`.\n\n```py\nX = 1\n```\nDone.")).toBe("Fixed paths.py. Done.");
     });
+
+    it("a row's preview is reused until its snippet, step or state changes", () => {
+        const step = { tool: "Bash", input: { command: "pnpm vitest run" } };
+        expect(rowPreviewLine("p:sub:a", row("x", "running", step))).toBe("Running the tests…");
+        expect(rowPreviewLine("p:sub:a", row("x", "running", { ...step }))).toBe("Running the tests…");
+        expect(rowPreviewLine("p:sub:a", row("x", "done", step))).toBe("Ran the tests");
+        expect(rowPreviewLine("p:sub:a", row("All green.", "done"))).toBe("All green.");
+        expect(rowPreviewLine("p:sub:b", row("x", "running", step))).toBe("Running the tests…");
+    });
 });
 
 describe("subagent card model", () => {
@@ -275,6 +284,15 @@ describe("subagent card model", () => {
         const view = subagentView(done, events, "claude", T0 + 99_000);
         expect(view.result).toBe("**The premise holds.**");
         expect(view.durationMs).toBe(60_000);
+    });
+
+    it("never takes a tracker fallback text as the result", () => {
+        const done = { ...child, session_state: "done", session_outcome: "completed", last_ts: T0 + 70_000 };
+        const events = [
+            text(child.id, "**The premise holds.**", 70),
+            text(child.id, "📌 Created #12 Fix the gauge", 71, { fallback_for: "item_create" }),
+        ];
+        expect(subagentView(done, events, "claude", T0 + 99_000).result).toBe("**The premise holds.**");
     });
 
     it("matches a helper step to the child titled from its description", () => {
@@ -479,6 +497,7 @@ describe("subagent card + sidebar child row (rendered)", () => {
         expect(container.textContent).not.toContain("🔀 Subtask");
         const row = container.querySelector(".mj_RoomListItem_sub");
         expect(row?.querySelector(".mj_RoomListPreview")?.textContent).toBe("Reading paths.py…");
+        expect(row?.getAttribute("aria-label")).toMatch(/^Open Claude subagent Part 2: units, /);
         expect(row?.querySelector(".mj_RoomListSubStatus_running .mj_TurnCard_spinner")).not.toBeNull();
         expect(row?.querySelector(".mj_AnthropicMark, .mj_OpenAIMark")).toBeNull();
         expect(row?.querySelector(".mj_RoomListName")?.textContent).toBe("Part 2: units");

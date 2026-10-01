@@ -1460,6 +1460,25 @@ export function describeCommand(command: string, depth = 0): Phrase {
     return phrase("env", "Checked the environment", "Checking the environment");
 }
 
+/**
+ * Whether a command's exit code is its `key` program's own: `npm test` and `cd app && npm test`
+ * exit with the tests; `npm test | tail -3`, `npm test || true` and `npm test; echo done` exit
+ * with another program, so their 0 says nothing about the tests. A cut command never vouches.
+ */
+export function exitSpeaksFor(command: string, key: PhraseKey, depth = 0): boolean {
+    if (/…$/u.test(command)) return false;
+    const stages = parseShell(command);
+    const last = stages[stages.length - 1];
+    if (!last) return false;
+    const words = peel(last.words, new Map());
+    // `bash -c "npm test | tail"`: the string's own last stage decides.
+    if (/^(ba|z|da)?sh$/.test((words[0] ?? "").replace(/^.*\//, ""))) {
+        const c = words.findIndex((w) => /^-l?c$/.test(w));
+        if (c >= 0 && words[c + 1] !== undefined && depth < 3) return exitSpeaksFor(words[c + 1], key, depth + 1);
+    }
+    return commandPhrase(last, new Map(), depth)?.key === key;
+}
+
 // ---------------------------------------------------------------------------------------------
 // Non-shell tools
 // ---------------------------------------------------------------------------------------------
