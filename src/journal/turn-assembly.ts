@@ -21,9 +21,9 @@ Please see LICENSE files in the repository root for full details.
  *              restarts) — one tertiary line each, outside the agent tile
  *   errors     a turn-ending error (session ended non-zero, can no longer resume) — .mj_TurnError
  *
- * Pure; no React. The bridge publishes its notices as ordinary `text` events, so
- * bridgeTextKind() recognises them by an allowlist of the bridge's fixed wordings. That is a
- * stop-gap until the bridge marks them.
+ * Pure; no React. A bridge that marks its notices (`payload.notice`) and the first event of a turn
+ * it injects (`payload.turn_start`) is read by those flags. For one that does not, bridgeTextKind()
+ * and isInjectedTurnStart() fall back to an allowlist of the bridge's fixed wordings.
  */
 
 import { type JournalEvent } from "./types";
@@ -89,6 +89,17 @@ export function bridgeTextKind(body: string): BridgeTextKind | null {
     return null;
 }
 
+/** `payload.notice` kinds that are not a plain notice; any other value (a newer kind too) is one. */
+const NOTICE_FLAG_KINDS: Readonly<Record<string, BridgeTextKind>> = { delivery_failed: "error" };
+
+/** How an agent text reads: by the bridge's `payload.notice` when it carries one, else its wording. */
+export function bridgeEventKind(event: JournalEvent): BridgeTextKind | null {
+    if (event.type !== "text" || isOperatorEvent(event)) return null;
+    const notice = asString(event.payload.notice);
+    if (notice) return NOTICE_FLAG_KINDS[notice] ?? "notice";
+    return bridgeTextKind(agentText(event));
+}
+
 const asString = (value: unknown): string => (typeof value === "string" ? value : "");
 
 export function isOperatorEvent(event: JournalEvent): boolean {
@@ -117,6 +128,9 @@ export function isTurnBoundary(event: JournalEvent): boolean {
  * opens one too. A control line parked until the turn ends ("… once this turn finishes") does not.
  */
 export function isInjectedTurnStart(event: JournalEvent): boolean {
+    // The bridge's own marker, on whatever event it put it.
+    const marker = event.payload.turn_start;
+    if (marker && typeof marker === "object" && !isOperatorEvent(event)) return true;
     const body = agentText(event).trim();
     if (!body) return false;
     if (event.payload.from === "user") return true;
@@ -226,15 +240,12 @@ type Classified =
     { bucket: "step"; step: Step } | { bucket: "text"; text: string } | { bucket: "break" | "error" | "notice" };
 
 function classifyAgentEvent(event: JournalEvent, previousTs: number | undefined): Classified {
+    const kind = bridgeEventKind(event);
+    if (kind === "error") return { bucket: "error" };
+    if (kind === "notice") return { bucket: "notice" };
     const step = eventToStep(event, previousTs);
     if (step) return { bucket: "step", step };
-    if (event.type === "text") {
-        const body = agentText(event);
-        const kind = bridgeTextKind(body);
-        if (kind === "error") return { bucket: "error" };
-        if (kind === "notice") return { bucket: "notice" };
-        return { bucket: "text", text: body };
-    }
+    if (event.type === "text") return { bucket: "text", text: agentText(event) };
     return { bucket: "break" };
 }
 
@@ -295,10 +306,15 @@ export function assembleTurns(events: readonly JournalEvent[]): Turn[] {
         }
         if (isInjectedTurnStart(event)) {
             finish();
-            current = { ...emptyTurn(event), opener: event };
-            turnAgent = event.sender;
+            turnAgent = event.sender.startsWith("agent:") ? event.sender : undefined;
             lastTs = event.ts;
-            continue;
+            // The bridge's line (or the text it mirrors for the user) heads the turn; a step or an
+            // answer the bridge marked is the turn's own content.
+            if (event.type === "text" && (bridgeEventKind(event) === "notice" || event.payload.from === "user")) {
+                current = { ...emptyTurn(event), opener: event };
+                continue;
+            }
+            current = emptyTurn(event);
         }
         const isAgent = event.sender.startsWith("agent:");
         if (isAgent && turnAgent !== undefined && event.sender !== turnAgent) finish();
@@ -309,8 +325,7 @@ export function assembleTurns(events: readonly JournalEvent[]): Turn[] {
         // A marker the journal writes under the user's name: shown in the turn, not as the operator.
         const marker = isOperatorEvent(event) && event.type !== "prompt_reply";
         // Duration ends at the turn's last own event: bridge notices and markers don't extend it.
-        if (!marker && !(event.type === "text" && bridgeTextKind(agentText(event)) === "notice"))
-            turn.endTs = Math.max(turn.endTs, event.ts);
+        if (!marker && bridgeEventKind(event) !== "notice") turn.endTs = Math.max(turn.endTs, event.ts);
         if (marker) {
             turn.breaks.push(event);
             continue;

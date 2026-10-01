@@ -8,6 +8,7 @@ Please see LICENSE files in the repository root for full details.
 import {
     assembleTurns,
     bridgeTextKind,
+    bridgeEventKind,
     eventToStep,
     isInjectedTurnStart,
     shownReplies,
@@ -476,5 +477,68 @@ describe("isInjectedTurnStart", () => {
     it("never takes an operator message or a room message for a bridge line", () => {
         expect(isInjectedTurnStart(user("🔔 Routine morning-sweep: Morning sweep"))).toBe(false);
         expect(isInjectedTurnStart(ev("text", { body: "Rebased.", from: "agent" }))).toBe(false);
+    });
+});
+
+describe("the bridge's structured flags", () => {
+    it("reads payload.notice before the wording, and tolerates kinds it does not know", () => {
+        const flagged = (body: string, notice: string): JournalEvent => ev("text", { body, from: "assistant", notice });
+        expect(bridgeEventKind(flagged("Anything at all", "compaction"))).toBe("notice");
+        expect(bridgeEventKind(flagged("Anything at all", "crash_restart"))).toBe("notice");
+        expect(bridgeEventKind(flagged("Anything at all", "slow_tool"))).toBe("notice");
+        expect(bridgeEventKind(flagged("Anything at all", "a_kind_from_the_future"))).toBe("notice");
+        expect(bridgeEventKind(flagged("Anything at all", "delivery_failed"))).toBe("error");
+        // Absent: the wording decides, as before.
+        expect(bridgeEventKind(say("Claude Code session restarted."))).toBe("notice");
+        expect(bridgeEventKind(say("Plain prose."))).toBeNull();
+        // Never on the operator's own text.
+        expect(bridgeEventKind(ev("text", { body: "x", notice: "control" }, { sender: "user:op" }))).toBeNull();
+    });
+
+    it("keeps a flagged notice out of the card and the answer", () => {
+        const [turn] = assembleTurns([
+            user("go"),
+            cmd("ls"),
+            ev("text", { body: "Context squeezed.", from: "assistant", notice: "compaction" }),
+            say("Done."),
+        ]);
+        expect(turn.notices.map((event) => event.payload.body)).toEqual(["Context squeezed."]);
+        expect(turn.answer.map((event) => event.payload.body)).toEqual(["Done."]);
+    });
+
+    it("opens a turn on payload.turn_start whatever the line says, and on any event type", () => {
+        const before = [user("deploy it"), cmd("pnpm build"), say("Deployed.")];
+        const line = ev("text", {
+            body: "A wording the client has never seen",
+            from: "assistant",
+            notice: "control",
+            turn_start: { origin: "a_new_origin" },
+        });
+        expect(isInjectedTurnStart(line)).toBe(true);
+        const turns = assembleTurns([...before, line, cmd("ls")]);
+        expect(turns).toHaveLength(2);
+        expect(turns[1].opener).toBe(line);
+        expect(stepsOf(turns[1].items)).toHaveLength(1);
+
+        // On a step or the agent's own words, the turn opens there and the event stays content.
+        const step = ev("tool_output", { command: "ls", exit_code: 0, turn_start: { origin: "routine" } });
+        const stepTurns = assembleTurns([...before, step]);
+        expect(stepTurns).toHaveLength(2);
+        expect(stepTurns[1].opener).toBeUndefined();
+        expect(stepsOf(stepTurns[1].items)).toHaveLength(1);
+        const words = ev("text", {
+            body: "Morning. Two PRs need you.",
+            from: "assistant",
+            turn_start: { origin: "routine" },
+        });
+        const wordTurns = assembleTurns([...before, words]);
+        expect(wordTurns).toHaveLength(2);
+        expect(wordTurns[1].answer).toEqual([words]);
+    });
+
+    it("never takes payload.turn_start on the operator's own event as a bridge line", () => {
+        expect(
+            isInjectedTurnStart(ev("text", { body: "hi", turn_start: { origin: "peer" } }, { sender: "user:op" })),
+        ).toBe(false);
     });
 });
