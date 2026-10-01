@@ -402,6 +402,29 @@ describe("Show the work OFF (default)", () => {
         expect(names.slice(2)).toEqual(["alpha", "beta"]);
     });
 
+    it("shows journal markers as compact lines, never raw JSON inside a tile", async () => {
+        await render(
+            client([
+                user("tidy the routines", 0),
+                cmd("routine_list", 0, 1),
+                ev("routine", { routine_id: "r1", name: "morning", action: "deleted" }, "user:op", 2),
+                ev("summary", { text: "a long summary" }, "agent:box", 3),
+                ev("consent_decision", { decision: "approve", by: "coordinator", reason: "fits" }, "journal", 4),
+                say("Done.", 5),
+                ev("coordinator", { role: "assigned" }, "user:op", 6),
+            ]),
+        );
+        const notices = [...container.querySelectorAll(".mj_SystemNotice")].map((node) => node.textContent);
+        expect(notices).toEqual([
+            "Routine “morning” deleted",
+            "The Coordinator approved this request: fits",
+            "This conversation is now the Coordinator",
+        ]);
+        const tile = container.querySelector(".mj_AgentTurn");
+        expect(tile?.textContent).not.toContain("{");
+        expect(tile?.textContent).not.toContain("a long summary");
+    });
+
     it("renders today's per-event thread when Show the work is ON, and switches back instantly", async () => {
         localStorage.setItem(SHOW_THE_WORK_KEY, "true");
         await render(client(sheetTurn()));

@@ -11,6 +11,7 @@ import {
     bridgeEventKind,
     eventToStep,
     isInjectedTurnStart,
+    noticeBody,
     shownReplies,
     threadRows,
 } from "../turn-assembly";
@@ -231,7 +232,8 @@ describe("assembleTurns", () => {
         const turns = assembleTurns(events);
         expect(turns).toHaveLength(1);
         expect(stepsOf(turns[0].items)).toHaveLength(2);
-        expect(turns[0].breaks.map((event) => event.type)).toEqual(["routine", "memory"]);
+        expect(turns[0].breaks.map((event) => event.type)).toEqual(["memory"]);
+        expect(turns[0].notices.map((event) => event.type)).toEqual(["routine"]);
         expect(turns[0].answer.map((event) => event.payload.body)).toEqual(["Done."]);
         // An item reply is the operator speaking: the bridge turns it into a turn.
         const reply = ev("item", { action: "commented", item_id: "it_1", num: 4 }, { sender: "user:op" });
@@ -540,5 +542,53 @@ describe("the bridge's structured flags", () => {
         expect(
             isInjectedTurnStart(ev("text", { body: "hi", turn_start: { origin: "peer" } }, { sender: "user:op" })),
         ).toBe(false);
+    });
+});
+
+describe("journal markers in the turn view", () => {
+    it("keeps summary and Coordinator role markers out of the tile", () => {
+        const [turn] = assembleTurns([
+            user("go"),
+            cmd("ls"),
+            ev("summary", { text: "a summary" }),
+            ev("coordinator", { role: "assigned" }, { sender: "journal" }),
+            say("Done."),
+        ]);
+        expect(turn.breaks).toEqual([]);
+        expect(turn.notices).toEqual([]);
+    });
+
+    it("shows routine and consent markers as one compact line, and hides a routine's fire", () => {
+        const saved = ev(
+            "routine",
+            { routine_id: "r1", name: "morning", action: "saved", created: true },
+            { sender: "user:op" },
+        );
+        const deleted = ev("routine", { routine_id: "r1", name: "morning", action: "deleted" }, { sender: "user:op" });
+        const fired = ev("routine", { routine_id: "r1", name: "morning", action: "fired" }, { sender: "journal" });
+        const consent = ev(
+            "consent_decision",
+            { kind: "spawn", decision: "approve", by: "coordinator", reason: "fits the rules" },
+            { sender: "journal" },
+        );
+        const [turn] = assembleTurns([user("go"), cmd("ls"), saved, deleted, fired, consent, say("Done.")]);
+        expect(turn.breaks).toEqual([]);
+        expect(turn.notices).toEqual([saved, deleted, consent]);
+        expect(noticeBody(saved)).toBe("Routine “morning” created");
+        expect(noticeBody(deleted)).toBe("Routine “morning” deleted");
+        expect(noticeBody(consent)).toBe("The Coordinator approved this request: fits the rules");
+        expect(noticeBody(ev("consent_decision", { decision: "deny" }))).toBe("The Coordinator declined this request");
+    });
+
+    it("shows a Coordinator role change the operator made as a compact line, not a raw bubble", () => {
+        const role = ev("coordinator", { role: "assigned" }, { sender: "user:op" });
+        const turns = assembleTurns([user("hi"), say("Hello."), role, say("I'm the Coordinator now.")]);
+        expect(turns).toHaveLength(2);
+        const rows = threadRows(turns);
+        expect(rows.map((row) => row.kind)).toEqual(["operator", "turn", "notice", "turn"]);
+        expect(noticeBody(role)).toBe("This conversation is now the Coordinator");
+        expect(noticeBody(ev("coordinator", { role: "released" }))).toBe(
+            "This conversation is no longer the Coordinator",
+        );
     });
 });

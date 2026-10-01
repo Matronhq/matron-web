@@ -239,6 +239,26 @@ export type ThreadRow =
 type Classified =
     { bucket: "step"; step: Step } | { bucket: "text"; text: string } | { bucket: "break" | "error" | "notice" };
 
+/**
+ * Journal bookkeeping markers. A `summary` and a Coordinator role event (other than the operator's
+ * own change, which opens a turn) have nothing to say in a tile; a routine change and a consent
+ * decision read as one compact notice line (noticeBody). A routine's fire is hidden: the bridge's
+ * own 🔔 line announces it. Developer view still shows every one of them as it is.
+ */
+function markerBucket(event: JournalEvent): "notice" | "hidden" | null {
+    switch (event.type) {
+        case "summary":
+        case "coordinator":
+            return "hidden";
+        case "routine":
+            return asString(event.payload.action) === "fired" ? "hidden" : "notice";
+        case "consent_decision":
+            return "notice";
+        default:
+            return null;
+    }
+}
+
 function classifyAgentEvent(event: JournalEvent, previousTs: number | undefined): Classified {
     const kind = bridgeEventKind(event);
     if (kind === "error") return { bucket: "error" };
@@ -247,6 +267,29 @@ function classifyAgentEvent(event: JournalEvent, previousTs: number | undefined)
     if (step) return { bucket: "step", step };
     if (event.type === "text") return { bucket: "text", text: agentText(event) };
     return { bucket: "break" };
+}
+
+/** The text of a notice row: the bridge's line, or a compact sentence for a journal marker. */
+export function noticeBody(event: JournalEvent): string {
+    const payload = event.payload;
+    switch (event.type) {
+        case "routine": {
+            const action = asString(payload.action);
+            const verb = action === "saved" ? (payload.created === true ? "created" : "updated") : action || "changed";
+            return `Routine “${asString(payload.name) || "a routine"}” ${verb}`;
+        }
+        case "consent_decision": {
+            const verdict = asString(payload.decision) === "approve" ? "approved" : "declined";
+            const reason = asString(payload.reason).trim();
+            return `The Coordinator ${verdict} this request${reason ? `: ${reason}` : ""}`;
+        }
+        case "coordinator":
+            return asString(payload.role) === "released"
+                ? "This conversation is no longer the Coordinator"
+                : "This conversation is now the Coordinator";
+        default:
+            return asString(payload.body);
+    }
 }
 
 function emptyTurn(first: JournalEvent, operator?: JournalEvent): Turn {
@@ -323,11 +366,13 @@ export function assembleTurns(events: readonly JournalEvent[]): Turn[] {
         const turn = current;
         turn.events.push(event);
         // A marker the journal writes under the user's name: shown in the turn, not as the operator.
-        const marker = isOperatorEvent(event) && event.type !== "prompt_reply";
+        const marker = (isOperatorEvent(event) && event.type !== "prompt_reply") || markerBucket(event) !== null;
         // Duration ends at the turn's last own event: bridge notices and markers don't extend it.
         if (!marker && bridgeEventKind(event) !== "notice") turn.endTs = Math.max(turn.endTs, event.ts);
         if (marker) {
-            turn.breaks.push(event);
+            const bucket = markerBucket(event);
+            if (bucket === "notice") turn.notices.push(event);
+            else if (bucket === null) turn.breaks.push(event);
             continue;
         }
         if (isOperatorEvent(event)) {
@@ -388,7 +433,9 @@ export function shownReplies(turn: Turn): JournalEvent[] {
 export function threadRows(turns: readonly Turn[], options: { liveLastTurn?: boolean } = {}): ThreadRow[] {
     const rows: ThreadRow[] = [];
     for (const turn of turns) {
-        if (turn.operator) rows.push({ kind: "operator", event: turn.operator });
+        // A Coordinator role change opens a turn but is no message: it reads as a compact line.
+        if (turn.operator)
+            rows.push({ kind: turn.operator.type === "coordinator" ? "notice" : "operator", event: turn.operator });
         if (turn.opener) rows.push({ kind: "notice", event: turn.opener });
         const agentContent = hasAgentContent(turn);
         if (!agentContent) for (const event of freeTextReplies(turn)) rows.push({ kind: "operator", event });

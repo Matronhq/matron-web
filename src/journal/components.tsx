@@ -104,7 +104,15 @@ import {
     recentFolderArgument,
 } from "./slash-palette";
 import { useShowTheWork } from "./show-the-work";
-import { assembleTurns, isOperatorEvent, shownReplies, type Turn, threadRows, type ThreadRow } from "./turn-assembly";
+import {
+    assembleTurns,
+    isOperatorEvent,
+    noticeBody,
+    shownReplies,
+    type Turn,
+    threadRows,
+    type ThreadRow,
+} from "./turn-assembly";
 import { noticeText, TurnCard, type TurnCardMode, TurnErrorRow } from "./turn-card";
 import { V6Icon } from "./v6-icons";
 import { applyPaneBand } from "./pane-width";
@@ -4216,7 +4224,9 @@ function AgentTurnRow({
     rowHandlers: RowContextMenu<JournalEvent>["rowHandlers"];
 }): React.ReactElement {
     // The tile speaks for the agent: its header never takes the operator's own reply.
-    const first = turn.events.find((event) => !isOperatorEvent(event));
+    const first =
+        turn.events.find((event) => event.sender.startsWith("agent:")) ??
+        turn.events.find((event) => !isOperatorEvent(event));
     const hasCard = stepsOf(turn.items).length > 0 || Boolean(live.running);
     // A reply the prompt card already shows (a picked option) is not repeated; a free-text
     // reply the card cannot show stays visible, in order among the break-throughs.
@@ -4307,9 +4317,9 @@ function AgentTurnRow({
     );
 }
 
-/** A bridge system notice (`.mj_SystemNotice`): one tertiary meta line, no avatar. */
+/** A bridge system notice or journal marker (`.mj_SystemNotice`): one tertiary meta line, no avatar. */
 function SystemNoticeRow({ event }: { event: JournalEvent }): React.ReactElement {
-    const body = asString(event.payload.body);
+    const body = noticeBody(event);
     return (
         <li className="mj_SystemNotice" data-event-id={event.seq} aria-live="polite" title={body}>
             {noticeText(body)}
