@@ -22,8 +22,9 @@ Please see LICENSE files in the repository root for full details.
  *   errors     a turn-ending error (session ended non-zero, can no longer resume) — .mj_TurnError
  *
  * Pure; no React. A bridge that marks its notices (`payload.notice`) and the first event of a turn
- * it injects (`payload.turn_start`) is read by those flags. For one that does not, bridgeTextKind()
- * and isInjectedTurnStart() fall back to an allowlist of the bridge's fixed wordings.
+ * it injects (`payload.turn_start`) is read by those flags: once a sender has published either, only
+ * `turn_start` opens a turn for its later events. For one that has not, bridgeTextKind() and
+ * isInjectedTurnStart() fall back to an allowlist of the bridge's fixed wordings.
  */
 
 import { type JournalEvent } from "./types";
@@ -80,26 +81,38 @@ const ERROR_PATTERNS: readonly RegExp[] = [
     /^⚠️?\s*Couldn't deliver (your queued message|\d+ queued messages) — the session ended/u,
 ];
 
-export function bridgeTextKind(body: string): BridgeTextKind | null {
+/**
+ * `flagged`: the sender marks its own lines (hasBridgeFlags), so an unmarked line in front of an
+ * injected turn is the agent's prose ("🔔 Heads up: …"), not the bridge's.
+ */
+export function bridgeTextKind(body: string, flagged = false): BridgeTextKind | null {
     const text = body.trim();
     if (!text) return null;
     if (ERROR_PATTERNS.some((pattern) => pattern.test(text))) return "error";
     if (NOTICE_PATTERNS.some((pattern) => pattern.test(text))) return "notice";
-    if (TURN_START_PATTERNS.some((pattern) => pattern.test(text))) return "notice";
+    if (!flagged && TURN_START_PATTERNS.some((pattern) => pattern.test(text))) return "notice";
     return null;
 }
 
 /** How an agent text reads: by the bridge's `payload.notice` when it carries one, else its wording. */
-export function bridgeEventKind(event: JournalEvent): BridgeTextKind | null {
+export function bridgeEventKind(event: JournalEvent, flagged = false): BridgeTextKind | null {
     if (event.type !== "text" || isOperatorEvent(event)) return null;
     const notice = asString(event.payload.notice);
     // Any kind, a newer one too, is a plain notice: a delivery failure can be recoverable (a room
     // inbox), so only the wording of a terminal one makes a turn-ending error.
     if (notice) return bridgeTextKind(agentText(event)) === "error" ? "error" : "notice";
-    return bridgeTextKind(agentText(event));
+    return bridgeTextKind(agentText(event), flagged || hasTurnStart(event));
 }
 
 const asString = (value: unknown): string => (typeof value === "string" ? value : "");
+
+const hasTurnStart = (event: JournalEvent): boolean =>
+    !isOperatorEvent(event) && Boolean(event.payload.turn_start) && typeof event.payload.turn_start === "object";
+
+/** A bridge event carrying the structured flags: its sender marks its notices and injected turns. */
+export function hasBridgeFlags(event: JournalEvent): boolean {
+    return !isOperatorEvent(event) && (Boolean(asString(event.payload.notice)) || hasTurnStart(event));
+}
 
 export function isOperatorEvent(event: JournalEvent): boolean {
     return event.sender.startsWith("user:");
@@ -111,13 +124,19 @@ export function isOperatorEvent(event: JournalEvent): boolean {
  */
 const TURN_OPENING_TYPES: ReadonlySet<string> = new Set(["text", "image", "file", "item", "coordinator"]);
 
+/** The user markers the bridge delivers as a turn: on a bridge that sends the flags, its turn_start opens it. */
+const DELIVERED_MARKER_TYPES: ReadonlySet<string> = new Set(["item", "coordinator"]);
+
 /**
  * An operator event that opens a new turn. An answer to the agent's own question
  * (`prompt_reply`) does not: the agent carries on with the same turn after it, so its steps stay
  * in the same card. Nor does a marker the journal writes under the user's name (a routine saved,
- * a mission, a memory): the operator didn't say anything to the agent.
+ * a mission, a memory): the operator didn't say anything to the agent. `bridgeFlagged`: the
+ * conversation's bridge sends the flags, so an item reply or a role change opens its turn at the
+ * bridge's `turn_start` instead (opening at the marker too would open it twice).
  */
-export function isTurnBoundary(event: JournalEvent): boolean {
+export function isTurnBoundary(event: JournalEvent, bridgeFlagged = false): boolean {
+    if (bridgeFlagged && DELIVERED_MARKER_TYPES.has(event.type)) return false;
     return isOperatorEvent(event) && TURN_OPENING_TYPES.has(event.type) && !asString(event.payload.fallback_for);
 }
 
@@ -125,14 +144,16 @@ export function isTurnBoundary(event: JournalEvent): boolean {
  * A bridge text that starts a turn the bridge injected (a routine, reminder, nudge, room message …).
  * Text the bridge mirrors on the user's behalf (`from: "user"`, e.g. a self-restart's carry-on)
  * opens one too. A control line parked until the turn ends ("… once this turn finishes") does not.
+ * `flagged`: the sender sends the flags (hasBridgeFlags), so only its `turn_start` opens a turn.
  */
-export function isInjectedTurnStart(event: JournalEvent): boolean {
+export function isInjectedTurnStart(event: JournalEvent, flagged = false): boolean {
     // The bridge's own marker, on whatever event it put it.
-    const marker = event.payload.turn_start;
-    if (marker && typeof marker === "object" && !isOperatorEvent(event)) return true;
+    if (hasTurnStart(event)) return true;
     const body = agentText(event).trim();
     if (!body) return false;
     if (event.payload.from === "user") return true;
+    // A line the bridge marks as a notice but not as a turn start is inside the running turn.
+    if (flagged || hasBridgeFlags(event)) return false;
     const first = body.split("\n")[0];
     return TURN_START_PATTERNS.some((pattern) => pattern.test(first)) && !DEFERRED_TAIL.test(first);
 }
@@ -239,26 +260,26 @@ type Classified =
     { bucket: "step"; step: Step } | { bucket: "text"; text: string } | { bucket: "break" | "error" | "notice" };
 
 /**
- * Journal bookkeeping markers. A `summary` and a Coordinator role event (other than the operator's
- * own change, which opens a turn) have nothing to say in a tile; a routine change and a consent
- * decision read as one compact notice line (noticeBody). Developer view still shows every one of
- * them as it is.
+ * Journal bookkeeping markers. A `summary` has nothing to say in a tile; a routine change, a
+ * consent decision and a Coordinator role change (the operator's, when the bridge's turn_start
+ * opens its turn rather than the marker) read as one compact notice line (noticeBody). Developer
+ * view still shows every one of them as it is.
  */
 function markerBucket(event: JournalEvent): "notice" | "hidden" | null {
     switch (event.type) {
         case "summary":
-        case "coordinator":
             return "hidden";
         case "routine":
         case "consent_decision":
+        case "coordinator":
             return "notice";
         default:
             return null;
     }
 }
 
-function classifyAgentEvent(event: JournalEvent, previousTs: number | undefined): Classified {
-    const kind = bridgeEventKind(event);
+function classifyAgentEvent(event: JournalEvent, previousTs: number | undefined, flagged: boolean): Classified {
+    const kind = bridgeEventKind(event, flagged);
     if (kind === "error") return { bucket: "error" };
     if (kind === "notice") return { bucket: "notice" };
     const step = eventToStep(event, previousTs);
@@ -266,9 +287,6 @@ function classifyAgentEvent(event: JournalEvent, previousTs: number | undefined)
     if (event.type === "text") return { bucket: "text", text: agentText(event) };
     return { bucket: "break" };
 }
-
-/** How far after a routine's fire marker the bridge's own 🔔 line for it is looked for. */
-const FIRE_ANNOUNCE_WINDOW = 8;
 
 /**
  * A fire the journal did not deliver: its marker's outcome is anything but "applied …" ("failed
@@ -280,25 +298,50 @@ const failedFire = (event: JournalEvent): string | null => {
     return outcome.replace(/^failed\b\s*/, "");
 };
 
+/** The journal's own call timed out or threw: the bridge may well have run the routine. */
+const UNCERTAIN_FIRE = new Set(["timeout", "internal"]);
+
 /**
- * The fire markers the bridge's own line announces ("🔔 Routine <name>: …", posted just before the
- * journal records the fire): those are hidden so the fire reads once. A fire nothing announces,
- * or one that failed, stays visible.
+ * The routines a bridge line names, when it is the bridge's line for a fire ("🔔 Routine <name>:
+ * <title>", "🔔 Routines <a>, <b>") or for a refused one ("⚠️ Routine <name>: <title> — refused: …").
  */
-function announcedFires(events: readonly JournalEvent[]): Set<number> {
-    const announced = new Set<number>();
-    events.forEach((event, index) => {
-        if (event.type !== "routine" || asString(event.payload.action) !== "fired") return;
-        if (failedFire(event) !== null) return;
-        const name = asString(event.payload.name);
-        const line = events
-            .slice(Math.max(0, index - FIRE_ANNOUNCE_WINDOW), index + 1 + FIRE_ANNOUNCE_WINDOW)
-            .some(
-                (next) => /^🔔\s*Routines? /u.test(agentText(next).trim()) && (!name || agentText(next).includes(name)),
-            );
-        if (line) announced.add(event.seq);
+function routineLineNames(event: JournalEvent, lead: "🔔" | "⚠️"): string[] {
+    const text = agentText(event).trim();
+    const match = (lead === "🔔" ? /^🔔\s*Routines? /u : /^⚠️?\s*Routines? /u).exec(text);
+    if (!match) return [];
+    if (lead === "⚠️" && !text.includes(" — refused: ")) return [];
+    const rest = text.slice(match[0].length);
+    if (!match[0].includes("Routines")) return [rest];
+    const list = rest.replace(/( — refused: | once this turn finishes| \(now that the session is free\)).*$/su, "");
+    return list.split(", ");
+}
+
+/** Whether a line names the routine: "Routine <name>: …", or <name> in a "Routines <a>, <b>" list. */
+const namesRoutine = (names: string[], name: string): boolean =>
+    names.some((entry) => entry === name || entry.startsWith(`${name}:`));
+
+/**
+ * The fire markers the bridge's own line in the same turn reads for ("🔔 Routine <name>: …", posted
+ * just before the journal records the fire, or its "⚠️ … refused: …" line): those are hidden so the
+ * fire reads once. A fire nothing announces, or one that failed with no line of its own, stays
+ * visible.
+ */
+function hideAnnouncedFires(turn: Turn): void {
+    const lines = turn.opener ? [turn.opener, ...turn.events] : turn.events;
+    const said = (lead: "🔔" | "⚠️", name: string): boolean =>
+        lines.some((line) => namesRoutine(routineLineNames(line, lead), name));
+    turn.notices = turn.notices.filter((event) => {
+        if (event.type !== "routine" || asString(event.payload.action) !== "fired") return true;
+        // The bridge strips brackets from a name it frames (session-control frameName).
+        const name = asString(event.payload.name)
+            .replace(/[[\]()]/g, "")
+            .trim();
+        if (!name) return true;
+        const failed = failedFire(event);
+        if (failed === null) return !said("🔔", name);
+        if (UNCERTAIN_FIRE.has(failed)) return true;
+        return !said("⚠️", name);
     });
-    return announced;
 }
 
 /** The text of a notice row: the bridge's line, or a compact sentence for a journal marker. */
@@ -308,6 +351,8 @@ export function noticeBody(event: JournalEvent): string {
         case "routine": {
             const action = asString(payload.action);
             const failed = action === "fired" ? failedFire(event) : null;
+            if (failed !== null && UNCERTAIN_FIRE.has(failed))
+                return `Routine “${asString(payload.name) || "a routine"}” may not have run (${failed})`;
             if (failed !== null)
                 return `Routine “${asString(payload.name) || "a routine"}” didn't run${failed ? `: ${failed}` : ""}`;
             const verb = action === "saved" ? (payload.created === true ? "created" : "updated") : action || "changed";
@@ -350,7 +395,6 @@ function emptyTurn(first: JournalEvent, operator?: JournalEvent): Turn {
 /** Group visible journal events (already filtered by the timeline) into operator turns. */
 export function assembleTurns(events: readonly JournalEvent[]): Turn[] {
     const turns: Turn[] = [];
-    const announced = announcedFires(events);
     let current: Turn | null = null;
     // Per turn: the text events in order with their position relative to the steps, resolved
     // into narration vs answer once the turn's last step is known.
@@ -358,6 +402,11 @@ export function assembleTurns(events: readonly JournalEvent[]): Turn[] {
     let lastTs: number | undefined;
     // The agent the turn's tile speaks for: another agent speaking (an agent chat room) gets its own.
     let turnAgent: string | undefined;
+    // Senders that have published the bridge's flags: for their later events only turn_start opens
+    // a turn. The user markers the bridge delivers as a turn (an item reply, a role change) follow
+    // the conversation's latest agent sender, the bridge that will deliver them.
+    const flaggedSenders = new Set<string>();
+    let latestAgent: string | undefined;
 
     const finish = (): void => {
         turnAgent = undefined;
@@ -376,24 +425,31 @@ export function assembleTurns(events: readonly JournalEvent[]): Turn[] {
             }
         }
         texts = [];
+        hideAnnouncedFires(turn);
         turns.push(turn);
         current = null;
     };
 
     for (const event of events) {
-        if (isTurnBoundary(event)) {
+        if (hasBridgeFlags(event)) flaggedSenders.add(event.sender);
+        if (event.sender.startsWith("agent:")) latestAgent = event.sender;
+        const flagged = flaggedSenders.has(event.sender);
+        if (isTurnBoundary(event, latestAgent !== undefined && flaggedSenders.has(latestAgent))) {
             finish();
             current = emptyTurn(event, event);
             lastTs = event.ts;
             continue;
         }
-        if (isInjectedTurnStart(event)) {
+        if (isInjectedTurnStart(event, flagged)) {
             finish();
             turnAgent = event.sender.startsWith("agent:") ? event.sender : undefined;
             lastTs = event.ts;
             // The bridge's line (or the text it mirrors for the user) heads the turn; a step or an
             // answer the bridge marked is the turn's own content.
-            if (event.type === "text" && (bridgeEventKind(event) === "notice" || event.payload.from === "user")) {
+            if (
+                event.type === "text" &&
+                (bridgeEventKind(event, flagged) === "notice" || event.payload.from === "user")
+            ) {
                 current = { ...emptyTurn(event), opener: event };
                 continue;
             }
@@ -408,9 +464,9 @@ export function assembleTurns(events: readonly JournalEvent[]): Turn[] {
         // A marker the journal writes under the user's name: shown in the turn, not as the operator.
         const marker = (isOperatorEvent(event) && event.type !== "prompt_reply") || markerBucket(event) !== null;
         // Duration ends at the turn's last own event: bridge notices and markers don't extend it.
-        if (!marker && bridgeEventKind(event) !== "notice") turn.endTs = Math.max(turn.endTs, event.ts);
+        if (!marker && bridgeEventKind(event, flagged) !== "notice") turn.endTs = Math.max(turn.endTs, event.ts);
         if (marker) {
-            const bucket = announced.has(event.seq) ? "hidden" : markerBucket(event);
+            const bucket = markerBucket(event);
             if (bucket === "notice") turn.notices.push(event);
             else if (bucket === null) turn.breaks.push(event);
             continue;
@@ -420,7 +476,7 @@ export function assembleTurns(events: readonly JournalEvent[]): Turn[] {
             lastTs = event.ts;
             continue;
         }
-        const classified = classifyAgentEvent(event, lastTs);
+        const classified = classifyAgentEvent(event, lastTs, flagged);
         lastTs = event.ts;
         switch (classified.bucket) {
             case "step":

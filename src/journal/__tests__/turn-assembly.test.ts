@@ -552,15 +552,76 @@ describe("the bridge's structured flags", () => {
     });
 });
 
+describe("on a bridge that sends the flags", () => {
+    // The bridge's own line, flagged as it publishes it (matron-bridge lib/turn-markers.js).
+    const line = (body: string, notice = "control", origin?: string): JournalEvent =>
+        ev("text", { body, from: "assistant", notice, ...(origin ? { turn_start: { origin } } : {}) });
+    const compacted = (): JournalEvent => line("✅ Context compacted.", "compaction");
+
+    it("never opens a turn at a line flagged as a notice without turn_start", () => {
+        const nudge = line("🔔 3 important things have gone unseen by the user for over 2 hours:\n- #12 …");
+        const turns = assembleTurns([user("go"), cmd("ls"), nudge, cmd("pnpm test"), say("Done.")]);
+        expect(turns).toHaveLength(1);
+        const [turn] = turns;
+        expect(stepsOf(turn.items)).toHaveLength(2);
+        expect(turn.notices).toEqual([nudge]);
+        expect(turn.answer.map((event) => event.payload.body)).toEqual(["Done."]);
+    });
+
+    it("keeps the agent's own 🔔 prose as the answer once the sender sends flags", () => {
+        const prose = say("🔔 Heads up: the deploy finished and CI is green.");
+        const turns = assembleTurns([user("deploy"), compacted(), cmd("pnpm build"), prose]);
+        expect(turns).toHaveLength(1);
+        expect(turns[0].opener).toBeUndefined();
+        expect(turns[0].answer).toEqual([prose]);
+        expect(turns[0].notices.map((event) => event.payload.body)).toEqual(["✅ Context compacted."]);
+    });
+
+    it("opens one turn for an item reply or a role change: the bridge's turn_start, not the marker", () => {
+        for (const marker of [
+            ev("item", { item_id: "it_1", num: 12, action: "comment" }, { sender: "user:op" }),
+            ev("coordinator", { role: "assigned" }, { sender: "user:op" }),
+        ]) {
+            const delivered = say("Looking at #12 now.");
+            delivered.payload.turn_start = { origin: marker.type };
+            const turns = assembleTurns([user("go"), compacted(), cmd("ls"), marker, delivered, cmd("cat a.ts")]);
+            expect(turns).toHaveLength(2);
+            expect(turns[0].operator?.payload.body).toBe("go");
+            expect(stepsOf(turns[1].items)).toHaveLength(1);
+            // The marker stays in view, in the turn it arrived in.
+            expect(marker.type === "item" ? turns[0].breaks : turns[0].notices).toContain(marker);
+        }
+    });
+
+    it("opens no empty turn for a command-shaped timer", () => {
+        const timer = line('⏰ Timer #2: sending "/status"');
+        const turns = assembleTurns([user("go"), say("Set."), timer, say("Status: idle.")]);
+        expect(turns).toHaveLength(1);
+        expect(turns[0].notices).toEqual([timer]);
+    });
+
+    it("leaves an older bridge (no flags yet) on the wording", () => {
+        const routine = say("🔔 Routine morning: Morning brief");
+        const turns = assembleTurns([user("go"), say("Done."), routine, cmd("ls")]);
+        expect(turns).toHaveLength(2);
+        expect(turns[1].opener).toBe(routine);
+        const item = ev("item", { item_id: "it_1", num: 12, action: "comment" }, { sender: "user:op" });
+        expect(assembleTurns([user("go"), say("Done."), item, say("On it.")])).toHaveLength(2);
+    });
+
+    it("decides per sender: another agent that sends no flags stays on the wording", () => {
+        const other = { sender: "agent:other" };
+        const room = ev("text", { body: '💬 beta in "alpha ↔️ beta": can you rebase?', from: "assistant" }, other);
+        const rebase = ev("tool_output", { command: "git rebase", exit_code: 0 }, other);
+        const turns = assembleTurns([user("go"), compacted(), say("Done."), room, rebase]);
+        expect(turns).toHaveLength(2);
+        expect(turns[1].opener).toBe(room);
+    });
+});
+
 describe("journal markers in the turn view", () => {
-    it("keeps summary and Coordinator role markers out of the tile", () => {
-        const [turn] = assembleTurns([
-            user("go"),
-            cmd("ls"),
-            ev("summary", { text: "a summary" }),
-            ev("coordinator", { role: "assigned" }, { sender: "journal" }),
-            say("Done."),
-        ]);
+    it("keeps summary markers out of the tile", () => {
+        const [turn] = assembleTurns([user("go"), cmd("ls"), ev("summary", { text: "a summary" }), say("Done.")]);
         expect(turn.breaks).toEqual([]);
         expect(turn.notices).toEqual([]);
     });
@@ -621,9 +682,66 @@ describe("a routine's fire marker", () => {
         const turns = assembleTurns([user("go"), say("Done."), line, marker, cmd("ls")]);
         expect(turns.flatMap((turn) => [...turn.notices, ...turn.breaks])).not.toContain(marker);
         expect(turns[1].opener).toBe(line);
-        // Either order reads once.
-        const swapped = assembleTurns([user("go"), say("Done."), fired(), say("🔔 Routine morning: Morning brief")]);
-        expect(swapped.flatMap((turn) => turn.notices)).toEqual([]);
+        // Either order reads once, within the turn: a line parked until the turn ends.
+        const parked = say("🔔 Routine morning: Morning brief once this turn finishes");
+        const swapped = assembleTurns([user("go"), cmd("ls"), fired(), parked, say("Done.")]);
+        expect(swapped.flatMap((turn) => turn.notices)).toEqual([parked]);
+        // Several routines merged into one line each read once.
+        const evening = ev("routine", { routine_id: "r2", name: "evening", action: "fired" }, { sender: "journal" });
+        const merged = assembleTurns([
+            user("go"),
+            say("Done."),
+            say("🔔 Routines morning, evening (now that the session is free)"),
+            fired(),
+            evening,
+        ]);
+        expect(merged.flatMap((turn) => turn.notices)).toEqual([]);
+    });
+
+    it("is announced only by its own routine's line, in its own turn", () => {
+        // "brief" appears in the line, but the line is routine "morning"'s.
+        const brief = ev("routine", { routine_id: "r3", name: "brief", action: "fired" }, { sender: "journal" });
+        const announced = assembleTurns([user("go"), say("🔔 Routine morning: Morning brief"), brief]);
+        expect(announced.flatMap((turn) => turn.notices)).toEqual([brief]);
+        // A line in an earlier turn announces nothing here.
+        const marker = fired();
+        const turns = assembleTurns([
+            user("go"),
+            say("🔔 Routine morning: Morning brief once this turn finishes"),
+            say("Done."),
+            user("next"),
+            cmd("ls"),
+            cmd("pnpm test"),
+            marker,
+        ]);
+        expect(turns[1].notices).toEqual([marker]);
+    });
+
+    it("may not have run when the journal's call timed out or threw", () => {
+        for (const [outcome, copy] of [
+            ["failed timeout", "Routine “morning” may not have run (timeout)"],
+            ["failed internal", "Routine “morning” may not have run (internal)"],
+        ]) {
+            const marker = ev(
+                "routine",
+                { routine_id: "r1", name: "morning", action: "fired", outcome },
+                { sender: "journal" },
+            );
+            const [turn] = assembleTurns([user("go"), say("Done."), marker]);
+            expect(turn.notices).toEqual([marker]);
+            expect(noticeBody(marker)).toBe(copy);
+        }
+    });
+
+    it("is hidden when the bridge's own refusal line for it is in the turn", () => {
+        const refusal = say("⚠️ Routine morning: Morning brief — refused: session is asleep");
+        const marker = ev(
+            "routine",
+            { routine_id: "r1", name: "morning", action: "fired", outcome: "failed agent_asleep" },
+            { sender: "journal" },
+        );
+        const [turn] = assembleTurns([user("go"), say("Done."), refusal, marker]);
+        expect(turn.notices).toEqual([refusal]);
     });
 
     it("shows any fire whose outcome is not applied, as the journal records it", () => {
