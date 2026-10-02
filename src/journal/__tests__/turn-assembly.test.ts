@@ -579,7 +579,7 @@ describe("on a bridge that sends the flags", () => {
 
     it("opens one turn for an item reply or a role change: the bridge's turn_start, not the marker", () => {
         for (const marker of [
-            ev("item", { item_id: "it_1", num: 12, action: "comment" }, { sender: "user:op" }),
+            ev("item", { item_id: "it_1", num: 12, action: "commented" }, { sender: "user:op" }),
             ev("coordinator", { role: "assigned" }, { sender: "user:op" }),
         ]) {
             const delivered = say("Looking at #12 now.");
@@ -605,7 +605,7 @@ describe("on a bridge that sends the flags", () => {
         const turns = assembleTurns([user("go"), say("Done."), routine, cmd("ls")]);
         expect(turns).toHaveLength(2);
         expect(turns[1].opener).toBe(routine);
-        const item = ev("item", { item_id: "it_1", num: 12, action: "comment" }, { sender: "user:op" });
+        const item = ev("item", { item_id: "it_1", num: 12, action: "commented" }, { sender: "user:op" });
         expect(assembleTurns([user("go"), say("Done."), item, say("On it.")])).toHaveLength(2);
     });
 
