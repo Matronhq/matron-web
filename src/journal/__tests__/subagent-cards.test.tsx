@@ -13,7 +13,15 @@ Please see LICENSE files in the repository root for full details.
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
-import { indicatorStep, payloadStep, plainLine, previewLine, rowPreviewLine } from "../activity-text";
+import {
+    indicatorStep,
+    payloadStep,
+    PREVIEW_CACHE_LIMIT,
+    previewCacheSize,
+    plainLine,
+    previewLine,
+    rowPreviewLine,
+} from "../activity-text";
 import { archiveStore, favoriteStore, MatronJournalClient, pinnedStore, unreadStore } from "../client";
 import { MatronApp } from "../components";
 import { helperForStep, helpersByTurn, subagentStatus, subagentView } from "../subagent-card";
@@ -232,6 +240,12 @@ describe("sidebar preview (Developer view off)", () => {
         expect(rowPreviewLine("p:sub:a", row("x", "done", step))).toBe("Ran the tests");
         expect(rowPreviewLine("p:sub:a", row("All green.", "done"))).toBe("All green.");
         expect(rowPreviewLine("p:sub:b", row("x", "running", step))).toBe("Running the tests…");
+    });
+
+    it("keeps the preview cache bounded, dropping the oldest rows", () => {
+        for (let n = 0; n < PREVIEW_CACHE_LIMIT + 50; n++) rowPreviewLine(`bound:${n}`, row("All green.", "done"));
+        expect(previewCacheSize()).toBe(PREVIEW_CACHE_LIMIT);
+        expect(rowPreviewLine(`bound:${PREVIEW_CACHE_LIMIT + 49}`, row("All green.", "done"))).toBe("All green.");
     });
 });
 

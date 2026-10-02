@@ -201,7 +201,14 @@ export function previewLine(conversation: PreviewSource): string {
     return text;
 }
 
+/** Rows the preview cache keeps; past it, the oldest entry is dropped. */
+export const PREVIEW_CACHE_LIMIT = 500;
 const previews = new Map<string, { key: string; line: string }>();
+
+/** How many rows the preview cache holds (for tests). */
+export function previewCacheSize(): number {
+    return previews.size;
+}
 
 /**
  * previewLine for one sidebar row, recomputed only when its inputs change: the list re-renders
@@ -213,6 +220,8 @@ export function rowPreviewLine(id: string, conversation: PreviewSource): string 
     const cached = previews.get(id);
     if (cached?.key === key) return cached.line;
     const line = previewLine(conversation);
+    previews.delete(id);
     previews.set(id, { key, line });
+    if (previews.size > PREVIEW_CACHE_LIMIT) previews.delete(previews.keys().next().value!);
     return line;
 }
