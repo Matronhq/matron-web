@@ -7,7 +7,7 @@ Please see LICENSE files in the repository root for full details.
 
 import { indicatorStep } from "../activity-text";
 import { activityStep } from "../components";
-import { liveLine } from "../turn-grouping";
+import { liveLine, stepSentence } from "../turn-grouping";
 
 jest.mock("../../../res/matron-logo-simple.svg", () => "matron-logo.svg");
 
@@ -24,6 +24,19 @@ describe("activityStep (the live line's step)", () => {
         const step = activityStep("🌐 matron bridge notice flag", "x")!;
         expect(step).toMatchObject({ tool: "WebSearch", input: { pattern: "matron bridge notice flag" } });
         expect(liveLine(step)).toBe("Searching the web for matron bridge notice flag…");
+    });
+
+    it("reads Codex's query-less web search as a search with no query", () => {
+        // The bridge sends `🌐 Web search` until the search has its query.
+        const step = activityStep("🌐 Web search", "x")!;
+        expect(step).toMatchObject({ tool: "WebSearch" });
+        expect(liveLine(step)).toBe("Searching the web…");
+        expect(stepSentence(step)).toBe("Searched the web");
+    });
+
+    it("adds no second ellipsis to a query the bridge already cut", () => {
+        const step = activityStep("🌐 matron bridge notice flag and more…", "x")!;
+        expect(liveLine(step)).toBe("Searching the web for matron bridge notice flag and more…");
     });
 
     it("reads a nested subtask with its description", () => {

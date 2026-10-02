@@ -311,6 +311,13 @@ describe("helper thread headlines", () => {
         expect(prose).toMatchObject({ type: "note" });
     });
 
+    it("a query-less web-search line reads as a search with no query", () => {
+        const [entry] = buildHeadlines([{ kind: "narration", text: "🌐 Web search" }]);
+        expect(entry.type === "headline" && headlineRowText(entry)).toBe("Searched the web");
+        const step: Step = { kind: "step", id: "s", tool: "WebSearch", input: { pattern: "Web search" }, status: "ok" };
+        expect(describeStep(step)).toMatchObject({ past: "Searched the web", live: "Searching the web" });
+    });
+
     it("narration that reads as machine text joins the steps instead of printing", () => {
         const entries = buildHeadlines([
             { kind: "narration", text: "🔧 python3 - <<'EOF' import sqlite3,json c=sqlite3.connect('/tmp/j.db')" },

@@ -248,7 +248,8 @@ export function stepSentence(step: Step): string {
     }
     if (c === "helper") return `Asked a helper to ${i.description ?? "help"}`;
     if (step.tool === "Browser") return `Took a screenshot of ${host(i.url)}`;
-    if (step.tool === "WebSearch") return i.pattern ? `Searched the web for ${i.pattern}` : "Searched the web";
+    if (step.tool === "WebSearch")
+        return webQuery(step) ? `Searched the web for ${webQuery(step)}` : "Searched the web";
     if (c === "web") return `Opened ${host(i.url)}`;
     if (c === "look") return `Read ${basename(i.path ?? lastArg(commandOf(step)))}`;
     if (c === "search") return "Searched the code";
@@ -267,6 +268,15 @@ function lastArg(cmd: string): string {
     return parts.length > 1 ? parts[parts.length - 1] : "";
 }
 
+/**
+ * A web search's query. A Codex search with no query yet comes through as the bridge's fallback
+ * word (`🌐 Web search`), which is not a query.
+ */
+export function webQuery(step: Step): string {
+    const query = step.input.pattern ?? "";
+    return query === "Web search" ? "" : query;
+}
+
 /** Present-progressive live line for the step that is running now. */
 export function liveLine(step: Step): string {
     const c = classify(step).key;
@@ -282,7 +292,9 @@ export function liveLine(step: Step): string {
     if (c === "history") return "Checking the history…";
     if (c === "git") return "Updating the branch…";
     if (c === "helper") return `Asking a helper to ${i.description ?? "help"}…`;
-    if (step.tool === "WebSearch") return i.pattern ? `Searching the web for ${i.pattern}…` : "Searching the web…";
+    // The bridge already cuts a long query with "…".
+    if (step.tool === "WebSearch")
+        return webQuery(step) ? `Searching the web for ${webQuery(step).replace(/…$/u, "")}…` : "Searching the web…";
     if (c === "web") return "Looking at a web page…";
     return "Working…";
 }

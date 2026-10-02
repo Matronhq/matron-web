@@ -23,7 +23,7 @@ Please see LICENSE files in the repository root for full details.
  * term (quoted, shortened), a host name and a helper's task description.
  */
 
-import { basename, type GroupIcon, isShellStep, type Step } from "./turn-grouping";
+import { basename, type GroupIcon, isShellStep, type Step, webQuery } from "./turn-grouping";
 
 export type PhraseKey =
     | "read"
@@ -1574,7 +1574,7 @@ function toolStepPhrase(step: Step): Phrase {
         }
         case "WebSearch":
         case "web_search": {
-            const q = i.pattern ? short(i.pattern, 48) : "";
+            const q = webQuery(step) ? short(webQuery(step), 48) : "";
             return q
                 ? phrase("web", `Searched the web for ${quote(q)}`, `Searching the web for ${quote(q)}`, q)
                 : phrase("web", "Searched the web", "Searching the web");
