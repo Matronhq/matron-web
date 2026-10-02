@@ -20,14 +20,20 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import "@fontsource/fira-code/latin-400.css";
 import "@fontsource/inter/latin-400.css";
+// Inter 500 (labels, menu rows, card titles): without it the browser matches 500 to 400.
+import "@fontsource/inter/latin-500.css";
 import "@fontsource/inter/latin-600.css";
 
 import { archiveStore, favoriteStore, MatronJournalClient, pinnedStore, unreadStore } from "../src/journal/client";
 import { MatronApp } from "../src/journal/components";
-import type { ClientState, Conversation, JournalEvent, Session } from "../src/journal/types";
+import type { ClientState, Conversation, JournalEvent, Session, SessionStatus } from "../src/journal/types";
+import { SHOW_THE_WORK_KEY } from "../src/journal/show-the-work";
+import { v6Fixture, type V6Scenario } from "./v6-thread";
+import { REAL_STATUS, subagentFixture, type SubagentScenario } from "./subagents";
 import "../src/journal/shell.pcss";
 import "../src/journal/journal.pcss";
 import "../src/journal/tracker.pcss";
+import "../src/journal/subagents.pcss";
 
 const SESSION: Session = {
     serverUrl: "https://journal.example",
@@ -295,8 +301,56 @@ const state: ClientState = {
     favoriteIds: favoriteStore.read(SESSION).ids,
     unreadOverrideIds: unreadStore.read(SESSION).ids,
 };
+// Turn cards: `?v6=<scenario>` swaps in a six-turn thread built from real journal shapes;
+// `?work=on` turns Developer view on (the rendering before turn cards).
+const v6Params = new URLSearchParams(window.location.search);
+const v6Scenario = v6Params.get("v6") as V6Scenario | null;
+if (v6Params.get("work") === "on") localStorage.setItem(SHOW_THE_WORK_KEY, "true");
+else localStorage.removeItem(SHOW_THE_WORK_KEY);
+if (v6Scenario) {
+    const fixture = v6Fixture(v6Scenario);
+    state.events = fixture.events;
+    state.toolStreams = fixture.toolStreams;
+    state.activity = fixture.activity;
+    state.conversations = state.conversations.map((conversation) =>
+        conversation.id === "c1" ? { ...conversation, session_state: fixture.sessionState } : conversation,
+    );
+}
+
+// Subagent cards + sidebar child rows: `?sub=thread|child|codex` swaps in a parent session with
+// Claude subagents and a Codex exec child (fixtures/subagents.ts).
+const subScenario = v6Params.get("sub") as SubagentScenario | null;
+if (subScenario) {
+    const fixture = subagentFixture(subScenario);
+    state.conversations = fixture.conversations;
+    state.selectedConversationId = fixture.selected;
+    state.events = fixture.events;
+    state.activity = fixture.activity;
+    state.toolStreams = {};
+    (client as unknown as { conversationEvents: (id: string) => Promise<JournalEvent[]> }).conversationEvents = async (
+        id: string,
+    ) => fixture.childEvents[id] ?? [];
+    (client as unknown as { refreshConversationTail: () => Promise<boolean> }).refreshConversationTail = async () =>
+        false;
+}
+
 // The client keeps its state private; mirror the test harness's internal override.
 (client as unknown as { state: ClientState }).state = state;
+
+// A real helper thread (`?sub=real-*`): the header's context gauge goes through the client's own
+// helper correction (statusFor), from the statuses an older bridge publishes.
+if (subScenario === "real-claude" || subScenario === "real-tests") {
+    const internals = client as unknown as {
+        statuses: Map<string, SessionStatus>;
+        statusFor: (id: string) => SessionStatus | undefined;
+    };
+    internals.statuses.set("p1", REAL_STATUS.parent);
+    internals.statuses.set(state.selectedConversationId!, REAL_STATUS.child);
+    state.sessionStatus =
+        typeof internals.statusFor !== "function" || new URLSearchParams(location.search).has("rawctx")
+            ? REAL_STATUS.child
+            : internals.statusFor.call(client, state.selectedConversationId!);
+}
 
 // Stub the new-session data path so a driver click on "New session" reaches the folders
 // form (agent → recent folders) where the themed inputs / checkbox / Start live.

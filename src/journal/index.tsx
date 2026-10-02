@@ -9,6 +9,8 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import "@fontsource/fira-code/latin-400.css";
 import "@fontsource/inter/latin-400.css";
+// Inter 500 (labels, menu rows, card titles): without it the browser matches 500 to 400.
+import "@fontsource/inter/latin-500.css";
 import "@fontsource/inter/latin-600.css";
 
 import { MatronJournalClient } from "./client";
@@ -16,6 +18,7 @@ import { MatronApp } from "./components";
 import "./shell.pcss";
 import "./journal.pcss";
 import "./tracker.pcss";
+import "./subagents.pcss";
 
 const container = document.getElementById("matron");
 if (!container) throw new Error("Matron application container is missing");

@@ -245,3 +245,60 @@ export function mergeSessionStatus(current: SessionStatus | undefined, update: S
         email: update.email ?? current?.email,
     };
 }
+
+const ONE_MILLION = 1_000_000;
+
+function normalizedModel(model: string): string {
+    return model
+        .toLowerCase()
+        .replace(/\[1m\]/g, "")
+        .replace(/-\d{8}$/, "")
+        .trim();
+}
+
+/** The model family a model id or alias names ("opus", "sonnet"…), or the bare id. */
+function modelFamily(model: string): string {
+    const id = normalizedModel(model);
+    return /\b(opus|sonnet|haiku|fable|mythos)\b/.exec(id.replace(/[-_]/g, " "))?.[1] ?? id;
+}
+
+/**
+ * The same model as far as its window goes: the same family, and the same model when both name
+ * an explicit revision (`opus[1m]` matches `claude-opus-5-5`; `claude-opus-4-1` does not match
+ * `claude-opus-5-5`). The bridge applies the same rule when it sizes a subagent's window.
+ */
+function sameModel(child: string, parent: string): boolean {
+    if (modelFamily(child) !== modelFamily(parent)) return false;
+    const a = normalizedModel(child);
+    const b = normalizedModel(parent);
+    return !/\d/.test(a) || !/\d/.test(b) || a === b;
+}
+
+/**
+ * A helper's own context gauge (a Claude subagent's child conversation). An older bridge sizes a
+ * subagent's window from the bare API model id its transcript carries (`claude-opus-5-5`), which
+ * never has the `[1m]` marker, so a subagent running in its parent's 1M window read 200k and
+ * pinned the bar at 100% in red. Corrected here, from data the frame already carries:
+ *   - more tokens than the reported window proves the window is the larger one (1M);
+ *   - a subagent on the parent's model inherits the parent's (larger) window.
+ * A different-family subagent (haiku under an opus[1m] parent), an older revision of the family,
+ * or a subagent that does not name its model keeps its own reported window.
+ */
+export function helperContextStatus(
+    child: SessionStatus | undefined,
+    parent: SessionStatus | undefined,
+): SessionStatus | undefined {
+    const context = child?.context;
+    if (!child || !context || !(context.tokens > 0)) return child;
+    let window = context.window > 0 ? context.window : ONE_MILLION;
+    if (context.tokens > window) window = ONE_MILLION;
+    const parentWindow = parent?.context?.window ?? 0;
+    // Inherit only on evidence: the child names its model and it is the parent's model.
+    if (parentWindow > window && child.model && parent?.model && sameModel(child.model, parent.model))
+        window = parentWindow;
+    if (window === context.window) return child;
+    return {
+        ...child,
+        context: { tokens: context.tokens, window, pct: Math.min(100, Math.round((context.tokens / window) * 100)) },
+    };
+}

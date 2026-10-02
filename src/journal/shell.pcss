@@ -64,6 +64,21 @@ Please see LICENSE files in the repository root for full details.
        viewer / upload modal read the same regardless of canvas colour. */
     --mj-scrim-modal: rgb(18 16 14 / 55%);
 
+    /* --- Turn card: amber "went wrong along the way", the critical error row, a label type
+       role and the live-line / expand timings. --- */
+    /* Amber TEXT that clears 4.5:1 on canvas + raised; --cpd-color-usage-medium is a fill (2.2:1 as text). */
+    --mj-warn-ink: #9a5700;
+    --mj-warn-dot: var(--cpd-color-usage-medium);
+    --mj-critical-tint: rgb(189 32 32 / 10%);
+    --mj-critical-border: rgb(189 32 32 / 45%);
+    --mj-font-label-sm: 500 12px/16px Inter, sans-serif;
+    --mj-font-mono: 400 12px/18px "Fira Code", monospace;
+    --mj-live-xfade: 240ms;
+    --mj-card-expand: var(--cpd-dur-fast);
+    --mj-group-expand: var(--cpd-dur-fast);
+    --mj-deep-open: var(--cpd-dur-med);
+    --mj-resolve: var(--cpd-dur-med);
+
     /* --- v2 motion + focus --- */
     --cpd-focus-ring: 0 0 0 2px var(--cpd-color-bg-canvas-default), 0 0 0 4px var(--cpd-color-text-action-accent);
     --cpd-dur-fast: 120ms;
@@ -176,6 +191,11 @@ Please see LICENSE files in the repository root for full details.
     --mj-selection: rgb(45 212 191 / 0.26);
     --mj-scrollbar: rgb(255 255 255 / 0.2);
     --mj-scrollbar-hover: rgb(255 255 255 / 0.32);
+
+    /* Turn card (dark): amber ink, critical tint + hairline. */
+    --mj-warn-ink: #ffb454;
+    --mj-critical-tint: rgb(255 106 106 / 14%);
+    --mj-critical-border: rgb(255 106 106 / 45%);
 
     /* In dark, shadows are near-invisible — surface lightness carries elevation; shadows keep shape only. */
     --cpd-shadow-sm: 0 1px 2px rgb(0 0 0 / 0.3);
@@ -447,35 +467,10 @@ button {
     background: var(--cpd-state-selected);
 }
 
-/* subagent child row: indented under its parent, muted name, ↳ connector. The leading
-   glyph (spinner while running / idle dot) sits in the normal status column. */
-.mj_RoomListItem_sub {
-    padding-left: 26px;
-}
-
+/* subagent child row: indented under its parent with a muted name. The rail, elbow and
+   status glyph live in subagents.pcss. */
 .mj_RoomListItem_sub .mj_RoomListName {
     color: var(--cpd-color-text-secondary);
-}
-
-.mj_RoomListSubArrow {
-    color: var(--cpd-color-text-tertiary);
-}
-
-.mj_RoomListWorkerGlyphs {
-    display: inline-flex;
-    width: 28px;
-    height: 12px;
-    flex: 0 0 28px;
-    align-items: center;
-    gap: 4px;
-}
-
-.mj_RoomListWorkerMark,
-.mj_RoomListOutcomeGlyph,
-.mj_RoomListSubSpinner {
-    width: 12px;
-    height: 12px;
-    flex: 0 0 12px;
 }
 
 .mj_RoomListItem_selected::before {
