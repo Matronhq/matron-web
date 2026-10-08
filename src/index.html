@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <meta name="theme-color" content="#ffffff" />
+        <meta name="description" content="Matron — chat with agents" />
+        <meta property="og:title" content="Matron" />
+        <meta property="og:description" content="Chat with agents" />
+        <meta property="og:image" content="opengraph.png" />
+        <link rel="manifest" href="manifest.json" />
+        <link rel="icon" href="icons/24.png" />
+        <script>
+            (() => {
+                let preference = null;
+                try {
+                    const stored = localStorage.getItem("matron-theme");
+                    preference = stored === "light" || stored === "dark" ? stored : null;
+                } catch {}
+                const resolved = preference ?? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+                document.documentElement.dataset.theme = resolved;
+                document.querySelector('meta[name="theme-color"]').content =
+                    resolved === "dark" ? "#262421" : "#ffffff";
+                if (preference === null) delete document.documentElement.dataset.themeUser;
+                else document.documentElement.dataset.themeUser = preference;
+            })();
+        </script>
+        <title>Matron</title>
+    </head>
+    <body>
+        <div id="matron"></div>
+    </body>
+</html>

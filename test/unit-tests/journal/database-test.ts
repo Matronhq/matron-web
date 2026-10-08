@@ -1,0 +1,289 @@
+/*
+Copyright 2026 Matron Contributors.
+
+SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
+Please see LICENSE files in the repository root for full details.
+*/
+
+import "fake-indexeddb/auto";
+import { IDBFactory } from "fake-indexeddb";
+
+import { JournalDatabase } from "../../../src/journal/database";
+import { type JournalEvent } from "../../../src/journal/types";
+
+function event(
+    seq: number,
+    sender: string,
+    type = "text",
+    payload: Record<string, unknown> = { body: `m${seq}` },
+): JournalEvent {
+    return { kind: "journal", seq, convo_id: "c1", ts: seq * 1_000, sender, type, payload };
+}
+
+describe("JournalDatabase", () => {
+    beforeEach(() => {
+        globalThis.indexedDB = new IDBFactory();
+    });
+
+    it("applies ordered frames atomically and ignores replay duplicates", async () => {
+        const database = await JournalDatabase.open("https://journal.example", 1, "alice");
+        await database.replaceWithSnapshot({
+            seq: 0,
+            conversations: [
+                {
+                    id: "c1",
+                    title: "Agent",
+                    session_state: "running",
+                    last_seq: 0,
+                    unread_count: 0,
+                    snippet: "",
+                    created_at: 1,
+                },
+            ],
+        });
+
+        expect(await database.applyJournal(event(1, "agent:dev"))).toBe(true);
+        expect(await database.applyJournal(event(1, "agent:dev"))).toBe(false);
+        expect(await database.cursor()).toBe(1);
+        expect(await database.events("c1")).toHaveLength(1);
+        expect((await database.conversations())[0]).toMatchObject({ last_seq: 1, unread_count: 1, snippet: "m1" });
+        database.close();
+    });
+
+    it("counts a journaled spawn_outcome as a message event — bumps unread and sets the snippet", async () => {
+        const database = await JournalDatabase.open("https://journal.example", 10, "alice");
+        await database.replaceWithSnapshot({
+            seq: 0,
+            conversations: [
+                {
+                    id: "c1",
+                    title: "Agent",
+                    session_state: "running",
+                    last_seq: 0,
+                    unread_count: 0,
+                    snippet: "",
+                    created_at: 1,
+                },
+            ],
+        });
+
+        await database.applyJournal(
+            event(1, "journal", "spawn_outcome", { request_id: "spawn-1", outcome: "started", room_id: "r1" }),
+        );
+
+        expect((await database.conversations())[0]).toMatchObject({
+            unread_count: 1,
+            snippet: "🚀 Spawned session started",
+        });
+        database.close();
+    });
+
+    it("keeps own messages unread-free and converges read markers", async () => {
+        const database = await JournalDatabase.open("https://journal.example", 2, "alice");
+        await database.replaceWithSnapshot({
+            seq: 0,
+            conversations: [
+                {
+                    id: "c1",
+                    title: "Agent",
+                    session_state: "running",
+                    last_seq: 0,
+                    unread_count: 0,
+                    snippet: "",
+                    created_at: 1,
+                },
+            ],
+        });
+        await database.applyJournal(event(1, "user:alice"));
+        await database.applyJournal(event(2, "agent:dev"));
+        await database.applyJournal(event(3, "user:alice", "read_marker", { convo_id: "c1", up_to_seq: 2 }));
+        expect((await database.conversations())[0]).toMatchObject({ unread_count: 0, read_up_to_seq: 2 });
+        database.close();
+    });
+
+    it("persists and reconciles the idempotent send outbox", async () => {
+        const database = await JournalDatabase.open("https://journal.example", 3, "alice");
+        await database.replaceWithSnapshot({ seq: 0, conversations: [] });
+        await database.addToOutbox({ localId: "local-1", convoId: "c1", body: "ship it", createdAt: 10 });
+        expect(await database.outbox("c1")).toHaveLength(1);
+        await database.reconcileOwnMessage(event(1, "user:alice", "text", { body: "ship it", local_id: "local-1" }));
+        expect(await database.outbox("c1")).toHaveLength(0);
+        database.close();
+    });
+
+    it("reconciles repeated messages by their exact mirrored local id", async () => {
+        const database = await JournalDatabase.open("https://journal.example", 4, "alice");
+        await database.replaceWithSnapshot({ seq: 0, conversations: [] });
+        await database.addToOutbox({ localId: "local-1", convoId: "c1", body: "same", createdAt: 10 });
+        await database.addToOutbox({ localId: "local-2", convoId: "c1", body: "same", createdAt: 11 });
+
+        await database.reconcileOwnMessage(event(1, "user:alice", "text", { body: "same" }));
+        expect((await database.outbox("c1")).map((message) => message.localId)).toEqual(["local-1", "local-2"]);
+
+        await database.reconcileOwnMessage(event(1, "user:alice", "text", { body: "same", local_id: "local-2" }));
+        expect((await database.outbox("c1")).map((message) => message.localId)).toEqual(["local-1"]);
+
+        await database.reconcileOwnMessage(event(2, "user:alice", "text", { body: "same", local_id: "local-1" }));
+        expect(await database.outbox("c1")).toHaveLength(0);
+        database.close();
+    });
+
+    it("reconciles only the authenticated user's matching conversation and pending kind", async () => {
+        const database = await JournalDatabase.open("https://journal.example", 6, "alice");
+        await database.replaceWithSnapshot({ seq: 0, conversations: [] });
+        await database.addToOutbox({ localId: "text-1", convoId: "c1", body: "same", createdAt: 10 });
+        await database.addToOutbox({
+            localId: "image-1",
+            convoId: "c1",
+            body: "",
+            createdAt: 11,
+            kind: "image",
+            attachState: "sending",
+            blobRef: "media-1",
+        });
+
+        await database.reconcileOwnMessage(event(1, "user:bob", "text", { body: "same", local_id: "text-1" }));
+        await database.reconcileOwnMessage({
+            ...event(2, "user:alice", "text", { body: "same", local_id: "text-1" }),
+            convo_id: "c2",
+        });
+        await database.reconcileOwnMessage(event(3, "user:alice", "file", { local_id: "image-1" }));
+        expect((await database.outbox()).map((message) => message.localId)).toEqual(["text-1", "image-1"]);
+
+        expect(await database.reconcileOwnMessage(event(4, "user:alice", "image", { local_id: "image-1" }))).toBe(
+            "image-1",
+        );
+        expect((await database.outbox()).map((message) => message.localId)).toEqual(["text-1"]);
+        database.close();
+    });
+
+    it("clears a persisted sending row when its own event is present after snapshot history loads", async () => {
+        const database = await JournalDatabase.open("https://journal.example", 8, "alice");
+        await database.replaceWithSnapshot({
+            seq: 10,
+            conversations: [
+                {
+                    id: "c1",
+                    title: "Agent",
+                    session_state: "running",
+                    last_seq: 10,
+                    unread_count: 0,
+                    snippet: "[image]",
+                    created_at: 1,
+                },
+            ],
+        });
+        await database.addToOutbox({
+            localId: "persisted-image",
+            convoId: "c1",
+            body: "",
+            createdAt: 1,
+            kind: "image",
+            attachState: "sending",
+            blobRef: "media-1",
+        });
+        await database.putHistory([
+            event(10, "user:alice", "image", { local_id: "persisted-image", blob_ref: "media-1" }),
+        ]);
+
+        expect(await database.reconcilePersistedOwnMessages()).toEqual(["persisted-image"]);
+        expect(await database.outbox()).toEqual([]);
+        database.close();
+    });
+
+    it("durably deletes a dismissed attachment outbox row", async () => {
+        const serverUrl = "https://journal.example";
+        const userId = 7;
+        const database = await JournalDatabase.open(serverUrl, userId, "alice");
+        await database.replaceWithSnapshot({ seq: 0, conversations: [] });
+        await database.addToOutbox({
+            localId: "dismissed-file",
+            convoId: "c1",
+            body: "",
+            createdAt: 1,
+            kind: "file",
+            attachState: "error",
+            errorKind: "upload_failed",
+        });
+
+        await database.deleteOutboxRow("dismissed-file");
+        database.close();
+
+        const reopened = await JournalDatabase.open(serverUrl, userId, "alice");
+        expect(await reopened.outbox()).toEqual([]);
+        reopened.close();
+    });
+
+    it("drops pending messages for conversations removed by a replacement snapshot", async () => {
+        const database = await JournalDatabase.open("https://journal.example", 5, "alice");
+        const conversation = {
+            title: "Agent",
+            session_state: "running",
+            last_seq: 0,
+            unread_count: 0,
+            snippet: "",
+            created_at: 1,
+        };
+        await database.replaceWithSnapshot({
+            seq: 0,
+            conversations: [
+                { ...conversation, id: "c1" },
+                { ...conversation, id: "removed" },
+            ],
+        });
+        await database.addToOutbox({ localId: "keep", convoId: "c1", body: "valid", createdAt: 10 });
+        await database.addToOutbox({ localId: "drop", convoId: "removed", body: "orphan", createdAt: 11 });
+
+        await database.replaceWithSnapshot({ seq: 20, conversations: [{ ...conversation, id: "c1" }] });
+
+        expect((await database.outbox()).map((message) => message.localId)).toEqual(["keep"]);
+        database.close();
+    });
+
+    it("normalizes an existing legacy self-parent during snapshot replacement", async () => {
+        const database = await JournalDatabase.open("https://journal.example", 9, "alice");
+        const conversation = {
+            id: "c1",
+            title: "Agent",
+            session_state: "running",
+            last_seq: 0,
+            unread_count: 0,
+            snippet: "",
+            created_at: 1,
+            read_up_to_seq: 0,
+            parent_convo_id: "c1",
+        };
+        const rawDatabase = (database as unknown as { database: IDBDatabase }).database;
+        const seed = rawDatabase.transaction("conversations", "readwrite");
+        seed.objectStore("conversations").put(conversation);
+        await new Promise<void>((resolve, reject) => {
+            seed.oncomplete = () => resolve();
+            seed.onerror = () => reject(seed.error);
+            seed.onabort = () => reject(seed.error);
+        });
+
+        await database.replaceWithSnapshot({ seq: 1, conversations: [{ ...conversation, parent_convo_id: null }] });
+
+        expect((await database.conversations())[0]).toMatchObject({ id: "c1", parent_convo_id: null });
+        database.close();
+    });
+
+    it("orders conversations by last activity, newest first, with last_seq as the tie-break", async () => {
+        const database = await JournalDatabase.open("https://journal.example", 10, "alice");
+        const base = { session_state: "running", unread_count: 0, snippet: "", created_at: 1 };
+        await database.replaceWithSnapshot({
+            seq: 0,
+            conversations: [
+                { ...base, id: "old", title: "Old", last_seq: 5, last_ts: 1_000 },
+                { ...base, id: "newest", title: "Newest", last_seq: 9, last_ts: 3_000 },
+                { ...base, id: "mid", title: "Mid", last_seq: 7, last_ts: 2_000 },
+                { ...base, id: "mid-tie", title: "MidTie", last_seq: 8, last_ts: 2_000 },
+            ],
+        });
+
+        const ordered = (await database.conversations()).map((conversation) => conversation.id);
+        // newest last_ts first; the two 2_000 rows tie-break on higher last_seq (8 before 7)
+        expect(ordered).toEqual(["newest", "mid-tie", "mid", "old"]);
+        database.close();
+    });
+});

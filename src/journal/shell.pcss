@@ -1,0 +1,1574 @@
+/*
+Copyright 2026 Matron Contributors.
+
+SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
+Please see LICENSE files in the repository root for full details.
+*/
+
+:root {
+    /* v5: every agent content block (prose, tool card, diff card, code block, prompt
+       card) shares this width so the column reads uniform. Operator override of the mock's
+       680px cap — content is fluid: it fills the chat pane (minus the wrapper's equal
+       L/R gutters) at any window size. */
+    --mj-content-width: 100%;
+    /* --- surfaces: unify step 1, Mac values --- */
+    --cpd-color-bg-accent: #0b6e7d;
+    --cpd-color-bg-accent-emphasis: #0c7e8f;
+    --cpd-color-bg-accent-tint: rgb(11 110 125 / 0.18);
+    --cpd-color-bg-badge: #7d756b;
+    /* Mac TerminalStyle: tool output and diff bodies sit on one fixed dark block in BOTH themes. */
+    --cpd-color-terminal-bg: #1f1f1f;
+    --cpd-color-terminal-fg: #dbdbdb;
+    --cpd-color-terminal-add: #73d173;
+    --cpd-color-terminal-del: #e65959;
+    --cpd-color-terminal-muted: #8c8c8c;
+    --cpd-color-bg-app: #f2f0ea;
+    --cpd-color-bg-canvas-default: #fff;
+    /* Mac sidebar material, measured: darker than the chat canvas (the audit's biggest 'feel' gap). */
+    --cpd-color-bg-sidebar: #e6e4de;
+    --cpd-color-bg-canvas-raised: #f7f5f0;
+    --cpd-color-bg-cluster: rgb(247 245 240 / 0.72);
+    /* Mac MatronTimelineBackground: a two-stop warm gradient. `background` shorthand only. */
+    --cpd-color-bg-room-canvas: linear-gradient(180deg, #f2f0ea 0%, #e8e5dc 100%);
+    --cpd-color-bg-scrim-auth: rgb(255 255 255 / 82%);
+    --cpd-color-bg-scrim-drag: rgb(255 255 255 / 90%);
+    --cpd-color-bg-self-bubble: #c4f5fb;
+    --cpd-color-bg-subtle-primary: #eae8e3;
+    --cpd-color-bg-subtle-secondary: #e6e4de;
+    --cpd-color-bg-usage-track: rgb(28, 24, 20, 0.12);
+    --cpd-color-border-accent: rgb(11 110 125 / 0.25);
+    --cpd-color-border-disabled: #ded8ce;
+    --cpd-color-border-interactive-primary: #b3aa9c;
+    --cpd-color-border-interactive-secondary: #d8d1c5;
+    --cpd-color-border-subtle: #e7e2d9;
+    --cpd-color-border-strong: #d8d1c5;
+    --cpd-color-icon-accent-primary: #0b6e7d;
+    --cpd-color-icon-secondary: #6b655c;
+    --cpd-color-icon-tertiary: #9a938a;
+    --cpd-color-text-action-accent: #0b6e7d;
+    --cpd-color-text-critical-primary: #bd2020;
+    /* Success ink for small text and glyphs (status green #34c759 is 2.1:1 on white). */
+    --cpd-color-text-success: #1e7a34;
+    --cpd-color-text-link-external: #0b6e7d;
+    --cpd-color-text-on-accent: #fff;
+    --cpd-color-text-on-badge: #fff;
+    --cpd-color-text-placeholder: #9a938a;
+    --cpd-color-text-primary: #1b1815;
+    --cpd-color-text-secondary: #6b655c;
+    --cpd-color-text-tertiary: #9a938a;
+    --cpd-color-usage-high: #ff3b30;
+    --cpd-color-usage-low: #34c759;
+    --cpd-color-usage-medium: #ff9500;
+
+    /* --- v2 interaction state layer (Radix 3/4/5 + M3 opacities) --- */
+    /* Mac row hover is gray @ 0.08 in both themes. */
+    --cpd-state-hover: rgb(128 128 128 / 0.08);
+    --cpd-state-active: rgb(128 128 128 / 0.14);
+    --cpd-state-selected: rgb(11 110 125 / 0.1);
+
+    /* §10.4 native chrome: no --cpd tokens exist for selection or scrollbar thumbs, so
+       author them here as accent-tint / neutral-ink values (mirrors the design's
+       --m-selection / --m-scrollbar). Overridden per theme in [data-theme="dark"]. */
+    --mj-selection: rgb(11 110 125 / 0.2);
+    --mj-scrollbar: rgb(28 24 20 / 0.22);
+    --mj-scrollbar-hover: rgb(28 24 20 / 0.34);
+    /* Modal scrim — a fixed dark veil over content; identical in both themes so the media
+       viewer / upload modal read the same regardless of canvas colour. */
+    --mj-scrim-modal: rgb(18 16 14 / 55%);
+
+    /* --- v2 motion + focus --- */
+    --cpd-focus-ring: 0 0 0 2px var(--cpd-color-bg-canvas-default), 0 0 0 4px var(--cpd-color-text-action-accent);
+    --cpd-dur-fast: 120ms;
+    --cpd-dur-med: 180ms;
+    --cpd-ease: cubic-bezier(0.2, 0, 0, 1);
+
+    /* --- radii: the Mac is uniformly squarer (bubbles/tool/diff 8, composer 10, prompt cards 12) --- */
+    --cpd-radius-xs: 4px;
+    --cpd-radius-sm: 6px;
+    --cpd-radius-md: 8px;
+    --cpd-radius-lg: 12px;
+    --cpd-radius-xl: 16px;
+    --cpd-radius-pill: 999px;
+    --cpd-radius-bubble: 8px;
+    --cpd-radius-card: 8px;
+    --cpd-radius-card-content: 12px;
+    --cpd-radius-composer: 10px;
+    --cpd-radius-code: 6px;
+    --cpd-radius-field: 6px;
+    --cpd-radius-popover: 12px;
+
+    /* --- elevation: Mac matronBubbleShadow rgb(18 16 14) @ 0.08; same in dark --- */
+    --cpd-shadow-bubble: 0 1px 1px rgb(18 16 14 / 0.08);
+    --cpd-shadow-sm: 0 1px 2px rgb(18 16 14 / 0.08);
+    --cpd-shadow-md: 0 3px 10px rgb(0 0 0 / 0.18);
+    --cpd-shadow-lg: 0 16px 48px rgb(18 16 14 / 0.16);
+    --cpd-shadow-float: 0 2px 4px rgb(0 0 0 / 0.15);
+
+    /* --- v2 icon sizes --- */
+    --cpd-icon-sm: 14px;
+    --cpd-icon-md: 16px;
+    --cpd-icon-lg: 20px;
+
+    /* System font first: SF Pro / SF Mono on Apple platforms (matches the Mac app), Inter / Fira Code elsewhere. */
+    --cpd-font-family-ui:
+        -apple-system, BlinkMacSystemFont, "SF Pro Text", Inter, "Helvetica Neue", "Segoe UI", Roboto, sans-serif;
+    --cpd-font-family-mono: ui-monospace, "SF Mono", Menlo, "Fira Code", monospace;
+
+    --cpd-font-size-root: 16px;
+    --cpd-font-body-2xs-regular: 400 10px/12px var(--cpd-font-family-ui);
+    --cpd-font-body-xs-regular: 400 12px/16px var(--cpd-font-family-ui);
+    --cpd-font-body-xs-semibold: 600 12px/16px var(--cpd-font-family-ui);
+    --cpd-font-body-sm-regular: 400 13px/17px var(--cpd-font-family-ui);
+    --cpd-font-body-md-regular: 400 16px/24px var(--cpd-font-family-ui);
+    --cpd-font-heading-sm-semibold: 600 18px/26px var(--cpd-font-family-ui);
+    --cpd-font-heading-md-semibold: 600 20px/26px var(--cpd-font-family-ui);
+
+    /* --- role ramp, Mac sizes and leading (SF at ~1.2–1.3) --- */
+    --cpd-font-micro: 400 10px/14px var(--cpd-font-family-ui);
+    --cpd-font-meta: 400 11px/15px var(--cpd-font-family-ui);
+    --cpd-font-body: 400 14px/18px var(--cpd-font-family-ui);
+    --cpd-font-body-strong: 500 14px/18px var(--cpd-font-family-ui);
+    --cpd-font-label: 400 13px/16px var(--cpd-font-family-ui);
+    --cpd-font-title: 600 13px/17px var(--cpd-font-family-ui);
+    --cpd-font-heading: 600 17px/22px var(--cpd-font-family-ui);
+
+    --cpd-font-size-2xs: 10px;
+    --cpd-font-size-xs: 12px;
+    --cpd-font-size-sm: 14px;
+    --cpd-font-size-md: 16px;
+    --cpd-font-size-lg: 18px;
+    --cpd-font-size-xl: 20px;
+
+    /* --- v2 spacing: 4px base, non-linear ramp (Refactoring UI) --- */
+    --cpd-space-0-5x: 2px;
+    --cpd-space-1x: 4px;
+    --cpd-space-2x: 8px;
+    --cpd-space-3x: 12px;
+    --cpd-space-4x: 16px;
+    --cpd-space-5x: 20px;
+    --cpd-space-6x: 24px;
+    --cpd-space-8x: 32px;
+    --cpd-space-10x: 40px;
+    --cpd-space-12x: 48px;
+}
+
+[data-theme="dark"] {
+    /* Warm dark ladder from the Mac timeline/bubble colours: app < canvas < panel < raised < overlay. */
+    --cpd-color-bg-accent: #0b6e7d;
+    --cpd-color-bg-accent-emphasis: #0c7e8f;
+    --cpd-color-bg-accent-tint: rgb(110 205 220 / 0.18);
+    --cpd-color-bg-badge: #433e37;
+    /* Mac TerminalStyle: tool output and diff bodies sit on one fixed dark block in BOTH themes. */
+    --cpd-color-terminal-bg: #1f1f1f;
+    --cpd-color-terminal-fg: #dbdbdb;
+    --cpd-color-terminal-add: #73d173;
+    --cpd-color-terminal-del: #e65959;
+    --cpd-color-terminal-muted: #8c8c8c;
+    --cpd-color-bg-app: #171512;
+    --cpd-color-bg-canvas-default: #262421;
+    --cpd-color-bg-sidebar: #2a2926;
+    --cpd-color-bg-canvas-raised: #2c2a26;
+    --cpd-color-bg-cluster: rgb(44 42 38 / 0.72);
+    --cpd-color-bg-room-canvas: linear-gradient(180deg, #1d1b18 0%, #171512 100%);
+    --cpd-color-bg-scrim-auth: rgb(23 21 18 / 0.86);
+    --cpd-color-bg-scrim-drag: rgb(23 21 18 / 0.9);
+    --cpd-color-bg-self-bubble: #123a41;
+    --cpd-color-bg-subtle-primary: #2c2a26;
+    --cpd-color-bg-subtle-secondary: #33302b;
+    --cpd-color-bg-usage-track: rgb(255, 255, 255, 0.12);
+    --cpd-color-border-accent: rgb(110 205 220 / 0.3);
+    --cpd-color-border-disabled: #33302b;
+    --cpd-color-border-interactive-primary: #5c574f;
+    --cpd-color-border-interactive-secondary: #433e37;
+    --cpd-color-border-subtle: #33302b;
+    --cpd-color-border-strong: #433e37;
+    --cpd-color-icon-accent-primary: #6ecddc;
+    --cpd-color-icon-secondary: #9a948b;
+    --cpd-color-icon-tertiary: #857e74;
+    --cpd-color-text-action-accent: #6ecddc;
+    --cpd-color-text-critical-primary: #ff6a6a;
+    --cpd-color-text-success: #30d158;
+    --cpd-color-text-link-external: #6ecddc;
+    /* Accent bg (--cpd-color-bg-accent #0b6e7d) is identical in both themes, so on-accent
+       text stays white in dark too; the lighter #6ecddc is only for text, icon and link accents. */
+    --cpd-color-text-on-accent: #fff;
+    --cpd-color-text-on-badge: #fff;
+    --cpd-color-text-placeholder: #857e74;
+    --cpd-color-text-primary: #e7e4df;
+    --cpd-color-text-secondary: #9a948b;
+    /* Tertiary ink lifted for the lighter #262421 panel: 3.6:1 there, 3.2:1 on subtle-secondary. */
+    --cpd-color-text-tertiary: #857e74;
+    --cpd-color-usage-high: #ff453a;
+    --cpd-color-usage-low: #30d158;
+    --cpd-color-usage-medium: #ff9f0a;
+
+    /* v2 interaction state layer (light-ink overlays on dark) */
+    --cpd-state-hover: rgb(128 128 128 / 0.08);
+    --cpd-state-active: rgb(128 128 128 / 0.14);
+    --cpd-state-selected: rgb(110 205 220 / 0.14);
+
+    /* §10.4 native chrome (dark): accent-tint selection + light-ink scrollbar thumbs. */
+    --mj-selection: rgb(110 205 220 / 0.26);
+    --mj-scrollbar: rgb(255 255 255 / 0.2);
+    --mj-scrollbar-hover: rgb(255 255 255 / 0.32);
+    /* Modal scrim is the same dark veil in both themes (declared here so the dark block is complete). */
+    --mj-scrim-modal: rgb(18 16 14 / 55%);
+
+    /* The Mac keeps the same shadows in dark; the warm ladder carries elevation. */
+    --cpd-shadow-bubble: 0 1px 1px rgb(18 16 14 / 0.08);
+    --cpd-shadow-sm: 0 1px 2px rgb(18 16 14 / 0.08);
+    --cpd-shadow-md: 0 3px 10px rgb(0 0 0 / 0.18);
+    --cpd-shadow-lg: 0 16px 48px rgb(18 16 14 / 0.16);
+    --cpd-shadow-float: 0 2px 4px rgb(0 0 0 / 0.15);
+}
+
+body {
+    background: var(--cpd-color-bg-canvas-default);
+    color: var(--cpd-color-text-primary);
+    font-family: var(--cpd-font-family-ui);
+    font-weight: 400;
+    line-height: 1.5;
+}
+
+button,
+input,
+textarea {
+    color: inherit;
+}
+
+button {
+    cursor: pointer;
+}
+
+.mx_MatrixChat_wrapper,
+.mx_MatrixChat,
+.mx_RoomView_wrapper,
+.mx_RoomView,
+.mx_RoomView_body,
+.mx_LeftPanel_wrapper,
+.mx_LeftPanel_wrapper--user,
+.mx_LeftPanel,
+.mx_LeftPanel_roomListContainer {
+    min-width: 0;
+    min-height: 0;
+}
+
+.mx_MatrixChat_wrapper,
+.mx_MatrixChat {
+    width: 100%;
+    height: 100%;
+}
+
+.mx_MatrixChat {
+    display: flex;
+    overflow: hidden;
+}
+
+.mx_LeftPanel_outerWrapper,
+.mx_LeftPanel_wrapper,
+.mx_LeftPanel_wrapper--user,
+.mx_LeftPanel,
+.mx_LeftPanel_roomListContainer,
+.mx_RoomListPanel {
+    display: flex;
+    height: 100%;
+}
+
+.mx_LeftPanel_outerWrapper {
+    position: relative;
+    overflow: visible;
+    background: var(--cpd-color-bg-sidebar);
+}
+
+.mx_LeftPanel_wrapper,
+.mx_LeftPanel_wrapper--user,
+.mx_LeftPanel,
+.mx_LeftPanel_roomListContainer,
+.mx_RoomListPanel {
+    flex: 1 1 auto;
+}
+
+.mx_RoomListPanel {
+    flex-direction: column;
+    background: var(--cpd-color-bg-sidebar);
+}
+
+.mj_RoomListHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    /* 14px top; 12px bottom = the uniform sidebar gap so the logo has clear space above
+       the New session button and every section is evenly spaced. */
+    padding: 14px 16px 12px 14px;
+}
+
+/* Nav rail (Mac MacNavColumn): 72px column of 22px icons with 10px labels, 60×56 entries,
+   4px apart, 8px top padding; the selected entry is a radius-8 accent tint; red count badges. */
+.mj_NavRail {
+    display: flex;
+    width: 72px;
+    flex: 0 0 72px;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding-top: 8px;
+    box-sizing: border-box;
+}
+
+.mj_NavRail_entry {
+    position: relative;
+    display: flex;
+    width: 70px;
+    height: 56px;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    border: 0;
+    border-radius: var(--cpd-radius-md);
+    background: transparent;
+    color: var(--cpd-color-text-secondary);
+    cursor: pointer;
+}
+
+.mj_NavRail_entry:hover {
+    background: var(--cpd-state-hover);
+}
+
+.mj_NavRail_entry[aria-current="page"] {
+    background: var(--cpd-state-selected);
+    color: var(--cpd-color-text-action-accent);
+}
+
+.mj_NavRail_icon {
+    position: relative;
+    display: flex;
+    height: 28px;
+    align-items: center;
+}
+
+.mj_NavRail_icon svg {
+    width: 22px;
+    height: 22px;
+}
+
+.mj_NavRail_label {
+    overflow: hidden;
+    max-width: 70px;
+    font: 400 10px/12px var(--cpd-font-family-ui);
+    letter-spacing: -0.2px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_NavRail_badge {
+    position: absolute;
+    top: -4px;
+    right: -10px;
+    min-width: 16px;
+    box-sizing: border-box;
+    padding: 1px 5px;
+    border-radius: var(--cpd-radius-pill);
+    background: var(--cpd-color-usage-high);
+    color: #fff;
+    font: 600 10px/14px var(--cpd-font-family-ui);
+    text-align: center;
+}
+
+.mj_NavRail_footer {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    margin-top: auto;
+    padding-bottom: 8px;
+}
+
+.mj_NavRail_avatar {
+    position: relative;
+    display: inline-flex;
+    width: 28px;
+    height: 28px;
+    align-items: center;
+    justify-content: center;
+    margin-top: 4px;
+    border: 0;
+    border-radius: 50%;
+    background: var(--cpd-color-bg-subtle-secondary);
+    color: var(--cpd-color-text-secondary);
+    cursor: pointer;
+    font: 600 11px/1 var(--cpd-font-family-ui);
+    text-transform: uppercase;
+}
+
+.mj_NavRail_status {
+    position: absolute;
+    right: -1px;
+    bottom: -1px;
+    width: 8px;
+    height: 8px;
+    border: 2px solid var(--cpd-color-bg-sidebar);
+    border-radius: 50%;
+    background: var(--cpd-color-text-tertiary);
+}
+
+.mj_NavRail_status_online {
+    background: var(--cpd-color-usage-low);
+}
+
+/* List header: "Conversations" title (Mac: 13pt semibold pane header) + mark-all-read + New session glyph. */
+.mj_RoomListTitle {
+    overflow: hidden;
+    margin: 0;
+    font: 600 13px/17px var(--cpd-font-family-ui);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_RoomListHeaderActions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.mj_IconButton {
+    display: inline-flex;
+    width: 32px;
+    height: 32px;
+    align-items: center;
+    justify-content: center;
+    padding: var(--cpd-space-1x);
+    border: 0;
+    border-radius: var(--cpd-radius-md);
+    background: transparent;
+    color: var(--cpd-color-icon-secondary);
+    transition:
+        background var(--cpd-dur-fast) var(--cpd-ease),
+        color var(--cpd-dur-fast) var(--cpd-ease);
+}
+
+.mj_IconButton:hover {
+    background: var(--cpd-state-hover);
+    color: var(--cpd-color-text-primary);
+}
+
+.mj_IconButton svg {
+    width: var(--cpd-icon-lg);
+    height: var(--cpd-icon-lg);
+}
+
+.mx_RoomListSearch {
+    display: flex;
+    align-items: center;
+    /* Mac search field: outer h10, top 4, bottom 8; a white 30pt field with a hairline on the sidebar. */
+    padding: 4px 10px 8px;
+}
+
+.mx_RoomListSearch_inputWrapper {
+    display: flex;
+    width: 100%;
+    height: 30px;
+    box-sizing: border-box;
+    align-items: center;
+    gap: var(--cpd-space-2x);
+    border: 1px solid var(--cpd-color-border-subtle);
+    border-radius: var(--cpd-radius-field);
+    background: var(--cpd-color-bg-canvas-default);
+    color: var(--cpd-color-text-secondary);
+    padding: 0 8px;
+}
+
+.mx_RoomListSearch_inputWrapper svg {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 auto;
+}
+
+.mx_RoomListSearch_input {
+    width: 100%;
+    min-width: 0;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    color: var(--cpd-color-text-primary);
+    /* v4 body.xs (search): 13px / 400 / 16px. */
+    font-size: 13px;
+    font-weight: 400;
+    line-height: 16px;
+}
+
+.mx_RoomListSearch_input::placeholder {
+    color: var(--cpd-color-text-secondary);
+}
+
+.mx_RoomListSearch_input::-webkit-search-cancel-button {
+    display: none;
+}
+
+.mj_RoomList {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto;
+    padding-top: 8px;
+}
+
+.mj_RoomListItem {
+    position: relative;
+    display: flex;
+    width: calc(100% - var(--cpd-space-4x));
+    box-sizing: border-box;
+    /* Mac chat row: ~40pt, padding v4 h8, 8 between glyph and text, radius 6 hover/selection. */
+    min-height: 40px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin: 0 var(--cpd-space-2x) 1px;
+    padding: 4px 8px;
+    border: 0;
+    border-radius: var(--cpd-radius-sm);
+    background: transparent;
+    color: var(--cpd-color-text-primary);
+    text-align: left;
+    transition: background var(--cpd-dur-fast) var(--cpd-ease);
+}
+
+.mj_RoomListItem:hover {
+    background: var(--cpd-state-hover);
+}
+
+.mj_RoomListItem_selected {
+    background: var(--cpd-state-selected);
+}
+
+/* subagent child row: indented under its parent, muted name, ↳ connector. The leading
+   glyph (spinner while running / idle dot) sits in the normal status column. */
+.mj_RoomListItem_sub {
+    padding-left: 26px;
+}
+
+.mj_RoomListItem_sub .mj_RoomListName {
+    color: var(--cpd-color-text-secondary);
+}
+
+.mj_RoomListSubArrow {
+    color: var(--cpd-color-text-tertiary);
+}
+
+.mj_RoomListWorkerGlyphs {
+    display: inline-flex;
+    width: 28px;
+    height: 12px;
+    flex: 0 0 28px;
+    align-items: center;
+    gap: 4px;
+}
+
+.mj_RoomListWorkerMark,
+.mj_RoomListOutcomeGlyph,
+.mj_RoomListSubSpinner {
+    width: 12px;
+    height: 12px;
+    flex: 0 0 12px;
+}
+
+/* Leading 8px status column: running = pulsing teal dot, idle = strong-line dot. */
+.mj_RoomListStatus {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--cpd-color-border-strong);
+}
+
+.mj_RoomListStatus_running {
+    background: var(--cpd-color-text-action-accent);
+    animation: mj-pulse 1.6s ease-in-out infinite;
+}
+
+.mj_RoomListText {
+    display: flex;
+    min-width: 0;
+    flex: 1 1 0;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.mj_RoomListName,
+.mj_RoomListMeta {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_RoomListName {
+    /* Mac row title: 14pt regular; semibold only while unread. */
+    color: var(--cpd-color-text-primary);
+    font: 400 14px/18px var(--cpd-font-family-ui);
+}
+
+/* Mac: "snippet · 1m" on one secondary 12pt line; the snippet truncates, the time never does
+   (MacChatListView gives the time layout priority). */
+.mj_RoomListMeta {
+    display: flex;
+    min-width: 0;
+    align-items: baseline;
+    color: var(--cpd-color-text-secondary);
+    font: 400 12px/16px var(--cpd-font-family-ui);
+}
+
+.mj_RoomListSnippet {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_RoomListDot {
+    flex: none;
+    white-space: pre;
+}
+
+.mj_RoomListText_unread .mj_RoomListName {
+    font-weight: 600;
+}
+
+/* Session tag ahead of the title (SessionTagText): box letter in the box's hue, semibold;
+   ":" secondary; the two-character short in primary. The letter's colour is set per row as
+   --mj-box-light / --mj-box-dark so the theme switch needs no re-render. */
+.mj_SessionTag_letter {
+    color: var(--mj-box-light);
+    font-weight: 600;
+}
+
+[data-theme="dark"] .mj_SessionTag_letter {
+    color: var(--mj-box-dark);
+}
+
+.mj_SessionTag_sep {
+    color: var(--cpd-color-text-secondary);
+}
+
+/* Day section headers (Mac sidebar list sections). */
+.mj_RoomListGroup_label {
+    margin: 8px 16px 2px;
+    color: var(--cpd-color-text-secondary);
+    font: 600 11px/14px var(--cpd-font-family-ui);
+}
+
+.mj_RoomListGroup:first-child .mj_RoomListGroup_label {
+    margin-top: 0;
+}
+
+.mj_UnreadBadge {
+    display: inline-flex;
+    min-width: 18px;
+    height: 18px;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--cpd-radius-pill);
+    /* v4: teal count badge, badge.count 600 10px/18px. */
+    background: var(--cpd-color-bg-accent);
+    color: var(--cpd-color-text-on-accent);
+    padding: 0 6px;
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 18px;
+}
+
+/* Right-hand column: unread badge / collapsed-children chip. */
+.mj_RoomListTrailing {
+    display: flex;
+    flex: 0 0 auto;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: var(--cpd-space-0-5x);
+}
+
+/* Collapsed-subagents count on a parent row — a subtle tertiary chevron+count that signals
+   hidden child rows and stays minimal (matches the meta column's muted styling). */
+.mj_RoomListCollapsedSubs {
+    display: inline-flex;
+    align-items: center;
+    gap: 1px;
+    color: var(--cpd-color-text-tertiary);
+    font-size: 10px;
+    font-weight: 500;
+    line-height: 14px;
+}
+
+.mj_RoomListCollapsedSubs svg {
+    width: 12px;
+    height: 12px;
+}
+
+/* A hidden subagent child under this collapsed parent is unread: lift the chip out of the muted
+   tertiary treatment onto the accent ink and append the shared unread dot, so a streaming child's
+   unread is never silent once its own row is collapsed away (loop: matron-web #13 review). */
+.mj_RoomListCollapsedSubs_unread {
+    color: var(--cpd-color-text-action-accent);
+    font-weight: 600;
+}
+
+.mj_RoomListTime {
+    flex: none;
+    white-space: nowrap;
+}
+
+.mj_RoomListItem_wrapper:focus-within .mj_RoomListTrailing {
+    padding-right: var(--cpd-space-5x);
+}
+
+.mj_RoomListEmpty {
+    color: var(--cpd-color-text-secondary);
+    padding: 12px;
+    text-align: center;
+}
+
+/* Message-content search (Apple-parity "Messages" section). Sits below the chat list in the
+   sidebar while the search box holds a query; the box already filters chat titles above it. */
+.mj_SearchResults {
+    margin-top: 4px;
+    padding-top: 4px;
+    border-top: 1px solid var(--cpd-color-border-subtle);
+}
+
+.mj_SearchResults_heading {
+    padding: 8px 12px 4px;
+    color: var(--cpd-color-text-tertiary);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.mj_SearchHitList {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.mj_SearchHit {
+    display: flex;
+    width: calc(100% - var(--cpd-space-3x));
+    box-sizing: border-box;
+    flex-direction: column;
+    gap: 2px;
+    margin: 0 var(--cpd-space-2x) 1px;
+    padding: 8px 10px;
+    border: 0;
+    border-radius: var(--cpd-radius-md);
+    background: transparent;
+    color: var(--cpd-color-text-primary);
+    text-align: left;
+    cursor: pointer;
+    transition: background var(--cpd-dur-fast) var(--cpd-ease);
+}
+
+.mj_SearchHit:hover {
+    background: var(--cpd-state-hover);
+}
+
+.mj_SearchHit_top {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.mj_SearchHit_title {
+    overflow: hidden;
+    color: var(--cpd-color-text-primary);
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 17px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_SearchHit_time {
+    flex: 0 0 auto;
+    color: var(--cpd-color-text-tertiary);
+    font-size: 11px;
+    font-weight: 400;
+    line-height: 14px;
+    white-space: nowrap;
+}
+
+.mj_SearchHit_snippet {
+    display: -webkit-box;
+    overflow: hidden;
+    color: var(--cpd-color-text-secondary);
+    font-size: 12px;
+    line-height: 16px;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+}
+
+.mj_SearchHit_mark {
+    background: transparent;
+    color: var(--cpd-color-text-action-accent);
+    font-weight: 600;
+}
+
+.mx_ResizeHandle {
+    position: relative;
+    z-index: 10;
+    width: 0;
+    flex: 0 0 0;
+    cursor: col-resize;
+}
+
+.mx_ResizeHandle::after {
+    position: absolute;
+    z-index: 1;
+    top: 0;
+    bottom: 0;
+    left: -3px;
+    width: 6px;
+    content: "";
+}
+
+.mx_ResizeHandle:hover::after {
+    background: var(--cpd-color-bg-accent-tint);
+}
+
+.mx_RoomView_wrapper,
+.mx_RoomView,
+.mx_RoomView_body {
+    display: flex;
+    flex: 1 1 0;
+}
+
+.mx_RoomView,
+.mx_RoomView_body {
+    width: 100%;
+}
+
+.mx_RoomView_body {
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--cpd-color-bg-room-canvas);
+}
+
+.mx_RoomHeader {
+    width: 100%;
+    /* Header band raised to 64px (operator: "a little higher"). At 64 the 36px title
+       block (title+subtitle) and the 36px 2×2 bars block (row-gap 10) both centre to
+       14–50, so title-top == bars-top AND subtitle-bottom == the 5h/wk row bottom. */
+    min-height: 64px;
+    box-sizing: border-box;
+    padding: 0 12px 0 18px;
+    background: var(--cpd-color-bg-canvas-default);
+}
+
+.mx_RoomView_timeline {
+    display: flex;
+    min-height: 0;
+    flex: 1 1 0;
+    position: relative;
+}
+
+.mx_RoomView_messagePanel {
+    width: 100%;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+}
+
+.mx_RoomView_messageListWrapper {
+    display: flex;
+    /* v5 (operator override): fluid — fill the chat pane with equal 20px L/R gutters,
+       no centred max-width cap. Content grows with the window. */
+    width: 100%;
+    box-sizing: border-box;
+    flex-direction: column;
+    justify-content: flex-end;
+    padding: 0 20px;
+}
+
+.mx_RoomView_MessageList {
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.mx_EventTile[data-layout="bubble"] {
+    --EventTile-bubble-max-width: min(76.75%, 800px);
+
+    position: relative;
+    min-height: 0;
+    flex: 0 0 auto;
+    margin: 5.5px 20px 0;
+}
+
+.mx_EventTile[data-layout="bubble"].mx_EventTile_continuation {
+    margin-top: 1px;
+}
+
+.mx_EventTile[data-layout="bubble"].mx_EventTile_lastInSection {
+    margin-bottom: 5.5px;
+}
+
+.mx_DisambiguatedProfile {
+    display: flex;
+    align-items: center;
+    gap: var(--cpd-space-1x);
+    margin: 0 0 var(--cpd-space-1x) var(--cpd-space-0-5x);
+    color: var(--cpd-color-text-primary);
+    font: var(--cpd-font-meta);
+    font-weight: 600;
+}
+
+.mx_DisambiguatedProfile > a {
+    flex-shrink: 0;
+    color: inherit;
+    text-decoration: none;
+}
+
+.mx_DisambiguatedProfile_displayName {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_MsgAvatar {
+    width: var(--cpd-icon-md);
+    height: var(--cpd-icon-md);
+    flex-shrink: 0;
+    background-color: var(--cpd-color-icon-secondary);
+    -webkit-mask-position: center;
+    mask-position: center;
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+    -webkit-mask-size: contain;
+    mask-size: contain;
+}
+
+.mx_EventTile_avatar {
+    display: none;
+}
+
+.mx_EventTile_line {
+    display: flex;
+    width: fit-content;
+    max-width: var(--EventTile-bubble-max-width);
+    min-height: 36px;
+    box-sizing: border-box;
+    position: relative;
+    gap: var(--cpd-space-1x);
+    margin-left: -9px;
+    padding: var(--cpd-space-3x) 56px var(--cpd-space-3x) var(--cpd-space-3x);
+    border: 1px solid var(--cpd-color-border-subtle);
+    border-radius: var(--cpd-radius-bubble);
+    background: var(--cpd-color-bg-canvas-default);
+    box-shadow: var(--cpd-shadow-bubble);
+    line-height: 1.5;
+}
+
+.mx_EventTile[data-self="false"] .mx_EventTile_line {
+    /* v5: agent content is a block column capped at the shared content width, so every
+       block (prose, tool/diff/code cards) fills the SAME width instead of each sizing to
+       its own content. Wide code/diff scrolls inside its card, not by widening the card. */
+    display: block;
+    width: 100%;
+    max-width: var(--mj-content-width);
+    margin-left: 0;
+    /* No horizontal padding so the agent content's right edge lines up exactly with the
+       own-bubble right edge (both at the tile edge). */
+    padding: var(--cpd-space-1x) 0;
+    border-color: transparent;
+    background: transparent;
+    box-shadow: none;
+}
+
+/* Agent continuation blocks no longer render a per-block timestamp (the section's single
+   timestamp lives on the profile row), so they fill to the same right edge as the first
+   block — no 56px reserve, no first-block spill. */
+
+.mx_EventTile[data-self="true"] .mx_EventTile_line {
+    /* v5: right edge aligns with the agent content column (no -9px overhang), so own
+       bubbles and agent messages share one clean right margin. */
+    margin-right: 0;
+    margin-left: auto;
+    border-color: transparent;
+    background: var(--cpd-color-bg-self-bubble);
+}
+
+.mx_EventTile_line > a {
+    position: absolute;
+    right: 8px;
+    bottom: 7px;
+}
+
+.mx_MessageTimestamp {
+    white-space: nowrap;
+    color: var(--cpd-color-text-secondary);
+    font-size: var(--cpd-font-size-2xs);
+    line-height: 14px !important;
+}
+
+.mx_EventTile_content {
+    min-width: 0;
+    overflow: hidden;
+    padding: 1px;
+}
+
+.markdown-body {
+    color: inherit;
+    font-family: inherit;
+    font-size: inherit;
+    line-height: inherit;
+}
+
+.markdown-body p:first-child {
+    margin-top: 0;
+}
+
+.markdown-body p:last-child {
+    margin-bottom: 0;
+}
+
+.mx_WhoIsTypingTile {
+    list-style: none;
+}
+
+.mx_MessageComposer {
+    min-height: 56px;
+    flex: 0 0 auto;
+    /* v5 composer.footer: TRANSPARENT — the warm room-canvas (--m-paper) reading
+       surface shows through. The bordered --m-panel shell is the input row alone. */
+    background: transparent;
+}
+
+.mx_MessageComposer_wrapper {
+    position: relative;
+    /* Mac composer bar: 16 all round, a divider above, on the timeline colour (no panel fill). */
+    padding: 16px;
+    border-top: 1px solid var(--cpd-color-border-subtle);
+    background: transparent;
+}
+
+.mx_SlashPalette {
+    position: absolute;
+    /* v4 layering: slash palette sits above the composer, below modals. */
+    z-index: 20;
+    right: var(--cpd-space-4x);
+    bottom: calc(100% + var(--cpd-space-2x));
+    left: var(--cpd-space-4x);
+    /* v4 caps the palette at 262px, but never taller than half the dynamic viewport —
+       on short visual viewports (mobile landscape, on-screen keyboard) a fixed 262px
+       would push the top rows off-screen above the absolutely-anchored composer. */
+    max-height: min(262px, 50dvh);
+    overflow-y: auto;
+    box-sizing: border-box;
+    border: 1px solid var(--cpd-color-border-subtle);
+    border-radius: var(--cpd-radius-md);
+    background: var(--cpd-color-bg-canvas-default);
+    box-shadow: var(--cpd-shadow-md);
+    color: var(--cpd-color-text-primary);
+}
+
+.mx_SlashPalette_row {
+    display: grid;
+    grid-template-columns: auto auto minmax(0, 1fr);
+    align-items: baseline;
+    gap: 9px;
+    padding: 7px 12px;
+    cursor: pointer;
+}
+
+/* v4: mouse hover and keyboard highlight are one state (--m-hover). */
+.mx_SlashPalette_row_highlighted {
+    background: var(--cpd-color-bg-subtle-primary);
+}
+
+.mx_SlashPalette_trigger {
+    font: 500 12.5px/18px var(--cpd-font-family-mono);
+    white-space: nowrap;
+}
+
+.mx_SlashPalette_argHint {
+    font: 400 11px/16px var(--cpd-font-family-mono);
+    color: var(--cpd-color-text-secondary);
+    white-space: nowrap;
+}
+
+.mx_SlashPalette_summary {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    font: 400 12px/16px var(--cpd-font-family-ui);
+    color: var(--cpd-color-text-secondary);
+}
+
+/* Mac composer row: plus.circle (17) outside left, a borderless white 32pt field with a 2/1
+   shadow, mic (15) outside right, and the accent arrow.up.circle.fill (22) only with text. */
+.mj_ComposerRow {
+    display: flex;
+    align-items: flex-end;
+    gap: 4px;
+}
+
+.mj_ComposerField {
+    display: flex;
+    min-width: 0;
+    flex: 1 1 auto;
+    min-height: 32px;
+    box-sizing: border-box;
+    align-items: center;
+    border: 1px solid transparent;
+    border-radius: var(--cpd-radius-composer);
+    background: var(--cpd-color-bg-canvas-default);
+    box-shadow: var(--cpd-shadow-sm);
+    padding: 0 8px;
+    transition: border-color var(--cpd-dur-fast) var(--cpd-ease);
+}
+
+/* Focus is the border turning accent (the Mac field has no ring); the textarea draws none. */
+.mj_ComposerField:focus-within {
+    border-color: var(--cpd-color-text-action-accent);
+}
+
+.mx_BasicMessageComposer {
+    display: flex;
+    align-items: center;
+}
+
+.mx_BasicMessageComposer_input {
+    /* Borderless and transparent inside the shadowed field; 13px like the Mac composer. */
+    width: 100%;
+    min-height: 30px;
+    max-height: 144px;
+    box-sizing: border-box;
+    margin: 0;
+    padding: 6px 0;
+    border: 0;
+    background: transparent;
+    font: 400 13px/18px var(--cpd-font-family-ui);
+}
+
+/* v5: focus is carried ENTIRELY by the shell border recolor
+   (.mj_ComposerField:focus-within → accent). No ring on the textarea — text
+   inputs match :focus-visible on every focus (click included), so a ring there shows
+   a "rectangle" the moment you type. The neutral→accent border change is the visible,
+   design-matching focus indicator. See reference_focus_visible_fires_on_every_text_input_focus. */
+.mx_BasicMessageComposer_input:focus,
+.mx_BasicMessageComposer_input:focus-visible {
+    outline: none;
+}
+
+.mx_BasicMessageComposer_input::placeholder {
+    color: var(--cpd-color-text-tertiary);
+}
+
+.mj_ComposerControl,
+.mj_ComposerSend {
+    display: inline-flex;
+    width: 32px;
+    height: 32px;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 0;
+    border-radius: var(--cpd-radius-md);
+    background: transparent;
+    color: var(--cpd-color-icon-secondary);
+    transition:
+        background var(--cpd-dur-fast) var(--cpd-ease),
+        color var(--cpd-dur-fast) var(--cpd-ease);
+}
+
+.mj_ComposerAttach svg {
+    width: 17px;
+    height: 17px;
+}
+
+.mj_ComposerMic svg {
+    width: 15px;
+    height: 15px;
+}
+
+.mj_ComposerControl:hover:not([aria-disabled="true"]):not(:disabled) {
+    background: var(--cpd-state-hover);
+    color: var(--cpd-color-text-primary);
+}
+
+.mj_ComposerSend {
+    color: var(--cpd-color-text-action-accent);
+}
+
+.mj_ComposerSend svg {
+    width: 22px;
+    height: 22px;
+}
+
+.mj_ComposerSend:hover {
+    background: var(--cpd-state-hover);
+}
+
+.mj_ComposerControl:focus-visible,
+.mj_ComposerSend:focus-visible {
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: 2px;
+}
+
+.mj_ComposerControl[aria-disabled="true"] {
+    color: var(--cpd-color-icon-tertiary);
+    opacity: 0.5;
+}
+
+.mx_HomePage {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    justify-content: center;
+    background: var(--cpd-color-bg-room-canvas);
+}
+
+.mx_HomePage_default_wrapper {
+    text-align: center;
+}
+
+.mx_HomePage_default_wrapper img {
+    width: 96px;
+}
+
+/* Sign-in: the Mac MacSignInView layout — one centred column on the window surface, no card.
+   Logo 72, title 17/600, caption labels above 28px fields, 12px between fields, full-width
+   submit disabled until the form is valid. (unify step 2) */
+.mj_Login {
+    display: flex;
+    width: 100%;
+    height: 100%;
+    box-sizing: border-box;
+    justify-content: center;
+    /* Short viewports (landscape phone, keyboard open): the column overflows downward and
+       scrolls instead of being clipped at the top by the overflow-hidden app host. */
+    overflow: auto;
+    padding: var(--cpd-space-8x);
+    background: var(--cpd-color-bg-canvas-default);
+}
+
+.mj_Login_column {
+    display: flex;
+    width: min(390px, 100%);
+    margin: auto;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--cpd-space-4x);
+}
+
+.mj_Login_logo {
+    width: 72px;
+    height: 72px;
+}
+
+/* Same treatment as the sidebar wordmark: the dark line-art mark goes white in dark. */
+[data-theme="dark"] .mj_Login_logo {
+    filter: brightness(0) invert(1);
+}
+
+.mj_Login_title {
+    margin: 0;
+    color: var(--cpd-color-text-primary);
+    font: 600 17px/22px var(--cpd-font-family-ui);
+}
+
+.mj_LoginServerNote {
+    margin: calc(-1 * var(--cpd-space-2x)) 0 0;
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-meta);
+}
+
+.mj_LoginForm {
+    display: flex;
+    width: 100%;
+    flex-direction: column;
+    gap: var(--cpd-space-3x);
+}
+
+.mj_LoginField {
+    display: flex;
+    flex-direction: column;
+    gap: var(--cpd-space-1x);
+}
+
+.mj_LoginField_label {
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-micro);
+}
+
+.mj_LoginField input {
+    width: 100%;
+    height: 28px;
+    box-sizing: border-box;
+    padding: 0 var(--cpd-space-2x);
+    border: 1px solid var(--cpd-color-border-interactive-secondary);
+    border-radius: var(--cpd-radius-field);
+    outline: 0;
+    background: var(--cpd-color-bg-canvas-default);
+    color: var(--cpd-color-text-primary);
+    font: var(--cpd-font-body-sm-regular);
+}
+
+.mj_LoginField input::placeholder {
+    color: var(--cpd-color-text-placeholder);
+}
+
+.mj_LoginField input:focus-visible {
+    border-color: var(--cpd-color-text-action-accent);
+    outline: 0;
+}
+
+.mj_Login_error {
+    font: var(--cpd-font-body-xs-regular);
+}
+
+.mj_LoginSubmit {
+    width: 100%;
+    height: 32px;
+    margin-top: var(--cpd-space-1x);
+    border: 0;
+    border-radius: var(--cpd-radius-md);
+    background: var(--cpd-color-bg-accent);
+    color: var(--cpd-color-text-on-accent);
+    font: 600 13px/17px var(--cpd-font-family-ui);
+}
+
+.mj_LoginSubmit:hover:not(:disabled) {
+    background: var(--cpd-color-bg-accent-emphasis);
+}
+
+.mj_LoginSubmit:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.mx_AutoHideScrollbar {
+    scrollbar-color: transparent transparent;
+}
+
+.mx_AutoHideScrollbar:hover {
+    scrollbar-color: rgb(101 109 119 / 40%) transparent;
+}
+
+/* Settings sheet (Mac Settings window as a sheet): grouped sections on the window surface. */
+.mj_SettingsScrim {
+    position: fixed;
+    z-index: 50;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--mj-scrim-modal);
+}
+
+.mj_SettingsSheet {
+    display: flex;
+    width: min(420px, calc(100vw - 32px));
+    max-height: calc(100dvh - 32px);
+    box-sizing: border-box;
+    flex-direction: column;
+    gap: 16px;
+    overflow: auto;
+    border-radius: var(--cpd-radius-popover);
+    background: var(--cpd-color-bg-canvas-raised);
+    box-shadow: var(--cpd-shadow-lg);
+    color: var(--cpd-color-text-primary);
+    padding: 16px;
+    outline: none;
+}
+
+.mj_SettingsSheet_head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.mj_SettingsSheet_head h2 {
+    margin: 0;
+    font: 600 13px/17px var(--cpd-font-family-ui);
+}
+
+.mj_SettingsSheet_done {
+    border: 0;
+    background: transparent;
+    color: var(--cpd-color-text-action-accent);
+    cursor: pointer;
+    font: 600 13px/17px var(--cpd-font-family-ui);
+}
+
+.mj_SettingsSheet_group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.mj_SettingsSheet_groupTitle {
+    margin: 0 4px;
+    color: var(--cpd-color-text-secondary);
+    font: 600 11px/14px var(--cpd-font-family-ui);
+}
+
+.mj_SettingsSheet_rows {
+    margin: 0;
+    border-radius: var(--cpd-radius-composer);
+    background: var(--cpd-color-bg-canvas-default);
+    box-shadow: var(--cpd-shadow-sm);
+}
+
+.mj_SettingsSheet_row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 12px;
+    font: 400 13px/17px var(--cpd-font-family-ui);
+}
+
+.mj_SettingsSheet_row + .mj_SettingsSheet_row {
+    border-top: 1px solid var(--cpd-color-border-subtle);
+}
+
+.mj_SettingsSheet_row dt {
+    color: var(--cpd-color-text-primary);
+}
+
+.mj_SettingsSheet_row dd {
+    min-width: 0;
+    margin: 0;
+    overflow: hidden;
+    color: var(--cpd-color-text-secondary);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_SettingsSheet_appearance {
+    align-self: flex-start;
+}
+
+/* New chats: a select per row, right-aligned like the Account values. */
+label.mj_SettingsSheet_row {
+    align-items: center;
+    padding-block: 6px;
+}
+
+.mj_SettingsSheet_select {
+    min-width: 0;
+    max-width: 60%;
+    padding: 3px 6px;
+    border: 1px solid var(--cpd-color-border-interactive-secondary);
+    border-radius: var(--cpd-radius-md);
+    background: var(--cpd-color-bg-canvas-default);
+    color: inherit;
+    font: inherit;
+}
+
+.mj_SettingsSheet_select:focus-visible {
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: -1px;
+}
+
+/* Boxes: one card per agent box, its name heading the agent / model / effort rows. */
+.mj_SettingsSheet_box + .mj_SettingsSheet_box {
+    margin-top: 4px;
+}
+
+.mj_SettingsSheet_boxName {
+    color: var(--cpd-color-text-primary);
+    font-weight: 600;
+}
+
+.mj_SettingsSheet_input {
+    width: 60%;
+}
+
+.mj_SettingsSheet_input::placeholder {
+    color: var(--cpd-color-text-secondary);
+}
+
+.mj_SettingsSheet_help,
+.mj_SettingsSheet_error {
+    margin: 0 4px;
+    font: 400 12px/16px var(--cpd-font-family-ui);
+}
+
+.mj_SettingsSheet_switchRow {
+    align-items: center;
+}
+
+.mj_SettingsSheet_switchText {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    color: var(--cpd-color-text-primary);
+}
+
+.mj_SettingsSheet_help {
+    color: var(--cpd-color-text-secondary);
+}
+
+.mj_SettingsSheet_error {
+    color: var(--cpd-color-text-critical-primary);
+}
+
+/* The help line under a switch label sits in the label column, tighter than a group help line. */
+.mj_SettingsSheet_switchText .mj_SettingsSheet_help {
+    margin: 0;
+    font: 400 11px/14px var(--cpd-font-family-ui);
+}
+
+/* An on/off switch: a pill track with a sliding knob, accent when on. */
+.mj_SettingsSheet_switch {
+    position: relative;
+    flex: none;
+    width: 36px;
+    height: 20px;
+    padding: 0;
+    border: 0;
+    border-radius: 10px;
+    background: var(--cpd-color-bg-subtle-primary);
+    cursor: pointer;
+    transition: background 0.15s;
+}
+.mj_SettingsSheet_switch::after {
+    content: "";
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--cpd-color-bg-canvas-default);
+    box-shadow: var(--cpd-shadow-sm);
+    transition: transform 0.15s;
+}
+.mj_SettingsSheet_switch[aria-checked="true"] {
+    background: var(--cpd-color-bg-accent);
+}
+.mj_SettingsSheet_switch[aria-checked="true"]::after {
+    transform: translateX(16px);
+}
+.mj_SettingsSheet_switch:focus-visible {
+    outline: 2px solid var(--cpd-color-icon-accent-primary);
+    outline-offset: 2px;
+}
+
+.mj_SettingsSheet_signOut {
+    height: 32px;
+    border: 0;
+    border-radius: var(--cpd-radius-md);
+    background: var(--cpd-color-bg-canvas-default);
+    box-shadow: var(--cpd-shadow-sm);
+    color: var(--cpd-color-text-critical-primary);
+    cursor: pointer;
+    font: 500 13px/17px var(--cpd-font-family-ui);
+}
+
+.mj_NavRail_settings {
+    position: relative;
+}

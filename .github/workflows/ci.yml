@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# The GITHUB_TOKEN needs nothing beyond reading the checkout: no job here
+# posts a comment, cuts a release, or writes back to the repo. Declaring
+# that explicitly stops a token minted with broader default permissions
+# from being handed to third-party actions in the build.
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: Lint & test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm test

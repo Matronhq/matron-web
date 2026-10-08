@@ -1,0 +1,398 @@
+/*
+Copyright 2026 Matron Contributors.
+
+SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
+Please see LICENSE files in the repository root for full details.
+*/
+
+import React, { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+
+import type { MatronJournalClient } from "../client";
+import type { EventPayload, JournalEvent } from "../types";
+import {
+    isRenderableItemMarker,
+    ItemCard,
+    ItemInlineNote,
+    MilestoneCard,
+    MemoryNotice,
+    MissionNotice,
+    renderItemMarker,
+} from "../tracker/cards";
+
+interface FakeClient {
+    openTrackerItem: jest.Mock;
+    openTrackerLink: jest.Mock;
+    openTrackerMission: jest.Mock;
+}
+
+function fakeClient(): FakeClient {
+    return { openTrackerItem: jest.fn(), openTrackerLink: jest.fn(), openTrackerMission: jest.fn() };
+}
+
+function event(type: string, payload: EventPayload): JournalEvent {
+    return { kind: "journal", seq: 1, convo_id: "c1", ts: 1, sender: "journal", type, payload };
+}
+
+async function mount(element: React.ReactElement): Promise<{ container: HTMLDivElement; root: Root }> {
+    const container = document.createElement("div");
+    document.body.append(container);
+    let root!: Root;
+    await act(async () => {
+        root = createRoot(container);
+        root.render(element);
+    });
+    return { container, root };
+}
+
+describe("renderItemMarker dispatch", () => {
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    const client = fakeClient() as unknown as MatronJournalClient;
+
+    it("returns null for the quiet invalidation-only actions and any unknown action", () => {
+        expect(renderItemMarker(event("item", { num: 1, action: "reordered" }), client)).toBeNull();
+        expect(renderItemMarker(event("item", { num: 1, action: "updated" }), client)).toBeNull();
+        expect(renderItemMarker(event("item", { num: 1, action: "who-knows" }), client)).toBeNull();
+    });
+
+    it("returns a card for created/closed and an inline note for commented/reopened", () => {
+        expect(renderItemMarker(event("item", { num: 1, action: "created" }), client)).not.toBeNull();
+        expect(renderItemMarker(event("item", { num: 1, action: "closed" }), client)).not.toBeNull();
+        expect(renderItemMarker(event("item", { num: 1, action: "commented" }), client)).not.toBeNull();
+        expect(renderItemMarker(event("item", { num: 1, action: "reopened" }), client)).not.toBeNull();
+    });
+
+    // F5: rendering and timeline suppression share ONE classifier (isRenderableItemMarker). If they
+    // could diverge, an unknown/version-skew action would render null yet survive suppression, leaving
+    // a ghost row (empty avatar/bubble). Assert the lock-step: renderItemMarker returns content iff the
+    // classifier says renderable, so the suppressor (isSuppressedTrackerEvent = !isRenderableItemMarker)
+    // suppresses exactly the null-rendering markers.
+    it("keeps isRenderableItemMarker in lock-step with renderItemMarker (no ghost rows)", () => {
+        for (const action of ["created", "closed", "commented", "reopened", "reordered", "updated", "who-knows"]) {
+            const renders = renderItemMarker(event("item", { num: 1, action }), client) !== null;
+            expect(isRenderableItemMarker(event("item", { num: 1, action }))).toBe(renders);
+        }
+        // The quiet/unknown actions are explicitly non-renderable (→ suppressed, no ghost row).
+        expect(isRenderableItemMarker(event("item", { num: 1, action: "reordered" }))).toBe(false);
+        expect(isRenderableItemMarker(event("item", { num: 1, action: "updated" }))).toBe(false);
+        expect(isRenderableItemMarker(event("item", { num: 1, action: "who-knows" }))).toBe(false);
+        // A non-item event is never a renderable item marker.
+        expect(isRenderableItemMarker(event("text", { body: "hi" }))).toBe(false);
+    });
+});
+
+describe("ItemCard", () => {
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    it("renders a created item with the orange needs-you border when awaiting the user", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <ItemCard
+                client={client as unknown as MatronJournalClient}
+                event={event("item", {
+                    num: 3,
+                    kind: "question",
+                    title: "Pick one",
+                    action: "created",
+                    awaiting: "user",
+                })}
+            />,
+        );
+
+        const card = container.querySelector(".mj_TrackerCard");
+        expect(card?.classList.contains("mj_TrackerCard_needsyou")).toBe(true);
+        expect(container.querySelector(".mj_TrackerStatusPill")?.textContent).toBe("Needs you");
+        expect(container.querySelector(".mj_TrackerCard_num")?.textContent).toBe("#3");
+    });
+
+    it("renders a closed item without the orange border even when it still records awaiting-user", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <ItemCard
+                client={client as unknown as MatronJournalClient}
+                event={event("item", {
+                    num: 3,
+                    kind: "decision",
+                    title: "Go with Postgres",
+                    action: "closed",
+                    awaiting: "user",
+                    resolution: "decided",
+                })}
+            />,
+        );
+
+        expect(container.querySelector(".mj_TrackerCard_needsyou")).toBeNull();
+        expect(container.querySelector(".mj_TrackerStatusPill")?.textContent).toBe("Closed · Decided");
+    });
+
+    it("falls back to the kind label when the title is absent", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <ItemCard
+                client={client as unknown as MatronJournalClient}
+                event={event("item", { num: 3, kind: "task", action: "created", awaiting: "agent" })}
+            />,
+        );
+
+        expect(container.querySelector(".mj_TrackerCard_title")?.textContent).toBe("Task");
+    });
+
+    it("opens the item when clicked", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <ItemCard
+                client={client as unknown as MatronJournalClient}
+                event={event("item", { num: 9, kind: "task", title: "t", action: "created" })}
+            />,
+        );
+
+        await act(async () => {
+            container.querySelector<HTMLButtonElement>(".mj_TrackerCard_row")!.click();
+        });
+        expect(client.openTrackerItem).toHaveBeenCalledWith(9);
+    });
+
+    // The comment body renders markdown (links, code-block copy buttons). It must sit beside the
+    // card's open button, not inside it: a link click opens the link's target, not the card's item.
+    it("opens a tracker link in the closing comment without also opening the card's item", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <ItemCard
+                client={client as unknown as MatronJournalClient}
+                event={event("item", {
+                    num: 3,
+                    kind: "task",
+                    title: "t",
+                    action: "closed",
+                    resolution: "done",
+                    comment: { body: "Superseded by [#7](matron://item/7)" },
+                })}
+            />,
+        );
+
+        const link = container.querySelector<HTMLAnchorElement>(".mj_TrackerCard_comment a")!;
+        expect(link.closest("button")).toBeNull();
+        await act(async () => {
+            link.click();
+        });
+        expect(client.openTrackerLink).toHaveBeenCalledWith("item", 7);
+        expect(client.openTrackerItem).not.toHaveBeenCalled();
+    });
+});
+
+describe("ItemInlineNote", () => {
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    it("renders a reply lead with the actor and the comment body for a commented marker", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <ItemInlineNote
+                client={client as unknown as MatronJournalClient}
+                event={event("item", {
+                    num: 4,
+                    kind: "question",
+                    title: "Colour?",
+                    action: "commented",
+                    by: "user",
+                    comment: { body: "let's go yellow" },
+                })}
+            />,
+        );
+
+        expect(container.querySelector(".mj_TrackerInlineNote_line")?.textContent).toContain(
+            "You replied on #4 · Colour?",
+        );
+        expect(container.querySelector(".mj_TrackerInlineNote_body")?.textContent).toContain("let's go yellow");
+    });
+
+    it("renders a reopened lead with no body and falls back to #num when the title is absent", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <ItemInlineNote
+                client={client as unknown as MatronJournalClient}
+                event={event("item", {
+                    num: 4,
+                    kind: "task",
+                    action: "reopened",
+                    by: "agent",
+                    comment: { body: "should be ignored" },
+                })}
+            />,
+        );
+
+        expect(container.querySelector(".mj_TrackerInlineNote_line")?.textContent).toContain("Agent reopened #4 · #4");
+        expect(container.querySelector(".mj_TrackerInlineNote_body")).toBeNull();
+    });
+
+    it("opens the item from the lead line, and a link in the reply body opens only its own target", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <ItemInlineNote
+                client={client as unknown as MatronJournalClient}
+                event={event("item", {
+                    num: 4,
+                    kind: "question",
+                    title: "Colour?",
+                    action: "commented",
+                    by: "agent",
+                    comment: { body: "See [#8](matron://item/8)\n\n```\ncode\n```" },
+                })}
+            />,
+        );
+
+        // No interactive markdown content is nested inside the note's button.
+        const lead = container.querySelector<HTMLButtonElement>("button.mj_TrackerInlineNote_line")!;
+        expect(lead.querySelector("a, button")).toBeNull();
+        const link = container.querySelector<HTMLAnchorElement>(".mj_TrackerInlineNote_body a")!;
+        expect(link.closest("button")).toBeNull();
+
+        await act(async () => {
+            link.click();
+        });
+        expect(client.openTrackerLink).toHaveBeenCalledWith("item", 8);
+        expect(client.openTrackerItem).not.toHaveBeenCalled();
+
+        await act(async () => {
+            lead.click();
+        });
+        expect(client.openTrackerItem).toHaveBeenCalledWith(4);
+    });
+});
+
+describe("MilestoneCard", () => {
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    it("shows the kind + mission subtitle and the orange border for a user_input milestone", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <MilestoneCard
+                client={client as unknown as MatronJournalClient}
+                event={event("milestone", {
+                    num: 7,
+                    mission_num: 5,
+                    kind: "user_input",
+                    title: "Approved the plan",
+                    body: "go for it",
+                    mission_title: "Ship the tracker",
+                })}
+            />,
+        );
+
+        expect(container.querySelector(".mj_TrackerCard_needsyou")).not.toBeNull();
+        expect(container.querySelector(".mj_TrackerCard_subtitle")?.textContent).toBe("Your input · Ship the tracker");
+        expect(container.querySelector(".mj_TrackerCard_milestoneBody")?.textContent).toBe("go for it");
+    });
+
+    it("shows no orange border for a progress milestone and jumps to the mission when clicked", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <MilestoneCard
+                client={client as unknown as MatronJournalClient}
+                event={event("milestone", { num: 7, mission_num: 5, kind: "progress", title: "Landed schema" })}
+            />,
+        );
+
+        expect(container.querySelector(".mj_TrackerCard_needsyou")).toBeNull();
+        expect(container.querySelector(".mj_TrackerCard_subtitle")?.textContent).toBe("Progress · #5");
+
+        await act(async () => {
+            container.querySelector<HTMLButtonElement>(".mj_TrackerCard")!.click();
+        });
+        expect(client.openTrackerMission).toHaveBeenCalledWith(5);
+    });
+});
+
+describe("MissionNotice", () => {
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    it("renders the started one-liner with the title", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <MissionNotice
+                client={client as unknown as MatronJournalClient}
+                event={event("mission", { num: 5, action: "created", title: "Ship the tracker" })}
+            />,
+        );
+        expect(container.querySelector(".mj_TrackerMissionNotice")?.textContent).toContain(
+            "Mission #5 started · Ship the tracker",
+        );
+    });
+
+    it("renders the closed-over-open-items one-liner", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <MissionNotice
+                client={client as unknown as MatronJournalClient}
+                event={event("mission", { num: 5, action: "closed", open_item_nums: [7, 8] })}
+            />,
+        );
+        expect(container.querySelector(".mj_TrackerMissionNotice")?.textContent).toContain(
+            "Mission #5 closed over #7, #8",
+        );
+    });
+
+    it("renders a bare closed one-liner when nothing was left open", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <MissionNotice
+                client={client as unknown as MatronJournalClient}
+                event={event("mission", { num: 5, action: "closed" })}
+            />,
+        );
+        expect(container.querySelector(".mj_TrackerMissionNotice")?.textContent).toContain("Mission #5 closed");
+    });
+});
+
+describe("MemoryNotice", () => {
+    it("says who saved which memory and opens it when tapped; a stripped payload opens the list", async () => {
+        const client = { openTrackerMemory: jest.fn(), openTrackerView: jest.fn() } as unknown as MatronJournalClient;
+        const { container } = await mount(
+            <MemoryNotice
+                client={client}
+                event={event("memory", {
+                    memory_id: "me_1",
+                    name: "avoid-elm",
+                    description: "Never use elm.",
+                    action: "saved",
+                    created: true,
+                    by: "agent",
+                })}
+            />,
+        );
+        const notice = container.querySelector(".mj_TrackerMemoryNotice") as HTMLButtonElement;
+        expect(notice.textContent).toContain("Agent saved a memory · avoid-elm — Never use elm.");
+        await act(async () => {
+            notice.click();
+        });
+        expect(client.openTrackerMemory).toHaveBeenCalledWith("avoid-elm");
+
+        const { container: stripped } = await mount(
+            <MemoryNotice
+                client={client}
+                event={event("memory", { memory_id: "me_2", action: "deleted", created: false, by: "user" })}
+            />,
+        );
+        const bare = stripped.querySelector(".mj_TrackerMemoryNotice") as HTMLButtonElement;
+        expect(bare.textContent).toContain("You deleted a memory");
+        await act(async () => {
+            bare.click();
+        });
+        expect(client.openTrackerView).toHaveBeenCalledWith({
+            view: "memories",
+            itemId: null,
+            missionId: null,
+            memoryName: null,
+        });
+    });
+});

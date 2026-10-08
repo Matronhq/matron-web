@@ -1,0 +1,6015 @@
+/*
+Copyright 2026 Matron Contributors.
+
+SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
+Please see LICENSE files in the repository root for full details.
+*/
+
+import React, {
+    type FormEvent,
+    type RefObject,
+    useCallback,
+    useEffect,
+    useId,
+    useLayoutEffect,
+    useMemo,
+    useRef,
+    useReducer,
+    useState,
+    useSyncExternalStore,
+} from "react";
+
+import matronLogo from "../../res/matron-logo-simple.svg";
+import { INITIAL_SGR_STATE, parseAnsi, stripLeadingSgrFragment } from "./ansi";
+import { JournalApiError } from "./api";
+import {
+    BROWSER_MEMORY_SAFETY_MAX_BYTES,
+    errorMessage,
+    type MatronJournalClient,
+    PREFERENCES_UNAVAILABLE_ERROR,
+    workerKind,
+} from "./client";
+import { copyText } from "./clipboard";
+import { type DraftStore, makeDraftStore } from "./composer-drafts";
+import { effectiveUnread } from "./conversation-flags";
+import { type RowContextMenu, useRowContextMenu } from "./context-menu";
+import { PinDialog, type PinDialogTarget } from "./PinDialogs";
+import { pinGlyph, successorHintText } from "./pins";
+import {
+    AnthropicMark,
+    ArchiveIcon,
+    AttachmentIcon,
+    CheckIcon,
+    ChevronDownIcon,
+    ChevronLeftIcon,
+    ChevronUpIcon,
+    ClipboardIcon,
+    CloseIcon,
+    CodeBracketsIcon,
+    CompactIcon,
+    ComposeIcon,
+    ArchiveFileIcon,
+    AudioFileIcon,
+    FileEditIcon,
+    FailedIcon,
+    FileIcon,
+    ImageFileIcon,
+    InactiveIcon,
+    InterruptedIcon,
+    KebabIcon,
+    PdfFileIcon,
+    TextFileIcon,
+    VideoFileIcon,
+    MarkdownIcon,
+    MarkAllReadIcon,
+    MarkReadIcon,
+    MarkUnreadIcon,
+    OpenAIMark,
+    PinIcon,
+    SearchIcon,
+    SendIcon,
+    SettingsIcon,
+    SystemThemeIcon,
+    LightThemeIcon,
+    DarkThemeIcon,
+    StarFilledIcon,
+    StarIcon,
+    UnarchiveIcon,
+    UploadTrayIcon,
+    CheckCircleIcon,
+    XOctagonIcon,
+    PlusCircleIcon,
+    ArrowUpCircleIcon,
+} from "./icons";
+import { NAV_RAIL_WIDTH, NavRail, type NavKey } from "./NavRail";
+import { SettingsSheet } from "./SettingsSheet";
+import { displayTitle, TaggedTitle } from "./SessionTag";
+import { groupByDay } from "./sidebar-groups";
+import { createLongPressController, type LongPressController } from "./longPress";
+import { MarkdownBody, markdownToPlainText } from "./markdown";
+import { isRenderableItemMarker, MemoryNotice, MilestoneCard, MissionNotice, renderItemMarker } from "./tracker/cards";
+import { needsUser } from "./tracker/format";
+import {
+    isPreviewableMarkdown,
+    MarkdownPreviewContext,
+    MarkdownPreviewPanel,
+    useMarkdownPreview,
+    useMarkdownPreviewPanel,
+} from "./markdown-preview";
+import { TrackerPane } from "./tracker/TrackerPane";
+import {
+    buildMediaCorpus,
+    isRenderableInViewer,
+    type MediaItem,
+    MediaViewer,
+    MediaViewerContext,
+    type MediaViewerContextValue,
+    useMediaViewer,
+} from "./media-viewer";
+import { getSnapshot, nextThemePref, setTheme, subscribe } from "./theme";
+import {
+    applyCommand,
+    applyFolder,
+    type BotCommand,
+    CLAUDE_BRIDGE_COMMANDS,
+    filterCommands,
+    folderSuggestions,
+    isCommandMode,
+    makeRecentFoldersStore,
+    recentFolderArgument,
+} from "./slash-palette";
+import {
+    compactTokens,
+    formatSampleAge,
+    isSampleStale,
+    normalizePercent,
+    resetDisplay,
+    sampleAgeMs,
+    usageAccessibleLabel,
+    usageShortLabel,
+    usageOrderRank,
+    usageLevel,
+    worstLimit,
+} from "./status";
+import {
+    asNumber,
+    asString,
+    type BoxStatus,
+    buildSidebarIndex,
+    childrenOf,
+    childSidebarPlacement,
+    type ClientState,
+    type MessageSearchState,
+    type Conversation,
+    type ConvoPin,
+    conversationTitle,
+    type DeviceDTO,
+    displaySender,
+    type EventPayload,
+    type FileKind,
+    fileKindFromMime,
+    hasSubagentChildRows,
+    IMAGE_FRAME_MAX_HEIGHT_PX,
+    imageFrameStyle,
+    isNearBottom,
+    type MediaDims,
+    parseMediaDims,
+    type JournalEvent,
+    type PendingMessage,
+    type RecentFolder,
+    rendersAsTopLevelRow,
+    isSubChat,
+    type SessionStatus,
+    spawnOutcomeKind,
+    type SpawnOutcomeKind,
+    spawnOutcomeSnippet,
+    type StagedUploadItem,
+    type StagedUploads,
+    type ToolStreamState,
+    normalizeServerUrl,
+} from "./types";
+import {
+    useVoiceRecorder,
+    VoiceErrorBanner,
+    VoiceMicButton,
+    type VoiceRecordingContext,
+    VoiceRecordingBar,
+} from "./voice-recorder";
+
+const NAV_VIEW = { projects: "missions", decisions: "inbox", memories: "memories" } as const;
+const NAV_KEY_FOR_VIEW: Record<"missions" | "inbox" | "memories", NavKey> = {
+    missions: "projects",
+    inbox: "decisions",
+    memories: "memories",
+};
+const LEFT_PANEL_SIZE_KEY = "mx_lhs_size";
+const LEFT_PANEL_DEFAULT_WIDTH = 350;
+const LEFT_PANEL_MIN_WIDTH = 224;
+
+function clampLeftPanelWidth(width: number, containerWidth: number): number {
+    return Math.min(Math.max(width, LEFT_PANEL_MIN_WIDTH), Math.max(LEFT_PANEL_MIN_WIDTH, containerWidth / 2));
+}
+
+function initialLeftPanelWidth(): number {
+    let storedWidth = Number.NaN;
+    try {
+        storedWidth = Number.parseInt(window.localStorage.getItem(LEFT_PANEL_SIZE_KEY) ?? "", 10);
+    } catch {
+        // Storage can be unavailable; the default width remains usable.
+    }
+    return clampLeftPanelWidth(
+        Number.isFinite(storedWidth) && storedWidth >= LEFT_PANEL_MIN_WIDTH ? storedWidth : LEFT_PANEL_DEFAULT_WIDTH,
+        // The stored width is the list's; the fixed nav rail sits beside it.
+        document.documentElement.clientWidth - NAV_RAIL_WIDTH,
+    );
+}
+
+function useLeftPanelResize(): {
+    width: number;
+    onPointerDown: (event: React.PointerEvent<HTMLDivElement>) => void;
+} {
+    const [width, setWidth] = useState(initialLeftPanelWidth);
+    const widthRef = useRef(width);
+    const stopDraggingRef = useRef<() => void>(() => undefined);
+
+    useEffect(() => {
+        widthRef.current = width;
+    }, [width]);
+
+    useEffect(() => {
+        const clampToWindow = (): void => {
+            const nextWidth = clampLeftPanelWidth(
+                widthRef.current,
+                document.documentElement.clientWidth - NAV_RAIL_WIDTH,
+            );
+            widthRef.current = nextWidth;
+            setWidth(nextWidth);
+        };
+        window.addEventListener("resize", clampToWindow);
+        return () => {
+            window.removeEventListener("resize", clampToWindow);
+            stopDraggingRef.current();
+        };
+    }, []);
+
+    const onPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>): void => {
+        if (event.button !== 0) return;
+        event.preventDefault();
+
+        const container = event.currentTarget.parentElement;
+        if (!container) return;
+        const containerLeft = container.getBoundingClientRect().left;
+
+        const stopDragging = (): void => {
+            window.removeEventListener("pointermove", onPointerMove);
+            window.removeEventListener("pointerup", stopDragging);
+            window.removeEventListener("pointercancel", stopDragging);
+            try {
+                window.localStorage.setItem(LEFT_PANEL_SIZE_KEY, String(Math.round(widthRef.current)));
+            } catch {
+                // Resizing remains available for the current session without persistence.
+            }
+            stopDraggingRef.current = () => undefined;
+        };
+        const onPointerMove = (moveEvent: PointerEvent): void => {
+            const nextWidth = clampLeftPanelWidth(
+                moveEvent.clientX - containerLeft - NAV_RAIL_WIDTH,
+                container.clientWidth - NAV_RAIL_WIDTH,
+            );
+            widthRef.current = nextWidth;
+            setWidth(nextWidth);
+        };
+
+        stopDraggingRef.current();
+        stopDraggingRef.current = stopDragging;
+        window.addEventListener("pointermove", onPointerMove);
+        window.addEventListener("pointerup", stopDragging);
+        window.addEventListener("pointercancel", stopDragging);
+    }, []);
+
+    return { width, onPointerDown };
+}
+
+export function ThemeToggle(): React.ReactElement {
+    const preference = useSyncExternalStore(subscribe, getSnapshot);
+    const label = preference === null ? "System" : preference === "light" ? "Light" : "Dark";
+    const icon =
+        preference === null ? <SystemThemeIcon /> : preference === "light" ? <LightThemeIcon /> : <DarkThemeIcon />;
+
+    return (
+        <button
+            className="mj_IconButton"
+            type="button"
+            aria-label={`Theme: ${label}`}
+            title={`Theme: ${label}`}
+            onClick={() => setTheme(nextThemePref(preference))}
+        >
+            {icon}
+        </button>
+    );
+}
+
+function formatTime(timestamp: number): string {
+    return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(timestamp));
+}
+
+// EXPORTED: the render callsite uses it, and unit tests import it directly to inject `now`.
+// `formatTime` stays private; only this helper needs the test seam.
+export function formatRelativeDay(timestamp: number, now: number = Date.now()): string {
+    if (!Number.isFinite(timestamp)) return ""; // Non-finite → no throw, empty string.
+    const then = new Date(timestamp);
+    if (Number.isNaN(then.getTime())) return ""; // Invalid Date → Intl.format would throw; bail.
+    const today = new Date(now);
+    const startOf = (d: Date): number => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    const dayMs = 86_400_000;
+    const daysAgo = Math.round((startOf(today) - startOf(then)) / dayMs);
+    if (daysAgo === 0) return formatTime(timestamp); // Today (including same-day minor-future skew) → clock.
+    if (daysAgo >= 1 && daysAgo <= 6) {
+        return new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(then);
+    }
+    // Older than six days or a genuinely future calendar day falls through to a dated label.
+    const sameYear = then.getFullYear() === today.getFullYear();
+    return new Intl.DateTimeFormat(
+        undefined,
+        sameYear ? { month: "short", day: "numeric" } : { month: "short", day: "numeric", year: "numeric" },
+    ).format(then);
+}
+
+// True when two epoch-ms timestamps fall on the same local calendar day.
+export function sameCalendarDay(a: number, b: number): boolean {
+    const left = new Date(a);
+    const right = new Date(b);
+    return (
+        left.getFullYear() === right.getFullYear() &&
+        left.getMonth() === right.getMonth() &&
+        left.getDate() === right.getDate()
+    );
+}
+
+// Timeline day-divider label: a relative word (Today / Yesterday / weekday within the week)
+// joined to an absolute date ("Today · 24 July"), so a scrolled-back reader always has both
+// the human anchor and the exact date. EXPORTED for unit tests (inject `now`).
+export function formatDayDivider(timestamp: number, now: number = Date.now()): string {
+    if (!Number.isFinite(timestamp)) return "";
+    const then = new Date(timestamp);
+    if (Number.isNaN(then.getTime())) return "";
+    const today = new Date(now);
+    const startOf = (d: Date): number => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    const daysAgo = Math.round((startOf(today) - startOf(then)) / 86_400_000);
+    const sameYear = then.getFullYear() === today.getFullYear();
+    const dateStr = new Intl.DateTimeFormat(
+        undefined,
+        sameYear ? { day: "numeric", month: "long" } : { day: "numeric", month: "long", year: "numeric" },
+    ).format(then);
+    let word: string | undefined;
+    if (daysAgo === 0) word = "Today";
+    else if (daysAgo === 1) word = "Yesterday";
+    else if (daysAgo >= 2 && daysAgo <= 6) word = new Intl.DateTimeFormat(undefined, { weekday: "long" }).format(then);
+    return word ? `${word} · ${dateStr}` : dateStr;
+}
+
+function formatBytes(value: unknown): string | undefined {
+    if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+    if (value < 1024) return `${value} B`;
+    if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`;
+    return `${(value / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function LoginScreen({ client, state }: { client: MatronJournalClient; state: ClientState }): React.ReactElement {
+    // unify step 2: the Mac sign-in layout — one column, labels above fields, submit disabled
+    // until the form is valid. When config.json fixes the server the field is hidden and the
+    // host is named under the title instead.
+    const fixedServer = state.config.journal_server_url?.trim() || undefined;
+    const [server, setServer] = useState(client.suggestedServer());
+    const [username, setUsername] = useState("");
+    const [password, setPassword] = useState("");
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState(state.connectionError);
+
+    const effectiveServer = fixedServer ?? server;
+    const canSubmit = !busy && effectiveServer.trim() !== "" && username.trim() !== "" && password !== "";
+    const brand = state.config.brand || "Matron";
+
+    const submit = async (event: FormEvent): Promise<void> => {
+        event.preventDefault();
+        if (!canSubmit) return;
+        setBusy(true);
+        setError(undefined);
+        try {
+            await client.login(effectiveServer, username, password);
+        } catch (loginError) {
+            setError(errorMessage(loginError));
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    return (
+        <div className="mj_Login">
+            <main className="mj_Login_column">
+                <img className="mj_Login_logo" src={matronLogo} alt={brand} />
+                <h1 className="mj_Login_title">Sign in to {brand}</h1>
+                {fixedServer && <p className="mj_LoginServerNote">Signing in to {hostLabel(fixedServer)}</p>}
+                <form className="mj_LoginForm" onSubmit={(event) => void submit(event)}>
+                    {!fixedServer && (
+                        <label className="mj_LoginField" htmlFor="mj_LoginForm_server">
+                            <span className="mj_LoginField_label">Server</span>
+                            <input
+                                id="mj_LoginForm_server"
+                                type="text"
+                                inputMode="url"
+                                value={server}
+                                onChange={(event) => setServer(event.target.value)}
+                                placeholder="https://your-server.example.com"
+                                autoComplete="url"
+                                autoCorrect="off"
+                                autoCapitalize="none"
+                                required
+                                autoFocus
+                            />
+                        </label>
+                    )}
+                    <label className="mj_LoginField" htmlFor="mj_LoginForm_username">
+                        <span className="mj_LoginField_label">Username</span>
+                        <input
+                            id="mj_LoginForm_username"
+                            type="text"
+                            value={username}
+                            onChange={(event) => setUsername(event.target.value)}
+                            placeholder="alice"
+                            autoComplete="username"
+                            autoCorrect="off"
+                            autoCapitalize="none"
+                            required
+                            autoFocus={Boolean(fixedServer)}
+                        />
+                    </label>
+                    <label className="mj_LoginField" htmlFor="mj_LoginForm_password">
+                        <span className="mj_LoginField_label">Password</span>
+                        <input
+                            id="mj_LoginForm_password"
+                            type="password"
+                            value={password}
+                            onChange={(event) => setPassword(event.target.value)}
+                            autoComplete="current-password"
+                            required
+                        />
+                    </label>
+                    {error && (
+                        <div className="mj_Error mj_Login_error" role="alert">
+                            {error}
+                        </div>
+                    )}
+                    <button className="mj_LoginSubmit" type="submit" disabled={!canSubmit}>
+                        {busy ? "Signing in…" : "Sign in"}
+                    </button>
+                </form>
+                {state.config.privacy_policy_url && (
+                    <a
+                        className="mj_PrivacyLink"
+                        href={state.config.privacy_policy_url}
+                        target="_blank"
+                        rel="noreferrer"
+                    >
+                        Privacy policy
+                    </a>
+                )}
+            </main>
+        </div>
+    );
+}
+
+/** Host shown under the sign-in title when the deployment fixes the server: "chat.example.com". */
+function hostLabel(url: string): string {
+    // normalizeServerUrl resolves the deployment's relative "/" or "/journal" against the page
+    // origin, the same way client.login does, so the note names the real host.
+    try {
+        return new URL(normalizeServerUrl(url)).host;
+    } catch {
+        return url;
+    }
+}
+
+type SheetState =
+    | { step: "loading-agents" }
+    | { step: "agents-error" }
+    | { step: "agents"; agents: DeviceDTO[] }
+    | {
+          step: "folders";
+          agent: DeviceDTO;
+          foldersRequestId: number;
+          folders?: RecentFolder[];
+          foldersError?: string;
+      }
+    | { step: "starting"; agent: DeviceDTO }
+    | { step: "uncertain" }
+    | { step: "error"; agent: DeviceDTO; message: string };
+
+function agentName(agent: DeviceDTO): string {
+    return agent.name?.trim() || `Agent ${agent.device_id}`;
+}
+
+function agentStatus(agent: DeviceDTO): string {
+    if (agent.connected) return "Connected";
+    if (agent.last_seen_at === undefined) return "Offline · last seen unknown";
+    const timestamp = agent.last_seen_at < 1_000_000_000_000 ? agent.last_seen_at * 1000 : agent.last_seen_at;
+    return `Offline · last seen ${new Date(timestamp).toLocaleString()}`;
+}
+
+// df -h style size for the disk line: "53G", "1.8T". One decimal below 10, whole numbers above.
+function formatDiskSize(bytes: number): string {
+    const units = ["B", "K", "M", "G", "T", "P"];
+    let value = bytes;
+    let unit = 0;
+    while (value >= 1024 && unit < units.length - 1) {
+        value /= 1024;
+        unit += 1;
+    }
+    const text = unit > 0 && value < 10 ? value.toFixed(1).replace(/\.0$/, "") : String(Math.round(value));
+    return `${text}${units[unit]}`;
+}
+
+// The box's last capacity report under its name: one line per limit (with its reset when the
+// bridge sent one), live sessions, disk, then how old the numbers are. No status → nothing.
+function BoxUsage({ status, now }: { status: BoxStatus | undefined; now: number }): React.ReactElement | null {
+    if (!status) return null;
+    const lines: string[] = [];
+    for (const line of status.limits?.lines ?? []) {
+        const reset = resetDisplay(line.resets_at, line.resets, now);
+        const usage = `${line.label} ${Math.round(line.percent)}%`;
+        lines.push(reset ? `${usage} · resets ${reset}` : usage);
+    }
+    if (status.activity) {
+        const count = status.activity.live_sessions;
+        lines.push(`${count} live session${count === 1 ? "" : "s"}`);
+    }
+    if (status.disk) {
+        const { free_bytes: free, total_bytes: total } = status.disk;
+        const freePercent = Math.round((free / total) * 100);
+        lines.push(`${formatDiskSize(free)} free of ${formatDiskSize(total)} (${freePercent}% free)`);
+    }
+    return (
+        <span className="mj_NewSessionSheet_usage">
+            {lines.map((line, index) => (
+                <span key={index} className="mj_NewSessionSheet_usageLine">
+                    {line}
+                </span>
+            ))}
+            <span className="mj_NewSessionSheet_usageAsOf">
+                as of {formatSampleAge(Math.max(0, now - status.reported_at))}
+            </span>
+        </span>
+    );
+}
+
+export function NewSessionSheet({
+    client,
+    onClose,
+}: {
+    client: MatronJournalClient;
+    onClose: () => void;
+}): React.ReactElement {
+    const [sheetState, setSheetState] = useState<SheetState>({ step: "loading-agents" });
+    const boxStatuses = useSyncExternalStore(client.subscribe, () => client.getSnapshot().boxStatuses);
+    const now = useMinuteClock();
+    const [workdir, setWorkdir] = useState("");
+    const [browserTools, setBrowserTools] = useState(false);
+    const [showBack, setShowBack] = useState(false);
+    const sheetStateRef = useRef(sheetState);
+    const agentsRef = useRef<DeviceDTO[]>([]);
+    const agentsRequestIdRef = useRef(0);
+    const foldersRequestIdRef = useRef(0);
+    const startingRef = useRef(false);
+    const mountedRef = useRef(false);
+    const dismissedRef = useRef(false);
+
+    const transition = useCallback((next: SheetState): void => {
+        sheetStateRef.current = next;
+        setSheetState(next);
+    }, []);
+
+    const loadFolders = useCallback(
+        (agent: DeviceDTO, backAvailable: boolean): void => {
+            const foldersRequestId = ++foldersRequestIdRef.current;
+            setShowBack(backAvailable);
+            transition({ step: "folders", agent, foldersRequestId });
+            void client.recentFolders(agent.device_id).then(
+                (folders) => {
+                    const current = sheetStateRef.current;
+                    if (
+                        !mountedRef.current ||
+                        dismissedRef.current ||
+                        current.step !== "folders" ||
+                        current.agent.device_id !== agent.device_id ||
+                        current.foldersRequestId !== foldersRequestId
+                    ) {
+                        return;
+                    }
+                    transition({ ...current, folders });
+                },
+                () => {
+                    const current = sheetStateRef.current;
+                    if (
+                        !mountedRef.current ||
+                        dismissedRef.current ||
+                        current.step !== "folders" ||
+                        current.agent.device_id !== agent.device_id ||
+                        current.foldersRequestId !== foldersRequestId
+                    ) {
+                        return;
+                    }
+                    transition({ ...current, folders: [], foldersError: "Couldn't load recent folders." });
+                },
+            );
+        },
+        [client, transition],
+    );
+
+    const loadAgents = useCallback((): void => {
+        const agentsRequestId = ++agentsRequestIdRef.current;
+        transition({ step: "loading-agents" });
+        void client.listAgents().then(
+            (agents) => {
+                if (!mountedRef.current || dismissedRef.current || agentsRequestId !== agentsRequestIdRef.current) {
+                    return;
+                }
+                agentsRef.current = agents;
+                const connectedAgents = agents.filter((agent) => agent.connected);
+                if (connectedAgents.length === 1) {
+                    loadFolders(connectedAgents[0], false);
+                } else {
+                    setShowBack(true);
+                    transition({ step: "agents", agents });
+                }
+            },
+            () => {
+                if (mountedRef.current && !dismissedRef.current && agentsRequestId === agentsRequestIdRef.current) {
+                    transition({ step: "agents-error" });
+                }
+            },
+        );
+    }, [client, loadFolders, transition]);
+
+    useEffect(() => {
+        mountedRef.current = true;
+        loadAgents();
+        return () => {
+            mountedRef.current = false;
+        };
+    }, [loadAgents]);
+
+    const dismiss = (): void => {
+        dismissedRef.current = true;
+        onClose();
+    };
+
+    const start = async (agent: DeviceDTO, path = workdir, browser = browserTools): Promise<void> => {
+        if (startingRef.current || dismissedRef.current) return;
+        startingRef.current = true;
+        transition({ step: "starting", agent });
+        const outcome = await client.startSessionRpc(agent.device_id, path, browser);
+        if (!mountedRef.current || dismissedRef.current) return;
+        if (outcome.kind === "created") {
+            dismissedRef.current = true;
+            onClose();
+            void client.selectConversation(outcome.convoId, { fromRpcCreate: true });
+            return;
+        }
+        if (outcome.kind === "uncertain") {
+            transition({ step: "uncertain" });
+            return;
+        }
+        startingRef.current = false;
+        transition({ step: "error", agent, message: outcome.message });
+    };
+
+    const folderState = sheetState.step === "folders" ? sheetState : undefined;
+
+    return (
+        <div className="mj_UploadConfirm_scrim" role="dialog" aria-modal="true" aria-labelledby="mj-new-session-title">
+            <div className="mj_UploadConfirm mj_NewSessionSheet">
+                <div className="mj_NewSessionSheet_head">
+                    <h2 className="mj_UploadConfirm_title" id="mj-new-session-title">
+                        New session
+                    </h2>
+                    <button type="button" className="mj_NewSessionSheet_close" aria-label="Close" onClick={dismiss}>
+                        <svg
+                            viewBox="0 0 24 24"
+                            width="16"
+                            height="16"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            aria-hidden="true"
+                        >
+                            <path d="M18 6 6 18M6 6l12 12" />
+                        </svg>
+                    </button>
+                </div>
+
+                {sheetState.step === "loading-agents" && (
+                    <div role="status">
+                        <span className="mj_Spinner" aria-hidden="true" /> Loading agents…
+                    </div>
+                )}
+
+                {sheetState.step === "agents-error" && (
+                    <>
+                        <p className="mj_UploadConfirm_error">Couldn't load agents.</p>
+                        <div className="mj_UploadConfirm_actions">
+                            <button type="button" className="mj_UploadConfirm_send" onClick={loadAgents}>
+                                Retry
+                            </button>
+                        </div>
+                    </>
+                )}
+
+                {sheetState.step === "agents" && (
+                    <>
+                        {sheetState.agents.length === 0 ? (
+                            <p>No agents connected — start the bridge on your box.</p>
+                        ) : (
+                            <div role="list" aria-label="Agents">
+                                {sheetState.agents.map((agent) => (
+                                    <button
+                                        key={agent.device_id}
+                                        type="button"
+                                        role="listitem"
+                                        disabled={!agent.connected}
+                                        onClick={() => loadFolders(agent, true)}
+                                    >
+                                        <strong>{agentName(agent)}</strong>
+                                        <span>{agentStatus(agent)}</span>
+                                        <BoxUsage status={boxStatuses[agent.device_id]} now={now} />
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                    </>
+                )}
+
+                {folderState && (
+                    <>
+                        <p>Start on {agentName(folderState.agent)}</p>
+                        <BoxUsage status={boxStatuses[folderState.agent.device_id]} now={now} />
+                        {folderState.folders === undefined ? (
+                            <div role="status">
+                                <span className="mj_Spinner" aria-hidden="true" /> Loading recent folders…
+                            </div>
+                        ) : (
+                            folderState.folders.length > 0 && (
+                                <div role="list" aria-label="Recent folders">
+                                    {folderState.folders.map((folder) => (
+                                        <button
+                                            key={folder.path}
+                                            type="button"
+                                            role="listitem"
+                                            onClick={() => {
+                                                setWorkdir(folder.path);
+                                                void start(folderState.agent, folder.path, browserTools);
+                                            }}
+                                        >
+                                            {folder.path}
+                                        </button>
+                                    ))}
+                                </div>
+                            )
+                        )}
+                        {folderState.foldersError && (
+                            <p className="mj_UploadConfirm_error">{folderState.foldersError}</p>
+                        )}
+                        <label htmlFor="mj-new-session-workdir">Folder path</label>
+                        <input
+                            id="mj-new-session-workdir"
+                            type="text"
+                            value={workdir}
+                            onChange={(event) => setWorkdir(event.target.value)}
+                            placeholder="Agent default"
+                        />
+                        <label>
+                            <input
+                                type="checkbox"
+                                checked={browserTools}
+                                onChange={(event) => setBrowserTools(event.target.checked)}
+                            />{" "}
+                            Browser tools
+                        </label>
+                        <div className="mj_UploadConfirm_actions">
+                            {showBack && (
+                                <button
+                                    type="button"
+                                    onClick={() => transition({ step: "agents", agents: agentsRef.current })}
+                                >
+                                    Back
+                                </button>
+                            )}
+                            <button
+                                type="button"
+                                className="mj_UploadConfirm_send"
+                                onClick={() => void start(folderState.agent)}
+                            >
+                                Start
+                            </button>
+                        </div>
+                    </>
+                )}
+
+                {sheetState.step === "starting" && (
+                    <div role="status">
+                        <span className="mj_Spinner" aria-hidden="true" /> Starting session…
+                    </div>
+                )}
+
+                {sheetState.step === "uncertain" && (
+                    <>
+                        <p>The session may have started. Check your conversations before trying again.</p>
+                        <div className="mj_UploadConfirm_actions">
+                            <button type="button" onClick={dismiss}>
+                                Close
+                            </button>
+                        </div>
+                    </>
+                )}
+
+                {sheetState.step === "error" && (
+                    <>
+                        <p className="mj_UploadConfirm_error">{sheetState.message}</p>
+                        <div className="mj_UploadConfirm_actions">
+                            <button
+                                type="button"
+                                className="mj_UploadConfirm_send"
+                                onClick={() => void start(sheetState.agent)}
+                            >
+                                Retry
+                            </button>
+                        </div>
+                    </>
+                )}
+            </div>
+        </div>
+    );
+}
+
+function WorkerMark({
+    conversation,
+    className,
+}: {
+    conversation: Conversation;
+    className: string;
+}): React.ReactElement | null {
+    const kind = workerKind(conversation);
+    if (kind === "codex") return <OpenAIMark className={`${className} mj_OpenAIMark`} />;
+    if (kind === "claude") return <AnthropicMark className={`${className} mj_AnthropicMark`} />;
+    return null;
+}
+
+type OutcomeClassification = "running" | "completed" | "interrupted" | "failed" | "inactive";
+
+function classifyOutcome(conversation: Conversation): OutcomeClassification {
+    if (conversation.session_state === "running") return "running";
+    if (conversation.session_state !== "done") return "inactive";
+    if (conversation.session_outcome === "interrupted") return "interrupted";
+    if (conversation.session_outcome === "failed") return "failed";
+    if (conversation.session_outcome === "completed" || conversation.session_outcome == null) return "completed";
+    return "inactive";
+}
+
+function accessibleOutcome(classification: OutcomeClassification): string {
+    return classification === "inactive" ? "status unknown" : classification;
+}
+
+function OutcomeGlyph({
+    conversation,
+    className,
+    spinnerClassName,
+}: {
+    conversation: Conversation;
+    className: string;
+    spinnerClassName?: string;
+}): React.ReactElement {
+    const classification = classifyOutcome(conversation);
+    if (classification === "running") {
+        return <span className={`mj_Spinner${spinnerClassName ? ` ${spinnerClassName}` : ""}`} aria-hidden="true" />;
+    }
+    if (classification === "interrupted") {
+        return <InterruptedIcon className={`${className} mj_InterruptedGlyph`} />;
+    }
+    if (classification === "failed") {
+        return <FailedIcon className={`${className} mj_FailedGlyph`} />;
+    }
+    if (classification === "completed") {
+        return <CheckIcon className={`${className} mj_CompletedGlyph`} aria-hidden="true" />;
+    }
+    return <InactiveIcon className={`${className} mj_InactiveOutcomeGlyph`} />;
+}
+
+// Debounce keystrokes before firing a message-content search request.
+const MESSAGE_SEARCH_DEBOUNCE_MS = 200;
+
+/**
+ * Render a server search snippet, turning its `**…**` match markers into <mark> highlights.
+ * The snippet is plain text (server-escaped), so we only split on the markers — no HTML is
+ * interpreted. Unbalanced markers degrade to literal text rather than swallowing the rest.
+ */
+export function renderSnippet(snippet: string): React.ReactNode[] {
+    const parts = snippet.split("**");
+    return parts.map((part, index) =>
+        // Odd segments sat between a matched pair of markers → highlight. If the count is even
+        // (a dangling marker), the trailing odd segment is still highlighted, which is harmless.
+        index % 2 === 1 ? (
+            <mark key={index} className="mj_SearchHit_mark">
+                {part}
+            </mark>
+        ) : (
+            <React.Fragment key={index}>{part}</React.Fragment>
+        ),
+    );
+}
+
+export function MessageSearchResults({
+    query,
+    search,
+    now,
+    onSelect,
+}: {
+    query: string;
+    search: MessageSearchState | undefined;
+    now: number;
+    onSelect: (conversationId: string) => void;
+}): React.ReactElement | null {
+    // Only surface the section for a live query. `search` can lag the box by a debounce interval
+    // or a stale query, so gate on the current box being non-empty AND the results being for it.
+    const trimmed = query.trim();
+    if (!trimmed || !search || search.query !== trimmed) return null;
+    const { hits, loading, failed } = search;
+    return (
+        <div className="mj_SearchResults" data-testid="message-search-results">
+            <div className="mj_SearchResults_heading" role="presentation">
+                Messages
+            </div>
+            {failed ? (
+                <p className="mj_RoomListEmpty" role="status">
+                    Search is unavailable right now.
+                </p>
+            ) : hits.length === 0 ? (
+                // Hits are bound to their query, so an empty set while loading means the current
+                // query has no results yet — show a searching state, never a prior query's rows.
+                loading ? (
+                    <p className="mj_RoomListEmpty" role="status">
+                        Searching…
+                    </p>
+                ) : (
+                    <p className="mj_RoomListEmpty" role="status">
+                        No messages match your search.
+                    </p>
+                )
+            ) : (
+                <ul className="mj_SearchHitList" role="list" aria-label="Message search results">
+                    {hits.map((hit) => (
+                        <li key={`${hit.convo_id}:${hit.seq}`} role="listitem">
+                            <button
+                                type="button"
+                                className="mj_SearchHit"
+                                onClick={() => onSelect(hit.convo_id)}
+                                aria-label={`Open conversation ${hit.title || "Untitled"}`}
+                            >
+                                <span className="mj_SearchHit_top">
+                                    <span className="mj_SearchHit_title">{hit.title || "Untitled"}</span>
+                                    <span className="mj_SearchHit_time">{formatRelativeDay(hit.ts, now)}</span>
+                                </span>
+                                <span className="mj_SearchHit_snippet">{renderSnippet(hit.snippet)}</span>
+                            </button>
+                        </li>
+                    ))}
+                </ul>
+            )}
+        </div>
+    );
+}
+
+function ConversationList({
+    client,
+    state,
+    width,
+}: {
+    client: MatronJournalClient;
+    state: ClientState;
+    width: number;
+}): React.ReactElement {
+    const [query, setQuery] = useState("");
+    const [tab, setTab] = useState<"active" | "favorites" | "archived">("active");
+    const [accountOpen, setAccountOpen] = useState(false);
+    const [newSessionOpen, setNewSessionOpen] = useState(false);
+    const [pinDialog, setPinDialog] = useState<PinDialogTarget>();
+    const [roomMenu, setRoomMenu] = useState<{ conversationId: string; left: number; top: number }>();
+    const roomMenuRef = useRef(roomMenu);
+    const roomMenuElementRef = useRef<HTMLDivElement>(null);
+    const roomMenuOpenerRef = useRef<HTMLElement | null>(null);
+    // Pending rAF id for the post-menu-action focus restore; cancelled before re-scheduling
+    // and on unmount so a stale callback can never steal focus (see restoreFocusAfterMenuAction).
+    const restoreFocusFrameRef = useRef<number | undefined>(undefined);
+    const menuTriggerRefs = useRef(new Map<string, HTMLButtonElement>());
+    const longPressTargetRef = useRef<{ conversationId: string; row: HTMLButtonElement } | undefined>(undefined);
+    const longPressFiredRef = useRef(false);
+    const longPressScrollCleanupRef = useRef<() => void>(() => undefined);
+    const openRoomMenuRef = useRef<(conversationId: string, left: number, top: number, opener: HTMLElement) => void>(
+        () => undefined,
+    );
+    const longPressControllerRef = useRef<LongPressController | undefined>(undefined);
+    const childOutcomesRef = useRef(
+        new Map(
+            state.conversations
+                .filter(isSubChat)
+                .map((conversation) => [conversation.id, classifyOutcome(conversation)] as const),
+        ),
+    );
+    const [outcomeAnnouncement, setOutcomeAnnouncement] = useState<string>();
+    const [, forceDayTick] = useReducer((n) => n + 1, 0);
+
+    useEffect(() => {
+        const nextOutcomes = new Map<string, OutcomeClassification>();
+        const changes: string[] = [];
+        for (const conversation of state.conversations) {
+            if (!isSubChat(conversation)) continue;
+            const outcome = classifyOutcome(conversation);
+            nextOutcomes.set(conversation.id, outcome);
+            const previous = childOutcomesRef.current.get(conversation.id);
+            if (previous !== undefined && previous !== outcome) {
+                changes.push(`${conversationTitle(conversation)}, ${accessibleOutcome(outcome)}`);
+            }
+        }
+        childOutcomesRef.current = nextOutcomes;
+        if (changes.length > 0) setOutcomeAnnouncement(changes.join("; "));
+    }, [state.conversations]);
+
+    useEffect(() => {
+        const now = new Date();
+        const renderedAt = new Date(renderNow);
+        if (
+            renderedAt.getFullYear() !== now.getFullYear() ||
+            renderedAt.getMonth() !== now.getMonth() ||
+            renderedAt.getDate() !== now.getDate()
+        ) {
+            forceDayTick();
+        }
+        const nextMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime();
+        const timer = setTimeout(forceDayTick, nextMidnight - now.getTime() + 1000);
+        return () => clearTimeout(timer);
+    });
+
+    // Message-content search (Apple-parity "Messages" section). The box already filters chat
+    // titles in-memory as you type; here we additionally hit the server's FTS endpoint, debounced
+    // so keystrokes don't each fire a request. Clearing the box drops the section immediately.
+    useEffect(() => {
+        if (!query.trim()) {
+            void client.searchMessages("");
+            return;
+        }
+        const timer = setTimeout(() => void client.searchMessages(query), MESSAGE_SEARCH_DEBOUNCE_MS);
+        return () => clearTimeout(timer);
+    }, [query, client]);
+
+    roomMenuRef.current = roomMenu;
+    openRoomMenuRef.current = (conversationId, left, top, opener): void => {
+        setAccountOpen(false);
+        setNewSessionOpen(false);
+        roomMenuOpenerRef.current = opener;
+        setRoomMenu({ conversationId, left, top });
+    };
+    if (!longPressControllerRef.current) {
+        longPressControllerRef.current = createLongPressController({
+            delayMs: 500,
+            onFire: () => {
+                const target = longPressTargetRef.current;
+                longPressScrollCleanupRef.current();
+                if (!target) return;
+                const rect = target.row.getBoundingClientRect();
+                longPressFiredRef.current = true;
+                openRoomMenuRef.current(target.conversationId, rect.right, rect.top, target.row);
+            },
+        });
+    }
+
+    const closeRoomMenu = useCallback((restoreFocus = false): void => {
+        if (!roomMenuRef.current) return;
+        setRoomMenu(undefined);
+        if (restoreFocus) roomMenuOpenerRef.current?.focus();
+    }, []);
+
+    // After a menu ACTION (mark-read/archive/unarchive) the focused menuitem unmounts, and
+    // archive/unarchive also remove the originating row — so restoring to the opener only works
+    // when it survives. Defer past the state-change re-render, then focus the opener if it's still
+    // connected (mark-read), else the always-present search input, so keyboard focus never falls
+    // through to document.body.
+    const restoreFocusAfterMenuAction = useCallback((): void => {
+        const opener = roomMenuOpenerRef.current;
+        // Cancel any still-pending restore before scheduling a new one. Without this the
+        // leaked callback fires on a LATER tick (or in a later test), finds its opener
+        // disconnected, and yanks focus to the search input — a real focus-steal, and the
+        // source of the flaky keyboard-focus test.
+        if (restoreFocusFrameRef.current != null) cancelAnimationFrame(restoreFocusFrameRef.current);
+        restoreFocusFrameRef.current = requestAnimationFrame(() => {
+            restoreFocusFrameRef.current = undefined;
+            if (opener && opener.isConnected) opener.focus();
+            else document.getElementById("room-list-search-input")?.focus();
+        });
+    }, []);
+
+    // Cancel a pending focus-restore rAF on unmount so it can't fire against a torn-down tree.
+    useEffect(
+        () => () => {
+            if (restoreFocusFrameRef.current != null) cancelAnimationFrame(restoreFocusFrameRef.current);
+        },
+        [],
+    );
+
+    const cancelLongPress = useCallback((): void => {
+        longPressControllerRef.current?.onPointerCancel();
+        longPressTargetRef.current = undefined;
+        longPressFiredRef.current = false;
+        longPressScrollCleanupRef.current();
+    }, []);
+
+    const listenForLongPressScroll = useCallback((): void => {
+        longPressScrollCleanupRef.current();
+        const onScroll = (): void => cancelLongPress();
+        document.addEventListener("scroll", onScroll, true);
+        longPressScrollCleanupRef.current = () => {
+            document.removeEventListener("scroll", onScroll, true);
+            longPressScrollCleanupRef.current = () => undefined;
+        };
+    }, [cancelLongPress]);
+
+    useEffect(
+        () => () => {
+            longPressControllerRef.current?.onPointerCancel();
+            longPressScrollCleanupRef.current();
+        },
+        [],
+    );
+
+    useEffect(() => {
+        if (!roomMenu) return;
+        const onPointerDown = (event: PointerEvent): void => {
+            if (!roomMenuRef.current || roomMenuElementRef.current?.contains(event.target as Node)) return;
+            closeRoomMenu();
+        };
+        const onKeyDown = (event: KeyboardEvent): void => {
+            if (roomMenuRef.current && event.key === "Escape") closeRoomMenu(true);
+        };
+        const onScroll = (): void => {
+            if (roomMenuRef.current) closeRoomMenu();
+        };
+        document.addEventListener("pointerdown", onPointerDown);
+        document.addEventListener("keydown", onKeyDown);
+        document.addEventListener("scroll", onScroll, true);
+        return () => {
+            document.removeEventListener("pointerdown", onPointerDown);
+            document.removeEventListener("keydown", onKeyDown);
+            document.removeEventListener("scroll", onScroll, true);
+        };
+    }, [Boolean(roomMenu), closeRoomMenu]);
+
+    useLayoutEffect(() => {
+        if (!roomMenu || !roomMenuElementRef.current) return;
+        const rect = roomMenuElementRef.current.getBoundingClientRect();
+        const left = Math.max(8, Math.min(roomMenu.left, window.innerWidth - rect.width - 8));
+        const top = Math.max(8, Math.min(roomMenu.top, window.innerHeight - rect.height - 8));
+        if (left !== roomMenu.left || top !== roomMenu.top) {
+            setRoomMenu({ ...roomMenu, left, top });
+        }
+    }, [roomMenu]);
+
+    useLayoutEffect(() => {
+        if (!roomMenu) return;
+        roomMenuElementRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+    }, [roomMenu]);
+    // ONE canonical index feeds BOTH sidebar paths here (top-level fallback + nested
+    // splice) AND the client-side selection/unread/mark-all consumers, so "rendered" and
+    // "selectable/counted" can never diverge. rendersAsTopLevelRow: a non-child always
+    // renders top-level; a child renders top-level only when childSidebarPlacement says so
+    // (orphan → always; parent exists → running-only, and then only when it can't nest).
+    const sidebarIndex = buildSidebarIndex(state.conversations, state.archivedIds, state.collapsedSubagentParentIds);
+    const isTopLevelRow = (conversation: Conversation): boolean => rendersAsTopLevelRow(conversation, sidebarIndex);
+    const conversations = useMemo(() => {
+        const normalized = query.trim().toLocaleLowerCase();
+        return state.conversations
+            .filter((conversation) => isTopLevelRow(conversation))
+            .filter(
+                (conversation) =>
+                    !normalized ||
+                    `${conversation.title} ${conversation.id} ${conversation.snippet}`
+                        .toLocaleLowerCase()
+                        .includes(normalized),
+            );
+    }, [query, state.archivedIds, state.conversations]);
+    // Journal pins (when this journal has them) replace the browser-local pinned set outright.
+    const journalPins = state.journalPins;
+    const journalPinnedIds = new Set(journalPins?.map((pin) => pin.convo_id) ?? []);
+    const isPinned = (id: string): boolean => (journalPins ? journalPinnedIds.has(id) : state.pinnedIds.has(id));
+    const activeAll = conversations.filter((conversation) => !state.archivedIds.has(conversation.id));
+    const active = [
+        ...activeAll.filter((conversation) => isPinned(conversation.id)),
+        ...activeAll.filter((conversation) => !isPinned(conversation.id)),
+    ];
+    // the Archived tab lists EVERY archived conversation flat — including an archived
+    // CHILD of an active parent, which `conversations` drops via isTopLevelRow (so it can be
+    // nested under its live parent in Active). Deriving the archived set from the full list
+    // (not the filtered `conversations`) keeps that child discoverable + it renders flat,
+    // matching how archived parents already render. Search still applies.
+    const archived = useMemo(() => {
+        const normalized = query.trim().toLocaleLowerCase();
+        return state.conversations
+            .filter((conversation) => state.archivedIds.has(conversation.id))
+            .filter(
+                (conversation) =>
+                    !normalized ||
+                    `${conversation.title} ${conversation.id} ${conversation.snippet}`
+                        .toLocaleLowerCase()
+                        .includes(normalized),
+            );
+    }, [query, state.archivedIds, state.conversations]);
+    const visibleRows =
+        tab === "favorites"
+            ? active.filter((conversation) => state.favoriteIds.has(conversation.id))
+            : tab === "archived"
+              ? archived
+              : active;
+    const hasAnyActive = state.conversations.some(
+        (conversation) => !state.archivedIds.has(conversation.id) && isTopLevelRow(conversation),
+    );
+    const hasAnyFavorite = state.conversations.some(
+        (conversation) =>
+            state.favoriteIds.has(conversation.id) &&
+            !state.archivedIds.has(conversation.id) &&
+            isTopLevelRow(conversation),
+    );
+    // Count every archived conversation (parents AND archived children of active parents) so
+    // the tab badge matches the flat Archived list they render into.
+    const archivedTotal = state.conversations.filter((conversation) => state.archivedIds.has(conversation.id)).length;
+    // Visibility is computed from the UNFILTERED conversation set (minus archived), NOT the
+    // search-filtered `active` — mark-all operates on the full active partition regardless of
+    // the search box, so the button must not vanish just because the search hides the unread rows.
+    const hasActiveUnread = state.conversations.some(
+        (conversation) =>
+            effectiveUnread(conversation, state.unreadOverrideIds) &&
+            !state.archivedIds.has(conversation.id) &&
+            isTopLevelRow(conversation),
+    );
+    const menuConversation = roomMenu
+        ? state.conversations.find((conversation) => conversation.id === roomMenu.conversationId)
+        : undefined;
+
+    useEffect(() => {
+        if (roomMenu && !menuConversation) closeRoomMenu();
+    }, [roomMenu, menuConversation, closeRoomMenu]);
+
+    const openAtElement = (conversationId: string, anchor: HTMLElement, opener: HTMLElement = anchor): void => {
+        const rect = anchor.getBoundingClientRect();
+        openRoomMenuRef.current(conversationId, rect.right, rect.bottom, opener);
+    };
+
+    // Nav rail: which section is current, and the unread total it badges (archived rows excluded;
+    // a row marked unread by hand counts once, like its own badge dot).
+    const navActive: NavKey = state.trackerView?.open
+        ? NAV_KEY_FOR_VIEW[state.trackerView.view ?? "inbox"]
+        : "conversations";
+    const unreadTotal = state.conversations.reduce((total, conversation) => {
+        if (state.archivedIds.has(conversation.id)) return total;
+        if (conversation.unread_count > 0) return total + conversation.unread_count;
+        return total + (effectiveUnread(conversation, state.unreadOverrideIds) ? 1 : 0);
+    }, 0);
+    // The For you badge: open items awaiting the user, the inbox's own "Needs you" filter.
+    const needsYouTotal = (state.inboxItems ?? []).filter(needsUser).length;
+    const closeSettings = useCallback(() => setAccountOpen(false), []);
+    const renderNow = Date.now();
+    const pinnedRows = journalPins ? [] : visibleRows.filter((conversation) => state.pinnedIds.has(conversation.id));
+    const unpinnedRows = journalPins
+        ? visibleRows.filter((conversation) => tab !== "active" || !journalPinnedIds.has(conversation.id))
+        : visibleRows.filter((conversation) => !state.pinnedIds.has(conversation.id));
+    const rowGroups = [
+        ...(pinnedRows.length ? [{ label: "Pinned", rows: pinnedRows }] : []),
+        ...groupByDay(unpinnedRows, renderNow),
+    ];
+    // The journal's Pinned section (Active tab only), in the journal's position order. Each pin
+    // keeps its conversation (absent when the journal flags it missing or this tab hasn't seen
+    // it); the search box matches the pin label as well as the conversation's title. An archived
+    // pin moves to the Archived tab with its conversation, as a browser-local pin always did —
+    // unless it is missing (no row there to manage it from) or offers a successor (the prompt to
+    // move the pin off the archived chat).
+    const shownPins = (journalPins ?? []).filter(
+        (pin) => pin.missing || pin.successor || !state.archivedIds.has(pin.convo_id),
+    );
+    const pinSection =
+        journalPins && tab === "active"
+            ? shownPins
+                  .map((pin) => ({
+                      pin,
+                      conversation: pin.missing
+                          ? undefined
+                          : state.conversations.find((conversation) => conversation.id === pin.convo_id),
+                  }))
+                  .filter(({ pin, conversation }) => {
+                      const normalized = query.trim().toLocaleLowerCase();
+                      if (!normalized) return true;
+                      return `${pin.label} ${conversation ? `${conversation.title} ${conversation.snippet}` : ""}`
+                          .toLocaleLowerCase()
+                          .includes(normalized);
+                  })
+            : [];
+    // Move up / Move down step through the pins the Pinned section shows (hidden archived pins
+    // keep their place but are hopped over, so every step moves the row on screen).
+    const menuPinIndex = roomMenu ? shownPins.findIndex((pin) => pin.convo_id === roomMenu.conversationId) : -1;
+    const shownPinIds = shownPins.map((pin) => pin.convo_id);
+    const nestedChildRows = (conversation: Conversation): React.ReactElement[] =>
+        tab === "archived"
+            ? []
+            : childrenOf(state.conversations, conversation.id)
+                  .filter(
+                      (child) =>
+                          !state.archivedIds.has(child.id) &&
+                          // A pinned sub-chat is drawn once, in the Pinned section.
+                          !journalPinnedIds.has(child.id) &&
+                          childSidebarPlacement(child, sidebarIndex) === "nested",
+                  )
+                  .map((child) => renderConversation(child, true));
+    const renderConversation = (
+        conversation: ClientState["conversations"][number],
+        isSubagent = false,
+        // A journal pin row: the pin's glyph + label lead, the conversation's title goes secondary.
+        pin?: ConvoPin,
+    ): React.ReactElement => {
+        const selected = state.selectedConversationId === conversation.id;
+        const overrideUnread = state.unreadOverrideIds.has(conversation.id) && conversation.unread_count === 0;
+        const unread = effectiveUnread(conversation, state.unreadOverrideIds);
+        const name = pin ? pin.label : conversationTitle(conversation);
+        const outcomeStatus = isSubagent ? accessibleOutcome(classifyOutcome(conversation)) : undefined;
+        const relativeTimestamp = formatRelativeDay(conversation.last_ts ?? conversation.created_at, renderNow);
+        // When this parent's subagent rows are collapsed, surface a subtle count of the hidden
+        // child rows so the collapse stays discoverable on the row itself. Gate on the CANONICAL
+        // index (hasSubagentChildRows) — NOT an independent running-child count — so it agrees with
+        // the menu and the placement derivation. An archived parent hosts no child rows (its running
+        // children are promoted to top-level), so it is absent from that set → no count, no false
+        // "N hidden" even if its collapse state persisted through archival. The set is only populated
+        // for real hosts, so the running-child count below always measures exactly what collapse hides.
+        const collapsedSubagentChildren =
+            !isSubagent &&
+            state.collapsedSubagentParentIds.has(conversation.id) &&
+            hasSubagentChildRows(conversation, sidebarIndex)
+                ? childrenOf(state.conversations, conversation.id).filter(
+                      (child) =>
+                          !state.archivedIds.has(child.id) &&
+                          // A pinned sub-chat stays in the Pinned section; collapse never hides it.
+                          !journalPinnedIds.has(child.id) &&
+                          child.session_state === "running",
+                  )
+                : [];
+        const collapsedSubagentCount = collapsedSubagentChildren.length;
+        // Collapse removes each hidden child's own inline row + unread badge. If any hidden child
+        // is still unread, the chip must carry that signal — otherwise a streaming child's unread
+        // surfaces nowhere (the aggregate badge already excludes nested children, and the strip
+        // pills never show unread). Measured over the SAME set the count derives from.
+        const collapsedSubagentUnread = collapsedSubagentChildren.some((child) =>
+            effectiveUnread(child, state.unreadOverrideIds),
+        );
+        return (
+            <div className="mj_RoomListItem_wrapper" role="listitem" key={conversation.id}>
+                <button
+                    className={`mj_RoomListItem${selected ? " mj_RoomListItem_selected" : ""}${isSubagent ? " mj_RoomListItem_sub" : ""}`}
+                    type="button"
+                    aria-current={selected ? "page" : undefined}
+                    aria-label={`Open ${isSubagent ? "subagent" : "room"} ${name}${outcomeStatus ? `, ${outcomeStatus}` : ""}, last activity ${relativeTimestamp}${overrideUnread ? ", marked unread" : ""}${
+                        collapsedSubagentCount > 0
+                            ? `, ${collapsedSubagentCount} subagent${collapsedSubagentCount === 1 ? "" : "s"} hidden${collapsedSubagentUnread ? " (unread)" : ""}`
+                            : ""
+                    }`}
+                    onClick={(event) => {
+                        if (longPressFiredRef.current) {
+                            longPressFiredRef.current = false;
+                            event.preventDefault();
+                            event.stopPropagation();
+                            return;
+                        }
+                        void client.selectConversation(conversation.id);
+                    }}
+                    onContextMenu={(event) => {
+                        event.preventDefault();
+                        const keyboardTriggered = event.clientX === 0 && event.clientY === 0;
+                        if (keyboardTriggered) {
+                            const trigger = menuTriggerRefs.current.get(conversation.id);
+                            openAtElement(conversation.id, trigger ?? event.currentTarget, event.currentTarget);
+                            return;
+                        }
+                        openRoomMenuRef.current(conversation.id, event.clientX, event.clientY, event.currentTarget);
+                    }}
+                    onPointerDown={(event) => {
+                        if (event.pointerType !== "touch") return;
+                        longPressTargetRef.current = { conversationId: conversation.id, row: event.currentTarget };
+                        longPressFiredRef.current = false;
+                        longPressControllerRef.current?.onPointerDown(event.clientX, event.clientY);
+                        listenForLongPressScroll();
+                    }}
+                    onPointerMove={(event) => {
+                        if (event.pointerType !== "touch") return;
+                        longPressControllerRef.current?.onPointerMove(event.clientX, event.clientY);
+                        if (!longPressControllerRef.current?.isPending && !longPressControllerRef.current?.didFire) {
+                            longPressScrollCleanupRef.current();
+                        }
+                    }}
+                    onPointerUp={(event) => {
+                        if (event.pointerType !== "touch") return;
+                        longPressControllerRef.current?.onPointerUp();
+                        longPressTargetRef.current = undefined;
+                        longPressScrollCleanupRef.current();
+                    }}
+                    onPointerCancel={(event) => {
+                        if (event.pointerType === "touch") cancelLongPress();
+                    }}
+                >
+                    {/* §118 leading-glyph precedence. Subagent rows identify the worker and its
+                        live/terminal outcome. Parent rows keep the shipped pin-or-status behaviour
+                        (star renders separately before the meta). */}
+                    {isSubagent ? (
+                        <span className="mj_RoomListWorkerGlyphs" aria-hidden="true">
+                            <WorkerMark conversation={conversation} className="mj_WorkerMark mj_RoomListWorkerMark" />
+                            <OutcomeGlyph
+                                conversation={conversation}
+                                className="mj_RoomListOutcomeGlyph"
+                                spinnerClassName="mj_RoomListSubSpinner"
+                            />
+                        </span>
+                    ) : pin ? (
+                        <span className="mj_RoomListPinGlyph mj_PinGlyph" aria-hidden="true">
+                            {pinGlyph(pin)}
+                        </span>
+                    ) : isPinned(conversation.id) ? (
+                        <span className="mj_RoomListPinGlyph">
+                            <PinIcon aria-hidden />
+                        </span>
+                    ) : (
+                        <span
+                            className={`mj_RoomListStatus mj_RoomListStatus_${
+                                conversation.session_state === "running" ? "running" : "idle"
+                            }`}
+                            aria-hidden="true"
+                        />
+                    )}
+                    <span className={`mj_RoomListText${unread ? " mj_RoomListText_unread" : ""}`}>
+                        <span className="mj_RoomListName" title={name} data-testid="room-name">
+                            {isSubagent && (
+                                <span className="mj_RoomListSubArrow" aria-hidden="true">
+                                    ↳{" "}
+                                </span>
+                            )}
+                            {pin ? pin.label : <TaggedTitle conversation={conversation} agents={state.agents} />}
+                        </span>
+                        <span
+                            className="mj_RoomListMeta"
+                            title={pin ? displayTitle(conversation) : conversation.snippet}
+                        >
+                            {pin ? (
+                                <>
+                                    <span className="mj_RoomListSnippet">
+                                        <TaggedTitle conversation={conversation} agents={state.agents} />
+                                    </span>
+                                    <span className="mj_RoomListDot"> · </span>
+                                </>
+                            ) : (
+                                conversation.snippet && (
+                                    <>
+                                        <span className="mj_RoomListSnippet">{conversation.snippet}</span>
+                                        <span className="mj_RoomListDot"> · </span>
+                                    </>
+                                )
+                            )}
+                            <span className="mj_RoomListTime">{relativeTimestamp}</span>
+                        </span>
+                    </span>
+                    {state.favoriteIds.has(conversation.id) && (
+                        <span className="mj_RoomListStarGlyph">
+                            <StarFilledIcon aria-hidden />
+                        </span>
+                    )}
+                    <span className="mj_RoomListTrailing">
+                        {collapsedSubagentCount > 0 && (
+                            // Decorative: the hidden-child count + unread state are announced via the
+                            // containing row button's aria-label (a nested label here would be silent to AT).
+                            <span
+                                className={`mj_RoomListCollapsedSubs${
+                                    collapsedSubagentUnread ? " mj_RoomListCollapsedSubs_unread" : ""
+                                }`}
+                                aria-hidden="true"
+                            >
+                                <ChevronLeftIcon aria-hidden />
+                                {collapsedSubagentCount}
+                                {collapsedSubagentUnread && <span className="mj_UnreadDot" aria-hidden />}
+                            </span>
+                        )}
+                        {conversation.unread_count > 0 ? (
+                            <span className="mj_UnreadBadge" aria-label={`${conversation.unread_count} unread`}>
+                                {conversation.unread_count}
+                            </span>
+                        ) : overrideUnread ? (
+                            <span className="mj_UnreadDot" aria-hidden />
+                        ) : null}
+                    </span>
+                </button>
+                {/* The row menu opens via right-click / long-press for pointer + touch. This
+                    trigger is invisible to mouse users (no hover reveal) but appears on
+                    keyboard focus, so keyboard/AT users keep a discoverable, operable route. */}
+                <button
+                    className="mj_RoomItemMenu_trigger"
+                    type="button"
+                    aria-haspopup="menu"
+                    aria-expanded={roomMenu?.conversationId === conversation.id}
+                    aria-label="Conversation options"
+                    ref={(element) => {
+                        if (element) menuTriggerRefs.current.set(conversation.id, element);
+                        else menuTriggerRefs.current.delete(conversation.id);
+                    }}
+                    onClick={(event) => {
+                        event.stopPropagation();
+                        openAtElement(conversation.id, event.currentTarget);
+                    }}
+                >
+                    <KebabIcon />
+                </button>
+            </div>
+        );
+    };
+
+    // A pin whose conversation is gone (or not in this client's list): greyed, Move pin… / Unpin only.
+    const renderMissingPin = (pin: ConvoPin): React.ReactElement => (
+        <div className="mj_RoomListItem_wrapper mj_PinRow_missing" role="listitem" key={pin.convo_id}>
+            <div className="mj_RoomListItem" aria-label={`Pinned ${pin.label}, conversation unavailable`}>
+                <span className="mj_RoomListPinGlyph mj_PinGlyph" aria-hidden="true">
+                    {pinGlyph(pin)}
+                </span>
+                <span className="mj_RoomListText">
+                    <span className="mj_RoomListName">{pin.label}</span>
+                    <span className="mj_RoomListMeta">Conversation unavailable</span>
+                </span>
+            </div>
+            <div className="mj_PinRow_actions">
+                <button type="button" onClick={() => setPinDialog({ kind: "move", convoId: pin.convo_id })}>
+                    Move pin…
+                </button>
+                <button type="button" onClick={() => void client.removePin(pin.convo_id)}>
+                    Unpin
+                </button>
+            </div>
+        </div>
+    );
+    // "New session on <box> — move pin here?" under a pin the journal has a successor for.
+    const renderSuccessorHint = (pin: ConvoPin): React.ReactElement | null =>
+        pin.successor ? (
+            <div className="mj_PinSuccessor" role="listitem" key={`${pin.convo_id}:successor`}>
+                <span className="mj_PinSuccessor_text">
+                    {successorHintText(pin, state.conversations, state.agents)}
+                </span>
+                <span className="mj_PinRow_actions">
+                    <button type="button" onClick={() => void client.acceptPinSuccessor(pin)}>
+                        Move
+                    </button>
+                    <button type="button" onClick={() => void client.dismissPinSuccessor(pin)}>
+                        Dismiss
+                    </button>
+                </span>
+            </div>
+        ) : null;
+
+    return (
+        <div
+            className={`mx_LeftPanel_outerWrapper ${
+                // At the phone breakpoint the main region owns the whole width whenever it has a
+                // surface to show: a selected conversation OR the open tracker pane (mirrors the
+                // mj_Chat_mobileHidden test on the main region, so the two never both render).
+                state.trackerView?.open || state.selectedConversationId ? "mj_Sidebar_mobileHidden" : ""
+            }`}
+            style={{ "--mj-left-panel-width": `${width}px` } as React.CSSProperties}
+        >
+            <NavRail
+                active={navActive}
+                counts={{ conversations: unreadTotal, decisions: needsYouTotal }}
+                onSelect={(key) => {
+                    setAccountOpen(false);
+                    closeRoomMenu();
+                    if (key === "conversations") client.closeTrackerView();
+                    // A rail tap always lands on the section's home, not a page left open inside it.
+                    else
+                        client.openTrackerView({
+                            view: NAV_VIEW[key],
+                            projectId: null,
+                            missionId: null,
+                            itemId: null,
+                            memoryName: null,
+                        });
+                }}
+                footer={
+                    // Mac: theme and account live in the Settings sheet; the rail foot keeps one
+                    // Settings button carrying the connection dot.
+                    <button
+                        className="mj_IconButton mj_NavRail_settings"
+                        type="button"
+                        aria-label={`Settings, ${
+                            state.connection === "online"
+                                ? "connected"
+                                : state.connection === "connecting"
+                                  ? "connecting"
+                                  : "offline"
+                        }`}
+                        title={`Settings · ${
+                            state.connection === "online"
+                                ? "connected"
+                                : state.connection === "connecting"
+                                  ? "connecting…"
+                                  : "offline"
+                        }`}
+                        onClick={() => {
+                            setNewSessionOpen(false);
+                            setAccountOpen((open) => !open);
+                        }}
+                    >
+                        <SettingsIcon />
+                        <span
+                            className={`mj_NavRail_status mj_NavRail_status_${state.connection}`}
+                            aria-hidden="true"
+                        />
+                    </button>
+                }
+            />
+            <div className="mx_LeftPanel_wrapper mx_LeftPanel_newRoomList">
+                <div className="mx_LeftPanel_wrapper--user">
+                    <div className="mx_LeftPanel mx_LeftPanel_newRoomList">
+                        <div className="mx_LeftPanel_roomListContainer">
+                            <nav className="mx_RoomListPanel" aria-label="Room list">
+                                <header
+                                    className="mj_RoomListHeader"
+                                    aria-label="Room options"
+                                    data-testid="room-list-header"
+                                >
+                                    <h2 className="mj_RoomListTitle">Conversations</h2>
+                                    <div className="mj_RoomListHeaderActions">
+                                        {tab !== "archived" && hasActiveUnread && (
+                                            <button
+                                                className="mj_IconButton mj_MarkAllReadButton"
+                                                type="button"
+                                                aria-label="Mark all as read"
+                                                onClick={() => client.markAllRead()}
+                                            >
+                                                <MarkAllReadIcon />
+                                            </button>
+                                        )}
+                                        {/* Mac: New Chat is the toolbar's square.and.pencil glyph, not a button row. */}
+                                        <button
+                                            className="mj_IconButton"
+                                            type="button"
+                                            aria-label="New session"
+                                            title="New session — runs /start"
+                                            onClick={() => {
+                                                setAccountOpen(false);
+                                                closeRoomMenu();
+                                                setNewSessionOpen(true);
+                                            }}
+                                        >
+                                            <ComposeIcon />
+                                        </button>
+                                    </div>
+                                </header>
+                                <div className="mj_RoomListTabs" role="group" aria-label="Filter conversations">
+                                    {(
+                                        [
+                                            ["active", "Active"],
+                                            ["favorites", "Favorites"],
+                                            ["archived", "Archived"],
+                                        ] as const
+                                    ).map(([key, label]) => (
+                                        <button
+                                            key={key}
+                                            type="button"
+                                            data-tab={key}
+                                            className={`mj_RoomListTab${tab === key ? " mj_RoomListTab_active" : ""}`}
+                                            aria-pressed={tab === key}
+                                            aria-label={key === "favorites" ? "Favorites" : undefined}
+                                            onClick={(event) => {
+                                                setTab(key);
+                                                event.currentTarget.focus({ preventScroll: true });
+                                            }}
+                                        >
+                                            {label}
+                                        </button>
+                                    ))}
+                                </div>
+                                <div data-testid="room-list-search" className="mx_RoomListSearch" role="search">
+                                    <label
+                                        className="mx_RoomListSearch_inputWrapper mx_no_textinput"
+                                        htmlFor="room-list-search-input"
+                                    >
+                                        <SearchIcon aria-hidden />
+                                        <input
+                                            id="room-list-search-input"
+                                            className="mx_RoomListSearch_input"
+                                            type="search"
+                                            value={query}
+                                            onChange={(event) => setQuery(event.target.value)}
+                                            placeholder="Search"
+                                            aria-label="Search"
+                                            autoComplete="off"
+                                            // Server rejects message-search queries over 256 chars; cap the shared
+                                            // box so a giant paste can't produce a misleading "unavailable" state.
+                                            maxLength={256}
+                                        />
+                                    </label>
+                                </div>
+                                {state.preferencesUnavailable && (
+                                    <div className="mj_ConnectionError" role="status">
+                                        {PREFERENCES_UNAVAILABLE_ERROR}
+                                    </div>
+                                )}
+                                {state.controlError && (
+                                    <div className="mj_ConnectionError" role="status">
+                                        {state.controlError}
+                                    </div>
+                                )}
+                                {outcomeAnnouncement && (
+                                    <span
+                                        className="mj_ScreenReaderOnly mj_SubagentOutcomeStatus"
+                                        role="status"
+                                        aria-live="polite"
+                                        aria-atomic="true"
+                                    >
+                                        {outcomeAnnouncement}
+                                    </span>
+                                )}
+                                <div className="mj_RoomList" data-testid="room-list">
+                                    {/* Active/Favorites render each parent row, then splice
+                                        its NON-ARCHIVED subagent children in beneath (indented) —
+                                        archiving a child removes it from these tabs. The Archived
+                                        tab renders flat (archived parents + archived children as
+                                        top-level rows), so an archived child stays discoverable +
+                                        unarchivable regardless of its parent's state.
+                                        children are TRANSIENT — a child nests here ONLY
+                                        while running (subagents are one-shot; a done/idle child
+                                        drops out of the sidebar but stays in state.conversations so
+                                        the header pill strip still shows it when its parent is
+                                        selected). The gate is childSidebarPlacement — the SAME
+                                        predicate that builds the top-level list above — so the
+                                        nested path and the fallback path stay in lock-step (a done
+                                        child of an ARCHIVED parent can't leak in via either). The
+                                        Archived tab is unaffected. */}
+                                    {/* Mac sidebar: rows sit under day section headers ("Today",
+                                        "Yesterday", weekday, date); pinned rows keep their own
+                                        section first. Each parent row is followed by its nested
+                                        running children, as before. */}
+                                    {pinSection.length > 0 && (
+                                        <section className="mj_RoomListGroup" aria-label="Pinned">
+                                            <div className="mj_RoomListGroup_label" aria-hidden="true">
+                                                Pinned
+                                            </div>
+                                            <div role="list">
+                                                {pinSection.flatMap(({ pin, conversation }) =>
+                                                    conversation
+                                                        ? [
+                                                              renderConversation(conversation, false, pin),
+                                                              renderSuccessorHint(pin),
+                                                              ...nestedChildRows(conversation),
+                                                          ].filter((row): row is React.ReactElement => row !== null)
+                                                        : [renderMissingPin(pin), renderSuccessorHint(pin)].filter(
+                                                              (row): row is React.ReactElement => row !== null,
+                                                          ),
+                                                )}
+                                            </div>
+                                        </section>
+                                    )}
+                                    {rowGroups.map((group) => (
+                                        <section
+                                            className="mj_RoomListGroup"
+                                            key={group.label}
+                                            aria-label={group.label}
+                                        >
+                                            <div className="mj_RoomListGroup_label" aria-hidden="true">
+                                                {group.label}
+                                            </div>
+                                            <div role="list">
+                                                {group.rows.flatMap((conversation) => [
+                                                    renderConversation(conversation, false),
+                                                    ...nestedChildRows(conversation),
+                                                ])}
+                                            </div>
+                                        </section>
+                                    ))}
+                                    {tab === "active" && !hasAnyActive && archivedTotal === 0 && !pinSection.length && (
+                                        <p className="mj_RoomListEmpty">Your agent conversations will appear here.</p>
+                                    )}
+                                    {tab === "active" && !hasAnyActive && archivedTotal > 0 && !pinSection.length && (
+                                        <p className="mj_RoomListEmpty">No active conversations.</p>
+                                    )}
+                                    {tab === "active" && hasAnyActive && !visibleRows.length && !pinSection.length && (
+                                        <p className="mj_RoomListEmpty">No conversations match your search.</p>
+                                    )}
+                                    {tab === "favorites" && !hasAnyFavorite && (
+                                        <p className="mj_RoomListEmpty">No favorite conversations yet.</p>
+                                    )}
+                                    {tab === "favorites" && hasAnyFavorite && !visibleRows.length && (
+                                        <p className="mj_RoomListEmpty">No favorites match your search.</p>
+                                    )}
+                                    {tab === "archived" && archivedTotal === 0 && (
+                                        <p className="mj_RoomListEmpty">No archived conversations.</p>
+                                    )}
+                                    {tab === "archived" && archivedTotal > 0 && !visibleRows.length && (
+                                        <p className="mj_RoomListEmpty">No archived conversations match your search.</p>
+                                    )}
+                                    {/* Inside the room-list scroll container so the Messages section
+                                        scrolls with the chat list — a long hit list stays reachable. */}
+                                    <MessageSearchResults
+                                        query={query}
+                                        search={state.messageSearch}
+                                        now={renderNow}
+                                        onSelect={(conversationId) => void client.selectConversation(conversationId)}
+                                    />
+                                </div>
+                            </nav>
+                        </div>
+                    </div>
+                </div>
+                {accountOpen && (
+                    <SettingsSheet
+                        client={client}
+                        session={state.session}
+                        connection={state.connection}
+                        notices={state.userSettingsUnsupported ? undefined : state.userSettings?.notices}
+                        noticesError={state.userSettingsError}
+                        onLoadSettings={() => void client.loadSettings()}
+                        onNoticesChange={(value) => void client.setNoticesSetting(value)}
+                        onSignOut={() => {
+                            setAccountOpen(false);
+                            void client.logout();
+                        }}
+                        onClose={closeSettings}
+                    />
+                )}
+                {newSessionOpen && <NewSessionSheet client={client} onClose={() => setNewSessionOpen(false)} />}
+                {pinDialog && (
+                    <PinDialog
+                        client={client}
+                        state={state}
+                        target={pinDialog}
+                        onClose={() => setPinDialog(undefined)}
+                    />
+                )}
+                {roomMenu && menuConversation && (
+                    <div
+                        className="mj_HeaderMenu mj_RoomItemMenu"
+                        role="menu"
+                        ref={roomMenuElementRef}
+                        style={{ position: "fixed", left: roomMenu.left, top: roomMenu.top }}
+                        onKeyDown={(event) => {
+                            const items = Array.from(
+                                event.currentTarget.querySelectorAll<HTMLElement>('[role="menuitem"]'),
+                            );
+                            const currentIndex = items.findIndex((item) => item === document.activeElement);
+                            if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                                event.preventDefault();
+                                const direction = event.key === "ArrowDown" ? 1 : -1;
+                                const nextIndex =
+                                    currentIndex === -1
+                                        ? event.key === "ArrowDown"
+                                            ? 0
+                                            : items.length - 1
+                                        : (currentIndex + direction + items.length) % items.length;
+                                items[nextIndex]?.focus();
+                            } else if (event.key === "Enter" || event.key === " ") {
+                                const currentItem = items[currentIndex];
+                                if (!currentItem) return;
+                                event.preventDefault();
+                                currentItem.click();
+                            } else if (event.key === "Escape") {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                closeRoomMenu(true);
+                            }
+                        }}
+                    >
+                        {journalPins ? (
+                            !(roomMenu && journalPinnedIds.has(roomMenu.conversationId)) ? (
+                                <button
+                                    className="mj_RoomItemMenu_item"
+                                    type="button"
+                                    role="menuitem"
+                                    onClick={() => {
+                                        closeRoomMenu();
+                                        setPinDialog({ kind: "edit", convoId: menuConversation.id });
+                                    }}
+                                >
+                                    <PinIcon aria-hidden />
+                                    Pin to sidebar…
+                                </button>
+                            ) : (
+                                <>
+                                    <button
+                                        className="mj_RoomItemMenu_item"
+                                        type="button"
+                                        role="menuitem"
+                                        onClick={() => {
+                                            closeRoomMenu();
+                                            setPinDialog({ kind: "edit", convoId: menuConversation.id });
+                                        }}
+                                    >
+                                        <FileEditIcon aria-hidden />
+                                        Edit pin…
+                                    </button>
+                                    {menuPinIndex > 0 && (
+                                        <button
+                                            className="mj_RoomItemMenu_item"
+                                            type="button"
+                                            role="menuitem"
+                                            onClick={() => {
+                                                closeRoomMenu();
+                                                void client.shiftPin(menuConversation.id, "up", shownPinIds);
+                                                restoreFocusAfterMenuAction();
+                                            }}
+                                        >
+                                            <ChevronUpIcon aria-hidden />
+                                            Move up
+                                        </button>
+                                    )}
+                                    {menuPinIndex >= 0 && menuPinIndex < shownPins.length - 1 && (
+                                        <button
+                                            className="mj_RoomItemMenu_item"
+                                            type="button"
+                                            role="menuitem"
+                                            onClick={() => {
+                                                closeRoomMenu();
+                                                void client.shiftPin(menuConversation.id, "down", shownPinIds);
+                                                restoreFocusAfterMenuAction();
+                                            }}
+                                        >
+                                            <ChevronDownIcon aria-hidden />
+                                            Move down
+                                        </button>
+                                    )}
+                                    <button
+                                        className="mj_RoomItemMenu_item"
+                                        type="button"
+                                        role="menuitem"
+                                        onClick={() => {
+                                            closeRoomMenu();
+                                            setPinDialog({ kind: "move", convoId: menuConversation.id });
+                                        }}
+                                    >
+                                        <PinIcon aria-hidden />
+                                        Move pin…
+                                    </button>
+                                    <button
+                                        className="mj_RoomItemMenu_item"
+                                        type="button"
+                                        role="menuitem"
+                                        onClick={() => {
+                                            closeRoomMenu();
+                                            void client.removePin(menuConversation.id);
+                                            restoreFocusAfterMenuAction();
+                                        }}
+                                    >
+                                        <PinIcon aria-hidden />
+                                        Unpin
+                                    </button>
+                                </>
+                            )
+                        ) : state.pinnedIds.has(menuConversation.id) ? (
+                            <button
+                                className="mj_RoomItemMenu_item"
+                                type="button"
+                                role="menuitem"
+                                onClick={() => {
+                                    closeRoomMenu();
+                                    client.unpinConversation(menuConversation.id);
+                                    restoreFocusAfterMenuAction();
+                                }}
+                            >
+                                <PinIcon aria-hidden />
+                                Unpin
+                            </button>
+                        ) : (
+                            <button
+                                className="mj_RoomItemMenu_item"
+                                type="button"
+                                role="menuitem"
+                                onClick={() => {
+                                    closeRoomMenu();
+                                    client.pinConversation(menuConversation.id);
+                                    restoreFocusAfterMenuAction();
+                                }}
+                            >
+                                <PinIcon aria-hidden />
+                                Pin
+                            </button>
+                        )}
+                        {state.favoriteIds.has(menuConversation.id) ? (
+                            <button
+                                className="mj_RoomItemMenu_item"
+                                type="button"
+                                role="menuitem"
+                                onClick={() => {
+                                    closeRoomMenu();
+                                    client.unfavoriteConversation(menuConversation.id);
+                                    restoreFocusAfterMenuAction();
+                                }}
+                            >
+                                <StarFilledIcon aria-hidden />
+                                Remove from Favorites
+                            </button>
+                        ) : (
+                            <button
+                                className="mj_RoomItemMenu_item"
+                                type="button"
+                                role="menuitem"
+                                onClick={() => {
+                                    closeRoomMenu();
+                                    client.favoriteConversation(menuConversation.id);
+                                    restoreFocusAfterMenuAction();
+                                }}
+                            >
+                                <StarIcon aria-hidden />
+                                Add to Favorites
+                            </button>
+                        )}
+                        {!state.archivedIds.has(menuConversation.id) &&
+                            !effectiveUnread(menuConversation, state.unreadOverrideIds) && (
+                                <button
+                                    className="mj_RoomItemMenu_item"
+                                    type="button"
+                                    role="menuitem"
+                                    onClick={() => {
+                                        closeRoomMenu();
+                                        client.markConversationUnread(menuConversation.id);
+                                        restoreFocusAfterMenuAction();
+                                    }}
+                                >
+                                    <MarkUnreadIcon aria-hidden />
+                                    Mark as unread
+                                </button>
+                            )}
+                        {!state.archivedIds.has(menuConversation.id) &&
+                            effectiveUnread(menuConversation, state.unreadOverrideIds) && (
+                                <button
+                                    className="mj_RoomItemMenu_item"
+                                    type="button"
+                                    role="menuitem"
+                                    onClick={() => {
+                                        closeRoomMenu();
+                                        client.markConversationRead(menuConversation.id);
+                                        restoreFocusAfterMenuAction();
+                                    }}
+                                >
+                                    <MarkReadIcon aria-hidden />
+                                    Mark as read
+                                </button>
+                            )}
+                        {/* Manual collapse/expand of this conversation's subagent child rows —
+                            shown ONLY when it currently hosts child rows (hasSubagentChildRows
+                            stays true while collapsed, so "Show subagents" remains reachable). */}
+                        {hasSubagentChildRows(menuConversation, sidebarIndex) && (
+                            <button
+                                className="mj_RoomItemMenu_item"
+                                type="button"
+                                role="menuitem"
+                                onClick={() => {
+                                    closeRoomMenu();
+                                    client.toggleSubagentCollapse(menuConversation.id);
+                                    restoreFocusAfterMenuAction();
+                                }}
+                            >
+                                <ChevronDownIcon aria-hidden />
+                                {state.collapsedSubagentParentIds.has(menuConversation.id)
+                                    ? "Show subagents"
+                                    : "Collapse subagents"}
+                            </button>
+                        )}
+                        {state.archivedIds.has(menuConversation.id) ? (
+                            <button
+                                className="mj_RoomItemMenu_item"
+                                type="button"
+                                role="menuitem"
+                                onClick={() => {
+                                    closeRoomMenu();
+                                    client.unarchiveConversation(menuConversation.id);
+                                    restoreFocusAfterMenuAction();
+                                }}
+                            >
+                                <UnarchiveIcon aria-hidden />
+                                Unarchive
+                            </button>
+                        ) : (
+                            <button
+                                className="mj_RoomItemMenu_item"
+                                type="button"
+                                role="menuitem"
+                                onClick={() => {
+                                    closeRoomMenu();
+                                    client.archiveConversation(menuConversation.id);
+                                    restoreFocusAfterMenuAction();
+                                }}
+                            >
+                                <ArchiveIcon aria-hidden />
+                                Archive
+                            </button>
+                        )}
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}
+
+export function useDismissablePopover(
+    open: boolean,
+    close: () => void,
+    refs: { openerRef: RefObject<HTMLElement | null>; panelRef: RefObject<HTMLElement | null> },
+): void {
+    const { openerRef, panelRef } = refs;
+    useEffect(() => {
+        if (!open) return;
+        const onPointerDown = (event: PointerEvent): void => {
+            const target = event.target as Node;
+            if (!openerRef.current?.contains(target) && !panelRef.current?.contains(target)) close();
+        };
+        const onKeyDown = (event: KeyboardEvent): void => {
+            if (event.key !== "Escape") return;
+            close();
+            openerRef.current?.focus();
+        };
+        const onScroll = (event: Event): void => {
+            if (!panelRef.current?.contains(event.target as Node)) close();
+        };
+        document.addEventListener("pointerdown", onPointerDown);
+        document.addEventListener("keydown", onKeyDown);
+        document.addEventListener("scroll", onScroll, true);
+        return () => {
+            document.removeEventListener("pointerdown", onPointerDown);
+            document.removeEventListener("keydown", onKeyDown);
+            document.removeEventListener("scroll", onScroll, true);
+        };
+    }, [open, close, openerRef, panelRef]);
+}
+
+// Redesign-v4 pane-width bands (ResizeObserver on the chat pane, not viewport):
+// >=640 full 2×2 usage grid (keep all four bars as long as they genuinely fit — the
+// 2×2 is ~350px and clears a minimal title down to ~640); <640 collapse to a ctx+5h
+// two-row stack + popover with all four. >=560 full subtitle + Compact; <560 subtitle →
+// status dot + short model, title popover, Compact hidden.
+const USAGE_COLLAPSE_PX = 640;
+// with host cpu/ram the grid grows to a 3rd column (~500px) — it needs a wider pane
+// to render without crushing the title, so collapse earlier (to the ctx+5h popover, which
+// still lists all six bars). Only the collapse WIDTH moves for the wide grid; the collapse
+// BEHAVIOUR (ctx+5h stack + popover) is unchanged, preserving the tuned narrow experience.
+const USAGE_COLLAPSE_WIDE_PX = 760;
+const USAGE_WIDE_METER_COUNT = 4; // >4 meters ⇒ 3rd column ⇒ use the wide threshold
+const TITLE_COLLAPSE_PX = 560;
+
+export function useAdaptiveHeader(
+    bodyEl: HTMLElement | null,
+    meterCount = 0,
+): {
+    usageCollapsed: boolean;
+    titleCollapsed: boolean;
+} {
+    const usageCollapsePx = meterCount > USAGE_WIDE_METER_COUNT ? USAGE_COLLAPSE_WIDE_PX : USAGE_COLLAPSE_PX;
+    const [collapse, setCollapse] = useState({ usageCollapsed: false, titleCollapsed: false });
+    const collapseRef = useRef(collapse);
+
+    useEffect(() => {
+        if (bodyEl == null || typeof ResizeObserver === "undefined") {
+            if (collapseRef.current.usageCollapsed || collapseRef.current.titleCollapsed) {
+                const expanded = { usageCollapsed: false, titleCollapsed: false };
+                collapseRef.current = expanded;
+                setCollapse(expanded);
+            }
+            return;
+        }
+
+        let latestWidth = 0;
+        let frame: number | null = null;
+        const observer = new ResizeObserver((entries) => {
+            const entry = entries[0];
+            latestWidth = entry.borderBoxSize?.[0]?.inlineSize ?? entry.contentRect.width;
+            if (frame != null) return;
+            frame = requestAnimationFrame(() => {
+                frame = null;
+                const usageCollapsed = latestWidth < usageCollapsePx;
+                const titleCollapsed = latestWidth < TITLE_COLLAPSE_PX;
+                if (
+                    collapseRef.current.usageCollapsed !== usageCollapsed ||
+                    collapseRef.current.titleCollapsed !== titleCollapsed
+                ) {
+                    const next = { usageCollapsed, titleCollapsed };
+                    collapseRef.current = next;
+                    setCollapse(next);
+                }
+            });
+        });
+        observer.observe(bodyEl);
+
+        return () => {
+            observer.disconnect();
+            if (frame != null) cancelAnimationFrame(frame);
+        };
+    }, [bodyEl, usageCollapsePx]);
+
+    return collapse;
+}
+
+function useMinuteClock(now?: number): number {
+    const [clockNow, setClockNow] = useState(Date.now);
+    useEffect(() => {
+        if (now !== undefined) return;
+        const interval = window.setInterval(() => setClockNow(Date.now()), 60_000);
+        return () => window.clearInterval(interval);
+    }, [now]);
+    return now ?? clockNow;
+}
+
+// The usage meter leads with a synthetic "ctx" bar (context-window %), matching
+// the v3/v4 mock where ctx is the first, emphasised meter; the rate limits follow.
+export function buildUsageMeters(
+    status: SessionStatus | undefined,
+    limits: SessionStatus["limits"] | undefined,
+): NonNullable<SessionStatus["limits"]> {
+    const meters: NonNullable<SessionStatus["limits"]> = [];
+    // Synthetic ctx meter carries id "context" (drives short tag / rank / a11y name) plus
+    // the raw used/limit pair (tokens/window) so the row can show e.g. 144k/200k.
+    if (status?.context) {
+        meters.push({
+            id: "context",
+            label: "context",
+            percent: status.context.pct,
+            used: status.context.tokens,
+            limit: status.context.window,
+        });
+    }
+    if (limits?.length) meters.push(...limits);
+    // Host CPU/RAM ride a TOP-LEVEL `status.vitals` object on the status frame (never a
+    // limits[] entry). Synthesize them into the meter row here, carrying `sampled_at_ms` so
+    // the shared staleness muting expires an idle conversation's replayed reading. Absent
+    // `status.vitals` → no host meters, no crash (graceful degradation). Non-finite readings
+    // are skipped individually so a partial vitals object still renders what it can.
+    if (status?.vitals) {
+        const { cpu_pct, ram_pct, sampled_at_ms } = status.vitals;
+        if (Number.isFinite(cpu_pct)) {
+            meters.push({ id: "host_cpu", label: "host CPU", percent: cpu_pct, sampled_at_ms });
+        }
+        if (Number.isFinite(ram_pct)) {
+            meters.push({ id: "host_ram", label: "host RAM", percent: ram_pct, sampled_at_ms });
+        }
+    }
+    // Normalise to the design's column-first grid order (ctx/5h, fbl/model/wk, cpu/ram);
+    // stable so any extra limits keep their relative order after the known ones.
+    return meters
+        .map((meter, index) => ({ meter, index }))
+        .sort((a, b) => usageOrderRank(a.meter) - usageOrderRank(b.meter) || a.index - b.index)
+        .map((entry) => entry.meter);
+}
+
+// "claude-sonnet-4-5" → "sonnet-4-5" for the <560 compact subtitle.
+function shortModelName(model: string): string {
+    return model.replace(/^(claude|gpt|openai|anthropic)[-/]/i, "").trim() || model;
+}
+
+export function UsageCluster({
+    limits,
+    now,
+}: {
+    limits: NonNullable<SessionStatus["limits"]>;
+    now?: number;
+}): React.ReactElement {
+    const displayNow = useMinuteClock(now);
+    return (
+        <div className="mj_UsageBars" role="group" aria-label="Usage limits">
+            {limits
+                .filter((limit) => limit.label.trim())
+                .map((limit, index) => {
+                    const norm = normalizePercent(limit.percent);
+                    const reset = resetDisplay(limit.resets_at, limit.resets, displayNow, limit.resets_at_ms);
+                    const level = norm === null ? "unknown" : usageLevel(norm);
+                    // Raw used/limit pair (ctx bar → e.g. 144k/200k). Not shown as the visible
+                    // figure (operator wants the PERCENT visible like every other bar); kept
+                    // only for the accessible aria-valuetext + a hover title.
+                    const rawPair =
+                        limit.used != null && limit.limit != null
+                            ? `${compactTokens(limit.used)}/${compactTokens(limit.limit)}`
+                            : undefined;
+                    const accessibleLabel = usageAccessibleLabel(limit);
+                    // Host vitals (host_cpu/host_ram) carry `sampled_at_ms` = their last real
+                    // sample time. On an idle conversation the bridge replays a stale reading
+                    // that looks live; expire it past HOST_VITALS_STALE_MS. Re-evaluated on the
+                    // shared minute clock (displayNow) so it decays without a fresh frame. Non-
+                    // host meters have no `sampled_at_ms` → never stale (current behaviour).
+                    const stale = isSampleStale(limit.sampled_at_ms, displayNow);
+                    const staleSuffix = stale
+                        ? `, last sampled ${formatSampleAge(sampleAgeMs(limit.sampled_at_ms, displayNow) ?? 0)}`
+                        : "";
+                    const valueText =
+                        norm === null
+                            ? "usage unknown"
+                            : `${norm}% used${rawPair ? `, ${rawPair}` : ""}${reset ? `, resets ${reset}` : ""}`;
+                    // Hover title carries the raw pair (a11y-adjacent affordance) alongside
+                    // any reset countdown; the visible figure is the percent only. Stale host
+                    // readings append their sample age so the muted state is explained on hover.
+                    const titleParts = [rawPair, reset ? `resets ${reset}` : undefined].filter(Boolean);
+                    const title =
+                        (titleParts.length ? titleParts.join(", ") : "") +
+                        (stale ? `${titleParts.length ? "" : accessibleLabel}${staleSuffix}` : "");
+                    return (
+                        <div
+                            className={`mj_UsageRow${stale ? " mj_UsageRow_stale" : ""}`}
+                            // Stable machine id (`session`, `host_cpu`, …) keeps a row bound to
+                            // its meter across reorders and staleness re-renders. Fall back to
+                            // label:index for id-less frames (older bridge / cached), which stays
+                            // duplicate-safe when two meters share a label.
+                            key={limit.id ?? `${limit.label}:${index}`}
+                            title={title || undefined}
+                        >
+                            {/* Visible label is the short tag; the accessible name keeps the
+                                full server-authored label so SR users know which limit it is.
+                                A stale host reading folds its sample age into the accessible
+                                name so SR users hear it (visible bar is just dimmed). */}
+                            <span className="mj_UsageLabel" aria-hidden="true">
+                                {usageShortLabel(limit)}
+                            </span>
+                            <span
+                                className="mj_UsageTrack"
+                                role="progressbar"
+                                aria-label={`${accessibleLabel}${staleSuffix}`}
+                                aria-valuemin={0}
+                                aria-valuemax={100}
+                                aria-valuenow={norm ?? undefined}
+                                aria-valuetext={valueText}
+                            >
+                                <span
+                                    className={`mj_UsageFill mj_UsageFill_${level}`}
+                                    style={{ width: norm === null ? "100%" : `${norm}%` }}
+                                />
+                            </span>
+                            <span className={`mj_UsagePercent mj_UsagePercent_${level}`}>
+                                {norm === null ? "—" : `${Math.round(norm)}%`}
+                            </span>
+                        </div>
+                    );
+                })}
+        </div>
+    );
+}
+
+// A header disclosure. It opens on hover (pointer) OR click/keyboard, but only
+// click/keyboard activation ("pinned") moves focus into the panel — hovering must
+// never steal focus from e.g. the composer. Hover-open dismisses on mouse-leave;
+// pinned-open dismisses on Escape, outside-click, or focus leaving the group.
+// Wrapping `before` (e.g. the h1) + trigger + panel in one relatively-positioned
+// group lets the mouse travel from the trigger into the panel without closing.
+function HeaderDisclosure({
+    className,
+    triggerClassName,
+    panelClassName,
+    label,
+    before,
+    trigger,
+    children,
+    headerRef,
+}: {
+    className: string;
+    triggerClassName: string;
+    panelClassName: string;
+    label: string;
+    before?: React.ReactNode;
+    trigger: React.ReactNode;
+    children: React.ReactNode;
+    headerRef: React.RefObject<HTMLElement | null>;
+}): React.ReactElement {
+    const [hoverOpen, setHoverOpen] = useState(false);
+    const [pinned, setPinned] = useState(false);
+    const open = hoverOpen || pinned;
+    const openerRef = useRef<HTMLButtonElement>(null);
+    const panelRef = useRef<HTMLDivElement>(null);
+    const popoverId = useId();
+    const close = useCallback(() => {
+        setHoverOpen(false);
+        setPinned(false);
+    }, []);
+    useDismissablePopover(open, close, { openerRef, panelRef });
+    // Move focus into the panel ONLY for click/keyboard activation — never on hover.
+    useLayoutEffect(() => {
+        if (pinned) panelRef.current?.focus();
+    }, [pinned]);
+    // If this disclosure unmounts (its band exited) while pinned — focus is inside
+    // it — restore focus to the stable header before the browser drops it to <body>.
+    const pinnedRef = useRef(pinned);
+    pinnedRef.current = pinned;
+    useEffect(
+        () => () => {
+            if (pinnedRef.current) headerRef.current?.focus();
+        },
+        [headerRef],
+    );
+    return (
+        <div
+            className={className}
+            onMouseEnter={() => setHoverOpen(true)}
+            onMouseLeave={() => setHoverOpen(false)}
+            onBlur={(event) => {
+                // Focus left the whole disclosure (tabbed away) → unpin + close.
+                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) close();
+            }}
+        >
+            {before}
+            <button
+                ref={openerRef}
+                type="button"
+                className={triggerClassName}
+                aria-label={label}
+                aria-expanded={open}
+                aria-controls={popoverId}
+                onClick={() => setPinned((value) => !value)}
+            >
+                {trigger}
+            </button>
+            {open && (
+                <div
+                    ref={panelRef}
+                    id={popoverId}
+                    className={panelClassName}
+                    role="group"
+                    aria-label={label}
+                    tabIndex={-1}
+                >
+                    {children}
+                </div>
+            )}
+        </div>
+    );
+}
+
+export function HeaderShell({
+    mode,
+    onBack,
+    backLabel,
+    title,
+    titleNode,
+    titleGlyph,
+    titleBadge,
+    subtitle,
+    subtitleCompact,
+    hasSubtitle,
+    limits,
+    rightControls,
+    persistentControls,
+    hideControlsWhenCompact = false,
+    collapse,
+}: {
+    mode: "parent" | "child";
+    onBack: () => void;
+    backLabel: string;
+    title: string;
+    /** Rendered title (session tag + stripped title); `title` stays the plain string for tooltips. */
+    titleNode?: React.ReactNode;
+    // Optional glyph before the title (child view: ↳) and a badge after it (SUBAGENT). §10.11
+    // requires the header to name the SUBAGENT when inside one — never the parent.
+    titleGlyph?: React.ReactNode;
+    titleBadge?: React.ReactNode;
+    subtitle: React.ReactNode;
+    subtitleCompact?: React.ReactNode;
+    hasSubtitle: boolean;
+    limits?: NonNullable<SessionStatus["limits"]>;
+    rightControls?: React.ReactNode;
+    // Rendered even at the compact breakpoint (unlike rightControls) — for affordances
+    // that must stay reachable on narrow/mobile where the sidebar menu is also hidden.
+    persistentControls?: React.ReactNode;
+    hideControlsWhenCompact?: boolean;
+    collapse: { usageCollapsed: boolean; titleCollapsed: boolean };
+}): React.ReactElement {
+    const { usageCollapsed, titleCollapsed } = collapse;
+    const headerRef = useRef<HTMLElement>(null);
+    const now = useMinuteClock();
+    const titleHeadingId = useId();
+
+    // Collapsed usage keeps two rows — ctx + the 5h (Session) limit — since the header
+    // band has the height for two and one bar reads as too little (operator's call).
+    // Pin BOTH by stable id, NOT by grid position: host cpu/ram now sort to limits[0]
+    // (host-vitals-first), so a positional pick would collapse to cpu/ram. Match the
+    // short-tag heuristic as a fallback for older/cached frames that lack ids.
+    const ctxMeter = limits?.find((meter) => meter.id === "context" || (!meter.id && usageShortLabel(meter) === "ctx"));
+    const sessionMeter = limits?.find(
+        (meter) => meter.id === "session" || (!meter.id && usageShortLabel(meter) === "5h"),
+    );
+    // ctx first, then 5h — pinned by id above. If a degenerate frame carries neither
+    // (limits present but no ctx/5h), fall back to the first meter so the collapsed
+    // disclosure still renders instead of vanishing.
+    const collapsedMeters = [ctxMeter, sessionMeter].filter((meter): meter is NonNullable<typeof meter> =>
+        Boolean(meter),
+    );
+    if (collapsedMeters.length === 0 && limits?.length) collapsedMeters.push(limits[0]);
+    const hasCollapsedUsage = collapsedMeters.length > 0;
+    const worst = limits ? worstLimit(limits) : undefined;
+    const worstNormalized = worst ? (normalizePercent(worst.percent) ?? 0) : undefined;
+    const worstReset = worst ? resetDisplay(worst.resets_at, worst.resets, now, worst.resets_at_ms) : "";
+    const usageLabel =
+        worstNormalized === undefined
+            ? "Usage — all metrics"
+            : `Usage — worst limit ${Math.round(worstNormalized)}%${worstReset ? `, resets ${worstReset}` : ""}`;
+
+    const controls = titleCollapsed && hideControlsWhenCompact ? null : rightControls;
+
+    return (
+        <header
+            ref={headerRef}
+            className={`mx_RoomHeader light-panel mj_ChatHeader${mode === "child" ? " mj_SubChatHeader" : ""}`}
+            tabIndex={-1}
+        >
+            <button type="button" className="mj_BackButton" onClick={onBack} aria-label={backLabel}>
+                <ChevronLeftIcon />
+            </button>
+            {titleCollapsed ? (
+                <HeaderDisclosure
+                    className="mj_HeaderCluster mj_HeaderTitleCluster mj_HeaderTitleCluster_compact"
+                    triggerClassName="mj_HeaderTitleDisclosure"
+                    panelClassName="mj_HeaderMenu mj_TitlePopover"
+                    label="Conversation details"
+                    headerRef={headerRef}
+                    before={
+                        <div
+                            id={titleHeadingId}
+                            dir="auto"
+                            role="heading"
+                            aria-level={1}
+                            className="mx_RoomHeader_heading"
+                            title={title}
+                        >
+                            {titleGlyph && (
+                                <span className="mj_HeaderTitleGlyph" aria-hidden="true">
+                                    {titleGlyph}
+                                </span>
+                            )}
+                            <span className="mx_RoomHeader_truncated mx_lineClamp">{titleNode ?? title}</span>
+                            {titleBadge}
+                        </div>
+                    }
+                    trigger={
+                        <>
+                            {subtitleCompact}
+                            <ChevronDownIcon aria-hidden="true" />
+                        </>
+                    }
+                >
+                    <div className="mj_TitlePopoverTitle">{title}</div>
+                    {hasSubtitle && <div className="mj_HeaderMeta">{subtitle}</div>}
+                </HeaderDisclosure>
+            ) : (
+                <div className="mj_HeaderCluster mj_HeaderTitleCluster">
+                    <div id={titleHeadingId} dir="auto" role="heading" aria-level={1} className="mx_RoomHeader_heading">
+                        {titleGlyph && (
+                            <span className="mj_HeaderTitleGlyph" aria-hidden="true">
+                                {titleGlyph}
+                            </span>
+                        )}
+                        <span className="mx_RoomHeader_truncated mx_lineClamp">{titleNode ?? title}</span>
+                        {titleBadge}
+                    </div>
+                    {hasSubtitle && <div className="mj_HeaderMeta">{subtitle}</div>}
+                </div>
+            )}
+            <div className="mj_HeaderControls">
+                {usageCollapsed && hasCollapsedUsage ? (
+                    <HeaderDisclosure
+                        className="mj_HeaderUsageDisclosure"
+                        triggerClassName="mj_HeaderCluster mj_UsageCluster mj_UsageCluster_collapsed"
+                        panelClassName="mj_HeaderMenu mj_UsagePopover"
+                        label={usageLabel}
+                        headerRef={headerRef}
+                        trigger={<UsageCluster limits={collapsedMeters} now={now} />}
+                    >
+                        <UsageCluster limits={limits ?? []} now={now} />
+                    </HeaderDisclosure>
+                ) : limits?.length ? (
+                    <div className="mj_HeaderCluster mj_UsageCluster">
+                        <UsageCluster limits={limits} now={now} />
+                    </div>
+                ) : null}
+                {(controls || persistentControls) &&
+                    (Boolean(limits?.length) || Boolean(usageCollapsed && hasCollapsedUsage)) && (
+                        <span className="mj_HeaderDivider" aria-hidden="true" />
+                    )}
+                {controls}
+                {persistentControls}
+            </div>
+        </header>
+    );
+}
+
+// Header "⋯" overflow: the selected conversation's actions (same set as the sidebar
+// row menu), opened by click only (never hover — these mutate state).
+function HeaderOverflowMenu({
+    client,
+    conversation,
+    state,
+}: {
+    client: MatronJournalClient;
+    conversation: Conversation;
+    state: ClientState;
+}): React.ReactElement {
+    const [open, setOpen] = useState(false);
+    const openerRef = useRef<HTMLButtonElement>(null);
+    const panelRef = useRef<HTMLDivElement>(null);
+    // Pending rAF id for the post-action focus restore; cancelled before re-scheduling and on
+    // unmount so a stale callback can never fire against a torn-down tree (mirrors the sidebar
+    // menu's restoreFocusAfterMenuAction).
+    const restoreFrameRef = useRef<number | undefined>(undefined);
+    const close = useCallback(() => setOpen(false), []);
+    useDismissablePopover(open, close, { openerRef, panelRef });
+    useLayoutEffect(() => {
+        if (open) panelRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+    }, [open]);
+    useEffect(
+        () => () => {
+            if (restoreFrameRef.current != null) cancelAnimationFrame(restoreFrameRef.current);
+        },
+        [],
+    );
+
+    const [pinDialog, setPinDialog] = useState<PinDialogTarget>();
+    const id = conversation.id;
+    const journalPinned = state.journalPins?.some((pin) => pin.convo_id === id) ?? false;
+    const isPinned = state.pinnedIds.has(id);
+    const isFavorite = state.favoriteIds.has(id);
+    const isArchived = state.archivedIds.has(id);
+    const isUnread = effectiveUnread(conversation, state.unreadOverrideIds);
+    const act = (run: () => void): void => {
+        const opener = openerRef.current;
+        close();
+        run();
+        // Defer past the re-render: a non-navigating action (pin/favorite/read) keeps the
+        // opener mounted → restore focus to it; archiving the selected conversation clears
+        // selection and unmounts this whole header, so skip rather than focus a dead node.
+        // Cancel any still-pending restore first so a leaked callback can't fire on a later tick.
+        if (restoreFrameRef.current != null) cancelAnimationFrame(restoreFrameRef.current);
+        restoreFrameRef.current = requestAnimationFrame(() => {
+            restoreFrameRef.current = undefined;
+            if (opener?.isConnected) opener.focus();
+        });
+    };
+
+    // Opening a pin sheet skips act()'s focus restore: the sheet's field takes focus instead.
+    const openPinDialog = (target: PinDialogTarget): void => {
+        close();
+        setPinDialog(target);
+    };
+
+    return (
+        <div
+            className="mj_HeaderOverflow"
+            onBlur={(event) => {
+                // Tab / Shift+Tab out of the menu closes it (focus left the whole control).
+                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) close();
+            }}
+        >
+            <button
+                ref={openerRef}
+                type="button"
+                className="mj_IconButton mj_HeaderOverflowTrigger"
+                aria-label="Conversation actions"
+                aria-haspopup="menu"
+                aria-expanded={open}
+                onClick={() => setOpen((current) => !current)}
+            >
+                <KebabIcon aria-hidden />
+            </button>
+            {open && (
+                <div
+                    className="mj_HeaderMenu mj_RoomItemMenu"
+                    role="menu"
+                    ref={panelRef}
+                    onKeyDown={(event) => {
+                        const items = Array.from(
+                            event.currentTarget.querySelectorAll<HTMLElement>('[role="menuitem"]'),
+                        );
+                        const currentIndex = items.findIndex((item) => item === document.activeElement);
+                        if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                            event.preventDefault();
+                            const direction = event.key === "ArrowDown" ? 1 : -1;
+                            const nextIndex =
+                                currentIndex === -1
+                                    ? event.key === "ArrowDown"
+                                        ? 0
+                                        : items.length - 1
+                                    : (currentIndex + direction + items.length) % items.length;
+                            items[nextIndex]?.focus();
+                        } else if (event.key === "Escape") {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            close();
+                            openerRef.current?.focus();
+                        }
+                    }}
+                >
+                    {state.journalPins ? (
+                        journalPinned ? (
+                            <>
+                                <button
+                                    className="mj_RoomItemMenu_item"
+                                    type="button"
+                                    role="menuitem"
+                                    onClick={() => openPinDialog({ kind: "edit", convoId: id })}
+                                >
+                                    <FileEditIcon aria-hidden />
+                                    Edit pin…
+                                </button>
+                                <button
+                                    className="mj_RoomItemMenu_item"
+                                    type="button"
+                                    role="menuitem"
+                                    onClick={() => openPinDialog({ kind: "move", convoId: id })}
+                                >
+                                    <PinIcon aria-hidden />
+                                    Move pin…
+                                </button>
+                                <button
+                                    className="mj_RoomItemMenu_item"
+                                    type="button"
+                                    role="menuitem"
+                                    onClick={() => act(() => void client.removePin(id))}
+                                >
+                                    <PinIcon aria-hidden />
+                                    Unpin
+                                </button>
+                            </>
+                        ) : (
+                            <button
+                                className="mj_RoomItemMenu_item"
+                                type="button"
+                                role="menuitem"
+                                onClick={() => openPinDialog({ kind: "edit", convoId: id })}
+                            >
+                                <PinIcon aria-hidden />
+                                Pin to sidebar…
+                            </button>
+                        )
+                    ) : (
+                        <button
+                            className="mj_RoomItemMenu_item"
+                            type="button"
+                            role="menuitem"
+                            onClick={() =>
+                                act(() => (isPinned ? client.unpinConversation(id) : client.pinConversation(id)))
+                            }
+                        >
+                            <PinIcon aria-hidden />
+                            {isPinned ? "Unpin" : "Pin"}
+                        </button>
+                    )}
+                    <button
+                        className="mj_RoomItemMenu_item"
+                        type="button"
+                        role="menuitem"
+                        onClick={() =>
+                            act(() =>
+                                isFavorite ? client.unfavoriteConversation(id) : client.favoriteConversation(id),
+                            )
+                        }
+                    >
+                        {isFavorite ? <StarFilledIcon aria-hidden /> : <StarIcon aria-hidden />}
+                        {isFavorite ? "Remove from Favorites" : "Add to Favorites"}
+                    </button>
+                    {!isArchived && (
+                        <button
+                            className="mj_RoomItemMenu_item"
+                            type="button"
+                            role="menuitem"
+                            onClick={() =>
+                                act(() =>
+                                    isUnread ? client.markConversationRead(id) : client.markConversationUnread(id),
+                                )
+                            }
+                        >
+                            {isUnread ? <MarkReadIcon aria-hidden /> : <MarkUnreadIcon aria-hidden />}
+                            {isUnread ? "Mark as read" : "Mark as unread"}
+                        </button>
+                    )}
+                    <button
+                        className="mj_RoomItemMenu_item"
+                        type="button"
+                        role="menuitem"
+                        onClick={() =>
+                            act(() => (isArchived ? client.unarchiveConversation(id) : client.archiveConversation(id)))
+                        }
+                    >
+                        {isArchived ? <UnarchiveIcon aria-hidden /> : <ArchiveIcon aria-hidden />}
+                        {isArchived ? "Unarchive" : "Archive"}
+                    </button>
+                </div>
+            )}
+            {pinDialog && (
+                <PinDialog client={client} state={state} target={pinDialog} onClose={() => setPinDialog(undefined)} />
+            )}
+        </div>
+    );
+}
+
+function ChatHeader({
+    client,
+    state,
+    collapse = { usageCollapsed: false, titleCollapsed: false },
+}: {
+    client: MatronJournalClient;
+    state: ClientState;
+    collapse?: { usageCollapsed: boolean; titleCollapsed: boolean };
+}): React.ReactElement {
+    const conversation = client.selectedConversation();
+    const title = conversation ? displayTitle(conversation) : "Conversation";
+    const status = state.sessionStatus;
+    const runState = conversation?.session_state;
+    const limits = status?.limits?.filter((limit) => limit.label.trim());
+    const meters = buildUsageMeters(status, limits);
+    const shortModel = status?.model ? shortModelName(status.model) : undefined;
+    const hasSubtitle = Boolean(status?.model || runState);
+    return (
+        <HeaderShell
+            mode="parent"
+            onBack={() => client.clearSelection()}
+            backLabel="Back to conversations"
+            title={title}
+            titleNode={conversation ? <TaggedTitle conversation={conversation} agents={state.agents} /> : undefined}
+            subtitle={
+                <>
+                    {status?.model && <span className="mj_HeaderModel">{status.model}</span>}
+                    {status?.workdir && <span className="mj_HeaderWorkdir">{status.workdir}</span>}
+                    {runState && <span className={`mj_HeaderState mj_HeaderState_${runState}`}>{runState}</span>}
+                </>
+            }
+            subtitleCompact={
+                (shortModel || runState) && (
+                    <span className="mj_HeaderMetaCompact">
+                        {runState && (
+                            <span className={`mj_HeaderStatusDot mj_HeaderStatusDot_${runState}`} aria-hidden="true" />
+                        )}
+                        {runState && <span className="mj_SrOnly">{runState}</span>}
+                        {shortModel && <span className="mj_HeaderModelShort">{shortModel}</span>}
+                    </span>
+                )
+            }
+            hasSubtitle={hasSubtitle}
+            rightControls={
+                status?.context && (
+                    <button
+                        className="mj_CompactButton"
+                        type="button"
+                        aria-label="Compact conversation"
+                        title="Compact the conversation — sends /compact"
+                        onClick={() =>
+                            void client
+                                .sendMessage("/compact")
+                                .catch((error) => console.warn("Compact command failed to send:", error))
+                        }
+                    >
+                        <CompactIcon />
+                        <span>Compact</span>
+                    </button>
+                )
+            }
+            persistentControls={
+                // Keyed by conversation id so a selection change while the menu is open
+                // remounts (and closes) it, instead of silently retargeting the actions.
+                conversation && (
+                    <HeaderOverflowMenu
+                        key={conversation.id}
+                        client={client}
+                        conversation={conversation}
+                        state={state}
+                    />
+                )
+            }
+            hideControlsWhenCompact
+            limits={meters}
+            collapse={collapse}
+        />
+    );
+}
+
+function SubChatHeader({
+    client,
+    state,
+    collapse = { usageCollapsed: false, titleCollapsed: false },
+}: {
+    client: MatronJournalClient;
+    state: ClientState;
+    collapse?: { usageCollapsed: boolean; titleCollapsed: boolean };
+}): React.ReactElement {
+    const selected = client.selectedConversation();
+    const status = state.sessionStatus;
+    const limits = status?.limits?.filter((limit) => limit.label.trim());
+    const meters = buildUsageMeters(status, limits);
+    const runState = selected?.session_state;
+    const running = runState === "running";
+    const shortModel = status?.model ? shortModelName(status.model) : undefined;
+    // §10.11: the header names the CHILD (title), the parent is named in the subtitle
+    // (hierarchy, read-only) and again on the back chip (actionable escape) — never in the
+    // title while the chip offers to return there.
+    const parent =
+        selected?.parent_convo_id != null
+            ? state.conversations.find((conversation) => conversation.id === selected.parent_convo_id)
+            : undefined;
+    const runLabel = running ? "working" : runState || "idle";
+    const goBack = (): void => {
+        if (!selected) {
+            client.clearSelection();
+            return;
+        }
+        const parentId = selected.parent_convo_id;
+        if (
+            parentId &&
+            parentId !== selected.id &&
+            state.conversations.some((conversation) => conversation.id === parentId)
+        ) {
+            void client.selectConversation(parentId);
+        } else {
+            client.clearSelection();
+        }
+    };
+
+    return (
+        <HeaderShell
+            mode="child"
+            onBack={goBack}
+            backLabel="Back to parent"
+            title={selected ? displayTitle(selected) : "Subagent"}
+            titleNode={selected ? <TaggedTitle conversation={selected} agents={state.agents} /> : undefined}
+            titleGlyph="↳"
+            titleBadge={<span className="mj_HeaderSubagentBadge">subagent</span>}
+            subtitle={
+                <>
+                    {parent && (
+                        <span className="mj_HeaderParentRef">
+                            of <span className="mj_HeaderParentName">{displayTitle(parent)}</span>
+                        </span>
+                    )}
+                    {runState && <span className={`mj_HeaderState mj_HeaderState_${runState}`}>{runLabel}</span>}
+                </>
+            }
+            subtitleCompact={
+                <span className="mj_HeaderMetaCompact">
+                    <span
+                        className={`mj_HeaderStatusDot mj_HeaderStatusDot_${running ? "running" : "idle"}`}
+                        aria-hidden="true"
+                    />
+                    <span className="mj_SrOnly">{running ? "Running" : "Finished"}</span>
+                    {shortModel && <span className="mj_HeaderModelShort">{shortModel}</span>}
+                </span>
+            }
+            hasSubtitle
+            limits={meters}
+            collapse={collapse}
+        />
+    );
+}
+
+function ReadOnlyHint(): React.ReactElement {
+    return <div className="mj_ReadOnlyHint">Read-only — subagent transcript</div>;
+}
+
+export function QueuedReleaseCard({
+    client,
+    event,
+    isReadOnly = false,
+    resolvedAction,
+}: {
+    client: MatronJournalClient;
+    event: JournalEvent;
+    isReadOnly?: boolean;
+    resolvedAction?: (itemId: string) => "send" | "cancel" | undefined;
+}): React.ReactElement {
+    const items = (Array.isArray(event.payload.items) ? event.payload.items : []).flatMap((item) => {
+        if (typeof item !== "object" || item === null || Array.isArray(item)) return [];
+        const record = item as EventPayload;
+        const text = asString(record.text);
+        return text ? [{ id: asString(record.id), text }] : [];
+    });
+    const actions = (Array.isArray(event.payload.actions) ? event.payload.actions : []).flatMap((action) => {
+        if (typeof action !== "object" || action === null || Array.isArray(action)) return [];
+        const record = action as EventPayload;
+        const id = asString(record.id);
+        if (!id) return [];
+        return [{ id, label: asString(record.label, id), intent: asString(record.intent, "neutral") }];
+    });
+    const declaredPrimaryIndex = actions.findIndex((action) => action.intent === "primary");
+    const primaryIndex = declaredPrimaryIndex >= 0 ? declaredPrimaryIndex : actions.length > 0 ? 0 : -1;
+    const resolution = items.map((item) => resolvedAction?.(item.id)).find((action) => action !== undefined);
+    const [phase, setPhase] = useState<"idle" | "sending" | "resolved">(resolution === undefined ? "idle" : "resolved");
+    const phaseRef = useRef(phase);
+    const watchdogRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+    const clearWatchdog = useCallback((): void => {
+        if (watchdogRef.current === undefined) return;
+        clearTimeout(watchdogRef.current);
+        watchdogRef.current = undefined;
+    }, []);
+    const sendAction = (action: string): void => {
+        if ((action !== "send" && action !== "cancel") || phaseRef.current !== "idle") return;
+
+        phaseRef.current = "sending";
+        if (!client.sendPromptReply(event.seq, action)) {
+            phaseRef.current = "idle";
+            return;
+        }
+
+        setPhase("sending");
+        watchdogRef.current = setTimeout(() => {
+            watchdogRef.current = undefined;
+            if (phaseRef.current !== "sending") return;
+            phaseRef.current = "idle";
+            setPhase("idle");
+            console.warn("matron: queued-release reply timed out", {
+                event: "queued_release_reply_timeout",
+                target_seq: event.seq,
+            });
+        }, 10_000);
+    };
+
+    useEffect(() => {
+        if (resolution === undefined) return;
+        clearWatchdog();
+        phaseRef.current = "resolved";
+        setPhase("resolved");
+    }, [clearWatchdog, resolution]);
+
+    useEffect(() => clearWatchdog, [clearWatchdog]);
+
+    return (
+        <div className="mj_PromptCard mj_QueuedReleaseCard">
+            <div className="mj_PromptHeader">
+                <span className="mj_PromptLabel">Queued message</span>
+                <time className="mj_PromptTime" dateTime={new Date(event.ts).toISOString()}>
+                    {formatTime(event.ts)}
+                </time>
+            </div>
+            <div className="mj_PromptBody">
+                <span className="mj_PromptGlyph" aria-hidden="true">
+                    <PromptMailGlyph />
+                </span>
+                {items.length > 0 ? (
+                    <div>
+                        {items.map((item, index) => (
+                            <span
+                                key={`${item.id}:${index}`}
+                                className="mj_PromptQuestion"
+                                style={{
+                                    display: "-webkit-box",
+                                    WebkitBoxOrient: "vertical",
+                                    WebkitLineClamp: 3,
+                                    overflow: "hidden",
+                                }}
+                            >
+                                {item.text}
+                            </span>
+                        ))}
+                    </div>
+                ) : (
+                    <span className="mj_PromptQuestion">{asString(event.payload.body)}</span>
+                )}
+            </div>
+            {!isReadOnly && resolution === undefined && actions.length > 0 && (
+                <div className="mj_PromptOptions">
+                    {actions.map((action, index) => {
+                        const variant = index === primaryIndex ? "primary" : "neutral";
+                        return (
+                            <button
+                                key={`${action.id}:${index}`}
+                                type="button"
+                                className={variant === "primary" ? "mj_PromptOption_affirmative" : undefined}
+                                data-intent={action.intent}
+                                data-variant={variant}
+                                value={action.id}
+                                disabled={phase !== "idle"}
+                                onClick={() => sendAction(action.id)}
+                            >
+                                {action.label}
+                            </button>
+                        );
+                    })}
+                </div>
+            )}
+            {resolution !== undefined && (
+                <div className="mj_PromptResolved">
+                    <span className="mj_PromptGlyph mj_PromptGlyph_ok" aria-hidden="true">
+                        <PromptCheckGlyph />
+                    </span>
+                    <span className="mj_Answered">{resolution === "send" ? "Sent" : "Cancelled"}</span>
+                </div>
+            )}
+        </div>
+    );
+}
+
+const PROMPT_REPLY_CONFIRMATION_TIMEOUT_MS = 10_000;
+
+function PromptCard({
+    client,
+    event,
+    answered,
+    answeredChoice,
+    permission = false,
+    isReadOnly = false,
+}: {
+    client: MatronJournalClient;
+    event: JournalEvent;
+    answered: boolean;
+    answeredChoice?: string;
+    permission?: boolean;
+    isReadOnly?: boolean;
+}): React.ReactElement {
+    const [freeText, setFreeText] = useState("");
+    const [locallyAnswered, setLocallyAnswered] = useState(false);
+    const [confirmationTimedOut, setConfirmationTimedOut] = useState(false);
+    const [nowMs, setNowMs] = useState(() => Date.now());
+    const question = permission
+        ? asString(event.payload.description, "Permission request")
+        : asString(event.payload.question, "The agent needs your input");
+    const rawOptions = Array.isArray(event.payload.options)
+        ? event.payload.options
+        : permission
+          ? ["Allow", "Deny"]
+          : [];
+    const options = rawOptions.map((option) => {
+        if (typeof option === "string") return { label: option, value: option };
+        if (typeof option === "object" && option) {
+            const record = option as EventPayload;
+            const label = asString(record.label, asString(record.value, asString(record.id, "Option")));
+            return { label, value: asString(record.value, asString(record.id, label)) };
+        }
+        return { label: String(option), value: String(option) };
+    });
+    const resolved = answered || (!permission && locallyAnswered);
+    const expiresAt =
+        typeof event.payload.expires_at === "number" && Number.isFinite(event.payload.expires_at)
+            ? event.payload.expires_at
+            : undefined;
+    // Client expiry is advisory because browser and bridge clocks can differ; the bridge's
+    // own timer and durable prompt_reply remain the canonical authorization decision.
+    const advisoryExpired = permission && !resolved && expiresAt !== undefined && nowMs >= expiresAt;
+    const pending = permission && locallyAnswered && !resolved && !confirmationTimedOut;
+    const retryable = permission && locallyAnswered && !resolved && confirmationTimedOut;
+    const disabled = resolved || pending;
+    const answer = (choice?: string, text?: string): void => {
+        if (disabled) return;
+        if (client.sendPromptReply(event.seq, choice, text)) {
+            setLocallyAnswered(true);
+            setConfirmationTimedOut(false);
+        }
+    };
+    const normalizedAnsweredChoice = answeredChoice?.trim().toLocaleLowerCase();
+    const durablyDenied = permission && resolved && normalizedAnsweredChoice === "deny";
+    const durablyAllowed = permission && resolved && !durablyDenied;
+
+    useEffect(() => {
+        if (!permission || resolved || expiresAt === undefined || advisoryExpired) return;
+
+        const updateNow = (): void => setNowMs(Date.now());
+        const msLeft = expiresAt - Date.now();
+        if (msLeft <= 0) {
+            updateNow();
+            return;
+        }
+
+        const timer = setTimeout(updateNow, Math.min(msLeft, MAX_TIMEOUT_MS));
+        return (): void => clearTimeout(timer);
+    }, [permission, resolved, expiresAt, advisoryExpired, nowMs]);
+
+    useEffect(() => {
+        if (!pending) return;
+
+        const timer = setTimeout(() => setConfirmationTimedOut(true), PROMPT_REPLY_CONFIRMATION_TIMEOUT_MS);
+        return (): void => clearTimeout(timer);
+    }, [pending]);
+
+    // §10.5 one primary per surface: exactly one filled affirmative. For permission it's
+    // "Allow"; for a generic question the first option whose label reads affirmative
+    // (send/yes/continue/confirm/ok/approve). Chosen by SEMANTICS, not position, so a
+    // reordered payload never fills "Always allow" / "Deny" / "Cancel".
+    const affirmativeIndex = options.findIndex((option) =>
+        permission ? option.label.trim().toLocaleLowerCase() === "allow" : PROMPT_AFFIRMATIVE.test(option.label.trim()),
+    );
+
+    return (
+        <div className={permission ? "mj_PromptCard mj_PromptCard_permission" : "mj_PromptCard"}>
+            <div className="mj_PromptHeader">
+                <span className="mj_PromptLabel">{permission ? "Permission request" : "Question"}</span>
+                <time className="mj_PromptTime" dateTime={new Date(event.ts).toISOString()}>
+                    {formatTime(event.ts)}
+                </time>
+            </div>
+            <div className="mj_PromptBody">
+                <span className="mj_PromptGlyph" aria-hidden="true">
+                    {permission ? <PromptTerminalGlyph /> : <PromptMailGlyph />}
+                </span>
+                <span className="mj_PromptQuestion">{question}</span>
+            </div>
+            {!isReadOnly && !resolved && options.length > 0 && (
+                <div className="mj_PromptOptions">
+                    {options.map((option, index) => (
+                        <button
+                            key={`${option.label}:${option.value}`}
+                            className={index === affirmativeIndex ? "mj_PromptOption_affirmative" : undefined}
+                            disabled={pending}
+                            onClick={() => answer(option.value)}
+                        >
+                            {option.label}
+                        </button>
+                    ))}
+                </div>
+            )}
+            {!isReadOnly && !disabled && (event.payload.allows_free_text === true || options.length === 0) && (
+                <form
+                    className="mj_PromptText"
+                    onSubmit={(submitEvent) => {
+                        submitEvent.preventDefault();
+                        if (freeText.trim()) answer(undefined, freeText.trim());
+                    }}
+                >
+                    <input
+                        value={freeText}
+                        onChange={(changeEvent) => setFreeText(changeEvent.target.value)}
+                        placeholder="Type an answer"
+                    />
+                    <button type="submit" className="mj_PromptOption_affirmative" disabled={!freeText.trim()}>
+                        Send
+                    </button>
+                </form>
+            )}
+            {pending && (
+                <div className="mj_PromptResolved mj_PromptResolved_pending">
+                    <span className="mj_PromptGlyph" aria-hidden="true" />
+                    <span className="mj_Muted">Sending…</span>
+                </div>
+            )}
+            {retryable && (
+                <div className="mj_PromptResolved mj_PromptResolved_retryable">
+                    <span className="mj_PromptGlyph" aria-hidden="true" />
+                    <span className="mj_Muted">Reply not confirmed — tap to retry</span>
+                </div>
+            )}
+            {resolved && (
+                <div
+                    className={`mj_PromptResolved${durablyAllowed ? " mj_PromptResolved_allowed" : ""}${durablyDenied ? " mj_PromptResolved_denied" : ""}`}
+                >
+                    <span
+                        className="mj_PromptGlyph mj_PromptGlyph_ok"
+                        aria-hidden="true"
+                        style={
+                            durablyDenied
+                                ? { color: "var(--cpd-color-text-critical-primary)" }
+                                : durablyAllowed
+                                  ? { color: "var(--cpd-color-usage-low)" }
+                                  : undefined
+                        }
+                    >
+                        {durablyDenied ? <PromptDeniedGlyph /> : <PromptCheckGlyph />}
+                    </span>
+                    <span
+                        className="mj_Answered"
+                        style={
+                            durablyDenied
+                                ? { color: "var(--cpd-color-text-critical-primary)" }
+                                : durablyAllowed
+                                  ? { color: "var(--cpd-color-usage-low)" }
+                                  : undefined
+                        }
+                    >
+                        {durablyDenied ? "Denied" : durablyAllowed ? "Allowed" : "Answered"}
+                    </span>
+                </div>
+            )}
+            {advisoryExpired && (
+                <div className="mj_PromptResolved mj_PromptResolved_expired">
+                    <span className="mj_PromptGlyph" aria-hidden="true" />
+                    <span className="mj_Expired">May have expired</span>
+                </div>
+            )}
+        </div>
+    );
+}
+
+// §10.2 alignment grid: SVG glyphs in the 24px prompt-card gutter (never inline emoji,
+// which make the text's left edge a function of glyph width). Stroke inherits currentColor.
+const PROMPT_AFFIRMATIVE = /^(send|yes|continue|confirm|ok|okay|approve|proceed|accept)\b/i;
+
+function PromptMailGlyph(): React.ReactElement {
+    return (
+        <svg
+            viewBox="0 0 24 24"
+            width="15"
+            height="15"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.7"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+        >
+            <path d="M4 6h16v12H4z" />
+            <path d="m4 7 8 6 8-6" />
+        </svg>
+    );
+}
+
+function PromptTerminalGlyph(): React.ReactElement {
+    return (
+        <svg
+            viewBox="0 0 24 24"
+            width="15"
+            height="15"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.7"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+        >
+            <path d="m5 7 5 5-5 5" />
+            <path d="M13 17h6" />
+        </svg>
+    );
+}
+
+function PromptCheckGlyph(): React.ReactElement {
+    return (
+        <svg
+            viewBox="0 0 24 24"
+            width="15"
+            height="15"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.4"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+        >
+            <path d="m5 12 4 4 10-10" />
+        </svg>
+    );
+}
+
+function PromptDeniedGlyph(): React.ReactElement {
+    return (
+        <svg
+            viewBox="0 0 24 24"
+            width="15"
+            height="15"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.4"
+            strokeLinecap="round"
+        >
+            <path d="m6 6 12 12M18 6 6 18" />
+        </svg>
+    );
+}
+
+// A journaled agent_spawn card is unanswerable if the bridge minted a malformed payload
+// (non-string/empty request_id or task) — rendered as a read-only AgentSpawnCard rather than
+// with Approve/Deny buttons nothing can resolve.
+function isAnswerableAgentSpawn(payload: EventPayload): boolean {
+    return (
+        typeof payload.request_id === "string" &&
+        payload.request_id.length > 0 &&
+        typeof payload.task === "string" &&
+        payload.task.length > 0
+    );
+}
+
+const SPAWN_OUTCOME_CARD_LABELS: Record<Exclude<SpawnOutcomeKind, "failed">, string> = {
+    started: "Started",
+    declined: "Denied",
+    expired: "Expired",
+    unknown: "Spawn request resolved",
+};
+
+// Plain-text labels for the card's resolved-state row (§ design "Resolved states"). Distinct
+// from spawnOutcomeSnippet's emoji-prefixed copy, which is for the standalone timeline row.
+function spawnOutcomeCardLabel(payload: EventPayload): string {
+    const kind = spawnOutcomeKind(payload);
+    if (kind === "failed") {
+        const errorCode = asString(payload.error_code);
+        return errorCode ? `Failed — ${errorCode}` : "Failed";
+    }
+    return SPAWN_OUTCOME_CARD_LABELS[kind];
+}
+
+type AgentSpawnDecision = "approve" | "deny";
+type AgentSpawnLocalPhase = "idle" | "sending" | "retryable" | "already-answered" | "gone";
+
+const noopAgentSpawnAnswer = (_decision: AgentSpawnDecision, _signal?: AbortSignal): Promise<void> => Promise.resolve();
+const noopAgentSpawnOpen = (): void => undefined;
+
+// Joins the .mj_PromptCard family (§ design "Kind dispatch and components"): same chrome and
+// row order as PromptCard so answering doesn't reflow.
+//
+// Local state machine (§ design "Resolution state"): idle -> sending -> {resolved via the
+// DURABLE spawn_outcome event | retryable after PROMPT_REPLY_CONFIRMATION_TIMEOUT_MS with no
+// durable event, mirroring PromptCard's confirmation-timeout treatment}. A tap's own POST can
+// also fail synchronously: 409 (already answered elsewhere/expired) and 404 (row gone) resolve
+// the card immediately with local copy; any other failure (network/transport) goes straight to
+// the retryable state. The `outcome` prop (derived from journaled events, no local persistence)
+// always wins over local phase — a durable resolution can arrive from another device at any time.
+// The card's "Runs" line: the agent, model and effort the child will start with (journal
+// protocol.md "What will run"). A value taken from the target box's defaults is marked "(box
+// default)" — once, after the first value, when all of them came from the box; else on each.
+const SPAWN_AGENT_LABELS: Record<string, string> = { claude: "Claude", codex: "Codex" };
+
+function spawnRunsLabel(payload: EventPayload): string {
+    const parts = (["agent", "model", "effort"] as const).flatMap((key) => {
+        const value = asString(payload[key]).trim();
+        if (!value) return [];
+        const text = key === "agent" ? (SPAWN_AGENT_LABELS[value] ?? value) : value;
+        return [{ text, boxDefault: payload[`${key}_source`] === "box_default" }];
+    });
+    const allBoxDefault = parts.length > 0 && parts.every((part) => part.boxDefault);
+    return parts
+        .map((part, index) =>
+            (allBoxDefault ? index === 0 : part.boxDefault) ? `${part.text} (box default)` : part.text,
+        )
+        .join(" · ");
+}
+
+function AgentSpawnCard({
+    event,
+    outcome,
+    isReadOnly = false,
+    onAnswer = noopAgentSpawnAnswer,
+    onOpen = noopAgentSpawnOpen,
+}: {
+    event: JournalEvent;
+    outcome: EventPayload | null;
+    isReadOnly?: boolean;
+    onAnswer?: (decision: AgentSpawnDecision, signal?: AbortSignal) => Promise<void>;
+    onOpen?: (roomId: string) => void;
+}): React.ReactElement {
+    const payload = event.payload;
+    const task = asString(payload.task);
+    const topic = asString(payload.topic);
+    const headline = topic || task.split("\n")[0] || "Agent spawn request";
+    const fromConvoTitle = asString(payload.from_convo_title);
+    const fromName = asString(payload.from_name);
+    const targetName = asString(payload.target_name);
+    const workdir = asString(payload.workdir);
+    const runs = spawnRunsLabel(payload);
+    const resolved = outcome !== null;
+    const kind = resolved ? spawnOutcomeKind(outcome) : undefined;
+    const roomId = resolved ? asString(outcome.room_id) : "";
+
+    const [phase, setPhase] = useState<AgentSpawnLocalPhase>("idle");
+    const phaseRef = useRef(phase);
+    // Bugbot/CodeRabbit finding on #23: attempt A's POST can still be in flight when the user
+    // retries (attempt B) after A's own confirmation timeout. Every phase transition below is
+    // gated on "is my attemptId still the current one?" so a late-settling A can never clobber
+    // B's `sending` with a stale `retryable`/`already-answered`/`gone` — which would otherwise
+    // re-enable Approve/Deny while B is still pending and invite a duplicate POST. mountedRef
+    // additionally guards the promise-settlement handlers (not the setTimeout below, whose
+    // cleanup already cancels it on unmount) — mirrors the new-session sheet's
+    // agentsRequestIdRef/mountedRef pattern above.
+    const attemptIdRef = useRef(0);
+    const mountedRef = useRef(false);
+    // Aborting the previous attempt's POST before the buttons re-enable narrows the
+    // Deny-races-Approve window: without it, a stalled Approve can still be in flight when the
+    // confirmation timeout re-enables the row, and a user's corrective Deny then loses the
+    // server-side first-arrival race to their own abandoned tap. The abort can't recall bytes the
+    // server already received — the durable outcome event stays authoritative for that case.
+    const abortRef = useRef<AbortController | null>(null);
+    const setLocalPhase = (next: AgentSpawnLocalPhase): void => {
+        phaseRef.current = next;
+        setPhase(next);
+    };
+
+    useEffect(() => {
+        mountedRef.current = true;
+        return (): void => {
+            mountedRef.current = false;
+            abortRef.current?.abort();
+        };
+    }, []);
+
+    const handleAnswer = (decision: AgentSpawnDecision): void => {
+        if (resolved || phaseRef.current === "sending") return;
+        const attemptId = ++attemptIdRef.current;
+        abortRef.current?.abort();
+        const controller = new AbortController();
+        abortRef.current = controller;
+        setLocalPhase("sending");
+        void onAnswer(decision, controller.signal).then(
+            () => undefined, // ack received; wait for the durable event (or the timeout effect below)
+            (error: unknown) => {
+                // A newer attempt (retry, or another tab) has already moved the phase on —
+                // this settlement is stale and must not touch state.
+                if (!mountedRef.current || attemptId !== attemptIdRef.current) return;
+                if (error instanceof JournalApiError && error.status === 409) setLocalPhase("already-answered");
+                else if (error instanceof JournalApiError && error.status === 404) setLocalPhase("gone");
+                else setLocalPhase("retryable"); // transport/other error -> back to answerable
+            },
+        );
+    };
+
+    useEffect(() => {
+        if (phase !== "sending" || resolved) return;
+        const attemptId = attemptIdRef.current;
+        const timer = setTimeout(() => {
+            if (attemptId !== attemptIdRef.current) return; // superseded by a newer attempt
+            if (phaseRef.current === "sending") {
+                abortRef.current?.abort(); // kill the stalled POST before re-enabling the buttons
+                setLocalPhase("retryable");
+            }
+        }, PROMPT_REPLY_CONFIRMATION_TIMEOUT_MS);
+        return (): void => clearTimeout(timer);
+    }, [phase, resolved]);
+
+    const pending = !resolved && phase === "sending";
+    const retryable = !resolved && phase === "retryable";
+    const alreadyAnswered = !resolved && phase === "already-answered";
+    const gone = !resolved && phase === "gone";
+    // Hides the action row for the same reasons a durable resolution does — nothing more to
+    // tap — even though these two are local-only, never journaled.
+    const pseudoResolved = resolved || alreadyAnswered || gone;
+
+    return (
+        <div className="mj_PromptCard mj_PromptCard_spawn">
+            <div className="mj_PromptHeader">
+                <span className="mj_PromptLabel">Agent spawn request</span>
+                <time className="mj_PromptTime" dateTime={new Date(event.ts).toISOString()}>
+                    {formatTime(event.ts)}
+                </time>
+            </div>
+            <div className="mj_PromptBody">
+                <span className="mj_PromptGlyph" aria-hidden="true">
+                    <PromptTerminalGlyph />
+                </span>
+                <span className="mj_SpawnHeadline">{headline}</span>
+            </div>
+            <div className="mj_SpawnDetails">
+                <div className="mj_SpawnDetail mj_SpawnDetail_from">
+                    <span className="mj_SpawnDetail_label">From</span>
+                    <span className="mj_SpawnDetail_value">
+                        {fromConvoTitle}
+                        {fromConvoTitle && fromName ? " · " : ""}
+                        {fromName}
+                    </span>
+                </div>
+                <div className="mj_SpawnDetail mj_SpawnDetail_target">
+                    <span className="mj_SpawnDetail_label">Target</span>
+                    <span className="mj_SpawnDetail_value">{targetName}</span>
+                </div>
+                <div className="mj_SpawnDetail mj_SpawnDetail_folder">
+                    <span className="mj_SpawnDetail_label">Folder</span>
+                    <span className="mj_SpawnDetail_value">{workdir}</span>
+                </div>
+                {runs && (
+                    <div className="mj_SpawnDetail mj_SpawnDetail_runs">
+                        <span className="mj_SpawnDetail_label">Runs</span>
+                        <span className="mj_SpawnDetail_value">{runs}</span>
+                    </div>
+                )}
+            </div>
+            <pre className="mj_SpawnTask">{task}</pre>
+            {/* A read-only card (sub-chat transcript viewer) never shows live Approve/Deny — it
+                mirrors PromptCard's own isReadOnly gate (§ Task-1-review scope A). */}
+            {!isReadOnly && !pseudoResolved && (
+                <div className="mj_PromptOptions">
+                    <button type="button" disabled={pending} onClick={() => handleAnswer("deny")}>
+                        Deny
+                    </button>
+                    <button
+                        type="button"
+                        className="mj_PromptOption_affirmative"
+                        disabled={pending}
+                        onClick={() => handleAnswer("approve")}
+                    >
+                        Approve
+                    </button>
+                </div>
+            )}
+            {pending && (
+                <div className="mj_PromptResolved mj_PromptResolved_pending">
+                    <span className="mj_PromptGlyph" aria-hidden="true" />
+                    <span className="mj_Muted">Sending…</span>
+                </div>
+            )}
+            {retryable && (
+                <div className="mj_PromptResolved mj_PromptResolved_retryable">
+                    <span className="mj_PromptGlyph" aria-hidden="true" />
+                    <span className="mj_Muted">Reply not confirmed — tap to retry</span>
+                </div>
+            )}
+            {alreadyAnswered && (
+                <div className="mj_PromptResolved mj_PromptResolved_expired">
+                    <span className="mj_PromptGlyph" aria-hidden="true" />
+                    <span className="mj_Answered">Already answered or expired</span>
+                </div>
+            )}
+            {gone && (
+                <div className="mj_PromptResolved mj_PromptResolved_gone">
+                    <span className="mj_PromptGlyph" aria-hidden="true" />
+                    <span className="mj_Answered">That request is no longer on the server.</span>
+                </div>
+            )}
+            {resolved && (
+                <div className={`mj_PromptResolved mj_PromptResolved_${kind}`}>
+                    <span className="mj_PromptGlyph" aria-hidden="true" />
+                    <span className="mj_Answered">{spawnOutcomeCardLabel(outcome)}</span>
+                    {kind === "started" && roomId && (
+                        <button type="button" className="mj_SpawnOpenButton" onClick={() => onOpen(roomId)}>
+                            Open
+                        </button>
+                    )}
+                </div>
+            )}
+        </div>
+    );
+}
+
+// Minimal standalone row for the durable spawn_outcome event itself (§ design "Timeline
+// rendering of spawn_outcome itself") — keeps the record legible once the card has scrolled
+// away, and stops the default case's raw JSON <details> dump.
+function SpawnOutcomeRow({ client, event }: { client: MatronJournalClient; event: JournalEvent }): React.ReactElement {
+    const kind = spawnOutcomeKind(event.payload);
+    const roomId = asString(event.payload.room_id);
+    return (
+        <div className={`mj_SpawnOutcomeRow mj_SpawnOutcomeRow_${kind}`}>
+            <span className="mj_SpawnOutcomeStatus">{spawnOutcomeSnippet(event.payload)}</span>
+            {kind === "started" && roomId && (
+                <button
+                    type="button"
+                    className="mj_SpawnOpenButton"
+                    onClick={() => void client.selectConversation(roomId, { suppressNotFound: true })}
+                >
+                    Open
+                </button>
+            )}
+        </div>
+    );
+}
+
+function ToolOutput({ client, event }: { client: MatronJournalClient; event: JournalEvent }): React.ReactElement {
+    const payload = event.payload;
+    const command = asString(payload.command).trim() || asString(payload.tool_name).trim() || "Tool output";
+    const exitCode = typeof payload.exit_code === "number" ? payload.exit_code : undefined;
+    const failed = payload.denied === true || (exitCode !== undefined && exitCode !== 0);
+    const expired = payload.expired === true;
+    // Mac ToolCallCard: the command's first token bold, its arguments smaller and grey, one line.
+    const [commandName, ...commandRest] = command === "Tool output" ? [command] : command.split(/\s+/);
+    const commandArgs = commandRest.join(" ");
+    const outcome =
+        payload.denied === true ? "denied" : exitCode !== undefined ? `exit ${exitCode}` : failed ? "failed" : "done";
+    const blobRef = typeof payload.blob_ref === "string" ? payload.blob_ref : undefined;
+    const [fullOutput, setFullOutput] = useState<string>();
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState<string>();
+
+    const load = async (): Promise<void> => {
+        if (!blobRef || loading) return;
+        setLoading(true);
+        setError(undefined);
+        try {
+            const url = await client.mediaUrl(blobRef);
+            const response = await fetch(url);
+            setFullOutput(await response.text());
+        } catch (loadError) {
+            setError(errorMessage(loadError));
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    return (
+        <details className={`mj_ToolCard ${failed ? "mj_ToolCard_failed" : ""}`}>
+            <summary title={command} aria-label={`${command}, ${failed ? `failed, ${outcome}` : outcome}`}>
+                <ChevronDownIcon className="mj_ToolCard_chevron" aria-hidden="true" />
+                {/* Mac: a green check or a red octagon says how it went; no exit badge, no time here. */}
+                <span
+                    className={`mj_ToolCard_status mj_ToolCard_status_${failed ? "failed" : "ok"}`}
+                    aria-hidden="true"
+                >
+                    {failed ? <XOctagonIcon /> : <CheckCircleIcon />}
+                </span>
+                <code className="mj_ToolCard_command">
+                    <b className="mj_ToolCard_cmd">{commandName}</b>
+                    {commandArgs && <span className="mj_ToolCard_args"> {commandArgs}</span>}
+                </code>
+            </summary>
+            <div className="mj_ToolCard_meta">
+                {outcome} · <time dateTime={new Date(event.ts).toISOString()}>{formatTime(event.ts)}</time>
+            </div>
+            <div className="mj_ToolCommand">
+                <code>{command}</code>
+            </div>
+            {expired ? (
+                <div className="mj_Expired">Output expired after 24 hours.</div>
+            ) : (
+                <>
+                    {(fullOutput ?? asString(payload.snippet)) && <pre>{fullOutput ?? asString(payload.snippet)}</pre>}
+                    {blobRef && fullOutput === undefined && (
+                        <button className="mj_TextButton" onClick={() => void load()} disabled={loading}>
+                            {loading ? "Loading…" : "Load full output"}
+                        </button>
+                    )}
+                    {payload.truncated === true && <div className="mj_Muted">Preview truncated</div>}
+                    {error && <div className="mj_Error">{error}</div>}
+                </>
+            )}
+        </details>
+    );
+}
+
+// Pick a file-tile glyph from the coarse MIME bucket. Generic sheet is the fallback.
+const FILE_KIND_ICON: Record<FileKind, (props: React.SVGProps<SVGSVGElement>) => React.ReactElement> = {
+    image: ImageFileIcon,
+    pdf: PdfFileIcon,
+    text: TextFileIcon,
+    audio: AudioFileIcon,
+    video: VideoFileIcon,
+    archive: ArchiveFileIcon,
+    generic: FileIcon,
+};
+
+function AuthenticatedMedia({
+    client,
+    mediaId,
+    image,
+    filename,
+    caption,
+    dims,
+    contentType,
+    size,
+}: {
+    client: MatronJournalClient;
+    mediaId: string;
+    image: boolean;
+    filename?: string;
+    caption?: string;
+    dims?: MediaDims;
+    contentType?: string;
+    size?: number;
+}): React.ReactElement {
+    const [url, setUrl] = useState<string>();
+    const [error, setError] = useState<string>();
+    const [loading, setLoading] = useState(false);
+    const viewer = useMediaViewer();
+    const markdownPreview = useMarkdownPreview();
+
+    const load = useCallback(async (): Promise<void> => {
+        setLoading(true);
+        try {
+            setUrl(await client.mediaUrl(mediaId));
+        } catch (loadError) {
+            setError(errorMessage(loadError));
+        } finally {
+            setLoading(false);
+        }
+    }, [client, mediaId]);
+
+    useEffect(() => {
+        if (image) void load();
+    }, [image, load]);
+
+    if (error) return <div className="mj_Error">{error}</div>;
+    if (image) {
+        // Reserve an aspect-ratio box BEFORE the blob decodes so the thread does not reflow when
+        // the image finishes loading. imageFrameStyle pre-shrinks the width so the CSS max-height
+        // cap preserves the aspect ratio (a non-replaced <div> won't back-shrink on its own).
+        // Absent dims means no reserved box, current fluid behaviour (fallback for un-measured).
+        const frameStyle: React.CSSProperties | undefined = dims ? imageFrameStyle(dims) : undefined;
+        // Emit the JS-authoritative height cap as a CSS custom property so the pcss frame rules
+        // (`.mj_ImageFrame_sized`, `.mj_Image img`) consume it via var() and cannot drift from the
+        // JS constant. Set on the always-present figure so it cascades to both sized and fluid cases.
+        const figureStyle = { "--mj-image-frame-max-height": `${IMAGE_FRAME_MAX_HEIGHT_PX}px` } as React.CSSProperties;
+        return (
+            <figure className="mj_Image" style={figureStyle}>
+                <div className={`mj_ImageFrame${dims ? " mj_ImageFrame_sized" : ""}`} style={frameStyle}>
+                    {url ? (
+                        // onError collapses the reserved frame (figure → mj_Error) when the blob decodes
+                        // to a broken image, so a corrupt image doesn't hold the full reserved box around
+                        // a broken glyph — matching the pre-reserve fluid behaviour.
+                        <img
+                            src={url}
+                            alt={caption || "Shared image"}
+                            className={viewer ? "mj_Image_zoomable" : undefined}
+                            role={viewer ? "button" : undefined}
+                            tabIndex={viewer ? 0 : undefined}
+                            aria-label={viewer ? `Open image${caption ? `, ${caption}` : ""}` : undefined}
+                            onClick={viewer ? (event) => viewer.openViewer(mediaId, event.currentTarget) : undefined}
+                            onKeyDown={
+                                viewer
+                                    ? (event) => {
+                                          if (event.key === "Enter" || event.key === " ") {
+                                              event.preventDefault();
+                                              viewer.openViewer(mediaId, event.currentTarget);
+                                          }
+                                      }
+                                    : undefined
+                            }
+                            onError={() => setError("Image failed to load")}
+                        />
+                    ) : (
+                        <div className="mj_MediaLoading">{loading ? "Loading image…" : "Image"}</div>
+                    )}
+                </div>
+                {caption && <figcaption>{caption}</figcaption>}
+            </figure>
+        );
+    }
+    const KindIcon = FILE_KIND_ICON[fileKindFromMime(contentType)];
+    const fileLabel = filename || "Download attachment";
+    // Markdown up to 2 MB opens in the side preview panel (which offers Download); larger files
+    // keep the download chip.
+    if (markdownPreview && isPreviewableMarkdown({ mime: contentType, name: filename, size })) {
+        return (
+            <button
+                className="mj_File mj_File_preview"
+                onClick={() =>
+                    markdownPreview.openMarkdownPreview({ blobRef: mediaId, name: filename || "attachment.md", size })
+                }
+                aria-label={`Preview ${fileLabel}`}
+            >
+                <KindIcon className="mj_FileIcon" />
+                <span className="mj_FileName">{fileLabel}</span>
+            </button>
+        );
+    }
+    // Renderable files (svg / pdf / video / raster) open the lightbox inline; the viewer
+    // fetches the blob itself and offers Download. Non-renderable types keep the plain
+    // download chip (HTML and unknown never render inline).
+    if (viewer && isRenderableInViewer(contentType, filename)) {
+        return (
+            <button
+                className="mj_File mj_File_preview"
+                onClick={(event) => viewer.openViewer(mediaId, event.currentTarget)}
+                aria-label={`Preview ${fileLabel}`}
+            >
+                <KindIcon className="mj_FileIcon" />
+                <span className="mj_FileName">{fileLabel}</span>
+            </button>
+        );
+    }
+    return url ? (
+        <a className="mj_File" href={url} download={filename || "attachment"}>
+            <KindIcon className="mj_FileIcon" />
+            <span className="mj_FileName">{fileLabel}</span>
+        </a>
+    ) : (
+        <button className="mj_File" onClick={() => void load()} disabled={loading}>
+            <KindIcon className="mj_FileIcon" />
+            <span className="mj_FileName">{loading ? "Preparing download…" : fileLabel}</span>
+        </button>
+    );
+}
+
+export interface DiffCardData {
+    diff: string;
+    displayPath?: string;
+    filePath?: string;
+    viewerUrl?: string;
+    viewerUrlExp?: number; // unix seconds from token payload; undefined if unreadable
+    tool?: string;
+    label?: string;
+    added?: number;
+    removed?: number;
+    truncated: boolean;
+    newFile: boolean;
+}
+
+// Module-level, once per page load: distinguishes "bridge withheld a link"
+// (no token param at all → expected, silent) from "a token was present but
+// undecodable" (schema drift → a signal worth one console warning). Throttled
+// to one warn per session so a fleet-wide token-format change is visible in a
+// console without spamming N cards. See M3 / P3 (fail-visible).
+let _viewerExpDecodeWarned = false;
+
+// A legitimate bridge token is base64url(JSON{path,exp,workdir}) + '.' + sig. Its
+// worst case is NOT tiny: generateFileLink embeds two full absolute paths, so with
+// both near PATH_MAX the encoded token approaches ~11KB. 16384 covers that with
+// margin while still bounding pathological (multi-MB) input far below any DoS size.
+// The bound is applied to the RAW viewerUrl string FIRST — before new URL() — so an
+// oversized durable event is rejected pre-parse (P8 Guard Boundary Inputs). Note the
+// residual: parseDiffPayload's own new URL(payload.viewer_url) at components.tsx:1305
+// (pre-existing code, unchanged here) already parses the full string before this
+// runs, so this bound protects only the work THIS function adds, not that prior parse.
+const MAX_VIEWER_TOKEN_LEN = 16384;
+
+function decodeViewerExp(viewerUrl: string): number | undefined {
+    if (viewerUrl.length > MAX_VIEWER_TOKEN_LEN) return undefined; // bound raw input BEFORE any parse (silent; not a schema-drift signal)
+    let token: string | null = null;
+    try {
+        // Defensive re-parse: in the real integration path parseDiffPayload already
+        // validated this exact string with new URL() (components.tsx:1301-1309), so
+        // this catch is unreachable via that caller — it future-proofs a direct call.
+        token = new URL(viewerUrl).searchParams.get("token");
+    } catch {
+        return undefined; // malformed URL — not a token-schema signal, stay silent
+    }
+    if (!token) return undefined; // no token param → nothing to decode (silent)
+    try {
+        const payload = token.split(".")[0];
+        if (!payload) throw new Error("empty token payload");
+        const b64 = payload.replace(/-/g, "+").replace(/_/g, "/");
+        const json = JSON.parse(atob(b64 + "=".repeat((4 - (b64.length % 4)) % 4)));
+        // Range-sanity: require a POSITIVE, *1000-SAFE INTEGER exp. Integer is
+        // load-bearing (not cosmetic): the render compares floor(Date.now()/1000)
+        // to exp+grace, so a fractional exp (K+0.2) could leave the floored clock
+        // forever below the threshold while the timer's msLeft<=0 branch writes the
+        // same floored value — no state change, no re-arm, link wedged live. The
+        // exp*1000 ceiling matters too: a huge-but-"integer" value (1e308 passes
+        // Number.isInteger; 9e15 is a non-safe integer) makes exp*1000 lose
+        // precision or become Infinity, so the clamp re-arms forever and the link
+        // stays live — the exact failure this feature removes. The bridge always
+        // mints a small floored-seconds exp (Math.floor(...) at index.js:343), so
+        // these bounds match the producer and are defense-in-depth against a forged
+        // durable event. MAX_EXP = floor(MAX_SAFE_INTEGER / 1000) keeps exp*1000 exact.
+        const MAX_EXP = Math.floor(Number.MAX_SAFE_INTEGER / 1000);
+        if (!Number.isSafeInteger(json.exp) || json.exp <= 0 || json.exp > MAX_EXP) {
+            throw new Error("no valid in-range integer exp");
+        }
+        return json.exp;
+    } catch (err) {
+        // A token WAS present but did not decode to a valid exp → schema-drift
+        // signal. Warn once; still return undefined (degrade to live-link).
+        if (!_viewerExpDecodeWarned) {
+            _viewerExpDecodeWarned = true;
+            console.warn(
+                "DiffCard: viewer_url token present but exp undecodable — expiry detection disabled for this token shape",
+                err,
+            );
+        }
+        return undefined;
+    }
+}
+
+export function parseDiffPayload(payload: EventPayload): DiffCardData {
+    let viewerUrl: string | undefined;
+    if (typeof payload.viewer_url === "string" && payload.viewer_url) {
+        try {
+            const url = new URL(payload.viewer_url);
+            viewerUrl = url.protocol === "https:" ? payload.viewer_url : undefined;
+        } catch {
+            viewerUrl = undefined;
+        }
+    }
+    // NOTE: the oversized-token bound lives ONLY inside decodeViewerExp (below),
+    // not on this link-render guard. An oversized-but-valid viewer_url must still
+    // render as a live link (viewer stays authoritative) — it just skips expiry
+    // detection. Gating the link itself on length regressed valid long links to
+    // no-link (Codex phase-1 review). The viewer_url string is already received +
+    // JSON-parsed by the journal client before this runs, so the pre-existing
+    // new URL() above is not a fresh unbounded-allocation DoS surface.
+
+    return {
+        diff: asString(payload.diff, asString(payload.patch, JSON.stringify(payload, null, 2))),
+        displayPath:
+            typeof payload.display_path === "string" && payload.display_path ? payload.display_path : undefined,
+        filePath: typeof payload.file_path === "string" && payload.file_path ? payload.file_path : undefined,
+        viewerUrl,
+        viewerUrlExp: viewerUrl ? decodeViewerExp(viewerUrl) : undefined,
+        tool: typeof payload.tool === "string" && payload.tool ? payload.tool : undefined,
+        label: typeof payload.label === "string" && payload.label ? payload.label : undefined,
+        added: typeof payload.added === "number" ? payload.added : undefined,
+        removed: typeof payload.removed === "number" ? payload.removed : undefined,
+        truncated: payload.truncated === true,
+        newFile: payload.new_file === true,
+    };
+}
+
+const MAX_DIFF_LINES = 5000;
+const CLOCK_SKEW_GRACE_SEC = 30;
+const MAX_TIMEOUT_MS = 2_147_483_647;
+
+export function DiffCard({ data }: { data: DiffCardData }): React.ReactElement {
+    const [expanded, setExpanded] = useState(false);
+    const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000));
+    const expiresAt = data.viewerUrlExp;
+    const expired = expiresAt !== undefined && nowSec >= expiresAt + CLOCK_SKEW_GRACE_SEC;
+    const allLines = data.diff.replace(/\r\n?/g, "\n").replace(/\n+$/, "").split("\n");
+    const overflowed = allLines.length > MAX_DIFF_LINES;
+    const lines = overflowed ? allLines.slice(0, MAX_DIFF_LINES) : allLines;
+    const lineCount = lines.length;
+    const expandable = lineCount > 12;
+    const path = data.displayPath ?? data.filePath ?? "file";
+    const filename = path.split(/[\\/]/).at(-1) || "file";
+    const visibleLines = expanded ? lines : lines.slice(0, 12);
+
+    useEffect(() => {
+        if (expiresAt === undefined || expired) return;
+
+        const bump = (): void => setNowSec(Math.floor(Date.now() / 1000));
+        const msLeft = (expiresAt + CLOCK_SKEW_GRACE_SEC) * 1000 - Date.now();
+        if (msLeft <= 0) {
+            bump();
+            return;
+        }
+
+        const timer = setTimeout(bump, Math.min(msLeft + 500, MAX_TIMEOUT_MS));
+        return (): void => clearTimeout(timer);
+    }, [expiresAt, expired, nowSec]);
+
+    const toggleExpanded = (): void => setExpanded((current) => !current);
+    const lineClass = (line: string): string => {
+        if (line.startsWith("+")) return "mj_DiffLine_add";
+        if (line.startsWith("-")) return "mj_DiffLine_del";
+        if (line.startsWith("@")) return "mj_DiffLine_hunk";
+        return "mj_DiffLine_ctx";
+    };
+
+    return (
+        <div className="mj_DiffCard">
+            <div className="mj_DiffCard_header">
+                {expandable && (
+                    <button
+                        type="button"
+                        aria-expanded={expanded}
+                        aria-label={expanded ? "Collapse diff" : "Expand diff"}
+                        onClick={toggleExpanded}
+                    >
+                        <svg viewBox="0 0 16 16" width={16} height={16} aria-hidden="true">
+                            <path
+                                d={expanded ? "m4 6 4 4 4-4" : "m6 4 4 4-4 4"}
+                                fill="none"
+                                stroke="currentColor"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                            />
+                        </svg>
+                    </button>
+                )}
+                <FileEditIcon aria-hidden="true" />
+                {data.viewerUrl && !expired ? (
+                    <a
+                        className="mj_DiffCard_filename mj_DiffCard_link"
+                        href={data.viewerUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                    >
+                        {filename}
+                    </a>
+                ) : data.viewerUrl && expired ? (
+                    <>
+                        <span
+                            className="mj_DiffCard_filename mj_DiffCard_expired"
+                            title="Viewer link expired — re-open the file from a fresh edit"
+                        >
+                            {filename}
+                        </span>
+                        <span className="mj_DiffCard_expiredNote">link expired</span>
+                    </>
+                ) : (
+                    <span className="mj_DiffCard_filename">{filename}</span>
+                )}
+                {data.label && <span className="mj_DiffCard_label">{data.label}</span>}
+                {data.newFile && <span className="mj_DiffCard_badge">new file</span>}
+                {typeof data.added === "number" && <span className="mj_DiffCard_added">+{data.added}</span>}
+                {typeof data.removed === "number" && <span className="mj_DiffCard_removed">−{data.removed}</span>}
+                {data.truncated && <span title="diff truncated">…</span>}
+            </div>
+            <div className="mj_DiffCard_body">
+                <div className="mj_DiffCard_track">
+                    {visibleLines.map((line, index) => (
+                        <div className={lineClass(line)} key={`${index}:${line}`}>
+                            {line}
+                        </div>
+                    ))}
+                </div>
+                {expandable && !expanded && (
+                    <button type="button" className="mj_DiffCard_more" onClick={toggleExpanded}>
+                        +{lineCount - 12} more lines
+                    </button>
+                )}
+                {overflowed && expanded && (
+                    <div className="mj_DiffCard_truncated">… diff too large; showing first {MAX_DIFF_LINES} lines</div>
+                )}
+                {data.truncated && <div className="mj_DiffCard_truncated">… diff truncated</div>}
+            </div>
+        </div>
+    );
+}
+
+function isLegacyQueuePrompt(event: JournalEvent): boolean {
+    if (event.type !== "prompt" || asString(event.payload.kind) === "queued_release") return false;
+    if (!Array.isArray(event.payload.options)) return false;
+    return event.payload.options.some((option) => {
+        if (typeof option !== "object" || option === null || Array.isArray(option)) return false;
+        const payload = option as EventPayload;
+        const id = asString(payload.id);
+        const value = asString(payload.value);
+        return (id === "cancel" && /^cancel:\d+$/.test(value)) || (id === "interrupt" && value === "interrupt");
+    });
+}
+
+// New queue-card tap echoes are identified by the queued prompt they target.
+// Legacy tiles also need a legacy control choice: an ordinary prompt may
+// coincidentally contain one legacy-shaped option while receiving a real
+// answer through another option. Bridge-authored release events are control
+// records too, so none of these control shapes renders as a chat bubble.
+export function isQueuedReleaseReply(
+    event: JournalEvent,
+    queuedReleasePromptSeqs: ReadonlySet<number>,
+    legacyQueuePromptSeqs: ReadonlySet<number>,
+): boolean {
+    if (event.type !== "prompt_reply") return false;
+    if (asString(event.payload.kind) === "queued_release") return true;
+    const targetSeq = asNumber(event.payload.target_seq, Number.NaN);
+    if (queuedReleasePromptSeqs.has(targetSeq)) return true;
+    const choice = asString(event.payload.choice);
+    return legacyQueuePromptSeqs.has(targetSeq) && (choice === "interrupt" || /^cancel:\d+$/.test(choice));
+}
+
+/**
+ * Tracker events that EventContent renders as null and so must not occupy a timeline row at all —
+ * otherwise EventRow still wraps the null content in an avatar + sender bubble (a ghost message).
+ * Two families: the plain-text `fallback_for` mirror the bridge emits for old clients (this client
+ * renders the real `item` marker instead), and every `item` marker that renders no card — the quiet
+ * invalidation-only reordered/updated AND any unknown action under version skew. The item test
+ * delegates to the SAME classifier renderItemMarker uses (isRenderableItemMarker), so rendering and
+ * suppression can never diverge and an unsupported action can never leave a ghost row (F5).
+ */
+function isSuppressedTrackerEvent(event: JournalEvent): boolean {
+    if (event.type === "text") return asString(event.payload.fallback_for).length > 0;
+    if (event.type === "item") return !isRenderableItemMarker(event);
+    return false;
+}
+
+const EMPTY_SPAWN_OUTCOMES: ReadonlyMap<string, EventPayload> = new Map();
+
+// A permission-decision reply is a prompt_reply targeting a permission_request
+// card. The card already renders the decision inline (answered/allowed/denied
+// via answeredPromptReplies), so its reply must NOT also render as a standalone
+// chat bubble — that duplicate reads as if the operator typed "Allow"/"Deny"
+// into the thread. Identified by target-seq provenance, mirroring
+// isQueuedReleaseReply: prompt_reply carries no self-identifying kind, so a
+// permission reply is only distinguishable by the permission_request it targets.
+export function isPermissionDecisionReply(event: JournalEvent, permissionRequestSeqs: ReadonlySet<number>): boolean {
+    if (event.type !== "prompt_reply") return false;
+    const targetSeq = asNumber(event.payload.target_seq, Number.NaN);
+    return permissionRequestSeqs.has(targetSeq);
+}
+
+export function EventContent({
+    client,
+    event,
+    answeredPromptReplies,
+    spawnOutcomes = EMPTY_SPAWN_OUTCOMES,
+    isReadOnly = false,
+    resolvedAction,
+}: {
+    client: MatronJournalClient;
+    event: JournalEvent;
+    answeredPromptReplies: ReadonlyMap<string, { choice?: string }>;
+    spawnOutcomes?: ReadonlyMap<string, EventPayload>;
+    isReadOnly?: boolean;
+    resolvedAction?: (itemId: string) => "send" | "cancel" | undefined;
+}): React.ReactElement | null {
+    const answer = answeredPromptReplies.get(`${event.convo_id}:${event.seq}`);
+    switch (event.type) {
+        case "text":
+            // A tracker fallback text (payload.fallback_for set) is the plain-text mirror the
+            // bridge emits for old clients that can't render the real `item` marker. This client
+            // renders that marker, so suppress the duplicate fallback text.
+            if (asString(event.payload.fallback_for)) return null;
+            return (
+                <div className="mj_Markdown">
+                    {/* A Coordinator briefing (payload.briefing_id) is an ordinary text event in the
+                        Coordinator conversation; a small badge says what it is. */}
+                    {asString(event.payload.briefing_id) ? <span className="mj_BriefingBadge">Briefing</span> : null}
+                    <MarkdownBody
+                        text={asString(event.payload.body)}
+                        label={String(event.seq)}
+                        onTrackerLink={(kind, num) => client.openTrackerLink(kind, num)}
+                    />
+                </div>
+            );
+        case "item":
+            // Quiet invalidation-only markers (reordered/updated) and unknown actions render null.
+            return renderItemMarker(event, client);
+        case "milestone":
+            return <MilestoneCard client={client} event={event} />;
+        case "mission":
+            return <MissionNotice client={client} event={event} />;
+        case "memory":
+            return <MemoryNotice client={client} event={event} />;
+        case "prompt":
+            if (asString(event.payload.kind) === "queued_release") {
+                return (
+                    <QueuedReleaseCard
+                        client={client}
+                        event={event}
+                        isReadOnly={isReadOnly}
+                        resolvedAction={resolvedAction}
+                    />
+                );
+            }
+            return (
+                <PromptCard
+                    key={`${event.convo_id}:${event.seq}`}
+                    client={client}
+                    event={event}
+                    answered={answer !== undefined}
+                    answeredChoice={answer?.choice}
+                    isReadOnly={isReadOnly}
+                />
+            );
+        case "permission_request": {
+            if (asString(event.payload.kind) === "agent_spawn") {
+                const requestId = asString(event.payload.request_id);
+                // A malformed agent_spawn payload (no request_id/task) can never be resolved:
+                // the generic PromptCard's Allow/Deny post through sendPromptReply, a channel the
+                // bridge doesn't listen on for spawns — the buttons would be dead. Render the
+                // spawn card read-only instead so the request is visible but not tappable.
+                const answerable = isAnswerableAgentSpawn(event.payload);
+                return (
+                    <AgentSpawnCard
+                        key={`${event.convo_id}:${event.seq}`}
+                        event={event}
+                        outcome={(requestId ? spawnOutcomes.get(requestId) : undefined) ?? null}
+                        isReadOnly={isReadOnly || !answerable}
+                        onAnswer={
+                            answerable
+                                ? (decision, signal) => client.answerAgentSpawn(requestId, decision, signal)
+                                : undefined
+                        }
+                        onOpen={(roomId) => void client.selectConversation(roomId, { suppressNotFound: true })}
+                    />
+                );
+            }
+            return (
+                <PromptCard
+                    key={`${event.convo_id}:${event.seq}`}
+                    client={client}
+                    event={event}
+                    answered={answer !== undefined}
+                    answeredChoice={answer?.choice}
+                    permission
+                    isReadOnly={isReadOnly}
+                />
+            );
+        }
+        case "prompt_reply":
+            return (
+                <div className="mj_MessageText">
+                    {asString(event.payload.choice, asString(event.payload.text, "Answered"))}
+                </div>
+            );
+        case "spawn_outcome":
+            return <SpawnOutcomeRow client={client} event={event} />;
+        case "tool_output":
+            return <ToolOutput client={client} event={event} />;
+        case "diff":
+            return <DiffCard data={parseDiffPayload(event.payload)} />;
+        case "image": {
+            const mediaId = asString(event.payload.blob_ref);
+            return mediaId ? (
+                <AuthenticatedMedia
+                    client={client}
+                    mediaId={mediaId}
+                    image
+                    caption={asString(event.payload.caption)}
+                    dims={parseMediaDims(event.payload.dims)}
+                />
+            ) : (
+                <div className="mj_Muted">Image unavailable</div>
+            );
+        }
+        case "file": {
+            const mediaId = asString(event.payload.blob_ref);
+            return (
+                <div>
+                    {mediaId ? (
+                        <AuthenticatedMedia
+                            client={client}
+                            mediaId={mediaId}
+                            image={false}
+                            filename={asString(event.payload.filename, "attachment")}
+                            contentType={asString(event.payload.content_type) || undefined}
+                            size={
+                                typeof event.payload.size === "number" && Number.isFinite(event.payload.size)
+                                    ? event.payload.size
+                                    : undefined
+                            }
+                        />
+                    ) : (
+                        <span className="mj_Muted">File unavailable</span>
+                    )}
+                    {formatBytes(event.payload.size) && (
+                        <span className="mj_FileSize">{formatBytes(event.payload.size)}</span>
+                    )}
+                    {asString(event.payload.caption) && (
+                        <div className="mj_FileCaption">{asString(event.payload.caption)}</div>
+                    )}
+                </div>
+            );
+        }
+        default:
+            return (
+                <details className="mj_Unknown">
+                    <summary>{event.type}</summary>
+                    <pre>{JSON.stringify(event.payload, null, 2)}</pre>
+                </details>
+            );
+    }
+}
+
+function EventRow({
+    client,
+    event,
+    answeredPromptReplies,
+    spawnOutcomes,
+    isReadOnly = false,
+    resolvedAction,
+    continuation = false,
+    lastInSection = true,
+    rowHandlers,
+}: {
+    client: MatronJournalClient;
+    event: JournalEvent;
+    answeredPromptReplies: ReadonlyMap<string, { choice?: string }>;
+    spawnOutcomes?: ReadonlyMap<string, EventPayload>;
+    isReadOnly?: boolean;
+    resolvedAction: (itemId: string) => "send" | "cancel" | undefined;
+    continuation?: boolean;
+    lastInSection?: boolean;
+    rowHandlers: RowContextMenu<JournalEvent>["rowHandlers"];
+}): React.ReactElement {
+    const own = event.sender.startsWith("user:");
+    const liRef = useRef<HTMLLIElement>(null);
+    const handlers = rowHandlers(event, () => liRef.current);
+    return (
+        <li
+            ref={liRef}
+            className={`mx_EventTile${continuation ? " mx_EventTile_continuation" : ""}${lastInSection ? " mx_EventTile_lastInSection" : ""}`}
+            tabIndex={-1}
+            aria-live="polite"
+            aria-atomic="true"
+            data-layout="bubble"
+            data-self={own}
+            data-event-id={event.seq}
+            {...handlers}
+            onClickCapture={handlers.onClickCapture}
+        >
+            {!own && !continuation && (
+                <span className="mx_DisambiguatedProfile">
+                    <MsgAvatar />
+                    <span className="mx_DisambiguatedProfile_displayName">{displaySender(event.sender)}</span>
+                    {/* tool_output owns its timestamp inline (after the exit badge); prompt /
+                        permission cards own theirs in the card header (§10.2). Suppress the
+                        profile-row time for all three so a first-in-section event never shows
+                        two identical timestamps. */}
+                    {event.type !== "tool_output" && event.type !== "prompt" && event.type !== "permission_request" && (
+                        <a href={`#event-${event.seq}`} onClick={(clickEvent) => clickEvent.preventDefault()}>
+                            <time className="mx_MessageTimestamp" dateTime={new Date(event.ts).toISOString()}>
+                                {formatTime(event.ts)}
+                            </time>
+                        </a>
+                    )}
+                </span>
+            )}
+            <div className="mx_EventTile_line">
+                {/* Own bubbles carry an inline timestamp (design: "…text <09:58>"). Agent
+                    continuation blocks do NOT — the section shows one timestamp on the profile
+                    row (§10.2 one-per-section), so continuation blocks fill to the shared right
+                    edge with no reserved timestamp gutter (kills the first-block spill). */}
+                {own && event.type !== "tool_output" && (
+                    <a href={`#event-${event.seq}`} onClick={(clickEvent) => clickEvent.preventDefault()}>
+                        <time className="mx_MessageTimestamp" dateTime={new Date(event.ts).toISOString()}>
+                            {formatTime(event.ts)}
+                        </time>
+                    </a>
+                )}
+                <div className="mx_MTextBody mx_EventTile_content">
+                    <div className="markdown-body">
+                        <EventContent
+                            client={client}
+                            event={event}
+                            answeredPromptReplies={answeredPromptReplies}
+                            spawnOutcomes={spawnOutcomes}
+                            isReadOnly={isReadOnly}
+                            resolvedAction={resolvedAction}
+                        />
+                    </div>
+                </div>
+            </div>
+        </li>
+    );
+}
+
+function MsgAvatar(): React.ReactElement {
+    const mask = `url("${matronLogo}")`;
+
+    return <span className="mj_MsgAvatar" style={{ WebkitMaskImage: mask, maskImage: mask }} aria-hidden />;
+}
+
+export function ToolStream({ stream }: { stream: ToolStreamState }): React.ReactElement {
+    const nodes = useMemo(() => {
+        const cleaned = stream.headTruncated ? stripLeadingSgrFragment(stream.content) : stream.content;
+        const text = stream.headTruncated ? `… earlier output omitted …\n${cleaned}` : stream.content;
+        return parseAnsi(text, INITIAL_SGR_STATE, "", 0).nodes;
+    }, [stream.content, stream.headTruncated]);
+
+    return (
+        <li className="mx_EventTile mx_EventTile_lastInSection" tabIndex={-1} data-layout="bubble" data-self="false">
+            <span className="mx_DisambiguatedProfile">
+                <MsgAvatar />
+                <span className="mx_DisambiguatedProfile_displayName">agent</span>
+            </span>
+            <div className="mx_EventTile_line">
+                <div className="mx_MTextBody mx_EventTile_content">
+                    <div className="markdown-body mj_LiveTool">
+                        <div>
+                            <span className="mj_LiveDot" /> Running{" "}
+                            <code>{stream.command || stream.tool || "tool"}</code>
+                        </div>
+                        <pre>{nodes}</pre>
+                    </div>
+                </div>
+            </div>
+        </li>
+    );
+}
+
+function attachmentErrorMessage(message: PendingMessage): string {
+    if (message.errorMessage) return message.errorMessage;
+    switch (message.errorKind) {
+        case "too_large":
+            return "File too large.";
+        case "browser_memory_limit":
+            return "This file is too large for this browser to upload safely.";
+        case "empty":
+            return "That file is empty.";
+        case "electron_binary_unsupported":
+            return message.errorMessage || "Attachments aren't supported in the desktop build yet.";
+        case "send_failed":
+            return "Couldn't send attachment.";
+        case "storage_failed":
+            return "Couldn't save attachment.";
+        case "upload_failed":
+        default:
+            return "Couldn't upload attachment.";
+    }
+}
+
+function PendingAttachment({
+    client,
+    message,
+    isReadOnly = false,
+}: {
+    client: MatronJournalClient;
+    message: PendingMessage;
+    isReadOnly?: boolean;
+}): React.ReactElement {
+    const filename = message.filename || (message.kind === "image" ? "Image" : "Attachment");
+    const detail = formatBytes(message.size);
+    const [recoveryAction, setRecoveryAction] = useState<"retry" | "dismiss">();
+    const [recoveryError, setRecoveryError] = useState<string>();
+    const [recoveryResult, setRecoveryResult] = useState<string>();
+
+    const recover = async (action: "retry" | "dismiss"): Promise<void> => {
+        setRecoveryAction(action);
+        setRecoveryError(undefined);
+        setRecoveryResult(undefined);
+        try {
+            if (action === "retry") await client.retryAttachment(message.localId);
+            else await client.dismissAttachment(message.localId);
+            // Only "dismiss" reports completion. A successful retry clears the
+            // error state, which unmounts this whole error block — so a "Retry
+            // completed." message is only ever visible when the retry actually
+            // FAILED (the chip is still in error), which made it misleading.
+            if (action === "dismiss") setRecoveryResult("Dismissed.");
+        } catch (error) {
+            setRecoveryError(`${action === "retry" ? "Retry" : "Dismiss"} failed: ${errorMessage(error)}`);
+        } finally {
+            setRecoveryAction(undefined);
+        }
+    };
+
+    return (
+        <li
+            className={`mx_EventTile mx_EventTile_lastInSection mj_AttachmentChip mj_AttachmentChip_${message.attachState ?? "sending"}`}
+            data-layout="bubble"
+            data-self="true"
+        >
+            <div className="mj_AttachmentChip_content">
+                <span className="mj_AttachmentChip_name">{filename}</span>
+                {message.caption && <span className="mj_AttachmentChip_caption">{message.caption}</span>}
+                {detail && <span className="mj_AttachmentChip_size">{detail}</span>}
+            </div>
+            {message.attachState === "uploading" && (
+                <span className="mj_AttachmentChip_status" role="status">
+                    <span className="mj_AttachmentChip_spinner" aria-hidden="true" />
+                    Uploading…
+                </span>
+            )}
+            {message.attachState === "sending" && (
+                <span className="mj_AttachmentChip_status" role="status">
+                    Sending…
+                </span>
+            )}
+            {message.attachState === "error" && (
+                <div className="mj_AttachmentChip_error" role="alert">
+                    <span>{attachmentErrorMessage(message)}</span>
+                    {recoveryError && <span>{recoveryError}</span>}
+                    {recoveryResult && <span role="status">{recoveryResult}</span>}
+                    <div className="mj_AttachmentChip_actions">
+                        {!isReadOnly && message.canRetry && (
+                            <button
+                                type="button"
+                                disabled={recoveryAction !== undefined}
+                                onClick={() => void recover("retry")}
+                            >
+                                {recoveryAction === "retry" ? "Retrying…" : "Retry"}
+                            </button>
+                        )}
+                        <button
+                            type="button"
+                            disabled={recoveryAction !== undefined}
+                            onClick={() => void recover("dismiss")}
+                        >
+                            {recoveryAction === "dismiss" ? "Dismissing…" : "Dismiss"}
+                        </button>
+                    </div>
+                </div>
+            )}
+        </li>
+    );
+}
+
+function Timeline({
+    client,
+    state,
+    isReadOnly = false,
+}: {
+    client: MatronJournalClient;
+    state: ClientState;
+    isReadOnly?: boolean;
+}): React.ReactElement {
+    const scrollRef = useRef<HTMLDivElement>(null);
+    const pendingScrollFrame = useRef<number | undefined>(undefined);
+    const selectedConversationId = useRef(state.selectedConversationId);
+    const [isFollowingTail, setFollow] = useState(true);
+    const [sourceEvent, setSourceEvent] = useState<JournalEvent>();
+    const menu = useRowContextMenu<JournalEvent>();
+    const sourceOpenerRef = useRef<HTMLElement | null>(null);
+    // Media viewer: the corpus is every image/file event in this conversation;
+    // openViewer is threaded to AuthenticatedMedia via MediaViewerContext.
+    const [viewerMediaId, setViewerMediaId] = useState<string>();
+    const viewerOpenerRef = useRef<HTMLElement | null>(null);
+    const mediaCorpus = useMemo<MediaItem[]>(() => buildMediaCorpus(state.events), [state.events]);
+    const openViewer = useCallback((mediaId: string, opener: HTMLElement | null): void => {
+        viewerOpenerRef.current = opener;
+        setViewerMediaId(mediaId);
+    }, []);
+    const mediaViewerValue = useMemo<MediaViewerContextValue>(() => ({ openViewer }), [openViewer]);
+    selectedConversationId.current = state.selectedConversationId;
+
+    useEffect(() => {
+        menu.close();
+        setSourceEvent(undefined);
+        setViewerMediaId(undefined);
+    }, [state.selectedConversationId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    const historyScrollAnchor = useRef<
+        | {
+              conversationId?: string;
+              scrollHeight: number;
+              scrollTop: number;
+              oldestSeq?: number;
+          }
+        | undefined
+    >(undefined);
+    const historyScrollRestored = useRef(false);
+    const { queuedReleasePromptSeqs, legacyQueuePromptSeqs, permissionRequestSeqs } = useMemo(() => {
+        const queuedReleasePromptSeqs = new Set<number>();
+        const legacyQueuePromptSeqs = new Set<number>();
+        const permissionRequestSeqs = new Set<number>();
+        for (const event of state.events) {
+            if (event.type === "permission_request") {
+                permissionRequestSeqs.add(event.seq);
+                continue;
+            }
+            if (event.type !== "prompt") continue;
+            if (asString(event.payload.kind) === "queued_release") queuedReleasePromptSeqs.add(event.seq);
+            else if (isLegacyQueuePrompt(event)) legacyQueuePromptSeqs.add(event.seq);
+        }
+        return { queuedReleasePromptSeqs, legacyQueuePromptSeqs, permissionRequestSeqs };
+    }, [state.events]);
+    const visibleEvents = useMemo(
+        () =>
+            state.events.filter(
+                (event) =>
+                    !["read_marker", "edit", "session_status", "convo_meta"].includes(event.type) &&
+                    !isQueuedReleaseReply(event, queuedReleasePromptSeqs, legacyQueuePromptSeqs) &&
+                    !isSuppressedTrackerEvent(event) &&
+                    !isPermissionDecisionReply(event, permissionRequestSeqs),
+            ),
+        [state.events, queuedReleasePromptSeqs, legacyQueuePromptSeqs, permissionRequestSeqs],
+    );
+    const timeline = useMemo(
+        () =>
+            [
+                ...visibleEvents.map((event) => ({ kind: "event" as const, timestamp: event.ts, event })),
+                ...state.pendingMessages.map((message) => ({
+                    kind: "pending" as const,
+                    timestamp: message.createdAt,
+                    message,
+                })),
+            ].sort((left, right) => left.timestamp - right.timestamp),
+        [visibleEvents, state.pendingMessages],
+    );
+    const answeredPromptReplies = useMemo(() => {
+        const replies = new Map<string, { choice?: string }>();
+        for (const event of state.events) {
+            if (event.type !== "prompt_reply") continue;
+            const targetSeq = asNumber(event.payload.target_seq, Number.NaN);
+            if (!Number.isSafeInteger(targetSeq) || targetSeq < 0) continue;
+            const choice = asString(event.payload.choice, asString(event.payload.label)) || undefined;
+            replies.set(`${event.convo_id}:${targetSeq}`, { choice });
+        }
+        return replies;
+    }, [state.events]);
+    // Durable, journaled resolution of an agent_spawn ask — no local persistence (§ design
+    // "Resolution state"). A card whose request_id has an entry here is resolved across
+    // restarts and devices because the spawn_outcome event is journaled, not client state.
+    const spawnOutcomes = useMemo(() => {
+        const outcomes = new Map<string, EventPayload>();
+        for (const event of state.events) {
+            if (event.type !== "spawn_outcome") continue;
+            // A non-string request_id (malformed/missing) must never coerce into the map — a
+            // bare `String(...)` here produces a junk "undefined" key that a card whose own
+            // request_id happens to stringify the same way could spuriously match (Task-1
+            // review scope D).
+            if (typeof event.payload.request_id !== "string") continue;
+            outcomes.set(event.payload.request_id, event.payload);
+        }
+        return outcomes;
+    }, [state.events]);
+    const releasedActions = useMemo(() => {
+        const actions = new Map<string, "send" | "cancel">();
+        for (const event of state.events) {
+            if (
+                event.type !== "prompt_reply" ||
+                asString(event.payload.kind) !== "queued_release" ||
+                !Array.isArray(event.payload.released)
+            )
+                continue;
+            const action = asString(event.payload.action);
+            if (action !== "send" && action !== "cancel") continue;
+            for (const releasedId of event.payload.released) {
+                const itemId = asString(releasedId);
+                if (itemId) actions.set(itemId, action);
+            }
+        }
+        return actions;
+    }, [state.events]);
+    const resolvedAction = useCallback(
+        (itemId: string): "send" | "cancel" | undefined => releasedActions.get(itemId),
+        [releasedActions],
+    );
+    const scrollToBottom = useCallback((): void => {
+        const node = scrollRef.current;
+        if (node) node.scrollTop = node.scrollHeight;
+    }, []);
+    const cancelPendingScrollFrame = useCallback((): void => {
+        if (pendingScrollFrame.current === undefined) return;
+        cancelAnimationFrame(pendingScrollFrame.current);
+        pendingScrollFrame.current = undefined;
+    }, []);
+    const onScroll = (): void => {
+        const node = scrollRef.current;
+        if (!node) return;
+        cancelPendingScrollFrame();
+        const queuedConversationId = state.selectedConversationId;
+        pendingScrollFrame.current = requestAnimationFrame(() => {
+            pendingScrollFrame.current = undefined;
+            if (selectedConversationId.current !== queuedConversationId) return;
+            setFollow(isNearBottom(node.scrollTop, node.scrollHeight, node.clientHeight));
+        });
+    };
+
+    useEffect(() => {
+        setFollow(true);
+        return cancelPendingScrollFrame;
+    }, [state.selectedConversationId, cancelPendingScrollFrame]);
+
+    useEffect(() => {
+        cancelPendingScrollFrame();
+        historyScrollAnchor.current = undefined;
+        historyScrollRestored.current = false;
+        setFollow(true);
+        scrollToBottom();
+    }, [state.sendTick, cancelPendingScrollFrame, scrollToBottom]);
+
+    useLayoutEffect(() => {
+        const node = scrollRef.current;
+        if (!node) return;
+
+        const anchor = historyScrollAnchor.current;
+        if (anchor) {
+            if (anchor.conversationId !== state.selectedConversationId) {
+                historyScrollAnchor.current = undefined;
+                historyScrollRestored.current = false;
+                node.scrollTop = node.scrollHeight;
+                return;
+            }
+            const oldestSeq = visibleEvents[0]?.seq;
+            const historyPrepended =
+                oldestSeq !== undefined && (anchor.oldestSeq === undefined || oldestSeq < anchor.oldestSeq);
+            if (historyPrepended || !state.loadingHistory) {
+                node.scrollTop = anchor.scrollTop + node.scrollHeight - anchor.scrollHeight;
+                historyScrollAnchor.current = undefined;
+                historyScrollRestored.current = state.loadingHistory;
+            }
+            return;
+        }
+
+        if (historyScrollRestored.current) {
+            if (!state.loadingHistory) historyScrollRestored.current = false;
+            return;
+        }
+
+        if (isFollowingTail) node.scrollTop = node.scrollHeight;
+    }, [
+        state.selectedConversationId,
+        visibleEvents,
+        state.pendingMessages.length,
+        state.textStreams,
+        state.toolStreams,
+        state.loadingHistory,
+        isFollowingTail,
+    ]);
+
+    const loadEarlierMessages = (): void => {
+        const node = scrollRef.current;
+        if (node) {
+            historyScrollAnchor.current = {
+                conversationId: state.selectedConversationId,
+                scrollHeight: node.scrollHeight,
+                scrollTop: node.scrollTop,
+                oldestSeq: visibleEvents[0]?.seq,
+            };
+        }
+        void client.loadOlderHistory();
+    };
+
+    // The activity indicator ('Thinking' / 'Running …') and the fire-and-forget tool-call cards
+    // both ride ephemeral frames whose turn-end 'idle'/'end' frame is never replayed
+    // (lib/journal-publisher.js publishActivity), so a dropped final frame would otherwise strand
+    // a stale "Thinking" or a dangling 'running' tool card until the next turn. Gate both
+    // on the durable, replayed run-state: only render while the session is actually running; the
+    // model reconcile (refreshConversations) prunes any tool card that lingers in the map.
+    const sessionRunning = client.selectedConversation()?.session_state === "running";
+
+    const timelineMain = (
+        <main className="mx_RoomView_timeline" data-testid="timeline">
+            <div className="mx_RoomView_messagePanel mx_AutoHideScrollbar" ref={scrollRef} onScroll={onScroll}>
+                <div className="mx_RoomView_messageListWrapper">
+                    <ol className="mx_RoomView_MessageList" aria-live="polite">
+                        {state.hasOlderHistory && (
+                            <li className="mj_HistoryRow">
+                                <button
+                                    className="mj_LoadHistory"
+                                    onClick={loadEarlierMessages}
+                                    disabled={state.loadingHistory}
+                                >
+                                    {state.loadingHistory ? "Loading…" : "Load earlier messages"}
+                                </button>
+                            </li>
+                        )}
+                        {timeline.map((item, index) => {
+                            const previous = timeline[index - 1];
+                            // A day divider precedes the first row of each new calendar day (§ upload-first
+                            // ref): a centred dated label flanked by hairline rules.
+                            const divider =
+                                !previous || !sameCalendarDay(item.timestamp, previous.timestamp) ? (
+                                    <li className="mj_DateDivider" role="separator">
+                                        <span className="mj_DateDivider_rule" aria-hidden="true" />
+                                        <span className="mj_DateDivider_label">{formatDayDivider(item.timestamp)}</span>
+                                        <span className="mj_DateDivider_rule" aria-hidden="true" />
+                                    </li>
+                                ) : null;
+                            if (item.kind === "event") {
+                                const next = timeline[index + 1];
+                                return (
+                                    <React.Fragment key={`e-${item.event.seq}`}>
+                                        {divider}
+                                        <EventRow
+                                            client={client}
+                                            event={item.event}
+                                            answeredPromptReplies={answeredPromptReplies}
+                                            spawnOutcomes={spawnOutcomes}
+                                            isReadOnly={isReadOnly}
+                                            resolvedAction={resolvedAction}
+                                            continuation={
+                                                previous?.kind === "event" &&
+                                                previous.event.sender === item.event.sender &&
+                                                !divider
+                                            }
+                                            lastInSection={
+                                                next?.kind !== "event" || next.event.sender !== item.event.sender
+                                            }
+                                            rowHandlers={menu.rowHandlers}
+                                        />
+                                    </React.Fragment>
+                                );
+                            }
+                            const message = item.message;
+                            return (
+                                <React.Fragment key={`m-${message.localId}`}>
+                                    {divider}
+                                    {message.kind === "image" || message.kind === "file" ? (
+                                        <PendingAttachment client={client} message={message} isReadOnly={isReadOnly} />
+                                    ) : (
+                                        <li
+                                            className="mx_EventTile mx_EventTile_sending mx_EventTile_lastInSection"
+                                            data-layout="bubble"
+                                            data-self="true"
+                                        >
+                                            <div className="mx_EventTile_line">
+                                                <div className="mx_MTextBody mx_EventTile_content">
+                                                    <div className="mj_Markdown">
+                                                        <MarkdownBody text={message.body} label={message.localId} />
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <span className="mj_SendingLabel">Sending…</span>
+                                        </li>
+                                    )}
+                                </React.Fragment>
+                            );
+                        })}
+                        {Object.values(state.textStreams).map((text, index) => (
+                            <li
+                                className="mx_EventTile mx_EventTile_lastInSection"
+                                key={`text-stream-${index}`}
+                                data-layout="bubble"
+                                data-self="false"
+                            >
+                                <span className="mx_DisambiguatedProfile">
+                                    <MsgAvatar />
+                                    <span className="mx_DisambiguatedProfile_displayName">agent</span>
+                                </span>
+                                <div className="mx_EventTile_line">
+                                    <div className="mx_MTextBody mx_EventTile_content">
+                                        <div className="mj_Markdown mj_Markdown_streaming">
+                                            <MarkdownBody text={text} streaming label={`stream-${index}`} />
+                                            <span className="mj_Cursor" />
+                                        </div>
+                                    </div>
+                                </div>
+                            </li>
+                        ))}
+                        {sessionRunning &&
+                            Object.values(state.toolStreams).map((stream) => (
+                                <ToolStream key={stream.messageRef} stream={stream} />
+                            ))}
+                        {state.activity && state.activity.state !== "idle" && sessionRunning && (
+                            <li className="mx_WhoIsTypingTile mj_Activity">
+                                <span />
+                                <span />
+                                <span />
+                                {state.activity.state === "thinking"
+                                    ? "Thinking"
+                                    : `Running ${state.activity.detail || "a tool"}`}
+                            </li>
+                        )}
+                    </ol>
+                </div>
+            </div>
+            {!isFollowingTail && (
+                <button
+                    className="mj_JumpToBottom"
+                    aria-label="Jump to bottom"
+                    onClick={() => {
+                        setFollow(true);
+                        scrollToBottom();
+                    }}
+                >
+                    ↓
+                </button>
+            )}
+            {menu.state && (
+                <div
+                    className="mj_HeaderMenu mj_EventRowMenu"
+                    role="menu"
+                    ref={menu.menuRef}
+                    style={{ position: "fixed", left: menu.state.left, top: menu.state.top }}
+                    onKeyDown={menu.menuKeyDown}
+                >
+                    {menu.state.target.type === "text" && (
+                        <>
+                            {/* Copy = readable plain text (markdown stripped); the raw markdown
+                                SOURCE is offered separately below (§10.7 icon per row). */}
+                            <button
+                                className="mj_RoomItemMenu_item"
+                                type="button"
+                                role="menuitem"
+                                onClick={() => {
+                                    void copyText(markdownToPlainText(asString(menu.state!.target.payload.body)));
+                                    menu.close();
+                                }}
+                            >
+                                <ClipboardIcon aria-hidden />
+                                <span>Copy</span>
+                            </button>
+                            <button
+                                className="mj_RoomItemMenu_item"
+                                type="button"
+                                role="menuitem"
+                                onClick={() => {
+                                    // The journal stores the markdown source in payload.body.
+                                    void copyText(asString(menu.state!.target.payload.body));
+                                    menu.close();
+                                }}
+                            >
+                                <MarkdownIcon aria-hidden />
+                                <span>Copy as Markdown</span>
+                            </button>
+                        </>
+                    )}
+                    <button
+                        className="mj_RoomItemMenu_item"
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                            sourceOpenerRef.current = menu.openerRef.current;
+                            setSourceEvent(menu.state!.target);
+                            menu.close();
+                        }}
+                    >
+                        <CodeBracketsIcon aria-hidden />
+                        <span>View source</span>
+                    </button>
+                </div>
+            )}
+            {sourceEvent && (
+                <EventSourceSheet
+                    event={sourceEvent}
+                    opener={sourceOpenerRef.current}
+                    onClose={() => setSourceEvent(undefined)}
+                />
+            )}
+            {viewerMediaId && mediaCorpus.length > 0 && (
+                <MediaViewer
+                    client={client}
+                    items={mediaCorpus}
+                    initialMediaId={viewerMediaId}
+                    opener={viewerOpenerRef.current}
+                    onClose={() => setViewerMediaId(undefined)}
+                />
+            )}
+        </main>
+    );
+
+    return <MediaViewerContext.Provider value={mediaViewerValue}>{timelineMain}</MediaViewerContext.Provider>;
+}
+
+const SLASH_LISTBOX_ID = "mx_SlashPalette_listbox";
+const slashRowId = (index: number): string => `${SLASH_LISTBOX_ID}_opt_${index}`;
+
+function SlashCommandPalette({
+    commands,
+    folders,
+    highlighted,
+    onHighlight,
+    onSelectCommand,
+    onSelectFolder,
+}: {
+    commands: BotCommand[];
+    folders: string[];
+    highlighted: number | null;
+    onHighlight: (index: number | null) => void;
+    onSelectCommand: (command: BotCommand) => void;
+    onSelectFolder: (path: string) => void;
+}): React.ReactElement {
+    const highlightedRow = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        if (highlighted !== null) highlightedRow.current?.scrollIntoView({ block: "nearest" });
+    }, [highlighted]);
+
+    return (
+        <div className="mx_SlashPalette" id={SLASH_LISTBOX_ID} role="listbox">
+            {folders.length > 0
+                ? folders.map((folder, index) => (
+                      <div
+                          className={`mx_SlashPalette_row${
+                              highlighted === index ? " mx_SlashPalette_row_highlighted" : ""
+                          }`}
+                          id={slashRowId(index)}
+                          key={`${folder}-${index}`}
+                          ref={highlighted === index ? highlightedRow : undefined}
+                          role="option"
+                          aria-selected={highlighted === index}
+                          onMouseEnter={() => onHighlight(index)}
+                          onMouseDown={(event) => event.preventDefault()}
+                          onClick={() => onSelectFolder(folder)}
+                      >
+                          <span className="mx_SlashPalette_trigger">{folder}</span>
+                      </div>
+                  ))
+                : commands.map((command, index) => (
+                      <div
+                          className={`mx_SlashPalette_row${
+                              highlighted === index ? " mx_SlashPalette_row_highlighted" : ""
+                          }`}
+                          id={slashRowId(index)}
+                          key={command.trigger}
+                          ref={highlighted === index ? highlightedRow : undefined}
+                          role="option"
+                          aria-selected={highlighted === index}
+                          onMouseEnter={() => onHighlight(index)}
+                          onMouseDown={(event) => event.preventDefault()}
+                          onClick={() => onSelectCommand(command)}
+                      >
+                          <span className="mx_SlashPalette_trigger">{command.trigger}</span>
+                          {command.argHint && <span className="mx_SlashPalette_argHint">{command.argHint}</span>}
+                          <span className="mx_SlashPalette_summary">{command.summary}</span>
+                      </div>
+                  ))}
+        </div>
+    );
+}
+
+function Composer({
+    client,
+    state,
+    drafts,
+    draftReloadTick,
+    reloadDraft,
+    sendingConvos,
+    draftRevisions,
+}: {
+    client: MatronJournalClient;
+    state: ClientState;
+    drafts: DraftStore;
+    draftReloadTick: number;
+    reloadDraft: (conversationId: string) => void;
+    sendingConvos: React.RefObject<Set<string>>;
+    draftRevisions: React.RefObject<Map<string, number>>;
+}): React.ReactElement {
+    const [body, setBody] = useState("");
+    // The voice-note path reads the draft from a callback that outlives renders.
+    const bodyRef = useRef(body);
+    bodyRef.current = body;
+    const [highlighted, setHighlighted] = useState<number | null>(null);
+    const [dismissed, setDismissed] = useState<string | null>(null);
+    const [nonDurable, setNonDurable] = useState(false);
+    const store = useMemo(() => makeRecentFoldersStore(state.session), [state.session]);
+    const [dismissedSeq, setDismissedSeq] = useState(0);
+    const textarea = useRef<HTMLTextAreaElement>(null);
+    const fileInput = useRef<HTMLInputElement>(null);
+    const convoId = state.selectedConversationId;
+    const convoIdRef = useRef(convoId);
+    convoIdRef.current = convoId;
+    const prevConvoIdRef = useRef(convoId);
+    const draftTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+    const draftTimerConvoRef = useRef<string | undefined>(undefined);
+    const folders = folderSuggestions(body, store);
+    const commands = filterCommands(CLAUDE_BRIDGE_COMMANDS, body);
+    const open = body !== dismissed && (folders.length > 0 || (isCommandMode(body) && commands.length > 0));
+
+    // A finished voice note goes to the conversation it was recorded in. The typed draft goes with
+    // it as its caption, so the agent gets both in one turn — unless a text send of it is already
+    // in flight. Like the send button, the draft clears as the send starts (the promise below
+    // settles only after the upload) and comes back if the voice note couldn't be saved.
+    const onVoiceRecorded = (blob: Blob, { contextKey: capturedConvo, sessionGen }: VoiceRecordingContext): void => {
+        const caption =
+            convoIdRef.current === capturedConvo && !sendingConvos.current.has(capturedConvo)
+                ? bodyRef.current.trim()
+                : "";
+        if (caption) {
+            clearSentDraftRef.current(capturedConvo, draftRevisions.current.get(capturedConvo) ?? 0);
+        }
+        const failed = (): void => {
+            if (caption) restoreDraftRef.current(capturedConvo, caption);
+            voice.reportSendFailure("Couldn't save the recording — try again.");
+        };
+        void client
+            .sendVoiceNote(blob, capturedConvo, sessionGen, caption || undefined)
+            .then((outcome) => {
+                if (outcome !== "sent" && outcome !== "persisted-terminal") failed();
+            })
+            .catch(failed);
+    };
+    const voice = useVoiceRecorder({ contextKey: convoId, client, onRecorded: onVoiceRecorded });
+    const { voiceState } = voice;
+
+    // Mirror the store's canonical per-convo durability flag into React state, but only for the
+    // currently-selected conversation — a late async persist/clear for A must not clobber B's badge.
+    const syncDurability = useCallback(
+        (cid: string) => {
+            if (convoIdRef.current === cid) setNonDurable(drafts.durability(cid) === "non-durable");
+        },
+        [drafts],
+    );
+    const cancelDraftDebounce = useCallback(() => {
+        if (draftTimerRef.current) {
+            clearTimeout(draftTimerRef.current);
+            draftTimerRef.current = undefined;
+        }
+        draftTimerConvoRef.current = undefined;
+    }, []);
+    // Cancel the pending debounce, but if it belonged to a DIFFERENT conversation than `keepCid`
+    // (a cross-convo late send: switch to B + type while A's send is in flight), flush that convo
+    // first so it isn't stranded. Never flush `keepCid`'s own timer — the caller is about to
+    // clear/persist it explicitly, and force-persisting a just-sent draft here would make it
+    // resurrect after a clear-failure (final-review round-3).
+    const cancelDebounceKeeping = useCallback(
+        (keepCid: string) => {
+            const pendingCid = draftTimerConvoRef.current;
+            cancelDraftDebounce();
+            if (pendingCid && pendingCid !== keepCid) {
+                drafts.persist(pendingCid);
+                syncDurability(pendingCid);
+            }
+        },
+        [cancelDraftDebounce, drafts, syncDurability],
+    );
+    const flushDraft = useCallback(() => {
+        cancelDraftDebounce();
+        const cid = prevConvoIdRef.current;
+        if (cid) {
+            drafts.persist(cid);
+            syncDurability(cid);
+        }
+    }, [cancelDraftDebounce, drafts, syncDurability]);
+
+    const setBodyDraft = useCallback(
+        (next: string) => {
+            setBody(next);
+            const cid = convoIdRef.current;
+            if (!cid) return;
+            draftRevisions.current.set(cid, (draftRevisions.current.get(cid) ?? 0) + 1);
+            drafts.setDraft(cid, next);
+            if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
+            draftTimerConvoRef.current = cid;
+            draftTimerRef.current = setTimeout(() => {
+                drafts.persist(cid);
+                syncDurability(cid);
+                draftTimerRef.current = undefined;
+                draftTimerConvoRef.current = undefined;
+            }, 250);
+        },
+        [draftRevisions, drafts, syncDurability],
+    );
+
+    useEffect(() => {
+        const onVis = (): void => {
+            if (document.visibilityState === "hidden") flushDraft();
+        };
+        window.addEventListener("pagehide", flushDraft);
+        document.addEventListener("visibilitychange", onVis);
+        return () => {
+            window.removeEventListener("pagehide", flushDraft);
+            document.removeEventListener("visibilitychange", onVis);
+            flushDraft();
+        };
+    }, [flushDraft]);
+
+    useLayoutEffect(() => {
+        const prev = prevConvoIdRef.current;
+        if (prev && prev !== convoId) flushDraft();
+        const { text, ok } = convoId ? drafts.read(convoId) : { text: "", ok: true };
+        setBody(ok ? text : "");
+        setDismissed(null);
+        setHighlighted(null);
+        // Sync the badge FROM the store for the newly-selected convo — never a blind reset, so a
+        // still-non-durable convo keeps its warning across switch-away/back (and a clear-failure flag surfaces).
+        setNonDurable(convoId ? drafts.durability(convoId) === "non-durable" : false);
+        if (textarea.current) textarea.current.style.height = "auto";
+        prevConvoIdRef.current = convoId;
+    }, [convoId, draftReloadTick]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    const selectCommand = (command: BotCommand): void => {
+        setBodyDraft(applyCommand(command.trigger));
+        setHighlighted(null);
+        textarea.current?.focus();
+    };
+    const selectFolder = (path: string): void => {
+        const nextBody = applyFolder(body, path);
+        setBodyDraft(nextBody);
+        setDismissed(nextBody);
+        setHighlighted(null);
+        textarea.current?.focus();
+    };
+    // After a send took the draft (a text message, or a voice note carrying it as caption): clear it,
+    // unless the user edited it during the send.
+    const clearSentDraft = (cid: string, submittedRevision: number): void => {
+        // Cancel cid's own pending timer without persisting (we clear/persist it below), but
+        // flush any pending timer owned by another convo the user switched to during the send.
+        cancelDebounceKeeping(cid);
+        const draftUnchanged = (draftRevisions.current.get(cid) ?? 0) === submittedRevision;
+        if (draftUnchanged) drafts.clear(cid);
+        else drafts.persist(cid);
+        syncDurability(cid);
+        reloadDraft(cid);
+        if (draftUnchanged && convoIdRef.current === cid) {
+            setBody("");
+            // The send glyph unmounts once the body is empty; keep focus in the composer.
+            textarea.current?.focus();
+            setDismissed(null);
+            if (textarea.current) textarea.current.style.height = "auto";
+        }
+    };
+    const clearSentDraftRef = useRef(clearSentDraft);
+    clearSentDraftRef.current = clearSentDraft;
+    // Puts back a draft a failed send took — unless the user has typed something new since.
+    const restoreDraft = (cid: string, text: string): void => {
+        if (drafts.read(cid).text.trim()) return;
+        if (convoIdRef.current === cid) {
+            setBodyDraft(text);
+            return;
+        }
+        drafts.setDraft(cid, text);
+        drafts.persist(cid);
+        syncDurability(cid);
+    };
+    const restoreDraftRef = useRef(restoreDraft);
+    restoreDraftRef.current = restoreDraft;
+    const send = async (): Promise<void> => {
+        const cid = convoIdRef.current;
+        const submitted = body;
+        if (!cid || !submitted.trim() || sendingConvos.current.has(cid)) return;
+        const submittedRevision = draftRevisions.current.get(cid) ?? 0;
+        sendingConvos.current.add(cid);
+        try {
+            if (await client.sendMessage(submitted, cid)) {
+                const folder = recentFolderArgument(submitted);
+                if (folder) store.record(folder);
+                clearSentDraft(cid, submittedRevision);
+            }
+        } catch (error) {
+            console.warn("matron: message not queued (outbox write failed)", error);
+        } finally {
+            sendingConvos.current.delete(cid);
+        }
+    };
+    return (
+        <div className="mx_MessageComposer" role="region" aria-label="Message composer" ref={voice.containerRef}>
+            <div className="mx_MessageComposer_wrapper">
+                {state.connectionError && state.connectionErrorSeq !== dismissedSeq && (
+                    <div className="mj_ConnectionError">
+                        <span role="status">{state.connectionError}</span>
+                        <button
+                            className="mj_ConnectionError_dismiss"
+                            type="button"
+                            aria-label="Dismiss error"
+                            title="Dismiss error"
+                            onClick={() => setDismissedSeq(state.connectionErrorSeq)}
+                        >
+                            <CloseIcon />
+                        </button>
+                    </div>
+                )}
+                <VoiceErrorBanner recorder={voice} />
+                {nonDurable && (
+                    <div className="mj_DraftNonDurable" role="status">
+                        Draft won't be saved — storage full
+                    </div>
+                )}
+                {open && (
+                    <SlashCommandPalette
+                        commands={commands}
+                        folders={folders}
+                        highlighted={highlighted}
+                        onHighlight={setHighlighted}
+                        onSelectCommand={selectCommand}
+                        onSelectFolder={selectFolder}
+                    />
+                )}
+                {voiceState === "recording" ? (
+                    <VoiceRecordingBar recorder={voice} />
+                ) : (
+                    <div className="mj_ComposerRow">
+                        {/* Mac composer: attach outside the field on the left; mic and the send glyph on the right. */}
+                        <button
+                            className="mj_ComposerControl mj_ComposerAttach"
+                            title="Attach a file"
+                            aria-label="Attach a file"
+                            onClick={() => fileInput.current?.click()}
+                        >
+                            <PlusCircleIcon />
+                        </button>
+                        <input
+                            ref={fileInput}
+                            type="file"
+                            multiple
+                            hidden
+                            onChange={(event) => {
+                                if (event.target.files) client.stageFiles([...event.target.files]);
+                                event.target.value = "";
+                            }}
+                        />
+                        <div className="mj_ComposerField" onClick={() => textarea.current?.focus()}>
+                            <div className="mx_BasicMessageComposer">
+                                <textarea
+                                    className="mx_BasicMessageComposer_input"
+                                    ref={textarea}
+                                    rows={1}
+                                    value={body}
+                                    onBlur={flushDraft}
+                                    onChange={(event) => {
+                                        const nextBody = event.target.value;
+                                        setBodyDraft(nextBody);
+                                        setHighlighted(null);
+                                        if (dismissed !== null && nextBody !== dismissed) setDismissed(null);
+                                        event.target.style.height = "auto";
+                                        // Mac composer: one 32px line, growing to eight (144px).
+                                        event.target.style.height = `${Math.min(event.target.scrollHeight, 144)}px`;
+                                    }}
+                                    onKeyDown={(event) => {
+                                        if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+                                        if (open) {
+                                            const count = folders.length || commands.length;
+                                            if (event.key === "ArrowDown") {
+                                                event.preventDefault();
+                                                setHighlighted((current) =>
+                                                    current === null ? 0 : (current + 1) % count,
+                                                );
+                                                return;
+                                            }
+                                            if (event.key === "ArrowUp") {
+                                                event.preventDefault();
+                                                setHighlighted((current) =>
+                                                    current === null ? count - 1 : (current - 1 + count) % count,
+                                                );
+                                                return;
+                                            }
+                                            if (event.key === "Tab") {
+                                                event.preventDefault();
+                                                const index = highlighted ?? 0;
+                                                if (folders.length > 0) selectFolder(folders[index]);
+                                                else selectCommand(commands[index]);
+                                                return;
+                                            }
+                                            if (event.key === "Escape") {
+                                                event.preventDefault();
+                                                setDismissed(body);
+                                                setHighlighted(null);
+                                                return;
+                                            }
+                                            if (event.key === "Enter" && !event.shiftKey && highlighted !== null) {
+                                                event.preventDefault();
+                                                if (folders.length > 0) selectFolder(folders[highlighted]);
+                                                else selectCommand(commands[highlighted]);
+                                                return;
+                                            }
+                                        }
+                                        if (event.key === "Enter" && !event.shiftKey) {
+                                            event.preventDefault();
+                                            void send();
+                                        }
+                                    }}
+                                    onPaste={(event) => {
+                                        if (state.stagedUploads) return;
+                                        const files = [...event.clipboardData.files];
+                                        if (files.length > 0) {
+                                            event.preventDefault();
+                                            client.stageFiles(files);
+                                        }
+                                    }}
+                                    placeholder={
+                                        state.connection === "online"
+                                            ? "Message…"
+                                            : "Messages will send when reconnected"
+                                    }
+                                    aria-label="Message your agent"
+                                    aria-describedby="mj-composer-hint"
+                                    role="combobox"
+                                    aria-expanded={open}
+                                    aria-controls={SLASH_LISTBOX_ID}
+                                    aria-activedescendant={highlighted !== null ? slashRowId(highlighted) : undefined}
+                                />
+                            </div>
+                        </div>
+                        <VoiceMicButton recorder={voice} className="mj_ComposerControl mj_ComposerMic" />
+                        {/* Mac: the send glyph (arrow.up.circle.fill) appears only once there is text. */}
+                        {body.trim() && (
+                            <button
+                                className="mj_ComposerSend"
+                                type="button"
+                                onClick={() => void send()}
+                                aria-label="Send message"
+                            >
+                                <ArrowUpCircleIcon />
+                            </button>
+                        )}
+                    </div>
+                )}
+                {/* The old hint row's instructions, kept for assistive tech only (the Mac shows none). */}
+                <span id="mj-composer-hint" className="mj_ScreenReaderOnly">
+                    / commands · shift+enter for newline
+                </span>
+            </div>
+        </div>
+    );
+}
+
+function EventSourceSheet({
+    event,
+    opener,
+    onClose,
+}: {
+    event: JournalEvent;
+    opener: HTMLElement | null;
+    onClose: () => void;
+}): React.ReactElement {
+    const sheetRef = useRef<HTMLDivElement>(null);
+    const doneRef = useRef<HTMLButtonElement>(null);
+
+    useEffect(() => {
+        doneRef.current?.focus();
+        return () => {
+            if (opener?.isConnected) opener.focus();
+        };
+    }, [opener]);
+
+    useEffect(() => {
+        const onKey = (event: KeyboardEvent): void => {
+            if (event.key === "Escape") {
+                onClose();
+                return;
+            }
+            if (event.key !== "Tab") return;
+            const focusable = [...(sheetRef.current?.querySelectorAll<HTMLElement>("button:not([disabled])") ?? [])];
+            if (focusable.length === 0) return;
+            const first = focusable[0];
+            const last = focusable[focusable.length - 1];
+            if (
+                event.shiftKey &&
+                (document.activeElement === first || !sheetRef.current?.contains(document.activeElement))
+            ) {
+                event.preventDefault();
+                last.focus();
+            } else if (
+                !event.shiftKey &&
+                (document.activeElement === last || !sheetRef.current?.contains(document.activeElement))
+            ) {
+                event.preventDefault();
+                first.focus();
+            }
+        };
+        document.addEventListener("keydown", onKey);
+        return () => document.removeEventListener("keydown", onKey);
+    }, [onClose]);
+
+    const json = JSON.stringify(event, null, 2);
+    // §10.8: the footer states the payload size so a clipped body is detectable. Byte size
+    // (not code-unit length) — matches what the operator would see on the wire.
+    const byteSize = typeof Blob === "function" ? new Blob([json]).size : json.length;
+    return (
+        <div
+            className="mj_EventSource_scrim"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Event source"
+            onClick={onClose}
+        >
+            <div ref={sheetRef} className="mj_EventSource" onClick={(clickEvent) => clickEvent.stopPropagation()}>
+                <header className="mj_EventSource_header">
+                    <CodeBracketsIcon className="mj_EventSource_headerIcon" aria-hidden />
+                    <h2>Event source</h2>
+                    <span className="mj_EventSource_typeChip">{event.type}</span>
+                    <span className="mj_EventSource_headerSpacer" />
+                    <button
+                        type="button"
+                        className="mj_EventSource_close"
+                        aria-label="Close"
+                        title="Close"
+                        onClick={onClose}
+                    >
+                        <CloseIcon aria-hidden />
+                    </button>
+                </header>
+                <div className="mj_EventSource_body">
+                    {/* §10.8: lift the scalar fields the operator scans for OUT of the blob into a
+                        labelled meta grid, so reading JSON to find a timestamp isn't the task. */}
+                    <div className="mj_EventSource_meta">
+                        <span className="mj_EventSource_metaCell">
+                            <span className="mj_EventSource_metaLabel">seq</span>
+                            <span className="mj_EventSource_metaValue">{event.seq}</span>
+                        </span>
+                        <span className="mj_EventSource_metaCell">
+                            <span className="mj_EventSource_metaLabel">sender</span>
+                            <span className="mj_EventSource_metaValue">{event.sender}</span>
+                        </span>
+                        <span className="mj_EventSource_metaCell">
+                            <span className="mj_EventSource_metaLabel">timestamp</span>
+                            <span className="mj_EventSource_metaValue">{formatEventTimestamp(event.ts)}</span>
+                        </span>
+                        <span className="mj_EventSource_metaCell">
+                            <span className="mj_EventSource_metaLabel">convo</span>
+                            <span
+                                className="mj_EventSource_metaValue mj_EventSource_metaValue_trunc"
+                                title={event.convo_id}
+                            >
+                                {event.convo_id}
+                            </span>
+                        </span>
+                    </div>
+                    <pre className="mj_EventSource_json">{json}</pre>
+                </div>
+                <div className="mj_EventSource_footer">
+                    <span className="mj_EventSource_note">Read-only · {byteSize} bytes</span>
+                    <button type="button" className="mj_EventSource_secondary" onClick={onClose}>
+                        Close
+                    </button>
+                    <button
+                        type="button"
+                        className="mj_EventSource_copy"
+                        ref={doneRef}
+                        onClick={() => void copyText(json)}
+                    >
+                        <ClipboardIcon aria-hidden />
+                        Copy JSON
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+// Event-source timestamp cell — a clock time with milliseconds (HH:MM:SS.mmm), lifted out
+// of the JSON blob per §10.8. Local time; the raw epoch stays visible in the blob below.
+function formatEventTimestamp(ts: number): string {
+    if (!Number.isFinite(ts)) return String(ts);
+    const date = new Date(ts);
+    if (Number.isNaN(date.getTime())) return String(ts);
+    const pad = (value: number, width = 2): string => String(value).padStart(width, "0");
+    return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}.${pad(date.getMilliseconds(), 3)}`;
+}
+
+function UploadConfirmDialog({
+    client,
+    staged,
+}: {
+    client: MatronJournalClient;
+    staged: StagedUploads;
+}): React.ReactElement {
+    useEffect(() => {
+        const onPaste = (event: ClipboardEvent): void => {
+            // Ignore the bootstrap paste the composer already consumed. On the first
+            // paste (modal closed) the composer stages + calls preventDefault(), which
+            // opens this dialog; React 19 flushes that mount synchronously, so this
+            // document listener registers WITHIN the same paste dispatch and would stage
+            // the file a second time ("1 of 2"). defaultPrevented is set by the composer's
+            // preventDefault() and is propagation-order-independent, so it holds even
+            // though the listener was added mid-dispatch. Once the dialog is open the
+            // composer is inert (no preventDefault), so subsequent pastes append here.
+            if (event.defaultPrevented) return;
+            const files = [...(event.clipboardData?.files ?? [])];
+            if (files.length > 0) {
+                event.preventDefault();
+                client.stageFiles(files);
+            }
+        };
+        const preventDropNavigation = (event: DragEvent): void => event.preventDefault();
+        document.addEventListener("paste", onPaste);
+        document.addEventListener("dragover", preventDropNavigation);
+        document.addEventListener("drop", preventDropNavigation);
+        return () => {
+            document.removeEventListener("paste", onPaste);
+            document.removeEventListener("dragover", preventDropNavigation);
+            document.removeEventListener("drop", preventDropNavigation);
+        };
+    }, [client]);
+
+    if (staged.error) {
+        return (
+            <div className="mj_UploadConfirm_scrim" role="dialog" aria-modal="true" aria-label="Upload error">
+                <div className="mj_UploadConfirm">
+                    <p className="mj_UploadConfirm_error">
+                        This conversation was archived in another tab. Attachment(s) were not sent.
+                    </p>
+                    <div className="mj_UploadConfirm_actions">
+                        <button aria-label="Close" onClick={() => client.cancelStagedFiles()}>
+                            Close
+                        </button>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    const head = staged.items[0];
+    if (!head) return <></>;
+    return (
+        <div className="mj_UploadConfirm_scrim" role="dialog" aria-modal="true" aria-label={head.file.name}>
+            <UploadConfirmPage key={head.id} client={client} staged={staged} head={head} />
+        </div>
+    );
+}
+
+function UploadConfirmPage({
+    client,
+    staged,
+    head,
+}: {
+    client: MatronJournalClient;
+    staged: StagedUploads;
+    head: StagedUploadItem;
+}): React.ReactElement {
+    const isImage = head.file.type.startsWith("image/");
+    const preflight =
+        head.file.size === 0
+            ? "That file is empty."
+            : head.file.size > BROWSER_MEMORY_SAFETY_MAX_BYTES
+              ? "This file is too large for this browser to upload safely."
+              : undefined;
+    const canSend = !preflight && !staged.confirming;
+    const [caption, setCaption] = useState("");
+    const textarea = useRef<HTMLTextAreaElement>(null);
+    const [previewUrl, setPreviewUrl] = useState<string>();
+    const position = staged.total - staged.items.length + 1;
+
+    useEffect(() => {
+        textarea.current?.focus();
+        if (!isImage || preflight) return undefined;
+        const url = URL.createObjectURL(head.file);
+        setPreviewUrl(url);
+        return () => {
+            URL.revokeObjectURL(url);
+        };
+        // Mounted once per page (keyed by head.id at the call site).
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    const send = (): void => {
+        if (!canSend) return;
+        void client.confirmStagedFile(head.id, caption);
+    };
+
+    return (
+        <div className="mj_UploadConfirm mj_UploadConfirm_queue">
+            <header className="mj_UploadConfirm_header">
+                {/* §10.1/§10.2: the title is ALWAYS "Send file" (never the filename — the
+                    filename lives in the file-info row below). "n of N" is a chip. */}
+                <UploadTrayIcon className="mj_UploadConfirm_uploadIcon" aria-hidden />
+                <h2 className="mj_UploadConfirm_title">Send file</h2>
+                {staged.total > 1 && (
+                    <span className="mj_UploadConfirm_count">
+                        {position} of {staged.total}
+                    </span>
+                )}
+                <span className="mj_UploadConfirm_headerSpacer" />
+                {/* ✕ is DESTRUCTIVE: cancelStagedFiles() irreversibly clears the ENTIRE staged
+                    queue (every file + all typed captions), not just this page. Its accessible
+                    name must disclose that — count-aware, so a SR user hears what is discarded.
+                    Same handler + semantics as the footer "Cancel all" (hidden for a lone file). */}
+                <button
+                    className="mj_UploadConfirm_close"
+                    aria-label={staged.total > 1 ? "Cancel all uploads" : "Cancel upload"}
+                    disabled={staged.confirming}
+                    onClick={() => client.cancelStagedFiles()}
+                >
+                    <CloseIcon />
+                </button>
+            </header>
+            <div className="mj_UploadConfirm_body">
+                {/* Preview + file-info are ONE card: a real image fills the top, otherwise a
+                    hatched "image preview" placeholder; the file-info row sits under a hairline. */}
+                <div className="mj_UploadConfirm_previewCard">
+                    {isImage && previewUrl ? (
+                        <img className="mj_UploadConfirm_preview" src={previewUrl} alt={head.file.name} />
+                    ) : (
+                        <div className="mj_UploadConfirm_previewPlaceholder" aria-hidden="true">
+                            <span>image preview</span>
+                        </div>
+                    )}
+                    <div className="mj_UploadConfirm_fileMeta">
+                        <FileIcon className="mj_UploadConfirm_fileIcon" aria-hidden />
+                        <span className="mj_UploadConfirm_fileName">{head.file.name}</span>
+                        <span className="mj_FileSize">{formatBytes(head.file.size)}</span>
+                    </div>
+                </div>
+                {staged.total > 1 && (
+                    <div className="mj_UploadConfirm_strip" role="list" aria-label="Queued files">
+                        {staged.items.map((item) => {
+                            const active = item.id === head.id;
+                            return (
+                                <span
+                                    key={item.id}
+                                    role="listitem"
+                                    className={active ? "mj_UploadThumb mj_UploadThumb_active" : "mj_UploadThumb"}
+                                    title={item.file.name}
+                                >
+                                    {active && isImage && previewUrl ? (
+                                        <img src={previewUrl} alt="" />
+                                    ) : (
+                                        <AttachmentIcon aria-hidden />
+                                    )}
+                                </span>
+                            );
+                        })}
+                        {staged.items.length > 1 && (
+                            <span className="mj_UploadConfirm_more">{staged.items.length - 1} more file queued</span>
+                        )}
+                    </div>
+                )}
+                {preflight && <p className="mj_UploadConfirm_error">{preflight}</p>}
+                {staged.persistError && (
+                    <p className="mj_UploadConfirm_error">Couldn&apos;t save this attachment — try Send again.</p>
+                )}
+                <textarea
+                    ref={textarea}
+                    className="mj_UploadConfirm_caption"
+                    placeholder="Add a caption…"
+                    maxLength={4096}
+                    value={caption}
+                    onChange={(event) => setCaption(event.target.value)}
+                    onKeyDown={(event) => {
+                        if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+                        if (event.key === "Enter" && !event.shiftKey) {
+                            event.preventDefault();
+                            send();
+                        } else if (event.key === "Escape" && !staged.confirming) {
+                            event.preventDefault();
+                            client.skipStagedFile(head.id);
+                        }
+                    }}
+                    aria-label="Caption"
+                />
+            </div>
+            <footer className="mj_UploadConfirm_footer mj_UploadConfirm_actions">
+                {staged.total > 1 && (
+                    <button
+                        className="mj_TextButton"
+                        aria-label="Cancel all"
+                        disabled={staged.confirming}
+                        onClick={() => client.cancelStagedFiles()}
+                    >
+                        Cancel all
+                    </button>
+                )}
+                <button
+                    className="mj_UploadConfirm_skip"
+                    aria-label="Skip"
+                    disabled={staged.confirming}
+                    onClick={() => client.skipStagedFile(head.id)}
+                >
+                    Skip
+                </button>
+                <button className="mj_UploadConfirm_send" aria-label="Send" disabled={!canSend} onClick={send}>
+                    <SendIcon />
+                    Send
+                </button>
+            </footer>
+        </div>
+    );
+}
+
+export function SubagentStrip({
+    client,
+    state,
+    mode,
+}: {
+    client: MatronJournalClient;
+    state: ClientState;
+    mode: "parent" | "child";
+}): React.ReactElement | null {
+    const selected = state.conversations.find((conversation) => conversation.id === state.selectedConversationId);
+    const siblingOrChildParentId = mode === "parent" ? state.selectedConversationId : selected?.parent_convo_id;
+    const siblingOrChildren = childrenOf(state.conversations, siblingOrChildParentId);
+    // in child view the escape names its destination — look up the parent conversation.
+    const parent =
+        mode === "child" && selected?.parent_convo_id
+            ? state.conversations.find((conversation) => conversation.id === selected.parent_convo_id)
+            : undefined;
+    if (siblingOrChildren.length === 0 && !parent) return null;
+
+    const runningFirst = (conversations: Conversation[]): Conversation[] => [
+        ...conversations.filter((conversation) => conversation.session_state === "running"),
+        ...conversations.filter((conversation) => conversation.session_state !== "running"),
+    ];
+    const ordered = runningFirst(siblingOrChildren);
+    return (
+        // §10.11: a non-scrolling row — the back chip + hairline stay PINNED while only the
+        // pill run scrolls, so the escape never scrolls off among many siblings.
+        <div className="mj_SubagentStrip" role="group" aria-label="Subagents">
+            {parent && (
+                <>
+                    <button
+                        className="mj_SubagentBack"
+                        type="button"
+                        title="Back to the parent conversation (Esc)"
+                        aria-label={`Back to ${conversationTitle(parent)}`}
+                        onClick={() => void client.selectConversation(parent.id)}
+                    >
+                        <ChevronLeftIcon className="mj_SubagentBack_icon" aria-hidden="true" />
+                        <span className="mj_SubagentBack_name">
+                            <TaggedTitle conversation={parent} agents={state.agents} />
+                        </span>
+                    </button>
+                    <span className="mj_SubagentStrip_hairline" aria-hidden="true" />
+                </>
+            )}
+            {ordered.length > 0 && (
+                <div className="mj_SubagentStrip_run" role="list">
+                    <span className="mj_SubagentStripLabel" aria-hidden="true">
+                        Subagents
+                    </span>
+                    {ordered.map((child) => {
+                        const isCurrent = mode === "child" && child.id === state.selectedConversationId;
+                        const isRunning = child.session_state === "running";
+                        const outcomeStatus = accessibleOutcome(classifyOutcome(child));
+                        const className = [
+                            "mj_SubagentPill",
+                            !isRunning && "mj_SubagentPill_finished",
+                            isCurrent && "mj_SubagentPill_current",
+                        ]
+                            .filter(Boolean)
+                            .join(" ");
+                        return (
+                            <div key={child.id} role="listitem" className="mj_SubagentPill_wrapper">
+                                <button
+                                    className={className}
+                                    aria-label={`Open subagent ${conversationTitle(child)}, ${outcomeStatus}`}
+                                    aria-current={isCurrent ? "true" : undefined}
+                                    disabled={isCurrent}
+                                    onClick={() => void client.selectConversation(child.id)}
+                                >
+                                    <WorkerMark conversation={child} className="mj_WorkerMark mj_SubagentPill_icon" />
+                                    <OutcomeGlyph conversation={child} className="mj_SubagentPill_icon" />
+                                    <span className="mj_SubagentPill_name">
+                                        <TaggedTitle conversation={child} agents={state.agents} />
+                                    </span>
+                                </button>
+                            </div>
+                        );
+                    })}
+                </div>
+            )}
+        </div>
+    );
+}
+
+function SignedInApp({ client, state }: { client: MatronJournalClient; state: ClientState }): React.ReactElement {
+    const leftPanel = useLeftPanelResize();
+    const [dragActive, setDragActive] = useState(state.dragActive);
+    const [draftReloadTicks, setDraftReloadTicks] = useState<Record<string, number>>({});
+    const [bodyEl, setBodyEl] = useState<HTMLElement | null>(null);
+    // Meter count drives the usage collapse threshold: the synthetic ctx bar + each
+    // non-blank limit. >4 (host cpu/ram present) needs the wider pane before the 3-column
+    // grid renders inline instead of collapsing to the popover.
+    const meterCount =
+        (state.sessionStatus?.context ? 1 : 0) +
+        (state.sessionStatus?.limits?.filter((limit) => limit.label.trim()).length ?? 0);
+    const collapse = useAdaptiveHeader(bodyEl, meterCount);
+    const appContent = useRef<HTMLDivElement>(null);
+    const uploadDialogWasOpen = useRef(Boolean(state.stagedUploads));
+    const drafts = useMemo(() => makeDraftStore(state.session), [state.session]);
+    const sendingConvos = useRef<Set<string>>(new Set());
+    const draftRevisions = useRef<Map<string, number>>(new Map());
+
+    useEffect(() => {
+        if (uploadDialogWasOpen.current && !state.stagedUploads) {
+            appContent.current?.querySelector<HTMLTextAreaElement>(".mx_BasicMessageComposer_input")?.focus();
+        }
+        uploadDialogWasOpen.current = Boolean(state.stagedUploads);
+    }, [state.stagedUploads]);
+
+    // Markdown attachment preview: a side panel to the right of the conversation or item.
+    const markdownPreview = useMarkdownPreviewPanel();
+    const closeMarkdownPreview = markdownPreview.close;
+    // It belongs to the view it was opened from: moving to another conversation or item closes it.
+    useEffect(() => {
+        closeMarkdownPreview();
+    }, [
+        state.selectedConversationId,
+        state.trackerView?.open,
+        state.trackerView?.view,
+        state.trackerView?.selectedItemId,
+        closeMarkdownPreview,
+    ]);
+
+    const isFileDrag = (event: React.DragEvent): boolean => Array.from(event.dataTransfer.types).includes("Files");
+    const selected = client.selectedConversation();
+    const childMode = selected != null && isSubChat(selected);
+
+    // §10.11.E: Escape unwinds ONE layer at a time, outermost-last. Inner layers (source
+    // viewer, upload/new-session modals, open menus) own their own Escape and close first;
+    // this handler is the INNERMOST rung — when nothing else is open and you are inside a
+    // subagent, Escape returns to the parent (the same action as the back chip). The
+    // DOM-presence guard enforces "one layer per press": while any overlay is still mounted
+    // (it hasn't unmounted yet during this same keydown), this rung defers to it.
+    const parentId = childMode ? selected?.parent_convo_id : undefined;
+    const hasParent = Boolean(
+        parentId && parentId !== selected?.id && state.conversations.some((c) => c.id === parentId),
+    );
+    useEffect(() => {
+        if (!hasParent || !parentId) return undefined;
+        const onKey = (event: KeyboardEvent): void => {
+            if (event.key !== "Escape" || event.defaultPrevented) return;
+            if (state.stagedUploads) return; // upload / new-session modal owns Escape
+            // Any inner overlay still mounted → it owns this press; defer.
+            if (
+                document.querySelector(
+                    ".mj_MediaViewer_scrim, .mj_EventSource_scrim, .mj_UploadConfirm_scrim, .mj_NewSessionSheet, .mj_SettingsScrim, .mj_EventRowMenu, .mj_RoomItemMenu, .mj_HeaderMenu, .mj_MdPreview, [role='menu']",
+                )
+            ) {
+                return;
+            }
+            event.preventDefault();
+            void client.selectConversation(parentId);
+        };
+        document.addEventListener("keydown", onKey);
+        return () => document.removeEventListener("keydown", onKey);
+    }, [hasParent, parentId, state.stagedUploads, client]);
+
+    return (
+        <MarkdownPreviewContext.Provider value={markdownPreview.context}>
+            <div className="mx_MatrixChat_wrapper">
+                <div ref={appContent} className="mx_MatrixChat" inert={state.stagedUploads ? true : undefined}>
+                    <ConversationList client={client} state={state} width={leftPanel.width} />
+                    <div
+                        className="mx_ResizeHandle mx_ResizeHandle--horizontal"
+                        data-id="lp-resizer"
+                        onPointerDown={leftPanel.onPointerDown}
+                    >
+                        <div />
+                    </div>
+                    <div
+                        className={`mx_RoomView_wrapper ${state.trackerView?.open || state.selectedConversationId ? "" : "mj_Chat_mobileHidden"}`}
+                    >
+                        {state.trackerView?.open ? (
+                            <TrackerPane client={client} state={state} />
+                        ) : state.selectedConversationId ? (
+                            <div
+                                className={`mx_RoomView${dragActive ? " mj_RoomView_dragActive" : ""}`}
+                                onDragOver={(event) => {
+                                    if (!isFileDrag(event)) return;
+                                    event.preventDefault();
+                                    setDragActive(true);
+                                }}
+                                onDrop={(event) => {
+                                    if (!isFileDrag(event)) return;
+                                    event.preventDefault();
+                                    setDragActive(false);
+                                    if (childMode) return;
+                                    if (state.stagedUploads) return;
+                                    const files = [...event.dataTransfer.files];
+                                    if (files.length > 0) client.stageFiles(files);
+                                }}
+                                onDragLeave={(event) => {
+                                    const nextTarget = event.relatedTarget;
+                                    if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) return;
+                                    setDragActive(false);
+                                }}
+                                onDragEnd={() => setDragActive(false)}
+                            >
+                                {dragActive && (
+                                    <div className="mj_DragOverlay" aria-hidden="true">
+                                        Drop files to attach
+                                    </div>
+                                )}
+                                <div
+                                    ref={setBodyEl}
+                                    className="mx_RoomView_body mx_MainSplit_timeline"
+                                    data-layout="bubble"
+                                >
+                                    {childMode ? (
+                                        <SubChatHeader client={client} state={state} collapse={collapse} />
+                                    ) : (
+                                        <ChatHeader client={client} state={state} collapse={collapse} />
+                                    )}
+                                    <SubagentStrip
+                                        client={client}
+                                        state={state}
+                                        mode={childMode ? "child" : "parent"}
+                                    />
+                                    <Timeline client={client} state={state} isReadOnly={childMode} />
+                                    {childMode ? (
+                                        <ReadOnlyHint />
+                                    ) : (
+                                        <Composer
+                                            client={client}
+                                            state={state}
+                                            drafts={drafts}
+                                            draftReloadTick={draftReloadTicks[state.selectedConversationId] ?? 0}
+                                            reloadDraft={(conversationId) =>
+                                                setDraftReloadTicks((ticks) => ({
+                                                    ...ticks,
+                                                    [conversationId]: (ticks[conversationId] ?? 0) + 1,
+                                                }))
+                                            }
+                                            sendingConvos={sendingConvos}
+                                            draftRevisions={draftRevisions}
+                                        />
+                                    )}
+                                </div>
+                            </div>
+                        ) : (
+                            <main className="mx_HomePage mx_HomePage_default">
+                                <div className="mx_HomePage_default_wrapper">
+                                    <img src={matronLogo} alt={state.config.brand || "Matron"} />
+                                    <h1>Welcome to {state.config.brand || "Matron"}</h1>
+                                </div>
+                            </main>
+                        )}
+                    </div>
+                    {markdownPreview.target ? (
+                        <MarkdownPreviewPanel
+                            client={client}
+                            target={markdownPreview.target}
+                            onClose={markdownPreview.close}
+                        />
+                    ) : null}
+                </div>
+                {state.stagedUploads && <UploadConfirmDialog client={client} staged={state.stagedUploads} />}
+            </div>
+        </MarkdownPreviewContext.Provider>
+    );
+}
+
+export function MatronApp({ client }: { client: MatronJournalClient }): React.ReactElement {
+    const state = useSyncExternalStore(client.subscribe, client.getSnapshot);
+    if (state.phase === "loading")
+        return (
+            <div className="mx_MatrixChat_splash mj_Loading">
+                <img src={matronLogo} alt="Matron" />
+            </div>
+        );
+    if (state.phase === "signed-out") return <LoginScreen client={client} state={state} />;
+    return <SignedInApp client={client} state={state} />;
+}

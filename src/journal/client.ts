@@ -1,0 +1,3794 @@
+/*
+Copyright 2026 Matron Contributors.
+
+SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
+Please see LICENSE files in the repository root for full details.
+*/
+
+import {
+    JournalApi,
+    JournalApiError,
+    loadMatronConfig,
+    parseBoxDefaultsState,
+    parseBoxStatus,
+    parseUserDefaults,
+} from "./api";
+import { JournalConnection } from "./connection";
+import { effectiveUnread, makeIdSetStore, type IdSetStore } from "./conversation-flags";
+import { JournalDatabase } from "./database";
+import {
+    DEFAULT_PIN_LIMIT,
+    markPinImportDone,
+    movedPinOrder,
+    parsePinList,
+    parsePinsResponse,
+    pinErrorMessage,
+    pinImportDone,
+    pinsFromContainer,
+    planPinImport,
+    readCachedPins,
+    writeCachedPins,
+} from "./pins";
+import { mergeSessionStatus } from "./status";
+import {
+    asNumber,
+    buildSidebarIndex,
+    childSidebarPlacement,
+    type BoxStatus,
+    type BriefingLatest,
+    type BriefingRefresh,
+    type BriefingState,
+    type ClientState,
+    type Conversation,
+    type BoxDefaults,
+    type BoxDefaultsPatch,
+    type BoxDefaultsState,
+    type DefaultsState,
+    type ConvoPin,
+    type DeviceDTO,
+    type JournalBoxStatusFrame,
+    isSubChat,
+    type MatronLinkKind,
+    type JournalEphemeralFrame,
+    type JournalEvent,
+    MESSAGE_EVENT_TYPES,
+    normalizeServerUrl,
+    type PendingMessage,
+    type RecentFolder,
+    rendersAsTopLevelRow,
+    type RpcReply,
+    type SearchHit,
+    type ServerFrame,
+    type Session,
+    type SnapshotResponse,
+    type TrackerAttachment,
+    type JournalControlFrame,
+    type TrackerCommentWrite,
+    type TrackerItem,
+    type UserSettings,
+    type MemoryWrite,
+    type TrackerResolution,
+    type TrackerViewState,
+    trimUtf8Prefix,
+    type UserDefaultKey,
+    type UserDefaults,
+    type ToolStreamState,
+    utf8Length,
+} from "./types";
+
+const SESSION_KEY = "matron_journal_session_v1";
+const LAST_SERVER_KEY = "matron_journal_last_server";
+const SELECTED_CONVERSATION_KEY_PREFIX = "matron_journal_selected_conversation_v1";
+const HISTORY_PAGE_SIZE = 80;
+// Message-content search hits per query (server caps at 50; 20 keeps the Messages section tight).
+const MESSAGE_SEARCH_LIMIT = 20;
+// Max query length the server accepts (over this it returns 400); guard client-side so an
+// over-long query reads as "no results", not a misleading "search unavailable" outage.
+const MESSAGE_SEARCH_MAX_QUERY_LEN = 256;
+// Transport-agnostic deadline: abort a /search that never settles so "Searching…" can't hang.
+const MESSAGE_SEARCH_TIMEOUT_MS = 15_000;
+
+/**
+ * Runtime guard for the GET /search response. The producer is a separate service, so we parse at
+ * the boundary (P33) rather than trusting the compile-time cast: a non-array `hits` or a hit missing
+ * a required field is dropped instead of crashing the render (e.g. `snippet.split` on undefined).
+ */
+function sanitizeSearchHits(response: { hits?: unknown } | null | undefined): SearchHit[] {
+    const raw = response?.hits;
+    if (!Array.isArray(raw)) return [];
+    const hits: SearchHit[] = [];
+    for (const item of raw) {
+        if (!item || typeof item !== "object") continue;
+        const h = item as Record<string, unknown>;
+        if (
+            typeof h.convo_id !== "string" ||
+            typeof h.title !== "string" ||
+            typeof h.seq !== "number" ||
+            typeof h.ts !== "number" ||
+            typeof h.sender !== "string" ||
+            typeof h.snippet !== "string"
+        ) {
+            continue;
+        }
+        hits.push({
+            convo_id: h.convo_id,
+            title: h.title,
+            seq: h.seq,
+            ts: h.ts,
+            sender: h.sender,
+            snippet: h.snippet,
+            live: h.live === true,
+        });
+    }
+    return hits;
+}
+const RPC_CREATE_WATCHDOG_MS = 10_000;
+const BACKFILL_SNAPSHOT_TIMEOUT_MS = 10_000;
+const TOOL_STREAM_DISPLAY_BYTES = 65_536;
+const MARK_ALL_READ_ERROR = "Some conversations couldn't be updated — device storage is full or unavailable.";
+export const PREFERENCES_UNAVAILABLE_ERROR = "Couldn't load saved preferences — device storage unavailable.";
+// This is only a browser memory-safety ceiling. The server's 413 response is
+// authoritative for deployment-specific upload policy.
+export const BROWSER_MEMORY_SAFETY_MAX_BYTES = 512 * 1024 * 1024;
+// Upload deadline is size-aware, not a fixed wall-clock. A fixed 60s covered
+// file read + the whole POST, so a server-accepted file whose transfer alone
+// exceeds 60s (e.g. 50MB on a ~5 Mbit/s uplink ≈ 84s) would deterministically
+// abort as upload_failed and retry could never succeed. Scale the deadline by
+// size against a conservative uplink floor, keeping a base for small files and
+// a hard cap so a truly-stuck upload is still bounded.
+const UPLOAD_TIMEOUT_BASE_MS = 60_000;
+const UPLOAD_MIN_BYTES_PER_MS = 64; // ≈ 0.5 Mbit/s uplink floor
+const UPLOAD_TIMEOUT_MAX_MS = 15 * 60_000; // 15 min cap
+export function uploadTimeoutMsFor(sizeBytes: number): number {
+    const sized = Math.ceil((Number.isFinite(sizeBytes) ? Math.max(0, sizeBytes) : 0) / UPLOAD_MIN_BYTES_PER_MS);
+    return Math.min(UPLOAD_TIMEOUT_MAX_MS, Math.max(UPLOAD_TIMEOUT_BASE_MS, sized));
+}
+
+// Client-local per-session flag stores. Archive key string is UNCHANGED (zero migration).
+export const archiveStore: IdSetStore = makeIdSetStore(
+    "matron_journal_archived_conversations_v1",
+    "archived-conversations",
+);
+export const pinnedStore: IdSetStore = makeIdSetStore("matron_journal_pinned_conversations_v1", "pinned-conversations");
+export const favoriteStore: IdSetStore = makeIdSetStore(
+    "matron_journal_favorite_conversations_v1",
+    "favorite-conversations",
+);
+export const unreadStore: IdSetStore = makeIdSetStore("matron_journal_unread_conversations_v1", "unread-conversations");
+export const collapsedSubagentStore: IdSetStore = makeIdSetStore(
+    "matron_journal_collapsed_subagents_v1",
+    "collapsed-subagents",
+);
+
+interface ConversationHistoryState {
+    initialized: boolean;
+    oldestSeq?: number;
+    hasMore: boolean;
+}
+
+interface ElectronBadgeBridge {
+    send(channel: "setBadgeCount", count: number): void;
+}
+
+interface AttachmentOwner {
+    gen: number;
+    api: JournalApi;
+    db: JournalDatabase;
+}
+
+type PersistPendingAttachmentOutcome =
+    { kind: "persisted-uploadable" } | { kind: "persisted-terminal" } | { kind: "persist-failed" };
+
+export type StartOutcome =
+    { kind: "created"; convoId: string } | { kind: "error"; message: string } | { kind: "uncertain" };
+
+export type WorkerKind = "claude" | "codex";
+
+export function workerKind(conversation: Conversation): WorkerKind | null {
+    if (!isSubChat(conversation)) return null;
+    if (/:codex:[^:]+$/.test(conversation.id)) return "codex";
+    if (/:sub:[^:]+$/.test(conversation.id)) return "claude";
+    return null;
+}
+
+function deviceName(): string {
+    if ((window as Window & { electron?: unknown }).electron) {
+        const platform = navigator.platform || "computer";
+        return `Matron Desktop (${platform})`;
+    }
+    return `Matron Web (${navigator.platform || "browser"})`;
+}
+
+function blankState(): ClientState {
+    return {
+        phase: "loading",
+        config: {},
+        conversations: [],
+        archivedIds: new Set(),
+        pinnedIds: new Set(),
+        journalPins: null,
+        pinLimit: DEFAULT_PIN_LIMIT,
+        favoriteIds: new Set(),
+        unreadOverrideIds: new Set(),
+        collapsedSubagentParentIds: new Set(),
+        controlError: undefined,
+        events: [],
+        pendingMessages: [],
+        connection: "offline",
+        connectionErrorSeq: 0,
+        loadingHistory: false,
+        hasOlderHistory: false,
+        textStreams: {},
+        toolStreams: {},
+        boxStatuses: {},
+        agents: [],
+        dragActive: false,
+        sendTick: 0,
+    };
+}
+
+function storedSession(): Session | undefined {
+    try {
+        const parsed = JSON.parse(localStorage.getItem(SESSION_KEY) ?? "null") as Partial<Session> | null;
+        if (
+            !parsed ||
+            typeof parsed.serverUrl !== "string" ||
+            typeof parsed.token !== "string" ||
+            typeof parsed.deviceId !== "number" ||
+            typeof parsed.userId !== "number" ||
+            typeof parsed.username !== "string"
+        ) {
+            return undefined;
+        }
+        return parsed as Session;
+    } catch {
+        return undefined;
+    }
+}
+
+function selectedConversationStorageKey(session: Session): string {
+    return `${SELECTED_CONVERSATION_KEY_PREFIX}:${encodeURIComponent(session.serverUrl)}:${session.userId}`;
+}
+
+function storedSelectedConversation(session: Session): string | undefined {
+    try {
+        return localStorage.getItem(selectedConversationStorageKey(session)) ?? undefined;
+    } catch {
+        return undefined;
+    }
+}
+
+export function archivedStorageKey(session: Session): string {
+    return archiveStore.storageKey(session);
+}
+
+export function storedArchivedIds(session: Session): Set<string> {
+    return archiveStore.read(session).ids;
+}
+
+export function storeArchivedIds(session: Session, ids: Set<string>): void {
+    archiveStore.write(session, ids);
+}
+
+function firstSelectableConversation(
+    conversations: Conversation[],
+    preferredId: string | undefined,
+    archivedIds: Set<string>,
+    collapsedParentIds: ReadonlySet<string>,
+): Conversation | undefined {
+    // auto-selection uses the SAME canonical predicate as rendering — a child that
+    // is not a top-level sidebar row (hidden done child, or a nested child) must never be
+    // silently auto-selected on reload; skip to the next selectable top-level row. The collapsed
+    // set matches render/mark-all/badge, so a collapsed (hidden) child is never auto-selected.
+    const index = buildSidebarIndex(conversations, archivedIds, collapsedParentIds);
+    const selectable = (conversation: Conversation): boolean =>
+        !archivedIds.has(conversation.id) && rendersAsTopLevelRow(conversation, index);
+    const preferred = conversations.find((conversation) => conversation.id === preferredId && selectable(conversation));
+    return preferred ?? conversations.find(selectable);
+}
+
+function storeSelectedConversation(session: Session, conversationId: string | undefined): void {
+    try {
+        const key = selectedConversationStorageKey(session);
+        if (conversationId) localStorage.setItem(key, conversationId);
+        else localStorage.removeItem(key);
+    } catch {
+        // Selection persistence is optional when storage is unavailable.
+    }
+}
+
+function capToolStream(value: string): { content: string; truncated: boolean } {
+    const bytes = new TextEncoder().encode(value);
+    if (bytes.length <= TOOL_STREAM_DISPLAY_BYTES) return { content: value, truncated: false };
+    let slice = bytes.slice(bytes.length - TOOL_STREAM_DISPLAY_BYTES);
+    while (slice.length > 0 && (slice[0] & 0xc0) === 0x80) slice = slice.slice(1);
+    return { content: new TextDecoder().decode(slice), truncated: true };
+}
+
+function abortPromise(signal: AbortSignal): Promise<never> {
+    return new Promise((_, reject) => {
+        const rejectAbort = (): void => reject(new DOMException("The upload timed out.", "AbortError"));
+        if (signal.aborted) rejectAbort();
+        else signal.addEventListener("abort", rejectAbort, { once: true });
+    });
+}
+
+/** A recorded voice note as a file: `voice-note.<ext>`, the extension following the recorder's mime. */
+export function voiceNoteFile(blob: Blob): File {
+    const type = blob.type || "audio/webm";
+    const ext = type.includes("mp4") ? "m4a" : type.includes("ogg") ? "ogg" : "webm";
+    return new File([blob], `voice-note.${ext}`, { type });
+}
+
+export class MatronJournalClient {
+    private state = blankState();
+    private readonly listeners = new Set<() => void>();
+    private api?: JournalApi;
+    // Monotonic guard so only the latest message-search request writes its results — an earlier
+    // slow response (or a cleared box) can never clobber a newer query's hits. See searchMessages.
+    private searchSeq = 0;
+    // The in-flight message-search request, so a superseding query / clear / logout can abort it
+    // (bounded exit — a stalled /search never leaves the section stuck "Searching…").
+    private searchAbort?: AbortController;
+    private database?: JournalDatabase;
+    private connection?: JournalConnection;
+    private readonly history = new Map<string, ConversationHistoryState>();
+    private readonly activities = new Map<string, JournalEphemeralFrame["activity"]>();
+    private readonly statuses = new Map<string, NonNullable<JournalEphemeralFrame["status"]>>();
+    private readonly textStreams = new Map<string, Record<string, string>>();
+    private readonly toolStreams = new Map<string, Record<string, ToolStreamState>>();
+    private readonly retiredStreamRefs = new Set<string>();
+    private readonly mediaUrls = new Map<string, string>();
+    private readonly mediaUrlRequests = new Map<string, Promise<string>>();
+    private readonly readHighWater = new Map<string, number>();
+    private readonly readTimers = new Map<string, number>();
+    private pendingFiles = new Map<string, File>();
+    private stagedSendChain: Promise<void> = Promise.resolve();
+    private transientAttachmentErrors = new Map<string, PendingMessage>();
+    private readonly dismissedAttachments = new Set<string>();
+    private readonly attachmentOperations = new Map<string, Promise<void>>();
+    private readonly retryingAttachments = new Set<string>();
+    private inFlightUploads = new Map<string, AbortController>();
+    private readonly uploadConvos = new Map<string, string>();
+    private readonly issuedRefreshEpochs = new Map<string, number>();
+    private readonly appliedRefreshEpochs = new Map<string, number>();
+    // Monotonic guards so only the latest tracker request writes its result — an earlier slow
+    // response (out-of-order load, or a superseded selection) can never clobber a newer one.
+    // Bumped on every load* call; the resolved response checks it before patching (F1/F2
+    // stale-response guards).
+    private trackerItemGen = 0;
+    private trackerMissionGen = 0;
+    private trackerInboxGen = 0;
+    // True while a loadInbox walk is in flight. The first connect-time walk publishes only at the
+    // end, so until then inboxItems is undefined; writes and item markers that land meanwhile must
+    // still count (see inboxTracked / applyWrittenItem) or the walk's older pages overwrite them.
+    private inboxWalking = false;
+    // Items written (e.g. a Seen tap) while a walk is in flight, by id, newest updated_at kept.
+    // Merged over the walk's result when it publishes, so a page fetched before the write cannot
+    // put a closed notice back in For you.
+    private inboxPendingWrites = new Map<string, TrackerItem>();
+    private trackerMissionsGen = 0;
+    private trackerProjectsGen = 0;
+    private trackerProjectGen = 0;
+    // Pending marker-driven inbox refetch. A burst of `item` markers (a reconnect replay, a batch of
+    // agent writes) coalesces into ONE inbox walk instead of one per marker.
+    private trackerInboxRefetchTimer?: number;
+    // Same for `mission` / `milestone` markers and the missions list.
+    private trackerMissionsRefetchTimer?: number;
+    private trackerMemoriesGen = 0;
+    private trackerMemoriesRefetchTimer?: number;
+    // Coordinator briefing: a request-generation guard like the tracker loaders', and the timer
+    // that refetches once a pending refresh's expires_at passes (the journal then reports it
+    // timed_out, which no frame announces).
+    private briefingGen = 0;
+    private settingsGen = 0;
+    private briefingExpiryTimer?: number;
+    // New-chat defaults. What the sheet shows is always `defaultsServer` (the latest answer from
+    // the journal: a GET result, a PUT response's key, or a live frame, applied in arrival order)
+    // with the user's unsaved picks (`defaultsPending`, the desired value per key) laid on top.
+    // Saves are single-flight per key (`defaultsSaving`): a pick made while that key's PUT is in
+    // flight only updates the desired value, and the PUT loop sends it once the current one
+    // settles, so the journal and the sheet both end on the latest pick. `defaultsSeq` moves on
+    // every GET start, frame and PUT response, so a GET answers only if nothing newer has landed
+    // since it was sent. `defaultsViewers` counts the views showing the defaults, which is what
+    // makes a reconnect refetch (the `defaults` frame is never replayed).
+    private defaultsServer?: UserDefaults;
+    private defaultsPending = new Map<UserDefaultKey, string | null>();
+    private defaultsSaving = new Map<UserDefaultKey, Promise<boolean>>();
+    // The key whose failed save the current `error` reports: a later successful save of that key
+    // clears it.
+    private defaultsErrorKey?: UserDefaultKey;
+    private defaultsSeq = 0;
+    private defaultsViewers = 0;
+    // Per-box defaults (Settings → Boxes). What the group shows for a box is its journal value
+    // (`boxDefaultsServer`, from GET /devices, a PUT answer or a `box_defaults` frame) with the
+    // PUT on the wire (`boxDefaultsInFlight`) and any newer unsent picks (`boxDefaultsPending`)
+    // laid on top. One PUT per box at a time; picks made meanwhile go in the next one. Each change
+    // to a box's journal value is stamped from `boxDefaultsClock`, so a GET sent before it never
+    // overwrites it. `boxDefaultsViewers` makes a reconnect refetch (the frame is never replayed).
+    private boxDefaultsServer = new Map<number, BoxDefaults>();
+    private boxDefaultsInFlight = new Map<number, BoxDefaultsPatch>();
+    private boxDefaultsPending = new Map<number, BoxDefaultsPatch>();
+    private boxDefaultsSaving = new Map<number, Promise<boolean>>();
+    private boxDefaultsStamps = new Map<number, number>();
+    private boxDefaultsList: Array<{ device_id: number; name?: string; connected: boolean }> = [];
+    private boxDefaultsClock = 0;
+    private boxDefaultsLoadGen = 0;
+    private boxDefaultsViewers = 0;
+    // The box whose failed save the error is about (undefined: a load error, or none).
+    private boxDefaultsErrorBox?: number;
+    // The clock reading when the current save error was raised (0: none since sign-in).
+    private boxDefaultsErrorAt = 0;
+    // Whether the pending missions refetch should also reload the open mission detail: set by item
+    // markers, which don't say which mission the item belongs to.
+    private trackerMissionRefetchPending = false;
+    private sessionGen = 0;
+    private ackTimer?: number;
+    private pendingAck = 0;
+    private historyError?: string;
+    private startSessionRequest?: Promise<StartOutcome>;
+    private rpcCreateWatchdog?: number;
+    private rpcCreateWatchdogConvo?: string;
+    private rpcCreateWatchdogGen?: number;
+    private storageListener?: (event: StorageEvent) => void;
+    private storeHydrated = { archive: true, pinned: true, favorite: true, unread: true, collapsed: true };
+    private storeWritable = { archive: true, pinned: true, favorite: true, unread: true, collapsed: true };
+    // The one-time carry-over of browser-local pins to the journal: one run at a time, retried
+    // after a failure (the localStorage flag makes a finished import once per server+user).
+    private pinImportStarted = false;
+    // The journal's list while a carry-over is pending or failed: the sidebar keeps the
+    // browser-local set until the import lands, so local pins never vanish mid-import.
+    private stagedPins: ConvoPin[] | null = null;
+
+    public get sessionGeneration(): number {
+        return this.sessionGen;
+    }
+
+    private allStorageHealthy(): boolean {
+        return Object.values(this.storeHydrated).every(Boolean) && Object.values(this.storeWritable).every(Boolean);
+    }
+
+    private logStorageDiag(
+        event: "read_fail" | "write_fail" | "degrade" | "recover",
+        store: string,
+        ok: boolean,
+    ): void {
+        // Console diagnostics are the deliberate ceiling here; this is not a telemetry pipeline.
+        console.warn("matron:store", { event, store, ok });
+    }
+
+    private storageUnavailable(store: string): boolean {
+        const unavailable = !this.allStorageHealthy();
+        if (unavailable !== Boolean(this.state.preferencesUnavailable)) {
+            this.logStorageDiag(unavailable ? "degrade" : "recover", store, !unavailable);
+        }
+        return unavailable;
+    }
+
+    public readonly subscribe = (listener: () => void): (() => void) => {
+        this.listeners.add(listener);
+        return () => this.listeners.delete(listener);
+    };
+
+    public readonly getSnapshot = (): ClientState => this.state;
+
+    public async initialise(): Promise<void> {
+        let config = {};
+        try {
+            config = await loadMatronConfig();
+        } catch (error) {
+            this.patch({
+                phase: "signed-out",
+                connectionError: error instanceof Error ? error.message : "Could not load Matron configuration",
+            });
+            return;
+        }
+        this.patch({ config });
+
+        const session = storedSession();
+        if (!session) {
+            this.patch({ phase: "signed-out" });
+            return;
+        }
+
+        try {
+            await this.startSession(session);
+        } catch (error) {
+            localStorage.removeItem(SESSION_KEY);
+            this.patch({
+                phase: "signed-out",
+                session: undefined,
+                connectionError: error instanceof Error ? error.message : "Could not restore the device session",
+            });
+        }
+    }
+
+    public suggestedServer(): string {
+        return this.state.config.journal_server_url || localStorage.getItem(LAST_SERVER_KEY) || "";
+    }
+
+    public async login(serverInput: string, username: string, password: string): Promise<void> {
+        const serverUrl = normalizeServerUrl(serverInput);
+        const api = new JournalApi(serverUrl);
+        const response = await api.login(username.trim(), password, deviceName());
+        const session: Session = {
+            serverUrl,
+            token: response.token,
+            deviceId: response.device_id,
+            userId: response.user_id,
+            username: username.trim(),
+        };
+        localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+        localStorage.setItem(LAST_SERVER_KEY, serverUrl);
+        await this.startSession(session);
+    }
+
+    public async logout(message?: string): Promise<void> {
+        this.sessionGen += 1;
+        for (const controller of this.inFlightUploads.values()) controller.abort();
+        this.inFlightUploads.clear();
+        this.uploadConvos.clear();
+        this.dismissedAttachments.clear();
+        this.pendingFiles.clear();
+        this.transientAttachmentErrors.clear();
+        this.connection?.stop();
+        this.connection = undefined;
+        if (this.storageListener) {
+            window.removeEventListener("storage", this.storageListener);
+            this.storageListener = undefined;
+        }
+        this.resetTransientSyncState();
+        try {
+            await this.database?.reset();
+        } catch {
+            // Signing out must not be blocked by a failed local cleanup.
+        }
+        this.database?.close();
+        this.database = undefined;
+        this.api = undefined;
+        this.defaultsServer = undefined;
+        this.defaultsPending.clear();
+        this.defaultsSaving.clear();
+        this.boxDefaultsServer.clear();
+        this.boxDefaultsInFlight.clear();
+        this.boxDefaultsPending.clear();
+        this.boxDefaultsSaving.clear();
+        this.boxDefaultsStamps.clear();
+        this.boxDefaultsList = [];
+        this.boxDefaultsErrorBox = undefined;
+        this.boxDefaultsErrorAt = 0;
+        for (const url of this.mediaUrls.values()) URL.revokeObjectURL(url);
+        this.mediaUrls.clear();
+        // The archived-conversations key is deliberately left in place: it is a per-device
+        // preference that re-login should restore. Clearing it here would also go unnoticed
+        // by this tab, since storage events only fire in other tabs.
+        localStorage.removeItem(SESSION_KEY);
+        this.state = {
+            ...blankState(),
+            phase: "signed-out",
+            config: this.state.config,
+            connectionError: message,
+        };
+        this.emit();
+    }
+
+    public async listAgents(): Promise<DeviceDTO[]> {
+        const response = await this.api?.devices();
+        if (!response) throw new Error("Not signed in.");
+        this.rememberBoxStatuses(response.devices);
+        return response.devices
+            .filter((device) => device.kind === "agent")
+            .sort(
+                (left, right) =>
+                    Number(right.connected) - Number(left.connected) ||
+                    (left.name ?? "").localeCompare(right.name ?? "") ||
+                    left.device_id - right.device_id,
+            );
+    }
+
+    // Seed each box's stored report from the roster, but never regress a row a live
+    // `box_status` frame has already moved past (protocol.md: latest report wins).
+    private rememberBoxStatuses(devices: DeviceDTO[]): void {
+        let next: Record<number, BoxStatus> | undefined;
+        for (const device of devices) {
+            if (!device.status) continue;
+            const current = this.state.boxStatuses[device.device_id];
+            if (current && current.reported_at > device.status.reported_at) continue;
+            next ??= { ...this.state.boxStatuses };
+            next[device.device_id] = device.status;
+        }
+        if (next) this.patch({ boxStatuses: next });
+    }
+
+    // A live report replaces the stored row for that box wholesale — the blocks the frame
+    // omits are gone, not kept (only `box_status` itself carries the full picture).
+    private handleBoxStatus(frame: JournalBoxStatusFrame): void {
+        const deviceId: unknown = frame.device_id;
+        if (typeof deviceId !== "number" || !Number.isFinite(deviceId)) return;
+        const status = parseBoxStatus(frame);
+        if (!status) return;
+        this.patch({ boxStatuses: { ...this.state.boxStatuses, [deviceId]: status } });
+    }
+
+    public async recentFolders(agentDeviceId: number): Promise<RecentFolder[]> {
+        const reply = await this.agentRpc(agentDeviceId, "recent_folders", {});
+        if (!reply.ok || typeof reply.result !== "object" || reply.result === null || Array.isArray(reply.result)) {
+            return [];
+        }
+        const folders = (reply.result as Record<string, unknown>).folders;
+        if (!Array.isArray(folders)) return [];
+        return folders.flatMap((raw): RecentFolder[] => {
+            if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return [];
+            const folder = raw as Record<string, unknown>;
+            if (
+                typeof folder.path !== "string" ||
+                folder.path.length === 0 ||
+                (folder.last_used !== null &&
+                    (typeof folder.last_used !== "number" || !Number.isFinite(folder.last_used)))
+            ) {
+                return [];
+            }
+            return [{ path: folder.path, last_used: folder.last_used }];
+        });
+    }
+
+    public startSessionRpc(agentDeviceId: number, workdir: string, browser: boolean): Promise<StartOutcome> {
+        if (this.startSessionRequest) {
+            return Promise.resolve({ kind: "error", message: "A session is already starting — please wait." });
+        }
+
+        const request = this.performStartSessionRpc(agentDeviceId, workdir, browser);
+        this.startSessionRequest = request;
+        const clear = (): void => {
+            if (this.startSessionRequest === request) this.startSessionRequest = undefined;
+        };
+        void request.then(clear, clear);
+        return request;
+    }
+
+    private async performStartSessionRpc(
+        agentDeviceId: number,
+        workdir: string,
+        browser: boolean,
+    ): Promise<StartOutcome> {
+        const params: { workdir?: string; browser?: true } = {};
+        const normalizedWorkdir = workdir.trim();
+        if (normalizedWorkdir) params.workdir = normalizedWorkdir;
+        if (browser) params.browser = true;
+
+        const reply = await this.agentRpc(agentDeviceId, "start", params);
+        if (reply.ok) {
+            if (typeof reply.result !== "object" || reply.result === null || Array.isArray(reply.result)) {
+                return { kind: "uncertain" };
+            }
+            const convoId = (reply.result as Record<string, unknown>).convo_id;
+            return typeof convoId === "string" && convoId.length > 0
+                ? { kind: "created", convoId }
+                : { kind: "uncertain" };
+        }
+        if (reply.origin === "relay") {
+            return {
+                kind: "error",
+                message:
+                    reply.code === "not_connected" || reply.code === "not_ready"
+                        ? "Still connecting — try again in a moment."
+                        : "Couldn't reach that box — try again.",
+            };
+        }
+        if (reply.origin === "agent" && reply.code === "bad_workdir") {
+            return { kind: "error", message: "That folder doesn't exist on the box." };
+        }
+        return { kind: "uncertain" };
+    }
+
+    /**
+     * Full-text search over message content for the Apple-parity "Messages" section. The caller
+     * (the search box) debounces; this method owns correctness:
+     *  - An empty/blank OR over-length (server rejects >256) query clears the section without a
+     *    request, so a giant paste reads as "no results", not a spurious "unavailable" outage.
+     *  - searchSeq ensures only the newest request applies; searchAbort cancels the prior in-flight
+     *    request AND a per-request timeout aborts one that never settles — bounded exit, so the
+     *    section can't hang on "Searching…" and obsolete searches don't pile up.
+     *  - Hits stay bound to the query that produced them: a new query starts empty (loading), so an
+     *    earlier query's hits are never shown under a later query's label.
+     *  - A server/transport/timeout error degrades to a failed empty state, never a throw — the
+     *    chat-title filter keeps working regardless.
+     */
+    public async searchMessages(rawQuery: string): Promise<void> {
+        const query = rawQuery.trim();
+        this.searchAbort?.abort(); // cancel any in-flight request; its stale result is guarded off below
+        this.searchAbort = undefined;
+        if (!query || query.length > MESSAGE_SEARCH_MAX_QUERY_LEN) {
+            this.searchSeq += 1; // supersede any in-flight request so its result is ignored
+            if (this.state.messageSearch) this.patch({ messageSearch: undefined });
+            return;
+        }
+        if (!this.api) return;
+        const seq = ++this.searchSeq;
+        const controller = new AbortController();
+        this.searchAbort = controller;
+        this.patch({ messageSearch: { query, hits: [], loading: true, failed: false } });
+        // A request can outlive the deadline on a transport that ignores the abort signal (Electron
+        // journalRequest observes no signal), so the bounded exit comes from a transport-independent
+        // Promise.race — mirroring devices(). The abort still fires to free the browser fetch.
+        const searchCall = this.api.search(query, MESSAGE_SEARCH_LIMIT, controller.signal);
+        void searchCall.catch(() => undefined);
+        let timeoutTimer: ReturnType<typeof setTimeout>;
+        const timeoutReject = new Promise<never>((_resolve, reject) => {
+            timeoutTimer = setTimeout(() => {
+                reject(new Error("timeout"));
+                controller.abort();
+            }, MESSAGE_SEARCH_TIMEOUT_MS);
+        });
+        try {
+            const response = await Promise.race([searchCall, timeoutReject]);
+            if (seq !== this.searchSeq) return;
+            // Defensive parse: the /search producer is a separate service, so guard against a
+            // version-skewed or malformed success (hits not an array, a hit missing fields) rather
+            // than letting it crash the render. A non-conforming payload degrades to "no results".
+            this.patch({ messageSearch: { query, hits: sanitizeSearchHits(response), loading: false, failed: false } });
+        } catch {
+            if (seq !== this.searchSeq) return;
+            this.patch({ messageSearch: { query, hits: [], loading: false, failed: true } });
+        } finally {
+            clearTimeout(timeoutTimer!);
+            if (this.searchAbort === controller) this.searchAbort = undefined;
+        }
+    }
+
+    public async selectConversation(
+        conversationId: string,
+        opts?: { clearUnread?: boolean; fromRpcCreate?: boolean; suppressNotFound?: boolean },
+    ): Promise<void> {
+        if (!this.database || !this.state.session) return;
+        // fromRpcCreate is for a room created milliseconds ago by this client's own RPC: it arms
+        // the sync watchdog (frames must follow shortly) AND tolerates a young room's 404 on
+        // history. suppressNotFound wants only the latter — opening a spawn-created room long
+        // after the fact must not arm a watchdog that only an incoming frame can clear, or an
+        // idle session reports "not syncing" as an error.
+        if (opts?.fromRpcCreate) this.armRpcCreateWatchdog(conversationId);
+        if (opts?.clearUnread ?? true) this.clearUnreadOverride(conversationId);
+        storeSelectedConversation(this.state.session, conversationId);
+        // Selecting a conversation closes the Tracker pane, so it drops the cached item detail the
+        // same way closeTrackerView does.
+        if (this.state.trackerView) {
+            this.trackerItemGen += 1;
+            this.trackerMissionGen += 1;
+            this.trackerProjectGen += 1;
+        }
+        this.patch({
+            selectedConversationId: conversationId,
+            // Selecting a conversation closes the Tracker pane so the chosen room becomes visible
+            // (trackerView is a main-region discriminant checked ahead of selectedConversationId).
+            trackerView: undefined,
+            ...(this.state.trackerView ? { trackerItem: null, trackerMission: null, trackerProject: null } : {}),
+            events: [],
+            pendingMessages: [],
+            loadingHistory: false,
+            hasOlderHistory: this.history.get(conversationId)?.hasMore ?? true,
+            activity: this.activities.get(conversationId),
+            sessionStatus: this.statuses.get(conversationId),
+            textStreams: { ...(this.textStreams.get(conversationId) ?? {}) },
+            toolStreams: { ...(this.toolStreams.get(conversationId) ?? {}) },
+        });
+        await this.refreshSelectedConversation(conversationId);
+        if (this.state.selectedConversationId !== conversationId) return;
+        this.connection?.send({ op: "viewing", convo_id: conversationId });
+
+        const conversation = this.state.conversations.find((candidate) => candidate.id === conversationId);
+        if (conversation?.unread_count) this.scheduleRead(conversationId, conversation.last_seq, 0);
+
+        if (!this.history.get(conversationId)?.initialized) {
+            await this.loadOlderHistory({ suppressNotFound: opts?.fromRpcCreate || opts?.suppressNotFound });
+        }
+    }
+
+    public clearSelection(): void {
+        this.connection?.send({ op: "viewing", convo_id: null });
+        if (this.state.session) storeSelectedConversation(this.state.session, undefined);
+        this.patch({ selectedConversationId: undefined, events: [], pendingMessages: [] });
+    }
+
+    public archiveConversation(conversationId: string): void {
+        this.setArchived(conversationId, true);
+    }
+
+    public unarchiveConversation(conversationId: string): void {
+        this.setArchived(conversationId, false);
+    }
+
+    public pinConversation(id: string): void {
+        this.setFlag(pinnedStore, "pinnedIds", id, true);
+    }
+
+    public unpinConversation(id: string): void {
+        this.setFlag(pinnedStore, "pinnedIds", id, false);
+    }
+
+    // ── Journal pins (only while state.journalPins is non-null) ─────────────
+
+    /**
+     * PUT /pins/:convo_id — pin (label required) or edit a pin. Resolves to an inline error
+     * message, or undefined on success (the list then comes from the response).
+     */
+    public savePin(convoId: string, pin: { label: string; emoji: string }): Promise<string | undefined> {
+        return this.pinRequest((api) => api.putPin(convoId, pin));
+    }
+
+    /** POST /pins/:convo_id/move — repoint a pin at another conversation; resolves to an error message. */
+    public movePin(convoId: string, toConvoId: string): Promise<string | undefined> {
+        return this.pinRequest((api) => api.movePin(convoId, toConvoId));
+    }
+
+    /** DELETE /pins/:convo_id; a failure lands in the sidebar's control error. */
+    public async removePin(convoId: string): Promise<void> {
+        this.reportPinError(await this.pinRequest((api) => api.deletePin(convoId)));
+    }
+
+    /** One step up or down the Pinned section (PUT /pins with the whole order). */
+    public async shiftPin(convoId: string, direction: "up" | "down", shownIds?: readonly string[]): Promise<void> {
+        const order = movedPinOrder(this.state.journalPins ?? [], convoId, direction, shownIds);
+        if (!order) return;
+        this.reportPinError(await this.pinRequest((api) => api.reorderPins(order)));
+    }
+
+    /** Move the pin to its offered successor. */
+    public async acceptPinSuccessor(pin: ConvoPin): Promise<void> {
+        if (!pin.successor) return;
+        this.reportPinError(await this.movePin(pin.convo_id, pin.successor.convo_id));
+    }
+
+    /** Stop offering the successor. */
+    public async dismissPinSuccessor(pin: ConvoPin): Promise<void> {
+        const successorId = pin.successor?.convo_id;
+        if (!successorId) return;
+        this.reportPinError(await this.pinRequest((api) => api.dismissPinSuccessor(pin.convo_id, successorId)));
+    }
+
+    private reportPinError(error: string | undefined): void {
+        if (error) this.patch({ controlError: `Couldn't update pins: ${error}` });
+    }
+
+    private async pinRequest(run: (api: JournalApi) => Promise<unknown>): Promise<string | undefined> {
+        const api = this.api;
+        if (!api) return "Not signed in.";
+        try {
+            const { pins, limit } = parsePinsResponse(await run(api));
+            if (this.api === api) this.applyJournalPins(pins, limit);
+            return undefined;
+        } catch (error) {
+            return pinErrorMessage(error);
+        }
+    }
+
+    /**
+     * Adopt the journal's pin list (null = this journal has no pins: keep the browser-local set).
+     * The first time pins are supported this session, carry any browser-local pins over.
+     */
+    private applyJournalPins(pins: ConvoPin[] | null, limit?: number): void {
+        const importPending = pins !== null && this.localPinImportPending();
+        // Before the sidebar first shows journal pins, stage them while local pins await their
+        // carry-over. Once it shows them, keep the list current and import alongside.
+        if (importPending && (this.stagedPins !== null || this.state.journalPins === null)) {
+            this.stagedPins = pins;
+            if (limit !== undefined) this.patch({ pinLimit: limit });
+        } else {
+            this.stagedPins = null;
+            this.patch({ journalPins: pins, ...(limit !== undefined ? { pinLimit: limit } : {}) });
+            if (this.state.session) writeCachedPins(this.state.session, pins);
+        }
+        if (importPending) void this.importLocalPins();
+    }
+
+    /** Browser-local pins exist that have not been carried over to the journal yet. */
+    private localPinImportPending(): boolean {
+        const session = this.state.session;
+        if (!session || pinImportDone(session)) return false;
+        const local = pinnedStore.read(session);
+        return local.ok && local.ids.size > 0;
+    }
+
+    /**
+     * One-time import, per (server, user): PUT each browser-local pin the journal lacks, in list
+     * order and within the limit, then clear the local set and switch the sidebar to the journal's
+     * list. Any failure stops the import and leaves the local set (and the flag) untouched — the
+     * sidebar stays on what it showed (the local pins, until the journal's were adopted), and the
+     * next pin list from the journal (a live frame, a pin action, a reconnect) retries.
+     */
+    private async importLocalPins(): Promise<void> {
+        const session = this.state.session;
+        const api = this.api;
+        if (!session || !api || this.pinImportStarted || pinImportDone(session)) return;
+        const local = pinnedStore.read(session);
+        if (!local.ok || local.ids.size === 0) return;
+        this.pinImportStarted = true;
+        const plan = planPinImport(
+            local.ids,
+            this.state.conversations,
+            this.stagedPins ?? this.state.journalPins ?? [],
+            this.state.pinLimit,
+        );
+        for (const { convo_id, label } of plan) {
+            let result: { pins: ConvoPin[]; limit: number };
+            try {
+                result = parsePinsResponse(await api.putPin(convo_id, { label, emoji: "" }));
+            } catch (error) {
+                console.warn("matron: pin import stopped", pinErrorMessage(error));
+                if (this.api === api) this.pinImportStarted = false;
+                return;
+            }
+            if (this.api !== api) return;
+            if (this.stagedPins !== null) this.stagedPins = result.pins;
+            else this.patch({ journalPins: result.pins });
+            this.patch({ pinLimit: result.limit });
+        }
+        if (this.api !== api || this.state.session !== session) return;
+        markPinImportDone(session);
+        let cleared = true;
+        try {
+            pinnedStore.write(session, new Set());
+        } catch {
+            this.logStorageDiag("write_fail", "pinned", false);
+            cleared = false;
+        }
+        const pins = this.stagedPins ?? this.state.journalPins ?? [];
+        this.stagedPins = null;
+        this.patch({ journalPins: pins, ...(cleared ? { pinnedIds: new Set<string>() } : {}) });
+        writeCachedPins(session, pins);
+    }
+
+    public favoriteConversation(id: string): void {
+        this.setFlag(favoriteStore, "favoriteIds", id, true);
+    }
+
+    public unfavoriteConversation(id: string): void {
+        this.setFlag(favoriteStore, "favoriteIds", id, false);
+    }
+
+    public markConversationUnread(id: string): void {
+        this.setFlag(unreadStore, "unreadOverrideIds", id, true);
+    }
+
+    /**
+     * Toggle whether a parent conversation's subagent child rows are collapsed in the sidebar.
+     * Persisted per session/user like the other row flags; the collapsed set is threaded into
+     * every buildSidebarIndex call, so collapsing suppresses the child rows across render,
+     * selection, unread aggregation, the desktop badge, and mark-all in lock-step.
+     */
+    public toggleSubagentCollapse(parentId: string): void {
+        const collapse = !this.state.collapsedSubagentParentIds.has(parentId);
+        const applied = this.setFlag(collapsedSubagentStore, "collapsedSubagentParentIds", parentId, collapse);
+        // Collapsing suppresses the parent's child rows. If the reading pane is pointed at one of
+        // those now-hidden children, leaving selection there lets the next snapshot resync reject it
+        // and swap the pane to an unrelated top-level convo. Fold selection UP to the (still-visible)
+        // host parent — matching the collapse mental model (cf. archive's deselect precedent).
+        if (applied && collapse) this.foldSelectionUnderCollapsedParent();
+    }
+
+    /**
+     * After a subagent parent is collapsed (locally or cross-tab), a RUNNING child that was the
+     * reading-pane selection just became a hidden row. Fold selection up to that child's host
+     * parent so the resync can't yank the pane elsewhere. No-op unless the current selection is a
+     * running child that the canonical index now resolves to "hidden" under a visible parent, so a
+     * done child (hidden for an unrelated reason) is never dragged into its parent.
+     */
+    private foldSelectionUnderCollapsedParent(): void {
+        const selectedId = this.state.selectedConversationId;
+        if (!selectedId) return;
+        const selected = this.state.conversations.find((conversation) => conversation.id === selectedId);
+        if (!selected || selected.session_state !== "running") return;
+        const parentId = selected.parent_convo_id;
+        if (parentId == null || parentId === "") return;
+        const index = buildSidebarIndex(
+            this.state.conversations,
+            this.state.archivedIds,
+            this.state.collapsedSubagentParentIds,
+        );
+        if (childSidebarPlacement(selected, index) !== "hidden") return;
+        const parent = this.state.conversations.find((conversation) => conversation.id === parentId);
+        if (parent && rendersAsTopLevelRow(parent, index)) void this.selectConversation(parentId);
+    }
+
+    public markConversationRead(conversationId: string): boolean {
+        const conversation = this.state.conversations.find((candidate) => candidate.id === conversationId);
+        if (!conversation) return true;
+        const cleared = this.clearUnreadOverride(conversationId);
+        if (conversation.unread_count > 0) this.scheduleRead(conversationId, conversation.last_seq, 0);
+        return cleared;
+    }
+
+    public markAllRead(): void {
+        const previousControlError = this.state.controlError;
+        // mark-all targets exactly the rows Active renders as top-level (canonical
+        // predicate) — never a hidden done child (no row, no Mark-all button) nor a nested
+        // child, both of which would otherwise leave a stuck, untargetable unread badge.
+        const index = buildSidebarIndex(
+            this.state.conversations,
+            this.state.archivedIds,
+            this.state.collapsedSubagentParentIds,
+        );
+        let anyFailed = false;
+        for (const conversation of this.state.conversations) {
+            if (this.state.archivedIds.has(conversation.id)) continue;
+            if (!rendersAsTopLevelRow(conversation, index)) continue;
+            if (!effectiveUnread(conversation, this.state.unreadOverrideIds)) continue;
+            // Single canonical mark-read path; it clears the override and flushes the server read.
+            if (!this.markConversationRead(conversation.id)) anyFailed = true;
+        }
+        this.patch({
+            controlError: anyFailed
+                ? MARK_ALL_READ_ERROR
+                : previousControlError === MARK_ALL_READ_ERROR
+                  ? undefined
+                  : previousControlError,
+        });
+    }
+
+    public async loadOlderHistory(opts?: { suppressNotFound?: boolean }): Promise<void> {
+        const conversationId = this.state.selectedConversationId;
+        if (!conversationId || !this.database || !this.api || this.state.loadingHistory) return;
+        const history = this.history.get(conversationId) ?? { initialized: false, hasMore: true };
+        if (history.initialized && !history.hasMore) return;
+
+        this.patch({ loadingHistory: true });
+        try {
+            const response = await this.api.messages(
+                conversationId,
+                history.initialized ? history.oldestSeq : undefined,
+                HISTORY_PAGE_SIZE,
+            );
+            await this.database.putHistory(response.events);
+            await this.reconcilePersistedOwnMessages(this.database);
+            const minimum = response.events.reduce<number | undefined>(
+                (current, event) => (current === undefined ? event.seq : Math.min(current, event.seq)),
+                history.oldestSeq,
+            );
+            const conversation = this.state.conversations.find((candidate) => candidate.id === conversationId);
+            const emptyInitialPageWithKnownHistory =
+                !history.initialized && response.events.length === 0 && (conversation?.last_seq ?? 0) > 0;
+            this.history.set(conversationId, {
+                initialized: !emptyInitialPageWithKnownHistory,
+                oldestSeq: minimum,
+                hasMore: emptyInitialPageWithKnownHistory || response.events.length === HISTORY_PAGE_SIZE,
+            });
+            if (this.state.selectedConversationId === conversationId)
+                await this.refreshSelectedConversation(conversationId);
+            this.clearHistoryError();
+        } catch (error) {
+            if (
+                opts?.suppressNotFound &&
+                error instanceof JournalApiError &&
+                error.status === 404 &&
+                error.code === "not_found"
+            ) {
+                this.history.set(conversationId, { initialized: true, hasMore: false });
+                this.clearHistoryError();
+                return;
+            }
+            this.historyError = error instanceof Error ? error.message : "Could not load message history";
+            this.patch({ connectionError: this.historyError });
+        } finally {
+            if (this.state.selectedConversationId === conversationId) {
+                this.patch({
+                    loadingHistory: false,
+                    hasOlderHistory: this.history.get(conversationId)?.hasMore ?? false,
+                });
+            }
+        }
+    }
+
+    public async sendMessage(bodyInput: string, targetConvoId?: string): Promise<boolean> {
+        const body = bodyInput.trim();
+        const conversationId = targetConvoId ?? this.state.selectedConversationId;
+        if (!body || !conversationId || !this.database) return false;
+        if (this.isChildConvo(conversationId)) return false;
+        const db = this.database;
+        const gen = this.sessionGen;
+        const connection = this.connection;
+        const owns = (): boolean => this.sessionGen === gen && this.database === db && this.connection === connection;
+        const message: PendingMessage = {
+            localId: crypto.randomUUID(),
+            convoId: conversationId,
+            body,
+            createdAt: Date.now(),
+        };
+        await db.addToOutbox(message); // the only awaited durable step
+        if (!owns()) return false;
+        // sendTick is a synchronous "a send happened → scroll to bottom" signal; bump it now (the
+        // message is durably queued) rather than gating it behind the async refresh below.
+        if (this.state.selectedConversationId === conversationId) {
+            try {
+                this.patch({ sendTick: this.state.sendTick + 1 });
+            } catch (error) {
+                console.warn("matron: post-send state update failed (message still queued)", error);
+            }
+        }
+        // Everything after the durable write is best-effort and must never reject sendMessage or
+        // delay its resolution. Otherwise the composer remains retryable despite a queued message.
+        void (async () => {
+            try {
+                await this.refreshSelectedConversation(conversationId);
+            } catch (error) {
+                console.warn("matron: post-send refresh failed (message still queued)", error);
+            }
+        })();
+        try {
+            this.sendPendingMessage(message, connection);
+        } catch (error) {
+            console.warn("matron: post-send dispatch threw (message still queued)", error);
+        }
+        return true;
+    }
+
+    private buildPendingAttachment(file: File, convoId: string, caption?: string): PendingMessage {
+        return {
+            localId: crypto.randomUUID(),
+            convoId,
+            body: "",
+            createdAt: Date.now(),
+            kind: file.type.startsWith("image/") ? "image" : "file",
+            filename: file.name,
+            size: file.size,
+            contentType: file.type || "application/octet-stream",
+            blobRef: null,
+            attachState: "uploading",
+            ...(caption ? { caption } : {}),
+        };
+    }
+
+    private async persistPendingAttachment(
+        message: PendingMessage,
+        file: File,
+        db: JournalDatabase,
+        gen: number,
+    ): Promise<PersistPendingAttachmentOutcome> {
+        if (file.size > BROWSER_MEMORY_SAFETY_MAX_BYTES || file.size === 0) {
+            message.attachState = "error";
+            message.errorKind = file.size > BROWSER_MEMORY_SAFETY_MAX_BYTES ? "browser_memory_limit" : "empty";
+            if (!(await this.persistAttachment(message, db, gen))) return { kind: "persist-failed" };
+            if (this.sessionGen !== gen) return { kind: "persist-failed" };
+            await this.refreshSelectedConversation(message.convoId, db, gen).catch(() => undefined);
+            return { kind: "persisted-terminal" };
+        }
+        this.pendingFiles.set(message.localId, file);
+        if (!(await this.persistAttachment(message, db, gen))) return { kind: "persist-failed" };
+        if (this.sessionGen !== gen || this.database !== db) return { kind: "persist-failed" };
+        return message.attachState === "uploading" ? { kind: "persisted-uploadable" } : { kind: "persisted-terminal" };
+    }
+
+    private async runPendingUpload(message: PendingMessage, file: File, owner: AttachmentOwner): Promise<void> {
+        if (!this.ownsAttachment(owner, message.localId)) return;
+        try {
+            await this.uploadPendingAttachment(message, file, owner);
+        } catch {
+            if (
+                !this.ownsAttachment(owner, message.localId) ||
+                message.attachState !== "uploading" ||
+                this.inFlightUploads.has(message.localId)
+            ) {
+                return;
+            }
+            message.attachState = "error";
+            message.errorKind = "upload_failed";
+            if (!(await this.persistAttachment(message, owner.db, owner.gen))) return;
+            try {
+                await this.refreshSelectedConversation(message.convoId, owner.db, owner.gen);
+            } catch {
+                if (
+                    this.ownsAttachment(owner, message.localId) &&
+                    this.state.selectedConversationId === message.convoId
+                ) {
+                    const pendingMessages = this.state.pendingMessages.filter(
+                        (pending) => pending.localId !== message.localId,
+                    );
+                    this.patch({ pendingMessages: [...pendingMessages, { ...message, canRetry: true }] });
+                }
+            }
+        }
+    }
+
+    /**
+     * `"sent"` means the attachment was durably persisted to the outbox and its upload was dispatched,
+     * not that delivery was confirmed. Later upload failures resolve here and surface through the
+     * standard retryable outbox error tile.
+     */
+    public async sendAttachment(
+        file: File,
+        convoId: string,
+        caption?: string,
+        sessionGen = this.sessionGen,
+    ): Promise<"sent" | "persisted-terminal" | "persist-failed" | "skipped"> {
+        if (sessionGen !== this.sessionGen) return "skipped";
+        const gen = sessionGen;
+        const api = this.api;
+        const db = this.database;
+        if (!api || !db) return "skipped";
+        if (this.isChildConvo(convoId)) return "skipped";
+        const owner = { gen, api, db };
+        const message = this.buildPendingAttachment(file, convoId, caption);
+        const persistOutcome = await this.persistPendingAttachment(message, file, db, gen);
+        if (persistOutcome.kind === "persisted-terminal") return "persisted-terminal";
+        if (persistOutcome.kind === "persist-failed") return "persist-failed";
+        const optimisticRefresh = this.refreshSelectedConversation(convoId, db, gen).catch(() => undefined);
+        await Promise.all([optimisticRefresh, this.runPendingUpload(message, file, owner)]);
+        return "sent";
+    }
+
+    /**
+     * `caption` is the composer's typed draft sent with the voice note: the agent gets the typed text,
+     * then the transcript, in one turn.
+     */
+    public async sendVoiceNote(
+        blob: Blob,
+        convoId?: string,
+        sessionGen = this.sessionGen,
+        caption?: string,
+    ): Promise<"sent" | "persisted-terminal" | "persist-failed" | "skipped"> {
+        if (sessionGen !== this.sessionGen) return "skipped";
+        const cid = convoId ?? this.state.selectedConversationId;
+        if (!cid || this.isChildConvo(cid) || this.state.archivedIds.has(cid)) return "skipped";
+        if (blob.size === 0) return "skipped";
+
+        return await this.sendAttachment(voiceNoteFile(blob), cid, caption?.trim() || undefined, sessionGen);
+    }
+
+    public async retryAttachment(localId: string): Promise<void> {
+        if (this.dismissedAttachments.has(localId) || this.retryingAttachments.has(localId)) return;
+        this.retryingAttachments.add(localId);
+        try {
+            await this.runAttachmentOperation(localId, async () => {
+                if (this.dismissedAttachments.has(localId)) return;
+                const gen = this.sessionGen;
+                const api = this.api;
+                const db = this.database;
+                if (!api || !db) return;
+                const owner = { gen, api, db };
+
+                const outbox = await db.outbox();
+                if (!this.ownsAttachment(owner, localId)) return;
+                const message =
+                    outbox.find((candidate) => candidate.localId === localId) ??
+                    this.transientAttachmentErrors.get(localId);
+                if (!message || message.attachState !== "error") return;
+                delete message.canRetry;
+                if (this.isChildConvo(message.convoId)) {
+                    this.markChildBlocked(message);
+                    if (!(await this.persistAttachment(message, db, gen))) return;
+                    if (!this.ownsAttachment(owner, localId)) return;
+                    await this.refreshSelectedConversation(message.convoId, db, gen);
+                    return;
+                }
+                if (this.state.selectedConversationId === message.convoId) {
+                    this.patch({ sendTick: this.state.sendTick + 1 });
+                }
+
+                if (
+                    message.errorKind === "upload_failed" ||
+                    (message.errorKind === "storage_failed" && !message.blobRef)
+                ) {
+                    const file = this.pendingFiles.get(localId);
+                    if (!file) return;
+                    message.attachState = "uploading";
+                    message.blobRef = null;
+                    delete message.errorKind;
+                    if (!(await this.persistAttachment(message, db, gen))) return;
+                    if (!this.ownsAttachment(owner, localId)) return;
+                    await this.refreshSelectedConversation(message.convoId, db, gen);
+                    if (!this.ownsAttachment(owner, localId)) return;
+                    await this.uploadPendingAttachment(message, file, owner);
+                    return;
+                }
+
+                if (
+                    (message.errorKind === "send_failed" || message.errorKind === "storage_failed") &&
+                    message.blobRef
+                ) {
+                    await this.emitPendingAttachment(message, owner);
+                }
+            });
+        } finally {
+            this.retryingAttachments.delete(localId);
+        }
+    }
+
+    private async uploadPendingAttachment(message: PendingMessage, file: File, owner: AttachmentOwner): Promise<void> {
+        if (!this.ownsAttachment(owner, message.localId)) return;
+
+        const controller = new AbortController();
+        const timer = window.setTimeout(() => controller.abort(), uploadTimeoutMsFor(file.size));
+        this.inFlightUploads.set(message.localId, controller);
+        this.uploadConvos.set(message.localId, message.convoId);
+        let mediaId: string;
+        try {
+            const bytes = await Promise.race([file.arrayBuffer(), abortPromise(controller.signal)]);
+            if (!this.ownsAttachment(owner, message.localId)) return;
+            if (this.isChildConvo(message.convoId)) {
+                this.markChildBlocked(message);
+                if (!(await this.persistAttachment(message, owner.db, owner.gen))) return;
+                if (!this.ownsAttachment(owner, message.localId)) return;
+                await this.refreshSelectedConversation(message.convoId, owner.db, owner.gen);
+                return;
+            }
+            const response = await owner.api.uploadMedia(bytes, message.contentType ?? file.type, controller.signal);
+            if (!this.ownsAttachment(owner, message.localId)) return;
+            if (typeof response.media_id !== "string" || response.media_id.trim() === "") {
+                throw new Error("The journal server returned a malformed media response.");
+            }
+            mediaId = response.media_id;
+        } catch (error) {
+            if (!this.ownsAttachment(owner, message.localId)) return;
+            if (this.isChildConvo(message.convoId)) {
+                this.markChildBlocked(message);
+                if (!(await this.persistAttachment(message, owner.db, owner.gen))) return;
+                if (!this.ownsAttachment(owner, message.localId)) return;
+                await this.refreshSelectedConversation(message.convoId, owner.db, owner.gen);
+                return;
+            }
+            message.blobRef = null;
+            message.attachState = "error";
+            message.errorKind =
+                error instanceof JournalApiError &&
+                (error.code === "too_large" || error.code === "empty" || error.code === "electron_binary_unsupported")
+                    ? error.code
+                    : "upload_failed";
+            message.errorMessage =
+                error instanceof JournalApiError && error.code === "electron_binary_unsupported"
+                    ? error.message
+                    : undefined;
+            if (!(await this.persistAttachment(message, owner.db, owner.gen))) return;
+            if (message.errorKind !== "upload_failed") this.pendingFiles.delete(message.localId);
+            if (!this.ownsAttachment(owner, message.localId)) return;
+            await this.refreshSelectedConversation(message.convoId, owner.db, owner.gen);
+            if (!this.ownsAttachment(owner, message.localId)) return;
+            return;
+        } finally {
+            window.clearTimeout(timer);
+            if (this.inFlightUploads.get(message.localId) === controller) {
+                this.inFlightUploads.delete(message.localId);
+                this.uploadConvos.delete(message.localId);
+            }
+        }
+
+        message.blobRef = mediaId;
+        await this.emitPendingAttachment(message, owner);
+    }
+
+    private attachmentPayload(message: PendingMessage): Record<string, unknown> {
+        return {
+            blob_ref: message.blobRef,
+            name: message.filename,
+            filename: message.filename,
+            content_type: message.contentType,
+            size: message.size,
+            local_id: message.localId,
+            ...(message.caption ? { caption: message.caption } : {}),
+        };
+    }
+
+    private async emitPendingAttachment(message: PendingMessage, owner: AttachmentOwner): Promise<void> {
+        if (this.isChildConvo(message.convoId)) {
+            this.markChildBlocked(message);
+            if (!this.ownsAttachment(owner, message.localId)) return;
+            if (!(await this.persistAttachment(message, owner.db, owner.gen))) return;
+            if (!this.ownsAttachment(owner, message.localId)) return;
+            await this.refreshSelectedConversation(message.convoId, owner.db, owner.gen);
+            return;
+        }
+        if (!message.blobRef || (message.kind !== "image" && message.kind !== "file")) return;
+        if (!this.ownsAttachment(owner, message.localId)) return;
+
+        message.attachState = "sending";
+        delete message.errorKind;
+        if (!(await this.persistAttachment(message, owner.db, owner.gen))) return;
+        if (!this.ownsAttachment(owner, message.localId)) return;
+        this.pendingFiles.delete(message.localId);
+        await this.refreshSelectedConversation(message.convoId, owner.db, owner.gen);
+        if (!this.ownsAttachment(owner, message.localId)) return;
+
+        if (this.dismissedAttachments.has(message.localId)) return;
+        // Re-check child state immediately before egress — no await follows, so this synchronous check
+        // and the send are atomic w.r.t. in-memory state. The convo may have transitioned to a read-only
+        // child during the awaits above (concurrent convo_meta / snapshot refresh) after the entry check
+        // at line 701. Defense-in-depth last line; authoritative read-only enforcement is server-side
+        // (three-layer model, a documented server follow-up).
+        if (this.isChildConvo(message.convoId)) {
+            this.markChildBlocked(message);
+            if (!(await this.persistAttachment(message, owner.db, owner.gen))) return;
+            if (!this.ownsAttachment(owner, message.localId)) return;
+            await this.refreshSelectedConversation(message.convoId, owner.db, owner.gen);
+            return;
+        }
+        const ok = this.connection?.send({
+            op: "send",
+            convo_id: message.convoId,
+            type: message.kind,
+            blob_ref: message.blobRef,
+            payload: this.attachmentPayload(message),
+            local_id: message.localId,
+        });
+        if (ok === true) return;
+
+        message.attachState = "error";
+        message.errorKind = "send_failed";
+        if (!this.ownsAttachment(owner, message.localId)) return;
+        if (!(await this.persistAttachment(message, owner.db, owner.gen))) return;
+        if (!this.ownsAttachment(owner, message.localId)) return;
+        await this.refreshSelectedConversation(message.convoId, owner.db, owner.gen);
+        if (!this.ownsAttachment(owner, message.localId)) return;
+    }
+
+    public async attachFiles(files: File[]): Promise<void> {
+        const gen = this.sessionGen;
+        const convoId = this.state.selectedConversationId;
+        if (!convoId) return;
+
+        for (const file of files) {
+            if (this.sessionGen !== gen) break;
+            try {
+                await this.sendAttachment(file, convoId);
+            } catch {
+                // Continue so one failed attachment does not block the rest of the batch.
+            }
+        }
+    }
+
+    public stageFiles(files: File[]): void {
+        if (files.length === 0) return;
+        const staged = this.state.stagedUploads;
+        if (staged) {
+            if (this.isChildConvo(staged.convoId)) return;
+            if (staged.error) return;
+            this.patch({
+                stagedUploads: {
+                    ...staged,
+                    items: [...staged.items, ...files.map((file) => ({ id: crypto.randomUUID(), file }))],
+                    total: staged.total + files.length,
+                },
+            });
+            return;
+        }
+        const convoId = this.state.selectedConversationId;
+        if (!convoId) return;
+        if (this.isChildConvo(convoId)) return;
+        this.patch({
+            stagedUploads: {
+                convoId,
+                items: files.map((file) => ({ id: crypto.randomUUID(), file })),
+                total: files.length,
+                confirming: false,
+            },
+        });
+    }
+
+    public async confirmStagedFile(itemId: string, captionInput?: string): Promise<void> {
+        const staged = this.state.stagedUploads;
+        if (!staged || staged.confirming || staged.error) return;
+        const head = staged.items[0];
+        if (!head || head.id !== itemId) return;
+        if (this.isChildConvo(staged.convoId)) return;
+        this.patch({ stagedUploads: { ...staged, confirming: true } });
+
+        const gen = this.sessionGen;
+        const api = this.api;
+        const db = this.database;
+        if (!api || !db) {
+            const current = this.state.stagedUploads;
+            if (current) this.patch({ stagedUploads: { ...current, confirming: false } });
+            return;
+        }
+        const owner: AttachmentOwner = { gen, api, db };
+        const convoId = staged.convoId;
+
+        if (!this.stagedConvoValid(convoId)) {
+            this.patch({ stagedUploads: { ...staged, items: [], confirming: false, error: "archived" } });
+            return;
+        }
+
+        const caption = captionInput?.trim() ? captionInput.trim() : undefined;
+        const message = head.message ?? this.buildPendingAttachment(head.file, convoId, caption);
+        head.message = message;
+        if (caption) message.caption = caption;
+        else delete message.caption;
+
+        const persistOutcome = await this.persistPendingAttachment(message, head.file, db, gen);
+        if (this.sessionGen !== gen) return;
+        const current = this.state.stagedUploads;
+        if (!current) return;
+        if (persistOutcome.kind === "persist-failed") {
+            this.transientAttachmentErrors.delete(message.localId);
+            this.pendingFiles.delete(message.localId);
+            if (this.state.selectedConversationId === convoId) {
+                await this.refreshSelectedConversation(convoId, db, gen).catch(() => undefined);
+            }
+            const afterPurge = this.state.stagedUploads;
+            if (!afterPurge) return;
+            this.patch({ stagedUploads: { ...afterPurge, confirming: false, persistError: true } });
+            return;
+        }
+        if (this.state.selectedConversationId === convoId) {
+            this.patch({ sendTick: this.state.sendTick + 1 });
+        }
+        void this.refreshSelectedConversation(convoId, db, gen).catch(() => undefined);
+        const rest = current.items.slice(1);
+        this.patch({
+            stagedUploads: rest.length
+                ? { ...current, items: rest, confirming: false, persistError: false }
+                : undefined,
+        });
+
+        if (persistOutcome.kind === "persisted-terminal") return;
+
+        this.stagedSendChain = this.stagedSendChain.then(async () => {
+            try {
+                if (this.sessionGen !== gen || this.database !== db) return;
+                if (!this.stagedConvoValid(convoId)) {
+                    message.attachState = "error";
+                    message.errorKind = "upload_failed";
+                    message.errorMessage = "Conversation was archived in another tab — unarchive to retry.";
+                    if (await this.persistAttachment(message, db, gen)) {
+                        await this.refreshSelectedConversation(convoId, db, gen).catch(() => undefined);
+                    }
+                    return;
+                }
+                await this.runPendingUpload(message, head.file, owner);
+            } catch {
+                // Rejection isolation: one failed upload must not poison the chain.
+            }
+        });
+    }
+
+    public skipStagedFile(itemId: string): void {
+        const staged = this.state.stagedUploads;
+        if (!staged || staged.confirming || staged.error) return;
+        const head = staged.items[0];
+        if (!head || head.id !== itemId) return;
+        const rest = staged.items.slice(1);
+        this.patch({
+            stagedUploads: rest.length ? { ...staged, items: rest, persistError: false } : undefined,
+        });
+    }
+
+    public cancelStagedFiles(): void {
+        const staged = this.state.stagedUploads;
+        if (!staged) return;
+        // The confirming lock guards all mutations at the client boundary.
+        if (staged.confirming) return;
+        this.patch({ stagedUploads: undefined });
+    }
+
+    private stagedConvoValid(convoId: string): boolean {
+        return (
+            this.state.conversations.some((conversation) => conversation.id === convoId) &&
+            !this.state.archivedIds.has(convoId)
+        );
+    }
+
+    public async dismissAttachment(localId: string): Promise<void> {
+        this.dismissedAttachments.add(localId);
+        this.inFlightUploads.get(localId)?.abort();
+        const gen = this.sessionGen;
+        const db = this.database;
+        if (!db) return;
+
+        await this.runAttachmentOperation(localId, async () => {
+            await db.deleteOutboxRow(localId);
+            if (this.sessionGen !== gen || this.database !== db) return;
+            this.pendingFiles.delete(localId);
+            this.transientAttachmentErrors.delete(localId);
+            const conversationId = this.state.selectedConversationId;
+            if (conversationId) await this.refreshSelectedConversation(conversationId, db, gen);
+        });
+    }
+
+    public sendPromptReply(targetSeq: number, choice?: string, text?: string): boolean {
+        if (this.isChildConvo(this.state.selectedConversationId ?? "")) return false;
+        const conversationId = this.state.selectedConversationId;
+        if (!conversationId) return false;
+        const sent =
+            this.connection?.send({
+                op: "prompt_reply",
+                convo_id: conversationId,
+                target_seq: targetSeq,
+                choice: choice ?? null,
+                text: text ?? null,
+            }) ?? false;
+        if (!sent) this.patch({ connectionError: "Reconnect before answering this prompt." });
+        return sent;
+    }
+
+    // House pattern: components talk to the client, not JournalApi directly. Errors (notably
+    // JournalApiError with `.status` 409/404) are rethrown unchanged for the card's state machine.
+    public async answerAgentSpawn(
+        requestId: string,
+        decision: "approve" | "deny",
+        signal?: AbortSignal,
+    ): Promise<void> {
+        if (!this.api) throw new Error("Not signed in.");
+        await this.api.answerAgentSpawn(requestId, decision, signal);
+    }
+
+    // Concurrent callers for the same id (the viewer body and its DownloadLink mount in the
+    // same commit) share one in-flight request: without the dedupe map each miss fetched the
+    // blob again and the loser's object URL was overwritten in the cache — never revoked, a
+    // permanent leak of the whole blob.
+    public mediaUrl(mediaId: string): Promise<string> {
+        const cached = this.mediaUrls.get(mediaId);
+        if (cached) return Promise.resolve(cached);
+        const inflight = this.mediaUrlRequests.get(mediaId);
+        if (inflight) return inflight;
+        const api = this.api;
+        if (!api) return Promise.reject(new Error("Not signed in"));
+        const gen = this.sessionGen;
+        const request = (async (): Promise<string> => {
+            try {
+                const blob = await api.media(mediaId);
+                const url = URL.createObjectURL(blob);
+                if (this.sessionGen !== gen) {
+                    // Signed out mid-fetch: the teardown that revokes cached URLs already ran,
+                    // so caching now would leak this one into the next session.
+                    URL.revokeObjectURL(url);
+                    throw new Error("Not signed in");
+                }
+                this.mediaUrls.set(mediaId, url);
+                return url;
+            } finally {
+                this.mediaUrlRequests.delete(mediaId);
+            }
+        })();
+        this.mediaUrlRequests.set(mediaId, request);
+        return request;
+    }
+
+    public selectedConversation(): Conversation | undefined {
+        return this.state.conversations.find((conversation) => conversation.id === this.state.selectedConversationId);
+    }
+
+    // ── Tracker pane (Missions / Milestones / Decisions-Inbox) ──────────────────────
+    // The tracker shares the main region with the conversation view — one surface at a
+    // time. `trackerView` is the discriminant; the list/detail data is store-resident
+    // (loaded lazily by the load* helpers below, invalidated over WS).
+
+    // `itemId`/`missionId`: a number selects that row; `null` explicitly CLEARS that selection
+    // (mutual exclusion — see openTrackerItem/openTrackerMission); `undefined` preserves the prev
+    // selection. `null ?? prev` would resolve to prev, so the clear needs the explicit === null arm.
+    public openTrackerView(
+        opts: {
+            view?: "missions" | "inbox" | "memories";
+            itemId?: number | null;
+            missionId?: number | null;
+            memoryName?: string | null;
+            projectId?: number | null;
+            /** true opens the latest briefing in full (Projects view); false closes it. */
+            briefing?: boolean;
+        } = {},
+    ): void {
+        const prev = this.state.trackerView;
+        const view = opts.view ?? prev?.view ?? "inbox";
+        // An open briefing survives only an update in the same view that touches no other
+        // selection: a tab switch or a detail's back button (which clear selections with null)
+        // closes it too.
+        const selecting =
+            opts.itemId !== undefined ||
+            opts.missionId !== undefined ||
+            opts.memoryName !== undefined ||
+            opts.projectId !== undefined;
+        const briefingOpen =
+            opts.briefing !== undefined
+                ? opts.briefing || undefined
+                : !selecting && view === prev?.view
+                  ? prev?.briefingOpen
+                  : undefined;
+        const next: TrackerViewState = {
+            open: true,
+            view,
+            selectedItemId: opts.itemId === null ? undefined : (opts.itemId ?? prev?.selectedItemId),
+            selectedMissionId: opts.missionId === null ? undefined : (opts.missionId ?? prev?.selectedMissionId),
+            selectedMemoryName: opts.memoryName === null ? undefined : (opts.memoryName ?? prev?.selectedMemoryName),
+            selectedProjectId: opts.projectId === null ? undefined : (opts.projectId ?? prev?.selectedProjectId),
+            ...(briefingOpen ? { briefingOpen } : {}),
+        };
+        this.patch({ trackerView: next });
+    }
+
+    // Memories view entry points: a name opens that memory's editor, "" opens the new-memory form,
+    // and closeTrackerMemory returns to the list. Item and mission selections are cleared so the
+    // pane's item-first precedence cannot shadow the memory (same rule as openTrackerItem).
+    public openTrackerMemory(name: string): void {
+        if (this.state.trackerItem) this.patch({ trackerItem: null });
+        if (this.state.trackerMission) this.patch({ trackerMission: null });
+        this.openTrackerView({ view: "memories", memoryName: name, itemId: null, missionId: null, projectId: null });
+    }
+
+    public closeTrackerMemory(): void {
+        this.openTrackerView({ view: "memories", memoryName: null });
+    }
+
+    // Closing drops the cached item and mission details (and orphans any in-flight load of them):
+    // markers are not followed while the pane is closed, so a record kept across a close could reopen
+    // showing a status, and live actions, that another client has since changed.
+    public closeTrackerView(): void {
+        if (!this.state.trackerView) return;
+        this.trackerItemGen += 1;
+        this.trackerMissionGen += 1;
+        this.trackerProjectGen += 1;
+        this.patch({ trackerView: undefined, trackerItem: null, trackerMission: null, trackerProject: null });
+    }
+
+    // Deep-link / row-tap entry points: select the row (last-tap-wins) and switch to its view.
+    // The pane's own effect issues the matching load* call when the selection changes.
+    // Selecting a DIFFERENT row invalidates the cached detail up front (→ null) so the previously
+    // loaded record can never be rendered — nor have its action handlers (reply/close/reopen) fire —
+    // against the new selection before the loader replaces it (F1). Re-selecting the same row keeps
+    // the cache so it doesn't flash.
+    // `keepProject`: an item opened from a project page keeps that project selected, so the item's
+    // back button can return to it (the view switch still clears it).
+    public openTrackerItem(num: number, opts: { keepProject?: boolean } = {}): void {
+        if (this.state.trackerItem && this.state.trackerItem.item.num !== num) {
+            this.patch({ trackerItem: null });
+        }
+        // Item and mission selection are MUTUALLY EXCLUSIVE — the pane shows one detail at a time and
+        // gives the item precedence. Opening an item must clear any prior mission selection AND its
+        // cached detail, or a cross-kind deep link (mission→item) would leave the stale mission
+        // selected/rendered and shadow the item just opened (F3).
+        if (this.state.trackerMission) this.patch({ trackerMission: null });
+        this.openTrackerView({
+            view: "inbox",
+            itemId: num,
+            missionId: null,
+            projectId: opts.keepProject ? undefined : null,
+        });
+    }
+
+    /** Opens a project page on the Projects view (the tracker's "missions" view key). */
+    public openTrackerProject(num: number): void {
+        if (this.state.trackerProject && this.state.trackerProject.project.num !== num) {
+            this.patch({ trackerProject: null });
+        }
+        if (this.state.trackerItem) this.patch({ trackerItem: null });
+        if (this.state.trackerMission) this.patch({ trackerMission: null });
+        this.openTrackerView({ view: "missions", projectId: num, missionId: null, itemId: null });
+    }
+
+    public openTrackerMission(num: number): void {
+        if (this.state.trackerMission && this.state.trackerMission.mission?.num !== num) {
+            this.patch({ trackerMission: null });
+        }
+        // Symmetric to openTrackerItem — clear any item selection + cache so an item→mission deep
+        // link can't leave the item selected and win the pane's item-first precedence (F3).
+        if (this.state.trackerItem) this.patch({ trackerItem: null });
+        this.openTrackerView({ view: "missions", missionId: num, itemId: null, projectId: null });
+    }
+
+    // One in-app handler for `matron://item|mission|project/<N>` and `matron://convo/<id>` markdown
+    // deep links (markdown.tsx parseMatronHref), shared by the timeline and every tracker Markdown
+    // call site so a valid link is always activatable (F6) — never rendered inert or stripped.
+    // A project link opens that project's page (openTrackerProject).
+    public openTrackerLink(kind: MatronLinkKind, target: number | string): void {
+        if (kind === "convo") {
+            if (typeof target === "string" && target) void this.selectConversation(target, { suppressNotFound: true });
+            return;
+        }
+        const num = typeof target === "number" ? target : Number(target);
+        if (!Number.isSafeInteger(num) || num <= 0) return;
+        if (kind === "item") this.openTrackerItem(num);
+        else if (kind === "mission") this.openTrackerMission(num);
+        else this.openTrackerProject(num);
+    }
+
+    // ── Coordinator briefing (top of the Projects tab) ──────────────────────
+
+    /** Open the latest briefing in full, in the Projects view (the tracker's "missions" key). */
+    public openBriefing(): void {
+        if (this.state.trackerItem) this.patch({ trackerItem: null });
+        if (this.state.trackerMission) this.patch({ trackerMission: null });
+        this.openTrackerView({
+            view: "missions",
+            itemId: null,
+            missionId: null,
+            memoryName: null,
+            projectId: null,
+            briefing: true,
+        });
+    }
+
+    public closeBriefing(): void {
+        this.openTrackerView({ view: "missions", briefing: false });
+    }
+
+    /**
+     * "Open in chat": the Coordinator conversation the briefing was posted to. The client has no
+     * jump-to-seq (search hits open their conversation the same way), so this opens the
+     * conversation; the briefing is its latest message unless the Coordinator has said more since.
+     */
+    public openBriefingInChat(convoId: string): void {
+        void this.selectConversation(convoId, { suppressNotFound: true });
+    }
+
+    // GET /briefings/latest. A 404 means the journal predates briefings: the card stays hidden
+    // (unsupported), and no error is shown. Loaders never clear a loaded view on failure.
+    // A successful load clears a refused ask's message (busy, couldn't ask): the card now shows the
+    // journal's current view, so a later frame, reconnect or return to the dashboard never pairs a
+    // new briefing with an old "The Coordinator is busy". `keepRefreshError` is for the 409 path's
+    // own refetch, whose message explains why the card is about to go. A 429's `retryAt` stays: it
+    // is the journal's own retry time and lapses by itself.
+    // ── User settings (GET/PATCH /settings, kept live by `hello_ok` and the `settings` frame) ──
+
+    public async loadSettings(): Promise<void> {
+        const api = this.api;
+        if (!api) return;
+        const gen = ++this.settingsGen;
+        try {
+            const settings = parseUserSettings(await api.settings());
+            if (this.api !== api || this.settingsGen !== gen) return;
+            this.patch({
+                userSettingsUnsupported: false,
+                ...(settings ? { userSettings: settings, userSettingsError: undefined } : {}),
+            });
+        } catch (error) {
+            if (this.api !== api || this.settingsGen !== gen) return;
+            // An older journal has no /settings: hide the switches. Any other failure keeps what the
+            // hello frame said, so a blip does not take the switch away.
+            if (error instanceof JournalApiError && error.status === 404) {
+                this.patch({ userSettingsUnsupported: true });
+            }
+        }
+    }
+
+    /** PATCH /settings {notices}. Shows the new value at once and puts the old one back on failure. */
+    public async setNoticesSetting(notices: boolean): Promise<boolean> {
+        const api = this.api;
+        if (!api) return false;
+        const previous = this.state.userSettings;
+        const gen = ++this.settingsGen;
+        this.patch({ userSettings: { notices }, userSettingsError: undefined });
+        try {
+            const settings = parseUserSettings(await api.patchSettings({ notices }));
+            if (this.api === api && this.settingsGen === gen && settings) this.patch({ userSettings: settings });
+            return true;
+        } catch (error) {
+            if (this.api === api && this.settingsGen === gen) {
+                this.patch({ userSettings: previous, userSettingsError: errorMessage(error) });
+            }
+            return false;
+        }
+    }
+
+    // A settings frame (or hello_ok) is the journal's word on the current value; it supersedes any
+    // GET still in flight.
+    private applySettingsFrame(raw: unknown): void {
+        const settings = parseUserSettings(raw);
+        if (!settings) return;
+        ++this.settingsGen;
+        this.patch({ userSettings: settings, userSettingsError: undefined });
+    }
+
+    public async loadBriefing(opts: { keepRefreshError?: boolean } = {}): Promise<void> {
+        const api = this.api;
+        if (!api) return;
+        const gen = ++this.briefingGen;
+        this.patchBriefing({ loading: true });
+        try {
+            const latest = sanitizeBriefingLatest(await api.latestBriefing());
+            if (this.api !== api || this.briefingGen !== gen) return;
+            this.setBriefingLatest(latest, {
+                loading: false,
+                unsupported: false,
+                error: undefined,
+                ...(opts.keepRefreshError ? {} : { refreshError: undefined }),
+            });
+        } catch (error) {
+            if (this.api !== api || this.briefingGen !== gen) return;
+            if (error instanceof JournalApiError && error.status === 404) {
+                this.patchBriefing({ loading: false, unsupported: true, error: undefined });
+                return;
+            }
+            this.patchBriefing({ loading: false, error: errorMessage(error) });
+        }
+    }
+
+    /**
+     * POST /briefings/refresh — ask the Coordinator for a new briefing. Resolves true when the
+     * journal took the ask (202). A 429 records `retryAt` (the card says "Try again in N min"); a
+     * 409 (no Coordinator) and a 503 (busy) record a message; a 409 also refetches, so a
+     * Coordinator that went away hides the card.
+     */
+    public async requestBriefingRefresh(): Promise<boolean> {
+        const api = this.api;
+        if (!api || this.state.briefing?.requesting) return false;
+        this.patchBriefing({ requesting: true, refreshError: undefined, retryAt: undefined });
+        try {
+            const latest = sanitizeBriefingLatest(await api.refreshBriefing());
+            if (this.api !== api) return false;
+            // The 202 body is the freshest view: supersede any load still in flight.
+            this.briefingGen += 1;
+            this.setBriefingLatest(latest, { requesting: false, loading: false, error: undefined });
+            return true;
+        } catch (error) {
+            if (this.api !== api) return false;
+            if (error instanceof JournalApiError && error.status === 429) {
+                const retryAt = asNumber(error.body?.retry_at, 0);
+                this.patchBriefing({
+                    requesting: false,
+                    retryAt: retryAt > 0 ? retryAt : Date.now() + 60_000,
+                });
+                return false;
+            }
+            if (error instanceof JournalApiError && error.status === 409) {
+                this.patchBriefing({ requesting: false, refreshError: "There's no Coordinator to ask." });
+                void this.loadBriefing({ keepRefreshError: true });
+                return false;
+            }
+            if (error instanceof JournalApiError && error.status === 503) {
+                this.patchBriefing({
+                    requesting: false,
+                    refreshError: "The Coordinator is busy. Try again in a moment.",
+                });
+                return false;
+            }
+            this.patchBriefing({
+                requesting: false,
+                refreshError: `Couldn't ask for a briefing: ${errorMessage(error)}`,
+            });
+            return false;
+        }
+    }
+
+    private patchBriefing(update: Partial<BriefingState>): void {
+        this.patch({ briefing: { loading: false, unsupported: false, ...this.state.briefing, ...update } });
+    }
+
+    private setBriefingLatest(latest: BriefingLatest, update: Partial<BriefingState>): void {
+        this.patchBriefing({ ...update, latest });
+        this.scheduleBriefingExpiry(latest);
+    }
+
+    // A pending refresh turns timed_out at expires_at without any frame: refetch just after it so
+    // the card stops saying "Refreshing…" and offers to try again.
+    private scheduleBriefingExpiry(latest: BriefingLatest): void {
+        if (this.briefingExpiryTimer !== undefined) window.clearTimeout(this.briefingExpiryTimer);
+        this.briefingExpiryTimer = undefined;
+        const expiresAt = latest.refresh?.state === "pending" ? latest.refresh.expires_at : undefined;
+        if (expiresAt === undefined) return;
+        const delay = Math.min(Math.max(0, expiresAt - Date.now()) + 1_000, 2_147_000_000);
+        this.briefingExpiryTimer = window.setTimeout(() => {
+            this.briefingExpiryTimer = undefined;
+            if (this.state.trackerView?.open && this.state.briefing && !this.state.briefing.unsupported) {
+                void this.loadBriefing();
+            }
+        }, delay);
+    }
+
+    // The live `briefing` frame (published / refreshing / refresh_failed) is pure invalidation, as
+    // is a reconnect (nothing replays the frame). Only a loaded card on an open pane refetches; a
+    // closed pane reloads when the Projects tab opens again.
+    private refetchBriefingIfShown(): void {
+        const briefing = this.state.briefing;
+        if (!this.state.trackerView?.open || !briefing || briefing.unsupported) return;
+        void this.loadBriefing();
+    }
+
+    // ── New-chat defaults (Settings → New chats; journal GET/PUT /defaults) ──────────────────
+
+    /**
+     * A view starts showing the defaults: load them now, and refetch on every reconnect until the
+     * returned release is called (a `defaults` frame missed while offline is never replayed).
+     */
+    public showDefaults(): () => void {
+        this.defaultsViewers += 1;
+        void this.loadDefaults();
+        let released = false;
+        return () => {
+            if (released) return;
+            released = true;
+            this.defaultsViewers -= 1;
+        };
+    }
+
+    // GET /defaults. A 404 means the journal predates per-user defaults: the group says so and
+    // shows no controls. A failed load keeps whatever value was already loaded. The answer is
+    // dropped when a newer GET, frame or PUT response landed after it was sent.
+    public async loadDefaults(): Promise<void> {
+        const api = this.api;
+        if (!api) return;
+        const seq = ++this.defaultsSeq;
+        this.patchDefaults({ loading: true });
+        try {
+            const value = await api.defaults();
+            if (this.api !== api || this.defaultsSeq !== seq) return;
+            this.defaultsServer = value;
+            this.defaultsErrorKey = undefined;
+            this.showDefaultsValue({ loading: false, unsupported: false, error: undefined });
+        } catch (error) {
+            if (this.api !== api || this.defaultsSeq !== seq) return;
+            if (error instanceof JournalApiError && error.status === 404) {
+                this.patchDefaults({ loading: false, unsupported: true, error: undefined });
+                return;
+            }
+            this.defaultsErrorKey = undefined;
+            this.patchDefaults({ loading: false, error: `Couldn't load the defaults: ${errorMessage(error)}` });
+        }
+    }
+
+    /**
+     * PUT /defaults for one key, optimistically: the new value shows at once and, if the journal
+     * refuses or can't be reached, goes back to the journal's latest value with an error.
+     * null = "Box default". Resolves true when the key's last PUT stored it.
+     */
+    public setDefault(key: UserDefaultKey, value: string | null): Promise<boolean> {
+        const api = this.api;
+        if (!api || !this.defaultsServer) return Promise.resolve(false);
+        if (this.state.defaults?.value?.[key] === value) return Promise.resolve(true);
+        this.defaultsPending.set(key, value);
+        this.defaultsErrorKey = undefined;
+        this.showDefaultsValue({ error: undefined });
+        const saving = this.defaultsSaving.get(key);
+        if (saving) return saving;
+        // Only this loop's own entry is removed: after a sign-out a new session may own the key.
+        const run: Promise<boolean> = this.saveDefaultPicks(api, key).finally(() => {
+            if (this.defaultsSaving.get(key) === run) this.defaultsSaving.delete(key);
+        });
+        this.defaultsSaving.set(key, run);
+        return run;
+    }
+
+    // One key's PUT loop: send the desired value, apply the answer, and go round again while a
+    // newer pick is waiting. Resolves with the outcome of the last PUT.
+    private async saveDefaultPicks(api: JournalApi, key: UserDefaultKey): Promise<boolean> {
+        let saved = false;
+        while (this.api === api && this.defaultsPending.has(key)) {
+            const value = this.defaultsPending.get(key)!;
+            try {
+                const stored = await api.putDefaults({ [key]: value });
+                if (this.api !== api) return false;
+                // The response's own key (in the journal's spelling: trimmed, lowercased) always
+                // applies; its other key is never newer than a frame already applied, so it is left.
+                this.defaultsSeq += 1;
+                this.defaultsServer = { ...this.defaultsServer!, [key]: stored[key] };
+                if (this.defaultsPending.get(key) === value) this.defaultsPending.delete(key);
+                const clearError = this.defaultsErrorKey === key;
+                if (clearError) this.defaultsErrorKey = undefined;
+                this.showDefaultsValue(clearError ? { error: undefined } : {});
+                saved = true;
+            } catch (error) {
+                if (this.api !== api) return false;
+                // Drop the failed pick; a newer one waiting for this key is sent next.
+                if (this.defaultsPending.get(key) === value) this.defaultsPending.delete(key);
+                const label = key === "default_model" ? "default model" : "default effort";
+                this.defaultsErrorKey = key;
+                this.showDefaultsValue({ error: `Couldn't save the ${label}: ${errorMessage(error)}` });
+                saved = false;
+            }
+        }
+        return saved;
+    }
+
+    // The live `defaults` frame carries the full new state (a change from any device or agent,
+    // including the echo of this client's own save). It replaces the journal's value; picks still
+    // in flight stay on top until their own PUT answers.
+    private handleDefaultsFrame(frame: unknown): void {
+        const value = parseUserDefaults(frame);
+        if (!value) return;
+        this.defaultsSeq += 1;
+        this.defaultsServer = value;
+        this.defaultsErrorKey = undefined;
+        this.showDefaultsValue({ loading: false, unsupported: false, error: undefined });
+    }
+
+    private showDefaultsValue(update: Partial<DefaultsState>): void {
+        const value = { ...this.defaultsServer! };
+        for (const [key, pick] of this.defaultsPending) value[key] = pick;
+        this.patchDefaults({ ...update, value });
+    }
+
+    private patchDefaults(update: Partial<DefaultsState>): void {
+        this.patch({ defaults: { loading: false, unsupported: false, ...this.state.defaults, ...update } });
+    }
+
+    // ── Per-box defaults (Settings → Boxes; GET /devices `defaults`, PUT /devices/:id/defaults) ──
+
+    /**
+     * A view starts showing the box defaults: load them now, and refetch on every reconnect until
+     * the returned release is called (a `box_defaults` frame missed while offline is never replayed).
+     */
+    public showBoxDefaults(): () => void {
+        this.boxDefaultsViewers += 1;
+        void this.loadBoxDefaults();
+        let released = false;
+        return () => {
+            if (released) return;
+            released = true;
+            this.boxDefaultsViewers -= 1;
+        };
+    }
+
+    // GET /devices. Agent boxes without a `defaults` block are left out; when no agent box has one
+    // the journal predates per-box defaults and the group hides. A box whose journal value changed
+    // after this GET was sent keeps that newer value.
+    public async loadBoxDefaults(): Promise<void> {
+        const api = this.api;
+        if (!api) return;
+        const gen = ++this.boxDefaultsLoadGen;
+        const sentAt = this.boxDefaultsClock;
+        this.patchBoxDefaults({ loading: true });
+        try {
+            const { devices } = await api.devices();
+            if (this.api !== api || this.boxDefaultsLoadGen !== gen) return;
+            this.rememberBoxStatuses(devices);
+            const agents = devices.filter((device) => device.kind === "agent");
+            const boxes = agents
+                .filter((device) => device.defaults)
+                .sort(
+                    (left, right) =>
+                        Number(right.connected) - Number(left.connected) ||
+                        (left.name ?? "").localeCompare(right.name ?? "") ||
+                        left.device_id - right.device_id,
+                );
+            // A box a save's 404 dropped after this GET was sent stays dropped (its stamp is the
+            // tombstone); a GET sent after the drop that still lists it brings it back.
+            const listed = boxes.filter((box) => {
+                const newer = (this.boxDefaultsStamps.get(box.device_id) ?? -1) > sentAt;
+                if (newer) return this.boxDefaultsServer.has(box.device_id);
+                this.boxDefaultsServer.set(box.device_id, box.defaults!);
+                return true;
+            });
+            this.boxDefaultsList = listed.map(({ device_id, name, connected }) => ({ device_id, name, connected }));
+            // An error raised after this GET was sent is newer than its answer: it stays.
+            const keepError = this.boxDefaultsErrorAt > sentAt;
+            if (!keepError) this.boxDefaultsErrorBox = undefined;
+            this.showBoxDefaultsValue({
+                loading: false,
+                unsupported: agents.length > 0 && boxes.length === 0,
+                ...(keepError ? {} : { error: undefined }),
+            });
+        } catch (error) {
+            if (this.api !== api || this.boxDefaultsLoadGen !== gen) return;
+            this.boxDefaultsErrorBox = undefined;
+            this.patchBoxDefaults({ loading: false, error: `Couldn't load the box defaults: ${errorMessage(error)}` });
+        }
+    }
+
+    /**
+     * PUT /devices/:id/defaults, optimistically: the picks show at once and, if the journal refuses
+     * or can't be reached, the box goes back to the journal's latest value with an error. null
+     * clears a value. Changing the agent without a model clears the model, as the journal does.
+     * Resolves true when the box's last PUT stored its picks.
+     */
+    public setBoxDefaults(deviceId: number, patch: BoxDefaultsPatch): Promise<boolean> {
+        const api = this.api;
+        if (!api || !this.boxDefaultsServer.has(deviceId)) return Promise.resolve(false);
+        const picks: BoxDefaultsPatch = { ...patch };
+        if ("default_agent" in picks && !("default_model" in picks)) picks.default_model = null;
+        this.boxDefaultsPending.set(deviceId, { ...this.boxDefaultsPending.get(deviceId), ...picks });
+        this.showBoxDefaultsValue({ error: undefined });
+        const saving = this.boxDefaultsSaving.get(deviceId);
+        if (saving) return saving;
+        const run: Promise<boolean> = this.saveBoxDefaultPicks(api, deviceId).finally(() => {
+            if (this.boxDefaultsSaving.get(deviceId) === run) this.boxDefaultsSaving.delete(deviceId);
+        });
+        this.boxDefaultsSaving.set(deviceId, run);
+        return run;
+    }
+
+    // One box's PUT loop: send the waiting picks, apply the answer, and go round again while newer
+    // picks are waiting. Resolves with the outcome of the last PUT.
+    private async saveBoxDefaultPicks(api: JournalApi, deviceId: number): Promise<boolean> {
+        let saved = false;
+        while (this.api === api && this.boxDefaultsPending.has(deviceId)) {
+            const body = this.boxDefaultsPending.get(deviceId)!;
+            this.boxDefaultsPending.delete(deviceId);
+            this.boxDefaultsInFlight.set(deviceId, body);
+            try {
+                const stored = await api.putBoxDefaults(deviceId, body);
+                if (this.api !== api) return false;
+                this.boxDefaultsInFlight.delete(deviceId);
+                // Only the keys this PUT sent (a sent agent always carries its model) apply: the
+                // answer's other keys are never newer than a frame that landed meanwhile. The stamp
+                // drops a GET sent before this answer.
+                this.boxDefaultsStamps.set(deviceId, ++this.boxDefaultsClock);
+                const server = this.boxDefaultsServer.get(deviceId);
+                if (server) {
+                    this.boxDefaultsServer.set(deviceId, {
+                        agent: "default_agent" in body ? stored.default_agent : server.agent,
+                        model: "default_model" in body ? stored.default_model : server.model,
+                        effort: "default_effort" in body ? stored.default_effort : server.effort,
+                    });
+                }
+                this.showBoxDefaultsValue(this.clearBoxDefaultsError(deviceId));
+                saved = true;
+            } catch (error) {
+                if (this.api !== api) return false;
+                this.boxDefaultsInFlight.delete(deviceId);
+                const name = this.boxDefaultsList.find((box) => box.device_id === deviceId)?.name ?? "the box";
+                this.boxDefaultsErrorBox = deviceId;
+                this.boxDefaultsErrorAt = ++this.boxDefaultsClock;
+                if (error instanceof JournalApiError && error.status === 404) {
+                    // The listing already proved the journal has box defaults, so a 404 means this
+                    // box is gone (deleted, or no longer this user's): drop it, keep the others.
+                    this.boxDefaultsPending.delete(deviceId);
+                    this.boxDefaultsServer.delete(deviceId);
+                    this.boxDefaultsStamps.set(deviceId, this.boxDefaultsErrorAt);
+                    this.boxDefaultsList = this.boxDefaultsList.filter((box) => box.device_id !== deviceId);
+                    this.showBoxDefaultsValue({ error: `Couldn't save ${name}'s defaults: the box is gone.` });
+                    return false;
+                }
+                this.showBoxDefaultsValue({ error: `Couldn't save ${name}'s defaults: ${errorMessage(error)}` });
+                saved = false;
+            }
+        }
+        return saved;
+    }
+
+    // The live `box_defaults` frame carries one box's full new state (a change from any device or
+    // agent, including the echo of this client's own save). Picks still in flight stay on top.
+    private handleBoxDefaultsFrame(frame: unknown): void {
+        const state = parseBoxDefaultsState(frame);
+        if (!state || !this.boxDefaultsServer.has(state.device_id)) return;
+        this.boxDefaultsStamps.set(state.device_id, ++this.boxDefaultsClock);
+        this.boxDefaultsServer.set(state.device_id, {
+            agent: state.default_agent,
+            model: state.default_model,
+            effort: state.default_effort,
+        });
+        this.showBoxDefaultsValue(this.clearBoxDefaultsError(state.device_id));
+    }
+
+    // A box's save error stands until that box's next successful save or live frame.
+    private clearBoxDefaultsError(deviceId: number): Partial<BoxDefaultsState> {
+        if (this.boxDefaultsErrorBox !== deviceId) return {};
+        this.boxDefaultsErrorBox = undefined;
+        return { error: undefined };
+    }
+
+    private showBoxDefaultsValue(update: Partial<BoxDefaultsState>): void {
+        const boxes = this.boxDefaultsList.flatMap((box) => {
+            const server = this.boxDefaultsServer.get(box.device_id);
+            if (!server) return [];
+            const picks = {
+                ...this.boxDefaultsInFlight.get(box.device_id),
+                ...this.boxDefaultsPending.get(box.device_id),
+            };
+            const defaults: BoxDefaults = {
+                agent: "default_agent" in picks ? (picks.default_agent ?? null) : server.agent,
+                model: "default_model" in picks ? (picks.default_model ?? null) : server.model,
+                effort: "default_effort" in picks ? (picks.default_effort ?? null) : server.effort,
+            };
+            return [{ ...box, defaults }];
+        });
+        this.patchBoxDefaults({ ...update, boxes });
+    }
+
+    private patchBoxDefaults(update: Partial<BoxDefaultsState>): void {
+        this.patch({
+            boxDefaults: { boxes: [], loading: false, unsupported: false, ...this.state.boxDefaults, ...update },
+        });
+    }
+
+    // ── Tracker data loaders (fetch → patch, sharing the trackerLoading/trackerError pair). Each
+    // guards on the api instance so a response that races a logout / re-login can never write into a
+    // newer session's store. ──────────────────────
+
+    public async loadMissions(): Promise<void> {
+        const api = this.api;
+        if (!api) return;
+        // Request-generation guard, matching loadInbox/loadItem/loadMission: the pane primes this on
+        // open and mission markers independently restart it, so a slower earlier request must never
+        // overwrite a newer one's result (else closed missions / obsolete counts reappear) (F2).
+        const gen = ++this.trackerMissionsGen;
+        this.patch({ trackerLoading: true, trackerError: undefined, missionsError: undefined });
+        try {
+            const { missions } = await api.missions();
+            if (this.api !== api || this.trackerMissionsGen !== gen) return;
+            this.patch({ missions, trackerLoading: false });
+        } catch (error) {
+            if (this.api !== api || this.trackerMissionsGen !== gen) return;
+            const message = errorMessage(error);
+            this.patch({ trackerError: message, missionsError: message, trackerLoading: false });
+        }
+    }
+
+    public async loadProjects(): Promise<void> {
+        const api = this.api;
+        if (!api) return;
+        const gen = ++this.trackerProjectsGen;
+        try {
+            const { projects } = await api.projects();
+            if (this.api !== api || this.trackerProjectsGen !== gen) return;
+            this.patch({ projects, projectsError: undefined, projectsUnsupported: false });
+        } catch (error) {
+            if (this.api !== api || this.trackerProjectsGen !== gen) return;
+            // An older journal has no /projects: show the missions list instead of a retry that
+            // can never succeed (the Mac treats this 404 as "not supported" too).
+            if (error instanceof JournalApiError && error.status === 404) {
+                this.patch({ projectsUnsupported: true, projectsError: undefined });
+                return;
+            }
+            this.patch({ projectsError: errorMessage(error) });
+        }
+    }
+
+    public async loadProject(id: number | string): Promise<void> {
+        const api = this.api;
+        if (!api) return;
+        const gen = ++this.trackerProjectGen;
+        const key = String(id).replace(/^#/, "");
+        try {
+            const detail = await api.project(id);
+            if (this.api !== api || this.trackerProjectGen !== gen) return;
+            // A merged project answers with the project it went into: follow it, so the page's
+            // number guard matches instead of spinning on "Loading…".
+            const view = this.state.trackerView;
+            const followMerge =
+                detail.merged_from && view?.selectedProjectId === Number(key) && detail.project.num !== Number(key);
+            this.patch({
+                trackerProject: detail,
+                projectLoadError: undefined,
+                ...(followMerge && view ? { trackerView: { ...view, selectedProjectId: detail.project.num } } : {}),
+            });
+        } catch (error) {
+            if (this.api !== api || this.trackerProjectGen !== gen) return;
+            this.patch({ projectLoadError: { id: key, message: errorMessage(error) } });
+        }
+    }
+
+    // The inbox is "tracked" once loaded, and also while its first walk is still in flight, so a
+    // write or marker that lands mid-walk refetches rather than being dropped.
+    private inboxTracked(): boolean {
+        return this.state.inboxItems !== undefined || this.inboxWalking;
+    }
+
+    // Lay the writes recorded during the walk over its result: a row the walk fetched before the
+    // write is replaced (or dropped, if the write closed it) unless the walk's copy is as new.
+    private mergeInboxPendingWrites(items: TrackerItem[]): TrackerItem[] {
+        if (this.inboxPendingWrites.size === 0) return items;
+        const pending = this.inboxPendingWrites;
+        this.inboxPendingWrites = new Map();
+        const merged: TrackerItem[] = [];
+        for (const row of items) {
+            const write = pending.get(row.id);
+            if (!write || (row.updated_at ?? 0) >= (write.updated_at ?? 0)) merged.push(row);
+            else if (write.state === "open") merged.push(write);
+        }
+        return merged;
+    }
+
+    public async loadInbox(): Promise<void> {
+        const api = this.api;
+        if (!api) return;
+        // Request-generation guard: like loadItem, a slower earlier load must never overwrite a
+        // newer one's result. A marker (WS) can restart loadInbox while an in-flight multi-page walk
+        // is mid-pagination; without this the older walk could finish last and restore rows the newer
+        // load already dropped (e.g. items closed meanwhile) (F2).
+        const gen = ++this.trackerInboxGen;
+        this.inboxWalking = true;
+        this.patch({ trackerLoading: true, trackerError: undefined, inboxError: undefined });
+        try {
+            // App-wide open items; the inbox sorts "needs you" (open && awaiting==user) first
+            // client-side, so a single open-state fetch feeds every section. The list is
+            // cursor-paginated (server clamps limit ≤500), so follow next_cursor to exhaustion —
+            // the inbox and its "Needs you" section reason over ALL open items, and a partial first
+            // page reads as a false "nothing needs you" / drops user-blocking rows (F3). Bounded to
+            // MAX_PAGES / MAX_ITEMS as a runaway guard; deduped by item id across pages.
+            const MAX_PAGES = 20;
+            const MAX_ITEMS = 10_000;
+            const accumulated: TrackerItem[] = [];
+            const seen = new Set<string>();
+            let cursor: string | undefined;
+            let truncated = false;
+            for (let page = 0; ; page += 1) {
+                const { items, next_cursor } = await api.items({ state: "open", ...(cursor ? { cursor } : {}) });
+                if (this.api !== api || this.trackerInboxGen !== gen) return;
+                for (const item of items) {
+                    if (seen.has(item.id)) continue;
+                    seen.add(item.id);
+                    accumulated.push(item);
+                }
+                if (!next_cursor) break;
+                // Hit the runaway guard while the server still has more pages: publish what we have
+                // but surface the truncation loudly rather than presenting a partial list as the
+                // authoritative "all open items" (a silent cap re-creates the false-empty bug) (F2).
+                if (page + 1 >= MAX_PAGES || accumulated.length >= MAX_ITEMS) {
+                    truncated = true;
+                    break;
+                }
+                cursor = next_cursor;
+            }
+            this.inboxWalking = false;
+            const merged = this.mergeInboxPendingWrites(accumulated);
+            this.patch({
+                inboxItems: merged,
+                trackerLoading: false,
+                trackerError: truncated
+                    ? "Showing a partial inbox — too many open items to load them all. Some rows may be missing."
+                    : undefined,
+            });
+        } catch (error) {
+            if (this.api !== api || this.trackerInboxGen !== gen) return;
+            this.inboxWalking = false;
+            const message = errorMessage(error);
+            this.patch({ trackerError: message, inboxError: message, trackerLoading: false });
+        }
+    }
+
+    public async loadMemories(): Promise<void> {
+        const api = this.api;
+        if (!api) return;
+        // Same generation guard as loadInbox: a memory marker restarts this while an earlier load
+        // is in flight, and the older answer must never overwrite the newer one.
+        const gen = ++this.trackerMemoriesGen;
+        this.patch({ trackerLoading: true, trackerError: undefined, memoriesError: undefined });
+        try {
+            const { memories } = await api.memories();
+            if (this.api !== api || this.trackerMemoriesGen !== gen) return;
+            this.patch({
+                memories: [...memories].sort((a, b) => a.name.localeCompare(b.name)),
+                trackerLoading: false,
+            });
+        } catch (error) {
+            if (this.api !== api || this.trackerMemoriesGen !== gen) return;
+            // memoriesError only: the pane-wide banner would follow the user to the Inbox and
+            // Missions tabs, and against a journal that predates /memories the 404 is expected.
+            this.patch({ memoriesError: errorMessage(error), trackerLoading: false });
+        }
+    }
+
+    public async loadItem(id: number | string): Promise<void> {
+        const api = this.api;
+        if (!api) return;
+        const gen = ++this.trackerItemGen;
+        // itemLoadError is left in place until a load succeeds: a retry that stalls must not take
+        // the "may be out of date" note (and its retry) off a record that is still stale.
+        this.patch({ trackerLoading: true, trackerError: undefined });
+        try {
+            const detail = await api.item(id);
+            // Guard both API identity (logout/re-login) AND request identity: a superseded/out-of-
+            // order response must never patch a newer selection's detail (F1).
+            if (this.api !== api || this.trackerItemGen !== gen) return;
+            this.patch({ trackerItem: detail, trackerLoading: false, itemLoadError: undefined });
+        } catch (error) {
+            if (this.api !== api || this.trackerItemGen !== gen) return;
+            const message = errorMessage(error);
+            this.patch({
+                trackerError: message,
+                // Keyed in the same "#"-free form isSelectedTrackerItem compares on, so a "#7"
+                // refetch still matches a numeric selection of 7.
+                itemLoadError: { id: String(id).replace(/^#/, ""), message },
+                trackerLoading: false,
+            });
+        }
+    }
+
+    public async loadMission(id: number | string): Promise<void> {
+        const api = this.api;
+        if (!api) return;
+        const gen = ++this.trackerMissionGen;
+        // Like itemLoadError, missionLoadError stays until a load succeeds: a retry that stalls
+        // must not take the retry offer off a selection that still has nothing (or stale) to show.
+        this.patch({ trackerLoading: true, trackerError: undefined });
+        try {
+            const detail = await api.mission(id);
+            if (this.api !== api || this.trackerMissionGen !== gen) return;
+            this.patch({ trackerMission: detail, trackerLoading: false, missionLoadError: undefined });
+        } catch (error) {
+            if (this.api !== api || this.trackerMissionGen !== gen) return;
+            const message = errorMessage(error);
+            this.patch({
+                trackerError: message,
+                // Keyed "#"-free so a "#5" refetch still matches a numeric selection of 5.
+                missionLoadError: { id: String(id).replace(/^#/, ""), message },
+                trackerLoading: false,
+            });
+        }
+    }
+
+    // ── Tracker mutations (fresh Idempotency-Key per call → refetch the affected row + patch).
+    // On failure they surface trackerError but leave the loaded data intact (await-refetch, no
+    // optimistic outbox in v1). The inbox is refetched only when already loaded, so a mutation from
+    // a detail view keeps its badges live without forcing a cold load.
+    // Each resolves `true` only on a CONFIRMED successful write and `false` on any handled failure
+    // (offline/auth-expiry/timeout/5xx, or signed-out) — callers gate destructive UI resets (e.g.
+    // clearing a reply draft) on that flag so a failed mutation never silently drops user input (F2).
+    // A write that lands but races a logout still resolves true (the write happened). ──
+
+    // A mutation refetches its item only while that item is still the selected one. The user can go
+    // Back and open another item while the write is in flight; loadItem bumps the request generation,
+    // so an unconditional refetch of the mutated item would discard the newer selection's load and
+    // leave the pane on the inbox with the new selection never loaded.
+    private isSelectedTrackerItem(id: number | string): boolean {
+        const selected = this.state.trackerView?.selectedItemId;
+        return selected != null && String(selected) === String(id).replace(/^#/, "");
+    }
+
+    // `idempotencyKey`: callers that can RETRY the same write after an AMBIGUOUS delivery (a comment
+    // POST that may have committed before the response was lost) must pass a STABLE key so the retry
+    // reuses it and the server dedupes the replay instead of minting a duplicate comment (F1). Omit
+    // it for one-shot callers to get a fresh key per call. NOTE: end-to-end dedup also needs the
+    // deployed transport to FORWARD the Idempotency-Key header — the web fetch path does; the desktop
+    // Electron preload currently discards it (see api.ts), tracked as the desktop-PATCH residual.
+    public async commentItem(
+        id: number | string,
+        body: TrackerCommentWrite,
+        idempotencyKey?: string,
+    ): Promise<boolean> {
+        const api = this.api;
+        if (!api) return false;
+        let written: TrackerItem | undefined;
+        try {
+            ({ item: written } = await api.postItemComment(id, body, idempotencyKey ?? crypto.randomUUID()));
+        } catch (error) {
+            if (this.api === api) this.patch({ trackerError: errorMessage(error) });
+            return false;
+        }
+        if (this.api !== api) return true;
+        // Reflect the written item at once (a Seen tap closes a notice in the same write), so the
+        // row leaves "Needs you" and the badge drops before the refetches below land.
+        if (written) this.applyWrittenItem(written);
+        if (this.isSelectedTrackerItem(id)) await this.loadItem(id);
+        if (this.inboxTracked()) await this.loadInbox();
+        if (this.state.missions) await this.loadMissions();
+        return true;
+    }
+
+    /**
+     * Uploads one file for a tracker comment (POST /media) and returns the attachment to post with
+     * it. Unlike a chat attachment there is no outbox: the reply box keeps the staged file and
+     * simply tries again. A failure resolves null and surfaces in the tracker's error banner.
+     * The same guards as a chat attachment apply before a byte is read: an empty file, or one over
+     * BROWSER_MEMORY_SAFETY_MAX_BYTES (whose arrayBuffer() could take the tab down), is refused.
+     */
+    public async uploadTrackerAttachment(file: File): Promise<TrackerAttachment | null> {
+        const api = this.api;
+        if (!api) return null;
+        if (file.size === 0 || file.size > BROWSER_MEMORY_SAFETY_MAX_BYTES) {
+            const why =
+                file.size === 0 ? "that file is empty." : "this file is too large for this browser to upload safely.";
+            this.patch({ trackerError: `Couldn't upload ${file.name}: ${why}` });
+            return null;
+        }
+        const type = file.type || "application/octet-stream";
+        const controller = new AbortController();
+        const timer = window.setTimeout(() => controller.abort(), uploadTimeoutMsFor(file.size));
+        try {
+            const bytes = await Promise.race([file.arrayBuffer(), abortPromise(controller.signal)]);
+            const response = await api.uploadMedia(bytes, type, controller.signal);
+            return {
+                blob_ref: response.media_id,
+                mime: response.content_type || type,
+                name: file.name,
+                size: Number.isFinite(response.size) ? response.size : file.size,
+            };
+        } catch (error) {
+            if (this.api === api) this.patch({ trackerError: `Couldn't upload ${file.name}: ${errorMessage(error)}` });
+            return null;
+        } finally {
+            window.clearTimeout(timer);
+        }
+    }
+
+    /** The one-tap "Seen" on a notice: an item action tap, which the journal answers by closing the
+     *  item as done. */
+    public markItemSeen(id: number | string): Promise<boolean> {
+        return this.commentItem(id, { action: SEEN_ACTION, body: SEEN_ACTION });
+    }
+
+    private applyWrittenItem(item: TrackerItem): void {
+        if (!item || typeof item !== "object" || typeof item.id !== "string") return;
+        const inbox = this.state.inboxItems;
+        const detail = this.state.trackerItem;
+        if (this.inboxWalking) {
+            const prior = this.inboxPendingWrites.get(item.id);
+            if (!prior || (item.updated_at ?? 0) >= (prior.updated_at ?? 0)) this.inboxPendingWrites.set(item.id, item);
+        }
+        this.patch({
+            ...(inbox
+                ? {
+                      inboxItems:
+                          item.state === "open"
+                              ? inbox.map((row) => (row.id === item.id ? item : row))
+                              : inbox.filter((row) => row.id !== item.id),
+                  }
+                : {}),
+            ...(detail && detail.item.id === item.id ? { trackerItem: { ...detail, item } } : {}),
+        });
+    }
+
+    // PUT is an upsert by name and idempotent by construction, so no Idempotency-Key: a retried
+    // save writes the same memory again. The list is reloaded rather than patched from the answer
+    // so the row order (by name) and any concurrent edits from an agent stay authoritative.
+    public async saveMemory(name: string, body: MemoryWrite): Promise<boolean> {
+        const api = this.api;
+        if (!api) return false;
+        try {
+            await api.putMemory(name, body);
+        } catch (error) {
+            if (this.api === api) this.patch({ trackerError: errorMessage(error) });
+            return false;
+        }
+        if (this.api !== api) return true;
+        await this.loadMemories();
+        return true;
+    }
+
+    public async deleteMemory(name: string): Promise<boolean> {
+        const api = this.api;
+        if (!api) return false;
+        try {
+            await api.deleteMemory(name);
+        } catch (error) {
+            if (this.api === api) this.patch({ trackerError: errorMessage(error) });
+            return false;
+        }
+        if (this.api !== api) return true;
+        if (this.state.trackerView?.selectedMemoryName === name) this.closeTrackerMemory();
+        await this.loadMemories();
+        return true;
+    }
+
+    public async closeTrackerItem(
+        id: number | string,
+        resolution: TrackerResolution,
+        comment?: string,
+    ): Promise<boolean> {
+        const api = this.api;
+        if (!api) return false;
+        try {
+            await api.closeItem(id, { resolution, comment }, crypto.randomUUID());
+        } catch (error) {
+            if (this.api === api) this.patch({ trackerError: errorMessage(error) });
+            return false;
+        }
+        if (this.api !== api) return true;
+        if (this.isSelectedTrackerItem(id)) await this.loadItem(id);
+        if (this.inboxTracked()) await this.loadInbox();
+        if (this.state.missions) await this.loadMissions();
+        return true;
+    }
+
+    public async reopenTrackerItem(id: number | string, comment?: string): Promise<boolean> {
+        const api = this.api;
+        if (!api) return false;
+        try {
+            await api.reopenItem(id, { comment }, crypto.randomUUID());
+        } catch (error) {
+            if (this.api === api) this.patch({ trackerError: errorMessage(error) });
+            return false;
+        }
+        if (this.api !== api) return true;
+        if (this.isSelectedTrackerItem(id)) await this.loadItem(id);
+        if (this.inboxTracked()) await this.loadInbox();
+        if (this.state.missions) await this.loadMissions();
+        return true;
+    }
+
+    // Mission counterpart of isSelectedTrackerItem: a mission mutation refetches its detail only while
+    // that mission is still selected, so a late refetch can't supersede a newer selection's load. The
+    // selection is a #num while mission mutators take the mission id, so an id matches through the
+    // cached detail of the selected mission (selecting a different mission clears that cache).
+    private isSelectedTrackerMission(id: number | string): boolean {
+        const selected = this.state.trackerView?.selectedMissionId;
+        if (selected == null) return false;
+        const key = String(id).replace(/^#/, "");
+        if (String(selected) === key) return true;
+        const cached = this.state.trackerMission?.mission;
+        return !!cached && cached.num === selected && cached.id === key;
+    }
+
+    public async saveMissionEdits(id: number | string, fields: { title?: string; body?: string }): Promise<boolean> {
+        const api = this.api;
+        if (!api) return false;
+        try {
+            await api.patchMission(id, fields, crypto.randomUUID());
+        } catch (error) {
+            if (this.api === api) this.patch({ trackerError: errorMessage(error) });
+            return false;
+        }
+        if (this.api !== api) return true;
+        if (this.isSelectedTrackerMission(id)) await this.loadMission(id);
+        if (this.state.missions) await this.loadMissions();
+        return true;
+    }
+
+    public async closeTrackerMission(id: number | string, summary: string): Promise<boolean> {
+        const api = this.api;
+        if (!api) return false;
+        try {
+            await api.closeMission(id, { summary }, crypto.randomUUID());
+        } catch (error) {
+            if (this.api === api) this.patch({ trackerError: errorMessage(error) });
+            return false;
+        }
+        if (this.api !== api) return true;
+        if (this.isSelectedTrackerMission(id)) await this.loadMission(id);
+        if (this.state.missions) await this.loadMissions();
+        return true;
+    }
+
+    // WS invalidation for tracker markers (`item` / `mission` / `milestone` journal frames).
+    // A marker is a change connected clients must reflect without re-polling; we refetch ONLY the
+    // tracker data the OPEN pane is showing. A closed pane fetches nothing: reopening it remounts the
+    // pane, which reloads the lists and the selection itself. The inbox refetch is coalesced (see
+    // scheduleInboxRefetch). The missions list refetch is coalesced the same way. `mission` is treated as pure invalidation. Item/mission numbers on the
+    // wire are the human #num; milestone markers carry `mission_num` for their parent mission.
+    private handleTrackerMarker(event: JournalEvent): void {
+        // The inbox feeds the For you badge on the rail, so it follows item markers even while the
+        // pane is closed; everything else is refetched only for an open pane.
+        if (event.type === "item" && this.inboxTracked()) this.scheduleInboxRefetch();
+        if (!this.state.trackerView?.open) return;
+        if (event.type === "item") {
+            const num = asNumber(event.payload.num, 0);
+            if (num && this.state.trackerItem && this.state.trackerItem.item.num === num) {
+                void this.loadItem(num);
+            }
+            // A mission's open-item and needs-you counts, and its detail's item list, derive from its
+            // items, but an item marker does not carry the mission, so refresh whatever is loaded.
+            if (this.state.missions || this.state.trackerMission || this.state.projects)
+                this.scheduleMissionsRefetch({ detail: true });
+            return;
+        }
+        if (event.type === "mission") {
+            const num = asNumber(event.payload.num, 0);
+            if (num && this.state.trackerMission && this.state.trackerView?.selectedMissionId === num) {
+                void this.loadMission(num);
+            }
+            if (this.state.missions || this.state.projects) this.scheduleMissionsRefetch();
+            return;
+        }
+        // A memory marker (spec 2026-09-27 memories) is pure invalidation; the journal may append
+        // it to two conversations (the writer's and the Coordinator's), so it is coalesced like the
+        // inbox refetch and a pair costs one GET /memories.
+        if (event.type === "memory") {
+            if (this.state.memories) this.scheduleMemoriesRefetch();
+            return;
+        }
+        if (event.type === "milestone") {
+            const missionNum = asNumber(event.payload.mission_num, 0);
+            if (missionNum && this.state.trackerMission && this.state.trackerView?.selectedMissionId === missionNum) {
+                void this.loadMission(missionNum);
+            }
+            if (this.state.missions || this.state.projects) this.scheduleMissionsRefetch();
+        }
+    }
+
+    // Coalesce marker-driven inbox refetches: the first marker arms a short timer and any marker that
+    // lands before it fires rides along, so a burst costs one paginated walk. The conditions are
+    // re-checked when the timer fires, since the pane may have closed (or the session ended) since.
+    private scheduleInboxRefetch(): void {
+        if (this.trackerInboxRefetchTimer !== undefined) return;
+        this.trackerInboxRefetchTimer = window.setTimeout(() => {
+            this.trackerInboxRefetchTimer = undefined;
+            if (this.inboxTracked()) void this.loadInbox();
+        }, 250);
+    }
+
+    private scheduleMemoriesRefetch(): void {
+        if (this.trackerMemoriesRefetchTimer !== undefined) return;
+        this.trackerMemoriesRefetchTimer = window.setTimeout(() => {
+            this.trackerMemoriesRefetchTimer = undefined;
+            if (this.state.trackerView?.open && this.state.memories) void this.loadMemories();
+        }, 250);
+    }
+
+    private scheduleMissionsRefetch(opts: { detail?: boolean } = {}): void {
+        if (opts.detail) this.trackerMissionRefetchPending = true;
+        if (this.trackerMissionsRefetchTimer !== undefined) return;
+        this.trackerMissionsRefetchTimer = window.setTimeout(() => {
+            this.trackerMissionsRefetchTimer = undefined;
+            const detail = this.trackerMissionRefetchPending;
+            this.trackerMissionRefetchPending = false;
+            if (!this.state.trackerView?.open) return;
+            if (this.state.missions) void this.loadMissions();
+            // Projects roll up their missions (protocol: refresh on any mission marker).
+            if (this.state.projects) void this.loadProjects();
+            const selectedProject = this.state.trackerView.selectedProjectId;
+            if (selectedProject != null && this.state.trackerProject?.project.num === selectedProject) {
+                void this.loadProject(selectedProject);
+            }
+            const selected = this.state.trackerView.selectedMissionId;
+            if (detail && selected != null && this.state.trackerMission?.mission?.num === selected) {
+                void this.loadMission(selected);
+            }
+        }, 250);
+    }
+
+    private async startSession(session: Session): Promise<void> {
+        this.sessionGen += 1;
+        this.pinImportStarted = false;
+        this.stagedPins = null;
+        this.storeHydrated = { archive: true, pinned: true, favorite: true, unread: true, collapsed: true };
+        const writeProbeKey = `${archiveStore.storageKey(session)}:__wprobe__`;
+        let storeWritable = false;
+        try {
+            localStorage.setItem(writeProbeKey, "1");
+            localStorage.removeItem(writeProbeKey);
+            storeWritable = true;
+        } catch {
+            // The bootstrap reads below may still succeed, but writes are unavailable.
+        }
+        this.storeWritable = {
+            archive: storeWritable,
+            pinned: storeWritable,
+            favorite: storeWritable,
+            unread: storeWritable,
+            collapsed: storeWritable,
+        };
+        for (const controller of this.inFlightUploads.values()) controller.abort();
+        this.inFlightUploads.clear();
+        this.uploadConvos.clear();
+        this.dismissedAttachments.clear();
+        this.pendingFiles.clear();
+        this.stagedSendChain = Promise.resolve();
+        this.transientAttachmentErrors.clear();
+        this.connection?.stop();
+        this.database?.close();
+        this.defaultsServer = undefined;
+        this.defaultsPending.clear();
+        this.defaultsSaving.clear();
+        this.api = new JournalApi(session.serverUrl, session.token);
+        this.database = await JournalDatabase.open(session.serverUrl, session.userId, session.username);
+        await this.database.expireToolLogs();
+
+        let cursor = await this.database.cursor();
+        const freshInstall = cursor === undefined;
+        let initialSnapshot: SnapshotResponse | undefined;
+        if (freshInstall) {
+            initialSnapshot = await this.api.snapshot();
+            await this.database.replaceWithSnapshot(initialSnapshot);
+            cursor = initialSnapshot.seq;
+        }
+        try {
+            if (freshInstall && initialSnapshot && typeof this.database.markBackfillDone === "function") {
+                await this.database.markBackfillDone(initialSnapshot);
+            } else if (
+                typeof this.database.backfillDone === "function" &&
+                !(await this.database.backfillDone()) &&
+                (typeof this.database.outcomeBackfillDue !== "function" || (await this.database.outcomeBackfillDue()))
+            ) {
+                const snapshotController = new AbortController();
+                let timeoutTimer: number;
+                const timeout = new Promise<never>((_resolve, reject) => {
+                    timeoutTimer = window.setTimeout(() => {
+                        snapshotController.abort();
+                        reject(new Error("snapshot backfill timeout"));
+                    }, BACKFILL_SNAPSHOT_TIMEOUT_MS);
+                });
+                try {
+                    await this.database.backfillParentLinks(
+                        await Promise.race([this.api.snapshot(snapshotController.signal), timeout]),
+                    );
+                } finally {
+                    window.clearTimeout(timeoutTimer!);
+                }
+            }
+        } catch (error) {
+            const permanent = error instanceof Error && error.message.startsWith("malformed");
+            if (permanent) await this.database.recordBackfillError(String(error)).catch(() => undefined);
+            console.warn(`matron: subchat backfill deferred (${permanent ? "permanent" : "transient"})`, error);
+        }
+        await this.reconcilePersistedOwnMessages(this.database);
+        const outbox = await this.database.outbox();
+        for (const message of outbox) {
+            if (message.attachState !== "uploading") continue;
+            try {
+                await this.database.addToOutbox({
+                    ...message,
+                    attachState: "error",
+                    errorKind: "upload_failed",
+                });
+            } catch {
+                this.transientAttachmentErrors.set(message.localId, {
+                    ...message,
+                    attachState: "error",
+                    errorKind: "storage_failed",
+                    canRetry: false,
+                });
+            }
+        }
+
+        const conversations = await this.database.conversations();
+        const storedConversationId = storedSelectedConversation(session);
+        const archiveRead = archiveStore.read(session);
+        const pinnedRead = pinnedStore.read(session);
+        const favoriteRead = favoriteStore.read(session);
+        const unreadRead = unreadStore.read(session);
+        const collapsedRead = collapsedSubagentStore.read(session);
+        this.storeHydrated.archive = archiveRead.ok;
+        this.storeHydrated.pinned = pinnedRead.ok;
+        this.storeHydrated.favorite = favoriteRead.ok;
+        this.storeHydrated.unread = unreadRead.ok;
+        this.storeHydrated.collapsed = collapsedRead.ok;
+        if (!archiveRead.ok) this.logStorageDiag("read_fail", "archive", false);
+        if (!pinnedRead.ok) this.logStorageDiag("read_fail", "pinned", false);
+        if (!favoriteRead.ok) this.logStorageDiag("read_fail", "favorite", false);
+        if (!unreadRead.ok) this.logStorageDiag("read_fail", "unread", false);
+        if (!collapsedRead.ok) this.logStorageDiag("read_fail", "collapsed", false);
+        const bootstrapTransitionStore = !archiveRead.ok
+            ? "archive"
+            : !pinnedRead.ok
+              ? "pinned"
+              : !favoriteRead.ok
+                ? "favorite"
+                : !unreadRead.ok
+                  ? "unread"
+                  : !collapsedRead.ok
+                    ? "collapsed"
+                    : "all";
+        const bootstrapReadFailed = this.storageUnavailable(bootstrapTransitionStore);
+        const archivedIds = archiveRead.ids;
+        const pinnedIds = pinnedRead.ids;
+        const favoriteIds = favoriteRead.ids;
+        const unreadOverrideIds = unreadRead.ids;
+        const collapsedSubagentParentIds = collapsedRead.ids;
+        const selectedConversation = firstSelectableConversation(
+            conversations,
+            storedConversationId,
+            archivedIds,
+            collapsedSubagentParentIds,
+        );
+        this.state = {
+            ...blankState(),
+            phase: "signed-in",
+            config: this.state.config,
+            session,
+            conversations,
+            archivedIds,
+            pinnedIds,
+            favoriteIds,
+            unreadOverrideIds,
+            collapsedSubagentParentIds,
+            preferencesUnavailable: bootstrapReadFailed,
+            selectedConversationId: selectedConversation?.id,
+            // The last adopted journal pins, until hello_ok brings the current list — unless
+            // browser-local pins still await their carry-over (they show until it lands).
+            journalPins: pinnedIds.size > 0 && !pinImportDone(session) ? null : readCachedPins(session),
+        };
+        if (this.storageListener) window.removeEventListener("storage", this.storageListener);
+        this.storageListener = (event: StorageEvent): void => {
+            const currentSession = this.state.session;
+            if (!currentSession) return;
+            if (event.key === archiveStore.storageKey(currentSession)) {
+                const read = archiveStore.read(currentSession);
+                this.storeHydrated.archive = read.ok;
+                if (read.ok) this.storeWritable.archive = true;
+                if (!read.ok) this.logStorageDiag("read_fail", "archive", false);
+                this.patch({
+                    ...(read.ok ? { archivedIds: read.ids } : {}),
+                    preferencesUnavailable: this.storageUnavailable("archive"),
+                });
+                if (read.ok && this.state.selectedConversationId && read.ids.has(this.state.selectedConversationId)) {
+                    this.clearSelection();
+                }
+            } else if (event.key === pinnedStore.storageKey(currentSession)) {
+                const read = pinnedStore.read(currentSession);
+                this.storeHydrated.pinned = read.ok;
+                if (read.ok) this.storeWritable.pinned = true;
+                if (!read.ok) this.logStorageDiag("read_fail", "pinned", false);
+                this.patch({
+                    ...(read.ok ? { pinnedIds: read.ids } : {}),
+                    preferencesUnavailable: this.storageUnavailable("pinned"),
+                });
+            } else if (event.key === favoriteStore.storageKey(currentSession)) {
+                const read = favoriteStore.read(currentSession);
+                this.storeHydrated.favorite = read.ok;
+                if (read.ok) this.storeWritable.favorite = true;
+                if (!read.ok) this.logStorageDiag("read_fail", "favorite", false);
+                this.patch({
+                    ...(read.ok ? { favoriteIds: read.ids } : {}),
+                    preferencesUnavailable: this.storageUnavailable("favorite"),
+                });
+            } else if (event.key === unreadStore.storageKey(currentSession)) {
+                const read = unreadStore.read(currentSession);
+                this.storeHydrated.unread = read.ok;
+                if (read.ok) this.storeWritable.unread = true;
+                if (!read.ok) this.logStorageDiag("read_fail", "unread", false);
+                this.patch({
+                    ...(read.ok ? { unreadOverrideIds: read.ids } : {}),
+                    preferencesUnavailable: this.storageUnavailable("unread"),
+                });
+            } else if (event.key === collapsedSubagentStore.storageKey(currentSession)) {
+                const read = collapsedSubagentStore.read(currentSession);
+                this.storeHydrated.collapsed = read.ok;
+                if (read.ok) this.storeWritable.collapsed = true;
+                if (!read.ok) this.logStorageDiag("read_fail", "collapsed", false);
+                this.patch({
+                    ...(read.ok ? { collapsedSubagentParentIds: read.ids } : {}),
+                    preferencesUnavailable: this.storageUnavailable("collapsed"),
+                });
+                // Mirror the local toggle: a cross-tab collapse can hide the selected child too.
+                if (read.ok) this.foldSelectionUnderCollapsedParent();
+            }
+        };
+        window.addEventListener("storage", this.storageListener);
+        this.emit();
+        if (selectedConversation) await this.selectConversation(selectedConversation.id, { clearUnread: false });
+
+        this.connection = new JournalConnection(session.serverUrl, session.token, {
+            cursor: async () => (await this.database?.cursor()) ?? cursor ?? 0,
+            onFrame: async (frame) => this.handleFrame(frame),
+            onReady: async (hello) => this.handleReady(hello),
+            onSnapshotRequired: async () => this.replaceSnapshot(),
+            onRevoked: () => void this.logout("This device was revoked. Sign in again to continue."),
+            onState: (connection, error) => this.patch({ connection, connectionError: error }),
+        });
+        this.connection.start();
+    }
+
+    private setArchived(conversationId: string, archived: boolean): void {
+        const session = this.state.session;
+        if (!session) return;
+        const current = archiveStore.read(session);
+        this.storeHydrated.archive = current.ok;
+        if (!current.ok) {
+            this.logStorageDiag("read_fail", "archive", false);
+            this.patch({
+                controlError: "Couldn't read saved archive — device storage unavailable.",
+                preferencesUnavailable: this.storageUnavailable("archive"),
+            });
+            return;
+        }
+        const next = new Set(current.ids);
+        if (archived) next.add(conversationId);
+        else next.delete(conversationId);
+        try {
+            archiveStore.write(session, next);
+        } catch {
+            this.storeWritable.archive = false;
+            this.logStorageDiag("write_fail", "archive", false);
+            this.patch({
+                controlError: "Couldn't save — device storage is full or unavailable.",
+                preferencesUnavailable: this.storageUnavailable("archive"),
+            });
+            return;
+        }
+        this.storeWritable.archive = true;
+        this.patch({
+            archivedIds: next,
+            controlError: undefined,
+            preferencesUnavailable: this.storageUnavailable("archive"),
+        });
+        if (archived && conversationId === this.state.selectedConversationId) this.clearSelection();
+    }
+
+    private setFlag(
+        store: IdSetStore,
+        stateKey: "pinnedIds" | "favoriteIds" | "unreadOverrideIds" | "collapsedSubagentParentIds",
+        id: string,
+        on: boolean,
+    ): boolean {
+        const session = this.state.session;
+        if (!session) return false;
+
+        let storeName: "pinned" | "favorite" | "unread" | "collapsed";
+        switch (stateKey) {
+            case "pinnedIds":
+                storeName = "pinned";
+                break;
+            case "favoriteIds":
+                storeName = "favorite";
+                break;
+            case "unreadOverrideIds":
+                storeName = "unread";
+                break;
+            case "collapsedSubagentParentIds":
+                storeName = "collapsed";
+                break;
+            default: {
+                const _exhaustive: never = stateKey;
+                throw new Error(`unmapped stateKey: ${_exhaustive}`);
+            }
+        }
+
+        const current = store.read(session);
+        this.storeHydrated[storeName] = current.ok;
+        if (!current.ok) {
+            this.logStorageDiag("read_fail", storeName, false);
+            this.patch({
+                controlError: "Couldn't read saved preference — device storage unavailable.",
+                preferencesUnavailable: this.storageUnavailable(storeName),
+            });
+            return false;
+        }
+        const next = new Set(current.ids);
+        if (on) next.add(id);
+        else next.delete(id);
+        try {
+            store.write(session, next);
+        } catch {
+            this.storeWritable[storeName] = false;
+            this.logStorageDiag("write_fail", storeName, false);
+            this.patch({
+                controlError: "Couldn't save — device storage is full or unavailable.",
+                preferencesUnavailable: this.storageUnavailable(storeName),
+            });
+            return false;
+        }
+        this.storeWritable[storeName] = true;
+        this.patch({
+            [stateKey]: next,
+            controlError: undefined,
+            preferencesUnavailable: this.storageUnavailable(storeName),
+        } as Partial<ClientState>);
+        return true;
+    }
+
+    private clearUnreadOverride(id: string): boolean {
+        // The in-memory no-op shortcut is only safe after the unread store has hydrated successfully.
+        // Otherwise a stale-empty mirror may mask a persisted override, so re-read before deleting.
+        if (this.api && this.storeHydrated.unread && !this.state.unreadOverrideIds.has(id)) return true;
+        return this.setFlag(unreadStore, "unreadOverrideIds", id, false);
+    }
+
+    private agentRpc(agentDeviceId: number, method: string, params: unknown): Promise<RpcReply> {
+        return (
+            this.connection?.agentRequest(agentDeviceId, method, params) ??
+            Promise.resolve({ ok: false, origin: "relay", code: "not_connected" })
+        );
+    }
+
+    private logRpcCreateDiag(event: "sync_watchdog_fire", conversationId: string): void {
+        console.warn("matron:rpc-create", { event, convo_id: conversationId });
+    }
+
+    private armRpcCreateWatchdog(conversationId: string): void {
+        this.clearRpcCreateWatchdog();
+        const gen = this.sessionGen;
+        this.rpcCreateWatchdogConvo = conversationId;
+        this.rpcCreateWatchdogGen = gen;
+        this.rpcCreateWatchdog = window.setTimeout(() => {
+            if (this.rpcCreateWatchdogConvo !== conversationId || this.rpcCreateWatchdogGen !== gen) return;
+            this.rpcCreateWatchdog = undefined;
+            this.rpcCreateWatchdogConvo = undefined;
+            this.rpcCreateWatchdogGen = undefined;
+            if (this.sessionGen !== gen || this.state.selectedConversationId !== conversationId) return;
+            this.logRpcCreateDiag("sync_watchdog_fire", conversationId);
+            this.patch({ connectionError: "Session created but not syncing yet — refresh to retry." });
+        }, RPC_CREATE_WATCHDOG_MS);
+    }
+
+    private clearRpcCreateWatchdog(conversationId?: string): void {
+        if (conversationId !== undefined && this.rpcCreateWatchdogConvo !== conversationId) return;
+        if (this.rpcCreateWatchdog !== undefined) window.clearTimeout(this.rpcCreateWatchdog);
+        this.rpcCreateWatchdog = undefined;
+        this.rpcCreateWatchdogConvo = undefined;
+        this.rpcCreateWatchdogGen = undefined;
+    }
+
+    private async replaceSnapshot(): Promise<void> {
+        if (!this.api || !this.database) return;
+        const previousSelection = this.state.selectedConversationId;
+        this.resetTransientSyncState();
+        this.patch({
+            connection: "connecting",
+            connectionError: undefined,
+            events: [],
+            pendingMessages: [],
+            loadingHistory: false,
+            hasOlderHistory: true,
+            activity: undefined,
+            sessionStatus: undefined,
+            textStreams: {},
+            toolStreams: {},
+        });
+        const snapshot = await this.api.snapshot();
+        await this.database.replaceWithSnapshot(snapshot);
+        await this.reconcilePersistedOwnMessages(this.database);
+        const conversations = await this.database.conversations();
+        let { archivedIds, pinnedIds, favoriteIds, unreadOverrideIds, collapsedSubagentParentIds } = this.state;
+        const session = this.state.session;
+        if (session) {
+            const archiveRead = archiveStore.read(session);
+            this.storeHydrated.archive = archiveRead.ok;
+            if (!archiveRead.ok) this.logStorageDiag("read_fail", "archive", false);
+            if (archiveRead.ok) archivedIds = archiveRead.ids;
+            const pinnedRead = pinnedStore.read(session);
+            this.storeHydrated.pinned = pinnedRead.ok;
+            if (!pinnedRead.ok) this.logStorageDiag("read_fail", "pinned", false);
+            if (pinnedRead.ok) pinnedIds = pinnedRead.ids;
+            const favoriteRead = favoriteStore.read(session);
+            this.storeHydrated.favorite = favoriteRead.ok;
+            if (!favoriteRead.ok) this.logStorageDiag("read_fail", "favorite", false);
+            if (favoriteRead.ok) favoriteIds = favoriteRead.ids;
+            const unreadRead = unreadStore.read(session);
+            this.storeHydrated.unread = unreadRead.ok;
+            if (!unreadRead.ok) this.logStorageDiag("read_fail", "unread", false);
+            if (unreadRead.ok) unreadOverrideIds = unreadRead.ids;
+            const collapsedRead = collapsedSubagentStore.read(session);
+            this.storeHydrated.collapsed = collapsedRead.ok;
+            if (!collapsedRead.ok) this.logStorageDiag("read_fail", "collapsed", false);
+            if (collapsedRead.ok) collapsedSubagentParentIds = collapsedRead.ids;
+        }
+        const snapshotTransitionStore = !this.storeHydrated.archive
+            ? "archive"
+            : !this.storeHydrated.pinned
+              ? "pinned"
+              : !this.storeHydrated.favorite
+                ? "favorite"
+                : !this.storeHydrated.unread
+                  ? "unread"
+                  : !this.storeHydrated.collapsed
+                    ? "collapsed"
+                    : "all";
+        const selectedConversation = firstSelectableConversation(
+            conversations,
+            previousSelection,
+            archivedIds,
+            collapsedSubagentParentIds,
+        );
+        this.applyJournalPins(pinsFromContainer(snapshot));
+        this.patch({
+            agents: snapshot.agents ?? this.state.agents,
+            conversations,
+            archivedIds,
+            pinnedIds,
+            favoriteIds,
+            unreadOverrideIds,
+            collapsedSubagentParentIds,
+            selectedConversationId: selectedConversation?.id,
+            preferencesUnavailable: this.storageUnavailable(snapshotTransitionStore),
+        });
+        // A snapshot can be the first place THIS tab observes a convo's parent link (→ read-only child).
+        // Mirror the journal-event path and abort any in-flight upload to a now-child convo so it can't
+        // egress to a read-only transcript. Guarded to skip work when idle.
+        if (this.uploadConvos.size > 0) this.abortUploadsForChildConvos();
+        if (selectedConversation) await this.selectConversation(selectedConversation.id, { clearUnread: false });
+        else if (this.state.session) storeSelectedConversation(this.state.session, undefined);
+    }
+
+    private async handleReady(hello?: JournalControlFrame): Promise<void> {
+        // hello_ok carries the pin list on a journal with pins; its absence means an older journal.
+        if (hello !== undefined) this.applyJournalPins(pinsFromContainer(hello));
+        const gen = this.sessionGen;
+        const db = this.database;
+        const connection = this.connection;
+        if (!db || !connection) return;
+        const ownsReplay = (): boolean =>
+            this.sessionGen === gen && this.database === db && this.connection === connection;
+
+        if (hello?.settings !== undefined) this.applySettingsFrame(hello.settings);
+        // The For you badge counts open items awaiting the user, so the inbox loads on every
+        // (re)connect, not only when the tracker opens: markers missed while offline never replay.
+        void this.loadInbox();
+
+        // A briefing frame missed while offline is never replayed: refetch the card on (re)connect.
+        this.refetchBriefingIfShown();
+        // Nor is a defaults frame: refetch while the Settings sheet shows them.
+        if (this.defaultsViewers > 0) void this.loadDefaults();
+        if (this.boxDefaultsViewers > 0) void this.loadBoxDefaults();
+
+        const outbox = await db.outbox();
+        if (!ownsReplay()) return;
+        const kept: PendingMessage[] = [];
+        const blockedTextIds: string[] = [];
+        const blockedAttachments: PendingMessage[] = [];
+        for (const message of outbox) {
+            if (!this.isChildConvo(message.convoId)) {
+                kept.push(message);
+                continue;
+            }
+            if (message.kind === "image" || message.kind === "file") blockedAttachments.push(message);
+            else blockedTextIds.push(message.localId);
+        }
+        if (blockedTextIds.length > 0) {
+            if (ownsReplay()) this.patch({ controlError: "Couldn't send to a read-only subagent transcript." });
+            try {
+                await db.deleteOutboxRows(blockedTextIds);
+            } catch {
+                if (ownsReplay()) {
+                    this.patch({ controlError: "Couldn't update blocked messages — device storage is unavailable." });
+                }
+            }
+        }
+        if (!ownsReplay()) return;
+        for (const message of blockedAttachments) {
+            this.markChildBlocked(message);
+            if (!(await this.persistAttachment(message, db, gen))) continue;
+            if (!ownsReplay()) return;
+            await this.refreshSelectedConversation(message.convoId, db, gen);
+            if (!ownsReplay()) return;
+        }
+        for (const message of kept) this.sendPendingMessage(message, connection);
+        if (this.state.selectedConversationId) {
+            connection.send({ op: "viewing", convo_id: this.state.selectedConversationId });
+            const conversation = this.selectedConversation();
+            if (conversation?.unread_count) this.scheduleRead(conversation.id, conversation.last_seq, 0);
+        }
+        for (const [conversationId, upToSeq] of this.readHighWater) {
+            this.scheduleRead(conversationId, upToSeq, 0);
+        }
+        const cursor = await db.cursor();
+        if (!ownsReplay()) return;
+        if (cursor !== undefined) connection.send({ op: "ack", cursor });
+    }
+
+    private async handleFrame(frame: ServerFrame): Promise<void> {
+        if (frame.kind === "journal") {
+            await this.handleJournal(frame);
+            return;
+        }
+        if (frame.kind === "ephemeral") {
+            this.handleEphemeral(frame);
+            return;
+        }
+        if (frame.kind === "box_status") {
+            this.handleBoxStatus(frame);
+            return;
+        }
+        if (frame.kind === "device_meta") {
+            const entry = { device_id: frame.device_id, name: frame.name, tag_char: frame.tag_char ?? null };
+            const others = this.state.agents.filter((agent) => agent.device_id !== frame.device_id);
+            this.patch({ agents: [...others, entry].sort((a, b) => a.device_id - b.device_id) });
+            return;
+        }
+        if (frame.kind === "briefing") {
+            this.refetchBriefingIfShown();
+            return;
+        }
+        if (frame.kind === "defaults") {
+            this.handleDefaultsFrame(frame);
+            return;
+        }
+        if (frame.kind === "box_defaults") {
+            this.handleBoxDefaultsFrame(frame);
+            return;
+        }
+        if (frame.kind === "pins") {
+            const pins = parsePinList(frame.pins);
+            if (pins) this.applyJournalPins(pins);
+            return;
+        }
+        if (frame.kind === "control" && frame.op === "settings") {
+            this.applySettingsFrame(frame.settings);
+            return;
+        }
+        if (frame.kind === "control" && frame.op === "error") {
+            this.patch({ connectionError: frame.detail || `Journal operation failed: ${frame.code ?? "unknown"}` });
+        }
+    }
+
+    private async handleJournal(event: JournalEvent): Promise<void> {
+        if (!this.database) return;
+        // Tracker markers (item/mission/milestone) drive a live refetch of the open tracker pane's
+        // data regardless of whether this event is newly applied below — fire-and-forget so it
+        // never blocks (or is blocked by) timeline application. Non-tracker types return at once.
+        this.handleTrackerMarker(event);
+        const applied = await this.database.applyJournal(event);
+        this.clearRpcCreateWatchdog(event.convo_id);
+        const removed = await this.database.reconcileOwnMessage(event);
+        if (removed) {
+            this.pendingFiles.delete(removed);
+            this.transientAttachmentErrors.delete(removed);
+        }
+        if (!applied) {
+            if (removed && event.convo_id === this.state.selectedConversationId) {
+                await this.refreshSelectedConversation(event.convo_id);
+            }
+            if (event.type === "convo_meta" && this.uploadConvos.size > 0) {
+                await this.refreshConversations();
+                this.abortUploadsForChildConvos();
+            }
+            return;
+        }
+        this.clearHistoryError();
+        this.scheduleAck(event.seq);
+
+        const messageRef = typeof event.payload.message_ref === "string" ? event.payload.message_ref : undefined;
+        if (messageRef) {
+            this.retiredStreamRefs.add(`${event.convo_id}:${messageRef}`);
+            const text = this.textStreams.get(event.convo_id);
+            const tools = this.toolStreams.get(event.convo_id);
+            if (text) delete text[messageRef];
+            if (tools) delete tools[messageRef];
+        }
+
+        await this.refreshConversations();
+        this.abortUploadsForChildConvos();
+        if (event.convo_id === this.state.selectedConversationId) {
+            await this.refreshSelectedConversation(event.convo_id);
+            if (MESSAGE_EVENT_TYPES.has(event.type) && !event.sender.startsWith("user:")) {
+                this.scheduleRead(event.convo_id, event.seq);
+            }
+        }
+    }
+
+    private async reconcilePersistedOwnMessages(database: JournalDatabase): Promise<void> {
+        const removed = await database.reconcilePersistedOwnMessages();
+        for (const localId of removed) {
+            this.pendingFiles.delete(localId);
+            this.transientAttachmentErrors.delete(localId);
+        }
+    }
+
+    private handleEphemeral(frame: JournalEphemeralFrame): void {
+        if (frame.activity) {
+            if (frame.activity.state === "idle") this.activities.delete(frame.convo_id);
+            else this.activities.set(frame.convo_id, frame.activity);
+        }
+        if (frame.status) {
+            this.statuses.set(frame.convo_id, mergeSessionStatus(this.statuses.get(frame.convo_id), frame.status));
+        }
+        if (frame.tool_stream && frame.message_ref) {
+            this.applyToolStream(frame);
+        }
+        if (frame.message_ref && (typeof frame.text === "string" || typeof frame.replace_text === "string")) {
+            const key = `${frame.convo_id}:${frame.message_ref}`;
+            if (!this.retiredStreamRefs.has(key)) {
+                const streams = this.textStreams.get(frame.convo_id) ?? {};
+                streams[frame.message_ref] =
+                    typeof frame.replace_text === "string"
+                        ? frame.replace_text
+                        : `${streams[frame.message_ref] ?? ""}${frame.text ?? ""}`;
+                this.textStreams.set(frame.convo_id, streams);
+            }
+        }
+        if (frame.convo_id === this.state.selectedConversationId) this.refreshEphemeralState(frame.convo_id);
+    }
+
+    private applyToolStream(frame: JournalEphemeralFrame): void {
+        const payload = frame.tool_stream;
+        const messageRef = frame.message_ref;
+        if (!payload || !messageRef || this.retiredStreamRefs.has(`${frame.convo_id}:${messageRef}`)) return;
+        const streams = this.toolStreams.get(frame.convo_id) ?? {};
+        if (payload.event === "end") {
+            delete streams[messageRef];
+        } else if (payload.event === "sync") {
+            const capped = capToolStream(payload.content ?? "");
+            streams[messageRef] = {
+                messageRef,
+                command: payload.meta?.command,
+                tool: payload.meta?.tool,
+                content: capped.content,
+                offset: (payload.offset ?? 0) + utf8Length(payload.content ?? ""),
+                headTruncated: Boolean(payload.head_truncated) || capped.truncated,
+            };
+        } else {
+            const chunk = payload.chunk ?? "";
+            const current = streams[messageRef] ?? {
+                messageRef,
+                content: "",
+                offset: payload.offset ?? 0,
+                headTruncated: false,
+            };
+            const offset = payload.offset ?? current.offset;
+            if (offset <= current.offset) {
+                const addition = trimUtf8Prefix(chunk, current.offset - offset);
+                const capped = capToolStream(current.content + addition);
+                current.content = capped.content;
+                current.offset += utf8Length(addition);
+                current.headTruncated ||= capped.truncated;
+                streams[messageRef] = current;
+            }
+        }
+        this.toolStreams.set(frame.convo_id, streams);
+    }
+
+    private refreshEphemeralState(conversationId: string): void {
+        this.patch({
+            activity: this.activities.get(conversationId),
+            sessionStatus: this.statuses.get(conversationId),
+            textStreams: { ...(this.textStreams.get(conversationId) ?? {}) },
+            toolStreams: { ...(this.toolStreams.get(conversationId) ?? {}) },
+        });
+    }
+
+    private async refreshConversations(): Promise<void> {
+        if (!this.database) return;
+        const conversations = await this.database.conversations();
+        // Reconcile the fire-and-forget tool-call cards against the durable run-state. The
+        // turn-end tool_stream 'end' frame (applyToolStream) is never replayed, so a dropped one
+        // would strand a dangling 'running' tool card in this.toolStreams. session_state is the
+        // persisted, replayed signal — a conversation no longer running has no live tool stream.
+        // Mirrors the activity-indicator reconcile so a settled turn cannot leave a pending card.
+        for (const conversation of conversations) {
+            if (conversation.session_state !== "running") this.toolStreams.delete(conversation.id);
+        }
+        this.patch({ conversations });
+        // Keep the published snapshot in lockstep with the private map. Deleting the private
+        // entry above does NOT touch ClientState.toolStreams, so a pruned card would otherwise
+        // still sit in the snapshot and re-render on the conversation's next running turn (before
+        // any fresh ephemeral frame republishes it). Republish the selected conversation's
+        // ephemeral state whenever its streams were just pruned.
+        const selectedId = this.state.selectedConversationId;
+        if (
+            selectedId !== undefined &&
+            !this.toolStreams.has(selectedId) &&
+            Object.keys(this.state.toolStreams).length > 0
+        ) {
+            this.refreshEphemeralState(selectedId);
+        }
+    }
+
+    private async refreshSelectedConversation(
+        expectedId: string,
+        db = this.database,
+        gen = this.sessionGen,
+    ): Promise<void> {
+        if (!db) return;
+        const refreshEpoch = (this.issuedRefreshEpochs.get(expectedId) ?? 0) + 1;
+        this.issuedRefreshEpochs.set(expectedId, refreshEpoch);
+        const [events, pendingMessages] = await Promise.all([db.events(expectedId), db.outbox(expectedId)]);
+        if (
+            refreshEpoch < (this.appliedRefreshEpochs.get(expectedId) ?? 0) ||
+            this.sessionGen !== gen ||
+            this.database !== db ||
+            this.state.selectedConversationId !== expectedId
+        )
+            return;
+        this.appliedRefreshEpochs.set(expectedId, refreshEpoch);
+        const visiblePending = new Map(pendingMessages.map((message) => [message.localId, message]));
+        for (const message of this.transientAttachmentErrors.values()) {
+            if (message.convoId === expectedId) visiblePending.set(message.localId, message);
+        }
+        this.patch({
+            events,
+            pendingMessages: [...visiblePending.values()].map((message) => ({
+                ...message,
+                canRetry:
+                    (message.errorKind === "upload_failed" && this.pendingFiles.has(message.localId)) ||
+                    message.errorKind === "send_failed" ||
+                    (message.errorKind === "storage_failed" &&
+                        (this.pendingFiles.has(message.localId) || Boolean(message.blobRef))),
+            })),
+        });
+    }
+
+    private async persistAttachment(message: PendingMessage, db: JournalDatabase, gen: number): Promise<boolean> {
+        if (this.dismissedAttachments.has(message.localId)) return false;
+        try {
+            await db.addToOutbox(message);
+        } catch {
+            if (this.sessionGen !== gen || this.database !== db || this.dismissedAttachments.has(message.localId))
+                return false;
+            const storageError: PendingMessage = {
+                ...message,
+                attachState: "error",
+                errorKind: "storage_failed",
+                canRetry: this.pendingFiles.has(message.localId) || Boolean(message.blobRef),
+            };
+            this.transientAttachmentErrors.set(message.localId, storageError);
+            if (this.state.selectedConversationId === message.convoId) {
+                const pendingMessages = this.state.pendingMessages.filter(
+                    (pending) => pending.localId !== message.localId,
+                );
+                this.patch({ pendingMessages: [...pendingMessages, storageError] });
+            }
+            return false;
+        }
+        if (this.sessionGen !== gen || this.database !== db || this.dismissedAttachments.has(message.localId))
+            return false;
+        this.transientAttachmentErrors.delete(message.localId);
+        return true;
+    }
+
+    private ownsAttachment(owner: AttachmentOwner, localId: string): boolean {
+        return (
+            this.sessionGen === owner.gen &&
+            this.api === owner.api &&
+            this.database === owner.db &&
+            !this.dismissedAttachments.has(localId)
+        );
+    }
+
+    private async runAttachmentOperation(localId: string, operation: () => Promise<void>): Promise<void> {
+        const previous = this.attachmentOperations.get(localId);
+        const current = previous ? previous.catch(() => undefined).then(operation) : operation();
+        this.attachmentOperations.set(localId, current);
+        try {
+            await current;
+        } finally {
+            if (this.attachmentOperations.get(localId) === current) this.attachmentOperations.delete(localId);
+        }
+    }
+
+    private isChildConvo(convoId: string): boolean {
+        const conversation = this.state.conversations.find((candidate) => candidate.id === convoId);
+        return !!conversation && isSubChat(conversation);
+    }
+
+    private abortUploadsForChildConvos(): void {
+        for (const [localId, convoId] of this.uploadConvos) {
+            if (this.isChildConvo(convoId)) this.inFlightUploads.get(localId)?.abort();
+        }
+    }
+
+    private markChildBlocked(message: PendingMessage): void {
+        message.attachState = "error";
+        message.errorKind = "send_failed";
+        message.errorMessage = "Can't send to a read-only subagent transcript.";
+    }
+
+    private sendPendingMessage(message: PendingMessage, connection = this.connection): void {
+        if (this.isChildConvo(message.convoId)) {
+            this.patch({ controlError: "Couldn't send to a read-only subagent transcript." });
+            return;
+        }
+        if (message.kind === "image" || message.kind === "file") {
+            if (!message.blobRef || this.dismissedAttachments.has(message.localId)) return;
+            connection?.send({
+                op: "send",
+                convo_id: message.convoId,
+                type: message.kind,
+                blob_ref: message.blobRef,
+                payload: this.attachmentPayload(message),
+                local_id: message.localId,
+            });
+            return;
+        }
+        connection?.send({
+            op: "send",
+            convo_id: message.convoId,
+            type: "text",
+            payload: { body: message.body, local_id: message.localId },
+            local_id: message.localId,
+        });
+    }
+
+    private scheduleAck(cursor: number): void {
+        this.pendingAck = Math.max(this.pendingAck, cursor);
+        if (this.ackTimer !== undefined) return;
+        this.ackTimer = window.setTimeout(() => {
+            this.ackTimer = undefined;
+            if (this.connection?.send({ op: "ack", cursor: this.pendingAck })) this.pendingAck = 0;
+        }, 250);
+    }
+
+    private scheduleRead(conversationId: string, upToSeq: number, delay = 400): void {
+        const previous = this.readHighWater.get(conversationId) ?? 0;
+        this.readHighWater.set(conversationId, Math.max(previous, upToSeq));
+        const currentTimer = this.readTimers.get(conversationId);
+        if (currentTimer !== undefined) window.clearTimeout(currentTimer);
+        this.readTimers.set(
+            conversationId,
+            window.setTimeout(() => void this.flushRead(conversationId), delay),
+        );
+    }
+
+    private async flushRead(conversationId: string): Promise<void> {
+        this.readTimers.delete(conversationId);
+        if (!this.database) return;
+        const upToSeq = this.readHighWater.get(conversationId);
+        if (upToSeq === undefined) return;
+        const sent =
+            this.connection?.send({ op: "read_marker", convo_id: conversationId, up_to_seq: upToSeq }) ?? false;
+        if (!sent) return;
+        this.readHighWater.delete(conversationId);
+        await this.database.markLocallyRead(conversationId, upToSeq);
+        await this.refreshConversations();
+    }
+
+    private clearHistoryError(): void {
+        if (!this.historyError) return;
+        if (this.state.connectionError === this.historyError) this.patch({ connectionError: undefined });
+        this.historyError = undefined;
+    }
+
+    private resetTransientSyncState(): void {
+        this.clearRpcCreateWatchdog();
+        // Abort an in-flight message search and bump the guard so any late result is ignored —
+        // covers logout and the snapshot/session transition that also call this. Clear the section
+        // too: the aborted request's result is guarded off, so leaving it would strand a "Searching…"
+        // state that never re-fires (the search effect keys on the query, which is unchanged here).
+        this.searchAbort?.abort();
+        this.searchAbort = undefined;
+        this.searchSeq += 1;
+        if (this.state.messageSearch) this.patch({ messageSearch: undefined });
+        for (const timer of this.readTimers.values()) window.clearTimeout(timer);
+        if (this.ackTimer !== undefined) window.clearTimeout(this.ackTimer);
+        if (this.trackerInboxRefetchTimer !== undefined) window.clearTimeout(this.trackerInboxRefetchTimer);
+        this.trackerInboxRefetchTimer = undefined;
+        this.inboxWalking = false;
+        this.inboxPendingWrites.clear();
+        if (this.trackerMissionsRefetchTimer !== undefined) window.clearTimeout(this.trackerMissionsRefetchTimer);
+        this.trackerMissionsRefetchTimer = undefined;
+        this.trackerMissionRefetchPending = false;
+        if (this.briefingExpiryTimer !== undefined) window.clearTimeout(this.briefingExpiryTimer);
+        this.briefingExpiryTimer = undefined;
+        this.briefingGen += 1;
+        this.readTimers.clear();
+        this.readHighWater.clear();
+        this.ackTimer = undefined;
+        this.pendingAck = 0;
+        this.historyError = undefined;
+        this.history.clear();
+        this.activities.clear();
+        this.statuses.clear();
+        this.textStreams.clear();
+        this.toolStreams.clear();
+        this.retiredStreamRefs.clear();
+    }
+
+    private patch(update: Partial<ClientState>): void {
+        const bump = "connectionError" in update && update.connectionError ? 1 : 0;
+        this.state = { ...this.state, ...update, connectionErrorSeq: this.state.connectionErrorSeq + bump };
+        this.emit();
+    }
+
+    private emit(): void {
+        // The desktop badge counts exactly the rows Active renders as top-level. Archived
+        // conversations are hidden from the active list and skipped by mark-all-read, so they
+        // must not inflate the badge; likewise a hidden done child (no row, no way to clear it)
+        // and a nested child both contribute zero, so the badge can never outlive its rows.
+        const index = buildSidebarIndex(
+            this.state.conversations,
+            this.state.archivedIds,
+            this.state.collapsedSubagentParentIds,
+        );
+        const unread = this.state.conversations.reduce(
+            (total, conversation) =>
+                total +
+                (!this.state.archivedIds.has(conversation.id) && rendersAsTopLevelRow(conversation, index)
+                    ? conversation.unread_count
+                    : 0),
+            0,
+        );
+        ((window as Window & { electron?: ElectronBadgeBridge }).electron as ElectronBadgeBridge | undefined)?.send(
+            "setBadgeCount",
+            unread,
+        );
+        for (const listener of this.listeners) listener();
+    }
+}
+
+/**
+ * Bind a GET /briefings/latest (or refresh 202) body defensively: the journal is a separate
+ * service, so a version-skewed or malformed field degrades (no briefing, no refresh) rather than
+ * crashing the render. A body that is not an object at all throws, which the loader reports.
+ */
+export function sanitizeBriefingLatest(raw: unknown): BriefingLatest {
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+        throw new Error("The journal server returned a malformed briefing.");
+    }
+    const value = raw as Record<string, unknown>;
+    const finite = (candidate: unknown): number | undefined =>
+        typeof candidate === "number" && Number.isFinite(candidate) ? candidate : undefined;
+    const b = value.briefing as Record<string, unknown> | null | undefined;
+    const briefing =
+        b &&
+        typeof b === "object" &&
+        typeof b.id === "string" &&
+        typeof b.body === "string" &&
+        typeof b.convo_id === "string" &&
+        finite(b.created_at) !== undefined
+            ? {
+                  id: b.id,
+                  body: b.body,
+                  created_at: b.created_at as number,
+                  convo_id: b.convo_id,
+                  seq: finite(b.seq) ?? 0,
+              }
+            : null;
+    const r = value.refresh as Record<string, unknown> | null | undefined;
+    const refresh =
+        r &&
+        typeof r === "object" &&
+        (r.state === "pending" || r.state === "failed" || r.state === "timed_out") &&
+        finite(r.requested_at) !== undefined
+            ? {
+                  requested_at: r.requested_at as number,
+                  state: r.state as BriefingRefresh["state"],
+                  ...(finite(r.expires_at) !== undefined ? { expires_at: r.expires_at as number } : {}),
+                  ...(typeof r.outcome === "string" ? { outcome: r.outcome } : {}),
+              }
+            : null;
+    return {
+        briefing,
+        refresh,
+        next_refresh_at: finite(value.next_refresh_at) ?? null,
+        has_coordinator: value.has_coordinator === true,
+    };
+}
+
+export function errorMessage(error: unknown): string {
+    if (error instanceof JournalApiError && error.retryAfter) {
+        return `${error.message} (${error.retryAfter}s)`;
+    }
+    return error instanceof Error ? error.message : "Something went wrong.";
+}
+
+/** The label of a notice's one-tap answer; the journal closes the notice when it is tapped. */
+const SEEN_ACTION = "Seen";
+
+/** `{notices}` from GET/PATCH /settings or a settings frame, or null when it does not carry a
+ *  boolean `notices` (a malformed or future shape must not flip the switch). */
+function parseUserSettings(raw: unknown): UserSettings | null {
+    if (typeof raw !== "object" || raw === null) return null;
+    const notices = (raw as { notices?: unknown }).notices;
+    return typeof notices === "boolean" ? { notices } : null;
+}

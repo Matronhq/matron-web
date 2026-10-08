@@ -1,0 +1,1353 @@
+/*
+Copyright 2026 Matron Contributors.
+
+SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
+Please see LICENSE files in the repository root for full details.
+*/
+
+export const MESSAGE_EVENT_TYPES = new Set([
+    "text",
+    "tool_output",
+    "diff",
+    "prompt",
+    "permission_request",
+    "file",
+    "image",
+    "spawn_outcome",
+    // v1: tracker markers are not unread messages — `item`/`milestone`/`mission` are
+    // deliberately OUT of this set to avoid unread-badge churn (revisit in a later pass).
+]);
+
+export interface MatronConfig {
+    brand?: string;
+    journal_server_url?: string;
+    privacy_policy_url?: string;
+}
+
+export interface Session {
+    serverUrl: string;
+    token: string;
+    deviceId: number;
+    userId: number;
+    username: string;
+}
+
+export interface LoginResponse {
+    token: string;
+    device_id: number;
+    user_id: number;
+}
+
+// A box's last capacity report (protocol.md "Box status (`box_status`)"): served as `status`
+// on GET /devices for agent devices that have ever reported, and pushed live to client sockets
+// as `{kind:'box_status', device_id, reported_at, ...blocks}`. Every block is optional — the
+// bridge sends whichever it has — and `reported_at` says how old the numbers are.
+export interface BoxStatusLimitLine {
+    id: string;
+    label: string;
+    percent: number;
+    // Human reset text ("Sep 28 at 1:10am (Europe/London)") and/or an ISO-8601 instant; each
+    // independently optional per line.
+    resets?: string;
+    resets_at?: string;
+}
+
+export interface BoxStatus {
+    reported_at: number;
+    activity?: {
+        live_sessions: number;
+        last_hour: Array<{ path: string; sessions: number }>;
+    };
+    limits?: {
+        as_of: number;
+        lines: BoxStatusLimitLine[];
+    };
+    disk?: {
+        free_bytes: number;
+        total_bytes: number;
+    };
+    account?: {
+        email: string;
+    };
+}
+
+export interface DeviceDTO {
+    device_id: number;
+    kind: string;
+    name?: string;
+    last_seen_at?: number;
+    connected: boolean;
+    is_self: boolean;
+    status?: BoxStatus;
+    /** An agent box's stored defaults for new sessions (see BoxDefaults). Absent on journals
+     *  that predate per-box defaults, and on client devices. */
+    defaults?: BoxDefaults;
+}
+
+export interface DevicesResponse {
+    devices: DeviceDTO[];
+}
+
+export interface RecentFolder {
+    path: string;
+    last_used: number | null;
+}
+
+export interface Conversation {
+    id: string;
+    title: string;
+    /** The bridge's own generated title, which `title` replaces with the mission's name while the
+     *  conversation is on a mission. Absent from older journals; null on the journal's own rows. */
+    auto_title?: string | null;
+    session_state: string;
+    session_outcome?: string | null;
+    last_seq: number;
+    unread_count: number;
+    snippet: string;
+    created_at: number;
+    parent_convo_id?: string | null; // null/undefined = top-level; set once at child creation, immutable
+    /** The agent box that manages this conversation (`GET /snapshot`); null for legacy rows. */
+    agent_device_id?: number | null;
+    last_ts?: number;
+    read_up_to_seq: number;
+}
+
+/** One of the user's agent boxes as the snapshot and `device_meta` frames describe it. */
+export interface AgentRosterEntry {
+    device_id: number;
+    name: string;
+    tag_char?: string | null;
+}
+
+export interface SnapshotResponse {
+    conversations: Array<Omit<Conversation, "read_up_to_seq"> & { read_up_to_seq?: number }>;
+    agents?: AgentRosterEntry[];
+    seq: number;
+    capabilities?: string[];
+    /** Journal pins; absent on a journal that predates them (parsed by pins.ts pinsFromContainer). */
+    pins?: unknown;
+}
+
+/** The newer session on the same box the app offers to move a pin to. */
+export interface ConvoPinSuccessor {
+    convo_id: string;
+    title: string;
+    created_at: number;
+}
+
+/** A journal-backed pinned desk chat (journal protocol "Pins"). */
+export interface ConvoPin {
+    convo_id: string;
+    /** One line, 1–24 characters; the row's primary text. */
+    label: string;
+    /** A short token, or "" to draw the label's first letter instead. */
+    emoji: string;
+    position: number;
+    device_id: number | null;
+    /** The pinned conversation is gone; the row offers only Move pin… and Unpin. */
+    missing?: true;
+    successor?: ConvoPinSuccessor;
+    created_at: number;
+    updated_at: number;
+}
+
+export type EventPayload = Record<string, unknown>;
+
+export interface JournalEvent {
+    kind?: "journal";
+    seq: number;
+    convo_id: string;
+    ts: number;
+    sender: string;
+    type: string;
+    payload: EventPayload;
+}
+
+export interface MessagesResponse {
+    events: JournalEvent[];
+}
+
+/**
+ * A single full-text search hit over message content, as returned by the server's
+ * `GET /search` endpoint. `snippet` carries `**…**` markers around the matched terms
+ * and `…` for elided context; `live` is true while the hit's conversation is running.
+ */
+export interface SearchHit {
+    convo_id: string;
+    title: string;
+    seq: number;
+    ts: number;
+    sender: string;
+    snippet: string;
+    live: boolean;
+}
+
+export interface SearchResponse {
+    hits: SearchHit[];
+}
+
+/**
+ * Message-content search state (Apple-parity "Messages" section). The room-list search box
+ * filters chat titles in-memory (the "Chats" behaviour); this holds the server-side content
+ * hits for the same query. `query` is the query the current `hits` belong to, so the view can
+ * ignore results that raced in after the box was cleared or retyped.
+ */
+export interface MessageSearchState {
+    query: string;
+    hits: SearchHit[];
+    loading: boolean;
+    failed: boolean;
+}
+
+export interface JournalControlFrame {
+    kind: "control";
+    op: string;
+    seq?: number;
+    code?: string;
+    detail?: string;
+    ref?: string;
+    request_id?: string;
+    /** hello_ok: the user's journal pins; absent on a journal that predates them. */
+    pins?: unknown;
+    /** `hello_ok` and the `settings` op carry the user's journal settings (unvalidated JSON). */
+    settings?: unknown;
+}
+
+export interface JournalRpcFrame {
+    kind: "rpc";
+    response?: {
+        request_id: string;
+        agent_device_id: number;
+        ok: boolean;
+        result?: unknown;
+        error?: {
+            code: string;
+            detail?: string;
+        };
+    };
+}
+
+export type RpcReply =
+    | { ok: true; origin: "agent"; result: unknown }
+    | {
+          ok: false;
+          origin: "agent" | "relay" | "timeout" | "teardown";
+          code: string;
+          detail?: string;
+      };
+
+export interface ToolStreamPayload {
+    event: "append" | "sync" | "end";
+    offset?: number;
+    chunk?: string;
+    content?: string;
+    head_truncated?: boolean;
+    reason?: string;
+    meta?: {
+        tool?: string;
+        command?: string;
+    };
+}
+
+export interface JournalEphemeralFrame {
+    kind: "ephemeral";
+    convo_id: string;
+    message_ref?: string;
+    text?: string;
+    replace_text?: string;
+    activity?: {
+        state: "thinking" | "tool" | "idle";
+        detail?: string;
+    };
+    tool_stream?: ToolStreamPayload;
+    status?: SessionStatus;
+}
+
+// Live box-status fan-out (client sockets only, never replayed): a full replacement of the
+// stored report for `device_id`. Blocks are validated client-side by `parseBoxStatus`.
+export interface JournalBoxStatusFrame {
+    kind: "box_status";
+    device_id: number;
+    reported_at: number;
+    activity?: unknown;
+    limits?: unknown;
+    disk?: unknown;
+    account?: unknown;
+}
+
+export interface JournalDeviceMetaFrame {
+    kind: "device_meta";
+    device_id: number;
+    name: string;
+    tag_char?: string | null;
+}
+
+// Coordinator briefing fan-out (client sockets only, never replayed; journal protocol.md
+// "Coordinator briefings → Live frame"): pure invalidation — the app refetches GET /briefings/latest.
+export interface JournalBriefingFrame {
+    kind: "briefing";
+    action: "published" | "refreshing" | "refresh_failed";
+    briefing_id?: string;
+}
+
+// The user's new-chat defaults changed (journal protocol.md "Default model and effort"): sent to
+// every live socket of the user, never replayed. Carries the full new state; validated client-side
+// by `parseUserDefaults`.
+export interface JournalDefaultsFrame {
+    kind: "defaults";
+    default_model?: unknown;
+    default_effort?: unknown;
+}
+
+// One agent box's defaults changed (journal protocol.md "Box defaults"): sent to the user's
+// client sockets, never replayed. Carries the box's full new state; validated client-side by
+// `parseBoxDefaultsState`.
+export interface JournalBoxDefaultsFrame {
+    kind: "box_defaults";
+    device_id?: unknown;
+    default_agent?: unknown;
+    default_model?: unknown;
+    default_effort?: unknown;
+}
+
+// Journal pins fan-out (client sockets only): the full pin list after every change.
+export interface JournalPinsFrame {
+    kind: "pins";
+    pins: unknown;
+}
+
+export type ServerFrame =
+    | JournalEvent
+    | JournalControlFrame
+    | JournalEphemeralFrame
+    | JournalRpcFrame
+    | JournalBoxStatusFrame
+    | JournalDeviceMetaFrame
+    | JournalBriefingFrame
+    | JournalDefaultsFrame
+    | JournalBoxDefaultsFrame
+    | JournalPinsFrame;
+
+export interface SessionStatus {
+    model?: string;
+    // v5 header subtitle: `model · workdir · run-state`. The bridge does not yet
+    // include the session cwd in the status frame — the segment renders only when
+    // present, so it lights up the moment the bridge adds it (tracked follow-up).
+    workdir?: string;
+    context?: {
+        tokens: number;
+        window: number;
+        pct: number;
+    };
+    limits?: Array<{
+        // Stable machine key. The bridge (final #156 contract) emits `session`, `week_all`,
+        // and `week_<model-slug>` (e.g. `week_fable`, `week_sonnet_5`); `context` and the
+        // host meters `host_cpu` / `host_ram` are client-synthesized (from `context` and the
+        // top-level `vitals` below — the bridge never sends host meters inside limits[]).
+        // Absent on older/cached frames — the client falls back to parsing `label`.
+        id?: string;
+        label: string;
+        percent: number;
+        // Raw used/limit pair (context bar rides these to show e.g. 144k/200k). Optional —
+        // only the synthesized ctx meter carries them today.
+        used?: number;
+        limit?: number;
+        unit?: string;
+        model?: string;
+        resets?: string;
+        // Final #156 contract: an OPTIONAL ISO-8601 string — omitted when the reset text is
+        // absent or unparseable, never null. resetDisplay still accepts a number here too as
+        // a belt-and-suspenders fallback for any pre-contract frame.
+        resets_at?: string | number;
+        // NOT a wire field: the merged #156 contract has no epoch-ms reset (an early draft
+        // carried `resets_at_ms` and dropped it as redundant — `Date.parse(resets_at)`
+        // recovers it). Kept only as a client-side tolerance; resetDisplay prefers it if a
+        // frame ever carries one.
+        resets_at_ms?: number;
+        // Epoch ms of the last REAL sample for this meter. NOT sent by the bridge inside
+        // limits[] (#156 keeps vitals at top level): the client copies it from
+        // `vitals.sampled_at_ms` onto the host_cpu / host_ram meters it synthesizes. Host
+        // readings only refresh on turn-end and get replayed verbatim to new viewers, so on
+        // an idle conversation the displayed value can be minutes/hours stale while looking
+        // current. When present, the client expires stale readings (renders a muted state
+        // past HOST_VITALS_STALE_MS). Absent → no staleness logic. See status.ts.
+        sampled_at_ms?: number;
+    }>;
+    // Host machine vitals (bridge status frame, top-level — NOT a limits[] entry). CPU/RAM
+    // percentages plus the epoch-ms time of their last real sample. Absent on bridges that
+    // don't publish vitals → the CPU/RAM meters simply don't render (graceful degradation).
+    // `sampled_at_ms` drives the same staleness muting as the per-meter field on limits[]:
+    // host readings only refresh on turn-end and get replayed verbatim to new viewers, so an
+    // idle conversation can show a minutes-old reading as live. See status.ts HOST_VITALS_STALE_MS.
+    vitals?: {
+        cpu_pct: number;
+        ram_pct: number;
+        sampled_at_ms: number;
+    };
+    email?: string;
+}
+
+export interface ToolStreamState {
+    messageRef: string;
+    command?: string;
+    tool?: string;
+    content: string;
+    offset: number;
+    headTruncated: boolean;
+}
+
+export interface PendingMessage {
+    localId: string;
+    convoId: string;
+    body: string;
+    createdAt: number;
+    kind?: "text" | "image" | "file";
+    filename?: string;
+    size?: number;
+    contentType?: string;
+    caption?: string;
+    blobRef?: string | null;
+    attachState?: "uploading" | "sending" | "error";
+    errorKind?:
+        | "upload_failed"
+        | "send_failed"
+        | "storage_failed"
+        | "too_large"
+        | "empty"
+        | "browser_memory_limit"
+        | "electron_binary_unsupported";
+    errorMessage?: string;
+    canRetry?: boolean;
+}
+
+export type ConnectionState = "offline" | "connecting" | "online";
+
+export interface StagedUploadItem {
+    id: string;
+    file: File;
+    /** Built on first confirm attempt; reused by persist retries so a page has ONE row identity. */
+    message?: PendingMessage;
+}
+
+export interface StagedUploads {
+    convoId: string;
+    items: StagedUploadItem[];
+    /** Cumulative count ever staged into this queue (paste-append increments). Header: "File k of N", k = total - items.length + 1. */
+    total: number;
+    /** P23 transient-submission lock: set synchronously at confirm entry; all modal actions inert while true. */
+    confirming: boolean;
+    /** Terminal invalidation notice (items cleared, error page shown). */
+    error?: "archived";
+    /** Non-terminal persist failure: page kept, inline error shown, Send retries. */
+    persistError?: boolean;
+}
+
+export interface ClientState {
+    phase: "loading" | "signed-out" | "signed-in";
+    config: MatronConfig;
+    session?: Session;
+    conversations: Conversation[];
+    archivedIds: Set<string>;
+    /** Browser-local pins, used only while `journalPins` is null. */
+    pinnedIds: Set<string>;
+    /** Journal pins in position order; null = this journal does not support pins (or not yet heard). */
+    journalPins: ConvoPin[] | null;
+    /** The journal's pin cap (from the last /pins response). */
+    pinLimit: number;
+    favoriteIds: Set<string>;
+    unreadOverrideIds: Set<string>;
+    /**
+     * Parent conversation ids whose subagent child rows the user has manually collapsed in the
+     * sidebar. Persisted per session/user like the other row flags; default empty = every parent
+     * expanded. Threaded into every buildSidebarIndex call so render/selection/unread/mark-all agree.
+     */
+    collapsedSubagentParentIds: Set<string>;
+    controlError?: string;
+    preferencesUnavailable?: boolean;
+    selectedConversationId?: string;
+    events: JournalEvent[];
+    pendingMessages: PendingMessage[];
+    connection: ConnectionState;
+    connectionError?: string;
+    connectionErrorSeq: number;
+    loadingHistory: boolean;
+    hasOlderHistory: boolean;
+    activity?: JournalEphemeralFrame["activity"];
+    sessionStatus?: SessionStatus;
+    // Last capacity report per agent device id — seeded from GET /devices, replaced by live
+    // `box_status` frames. Read by the new-session sheet.
+    boxStatuses: Record<number, BoxStatus>;
+    /** The user's agent boxes, from the snapshot and live `device_meta` frames; drives session tags. */
+    agents: AgentRosterEntry[];
+    textStreams: Record<string, string>;
+    toolStreams: Record<string, ToolStreamState>;
+    dragActive: boolean;
+    stagedUploads?: StagedUploads;
+    sendTick: number;
+    // Message-content search hits (Apple-parity "Messages" section). Undefined until the first
+    // search of a session; cleared back to undefined when the search box empties.
+    messageSearch?: MessageSearchState;
+    // Tracker pane (Missions / Milestones / Decisions-Inbox). `trackerView` is the main-region
+    // discriminant (checked ahead of selectedConversationId — one surface at a time). The rest are
+    // store-resident so sidebar badges stay live off WS invalidation:
+    //   missions/inboxItems  = the two list views;
+    //   trackerItem          = the open item detail (item + its comment thread), null = none;
+    //   trackerMission       = the open mission detail, null = none.
+    // Undefined = never loaded this session.
+    trackerView?: TrackerViewState;
+    missions?: Mission[];
+    inboxItems?: TrackerItem[];
+    /** Projects (unify step 7): the dashboard rows and the open project's detail. */
+    projects?: Project[];
+    projectsError?: string;
+    /** GET /projects answered 404: an older journal without projects; the tracker shows missions. */
+    projectsUnsupported?: boolean;
+    /** Last failed project-detail load, keyed by its number (like missionLoadError). */
+    projectLoadError?: { id: string; message: string };
+    trackerProject?: ProjectDetail | null;
+    trackerItem?: { item: TrackerItem; comments: TrackerComment[] } | null;
+    trackerMission?: MissionDetail | null;
+    /** True while ANY tracker fetch is in flight (v1: one detail/list open at a time). */
+    trackerLoading?: boolean;
+    /** Last tracker fetch/mutation error; cleared on the next successful load. */
+    trackerError?: string;
+    /** Error from the last inbox load only. Unlike trackerError, which any tracker load clears, this
+     *  is cleared only by the next inbox load, so a never-loaded inbox can tell "failed" from
+     *  "still loading" while other loads come and go. */
+    inboxError?: string;
+    /** Error from the last item-detail load, keyed by the item it was for (`id` is the item number
+     *  as a string, any leading "#" dropped). Unlike trackerError it survives other tracker loads
+     *  and an in-flight retry, and is cleared only when an item load succeeds, so the pane can keep
+     *  offering a retry for the selected item until it actually loads. */
+    itemLoadError?: { id: string; message: string };
+    /** Same as inboxError, for the missions list. */
+    missionsError?: string;
+    /** Same as itemLoadError, for the open mission detail: keyed by the mission number (leading "#"
+     *  dropped), survives other tracker loads and an in-flight retry, and is cleared only when a
+     *  mission load succeeds, so the pane can keep offering a retry until it actually loads. */
+    missionLoadError?: { id: string; message: string };
+    /** The Memories view's list, sorted by name. Undefined = never loaded this session. */
+    memories?: Memory[];
+    /** Same as inboxError, for the memories list. */
+    memoriesError?: string;
+    /** The Coordinator's latest briefing (top of the Projects tab). Undefined = never loaded. */
+    briefing?: BriefingState;
+    /** The user's defaults for new chats (Settings → New chats). Undefined = never loaded. */
+    defaults?: DefaultsState;
+    /** Per-box defaults for new sessions (Settings → Boxes). Undefined = never loaded. */
+    boxDefaults?: BoxDefaultsState;
+    /** The user's journal settings (GET /settings, `hello_ok`, the `settings` control frame).
+     *  Undefined = not known yet. */
+    userSettings?: UserSettings;
+    /** GET /settings answered 404: an older journal without settings; the switches are hidden. */
+    userSettingsUnsupported?: boolean;
+    /** The last failed settings save; cleared by the next save. */
+    userSettingsError?: string;
+}
+
+// ── New-chat defaults (journal GET/PUT /defaults) ───────────────────────────────────────────────
+// Per-user default model and effort that every bridge applies to a new chat started without a
+// choice of its own. null = "Box default": each bridge falls back to its own environment.
+
+/** GET /defaults, and the 200 body of PUT /defaults. */
+export interface UserDefaults {
+    default_model: string | null;
+    default_effort: string | null;
+}
+
+export type UserDefaultKey = keyof UserDefaults;
+
+export interface DefaultsState {
+    /** The last known defaults; undefined until the first load succeeds. */
+    value?: UserDefaults;
+    loading: boolean;
+    /** The journal predates /defaults (GET answered 404): the settings group says so. */
+    unsupported: boolean;
+    /** The last load or save failure; a failed save has already reverted its optimistic value. */
+    error?: string;
+}
+
+// ── Per-box defaults (journal GET /devices `defaults`, PUT /devices/:id/defaults) ─────────────────
+// The agent, model and effort a session started on one agent box gets when nobody names them.
+// null = the bridge's own fallback (its MATRON_DEFAULT_* environment). The model and effort belong
+// to the box's default agent: a Claude alias on a Claude box, a Codex model id on a Codex box.
+
+export type BoxAgent = "claude" | "codex";
+
+/** GET /devices `defaults` on an agent box. */
+export interface BoxDefaults {
+    agent: string | null;
+    model: string | null;
+    effort: string | null;
+}
+
+/** PUT /devices/:id/defaults body (any subset) and its 200 answer (all keys). */
+export interface BoxDefaultsPatch {
+    default_agent?: string | null;
+    default_model?: string | null;
+    default_effort?: string | null;
+}
+
+export interface BoxDefaultsState {
+    /** The user's agent boxes that carry defaults, in roster order; values include unsaved picks. */
+    boxes: Array<{ device_id: number; name?: string; connected: boolean; defaults: BoxDefaults }>;
+    loading: boolean;
+    /** The journal predates per-box defaults: the settings group is hidden. */
+    unsupported: boolean;
+    /** The last load or save failure; a failed save has already reverted its optimistic value. */
+    error?: string;
+}
+
+/** Per-user journal settings. `notices`: agents file things to read as notice items. */
+export interface UserSettings {
+    notices: boolean;
+}
+
+/** The in-app `matron://` deep links the markdown renderer activates (markdown.tsx parseMatronHref). */
+export type MatronLinkKind = "item" | "mission" | "project" | "convo";
+/** `target` is the #num for item/mission/project and the conversation id for convo. */
+export type TrackerLinkHandler = (kind: MatronLinkKind, target: number | string) => void;
+
+// ── Coordinator briefings (journal /briefings, spec 2026-10-04 latest briefing) ─────────────────
+// The Coordinator publishes sweeps/status updates as briefings; the Projects tab shows the latest
+// and may ask for a fresh one. Every timestamp is epoch ms.
+
+export interface Briefing {
+    id: string;
+    /** Markdown, ≤32 KB. */
+    body: string;
+    created_at: number;
+    /** The Coordinator conversation the briefing's `text` event was appended to. */
+    convo_id: string;
+    /** That event's seq (the "Open in chat" anchor). */
+    seq: number;
+}
+
+export interface BriefingRefresh {
+    requested_at: number;
+    state: "pending" | "failed" | "timed_out";
+    /** Pending only: when the journal stops waiting and the state becomes timed_out. */
+    expires_at?: number;
+    /** Failed only: the firer's outcome string. */
+    outcome?: string;
+}
+
+/** GET /briefings/latest, and the 202 body of POST /briefings/refresh. */
+export interface BriefingLatest {
+    briefing: Briefing | null;
+    refresh: BriefingRefresh | null;
+    /** When the next refresh may be asked for; null = now. */
+    next_refresh_at: number | null;
+    has_coordinator: boolean;
+}
+
+export interface BriefingState {
+    /** The last loaded view; undefined until the first load lands. */
+    latest?: BriefingLatest;
+    loading: boolean;
+    /** The journal predates briefings (GET /briefings/latest 404s): the card stays hidden. */
+    unsupported: boolean;
+    /** Error from the last load; cleared by the next successful one. */
+    error?: string;
+    /** A POST /briefings/refresh is in flight. */
+    requesting?: boolean;
+    /** Why the last refresh ask was refused (429 / 409 / 503 / network). */
+    refreshError?: string;
+    /** On a 429: when a refresh may be asked for again. */
+    retryAt?: number;
+}
+
+// ── Tracker (Missions / Milestones / Decisions-Inbox) ──────────────────────────
+// Wire shapes bind EXACTLY to the journal tracker API (src/items.js, src/missions.js
+// @dd9c04a): `id`/`mission_id`/`supersedes`/`origin_convo_id` are opaque TEXT ids
+// (strings); `num` is the human #number (integer); every timestamp is epoch-ms INTEGER
+// (number). Titles can be absent across a privacy boundary — bind defensively at render.
+
+/** Which tracker surface the pane shows; `selected*Id` are #num values (integers). */
+export interface TrackerViewState {
+    open: boolean;
+    view?: "missions" | "inbox" | "memories";
+    selectedItemId?: number;
+    selectedMissionId?: number;
+    /** Projects view: the open project's number; undefined = the dashboard. */
+    selectedProjectId?: number;
+    /** Memories view: the open memory's name, or "" for the new-memory form. Undefined = the list. */
+    selectedMemoryName?: string;
+    /** Missions (Projects) view: the latest briefing is open in full. */
+    briefingOpen?: boolean;
+}
+
+// ── Memories (journal /memories, spec 2026-09-27 memories) ─────────────────────
+// The user's shared agent memory: standing rules and facts every agent may save and the
+// Coordinator reads at spawn. Shaped like a Claude Code memory file. `name` is the key
+// (kebab-case, unique per user); PUT /memories/:name overwrites the whole memory.
+
+export type MemoryType = "user" | "feedback" | "project" | "reference";
+
+export interface Memory {
+    id: string;
+    name: string;
+    type: MemoryType;
+    /** One line, ≤200 chars — the line the Coordinator sees at spawn. */
+    description: string;
+    /** Markdown, ≤8192 bytes, may be empty. */
+    body: string;
+    origin_convo_id: string | null;
+    origin_device_id: number | null;
+    origin_private?: boolean;
+    created_by: "user" | "agent";
+    updated_by: "user" | "agent";
+    created_at: number;
+    updated_at: number;
+}
+
+/** PUT /memories/:name body. Omitted `body` clears the stored body; omitted `type` keeps it. */
+export interface MemoryWrite {
+    description: string;
+    body?: string;
+    type?: MemoryType;
+}
+
+/** `notice` is an FYI the user reads but does not decide: filed awaiting the user with a "Seen"
+ *  button, and closed as done by the tap. The journal only sends it to clients that ask for it
+ *  (the X-Matron-Item-Kinds header); others see a task. */
+export type TrackerItemKind = "task" | "question" | "decision" | "notice";
+export type TrackerItemState = "open" | "closed";
+export type TrackerResolution = "done" | "answered" | "decided" | "reversed" | "cancelled";
+export type TrackerAwaiting = "user" | "agent";
+export type TrackerMilestoneKind = "user_input" | "progress";
+export type TrackerMissionState = "open" | "closed";
+export type TrackerActor = "user" | "agent";
+export type TrackerCommentKind = "comment" | "status";
+
+export interface TrackerLink {
+    url: string;
+    title?: string;
+}
+
+export interface TrackerAttachment {
+    blob_ref: string;
+    mime: string;
+    name: string;
+    size: number;
+    transcript?: string;
+    /** Pixel dimensions the journal measured for an image attachment; absent on other mimes and on
+     *  images it could not measure. */
+    width?: number;
+    height?: number;
+}
+
+/** A resolution/state/awaiting triple; a status comment's text derives from `meta.to`. */
+export interface StatusSnapshot {
+    state: TrackerItemState;
+    resolution: TrackerResolution | null;
+    awaiting: TrackerAwaiting | null;
+}
+
+export interface TrackerItem {
+    id: string;
+    num: number;
+    kind: TrackerItemKind;
+    state: TrackerItemState;
+    resolution: TrackerResolution | null;
+    awaiting: TrackerAwaiting | null;
+    rank: number;
+    title: string;
+    body: string;
+    labels: string[];
+    links: TrackerLink[];
+    supersedes: string | null;
+    origin_convo_id: string;
+    /** Title of the origin conversation as the journal resolved it, for provenance labels. Absent
+     *  on a journal that predates the field; null or "" when the origin conversation is gone or
+     *  untitled. */
+    origin_convo_title?: string | null;
+    origin_device_id?: number;
+    created_by: TrackerActor;
+    created_at: number;
+    updated_at: number;
+    closed_at: number | null;
+    mission_id: string | null;
+    mission_num: number | null;
+    comment_count: number;
+    last_comment_at: number | null;
+    attachments: TrackerAttachment[];
+    has_image: boolean;
+    /** The item's own one-tap answers (a notice offers "Seen"). Absent on a journal that predates
+     *  item actions. */
+    actions?: string[];
+}
+
+export interface TrackerComment {
+    id: string;
+    item_id: string;
+    author: TrackerActor;
+    device_id: number;
+    kind: TrackerCommentKind;
+    body: string;
+    attachments: TrackerAttachment[];
+    meta?: { from?: StatusSnapshot; to?: StatusSnapshot } | null;
+    created_at: number;
+    /** One-tap answers this comment offers (an agent's follow-up question). Absent on a journal
+     *  that predates comment actions; `[]` on every comment that offers none. */
+    actions?: string[];
+    /** The label of the user's latest tap on this comment's `actions`, null until one. */
+    chosen_action?: string | null;
+    /** Set on the user's tap comment: the tapped label, and the id of the comment it answers
+     *  (null when it answered the item's own buttons). */
+    action?: string | null;
+    reply_to?: string | null;
+}
+
+/** `POST /items/:id/comments` body. `action` + `reply_to` is a tap on a comment's button. */
+export interface TrackerCommentWrite {
+    body?: string;
+    attachments?: TrackerAttachment[];
+    action?: string;
+    reply_to?: string;
+}
+
+/** The `{num,title,kind,created_at}` digest a mission list-row carries for its newest milestone. */
+export interface MissionLastMilestone {
+    num: number;
+    title: string;
+    kind: TrackerMilestoneKind;
+    created_at: number;
+}
+
+export interface Mission {
+    id: string;
+    num: number;
+    state: TrackerMissionState;
+    title: string;
+    /** Optional short label the journal names the mission's conversations by (null when unset;
+     *  absent from older journals). */
+    name?: string | null;
+    body: string;
+    close_summary: string | null;
+    closed_by: TrackerActor | null;
+    closed_over_open_items: number;
+    origin_convo_id: string;
+    origin_device_id?: number;
+    created_by: TrackerActor;
+    created_at: number;
+    updated_at: number;
+    last_milestone_at: number | null;
+    closed_at: number | null;
+    // List-row counts (present on every list/detail mission row).
+    open_items: number;
+    needs_you: number;
+    conversations: number;
+    milestones: number;
+    last_milestone: MissionLastMilestone | null;
+    /** The mission's project (journal Projects); null when it is in none. */
+    project_id?: string | null;
+    project_num?: number | null;
+    /** The mission's activity rollup, where the journal sends it. */
+    activity?: string;
+}
+
+export interface Milestone {
+    id: string;
+    mission_id: string;
+    num: number;
+    kind: TrackerMilestoneKind;
+    title: string;
+    body: string;
+    convo_id: string;
+    seq: number;
+    device_id: number;
+    created_by: TrackerActor;
+    created_at: number;
+}
+
+/** The reduced open-item shape a mission detail lists (awaiting-user first). */
+export interface MissionItemRef {
+    id: string;
+    num: number;
+    kind: TrackerItemKind;
+    state: TrackerItemState;
+    awaiting: TrackerAwaiting | null;
+    title: string;
+    origin_convo_id: string;
+    updated_at: number;
+}
+
+export interface MissionConversation {
+    id: string;
+    title: string;
+    /** The bridge's generated topic (see Conversation.auto_title); absent from older journals. */
+    auto_title?: string | null;
+    state: string;
+    box: string | null;
+}
+
+/** A project (journal `GET /projects`): groups missions; carries rollups of its missions. */
+export interface Project {
+    id: string;
+    num: number;
+    state: "open" | "closed";
+    title: string;
+    body: string;
+    status: string | null;
+    status_by: TrackerActor | null;
+    status_updated_at: number | null;
+    created_at: number;
+    updated_at: number;
+    close_summary?: string | null;
+    merged_into_num?: number | null;
+    missions: { running: number; waiting: number; idle: number; quiet: number; closed: number };
+    needs_you: number;
+    open_items: number;
+    last_activity_at: number;
+}
+
+/** `GET /projects/:id`. */
+export interface ProjectDetail {
+    project: Project;
+    missions: Array<Mission & { status?: string | null; activity?: string }>;
+    needs_you: Array<MissionItemRef & { mission_id: string; mission_num: number }>;
+    recent_milestones: Array<Milestone & { mission_num: number }>;
+    sessions_by_box: Record<string, number>;
+    /** Set when the asked-for project was merged: this detail is the project it went into. */
+    merged_from?: { id: string; num: number };
+}
+
+export interface MissionDetail {
+    mission: Mission;
+    milestones: Milestone[];
+    items: MissionItemRef[];
+    conversations: MissionConversation[];
+}
+
+export function coerceParentId(x: unknown): string | null {
+    const s = typeof x === "string" ? x.trim() : "";
+    return s || null;
+}
+
+export function isSubChat(c: Pick<Conversation, "parent_convo_id">): boolean {
+    return c.parent_convo_id != null && c.parent_convo_id !== "";
+}
+
+export function childrenOf(conversations: Conversation[], parentId: string | null | undefined): Conversation[] {
+    if (!parentId) return [];
+    return conversations
+        .filter((c) => c.parent_convo_id === parentId)
+        .sort((a, b) => a.created_at - b.created_at || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+}
+
+export function runningChildrenOf(conversations: Conversation[], parentId: string | null | undefined): Conversation[] {
+    return childrenOf(conversations, parentId).filter((c) => c.session_state === "running");
+}
+
+export function parentPresent(c: Conversation, ids: ReadonlySet<string>): boolean {
+    return isSubChat(c) && c.parent_convo_id !== c.id && c.parent_convo_id != null && ids.has(c.parent_convo_id);
+}
+
+export type ChildSidebarPlacement = "nested" | "top-level" | "hidden";
+
+/** Shared empty set — default for the optional collapsed-parents argument (no allocation per call). */
+const EMPTY_ID_SET: ReadonlySet<string> = new Set<string>();
+
+/**
+ * precomputed lookups shared by every sidebar-visibility consumer so the SAME
+ * classification drives rendering, selection, unread aggregation, the desktop badge, and
+ * mark-all. Build it once per derivation from the conversation list + the archived set.
+ * `placement` holds each conversation's fully-resolved Active/Favorites placement (see
+ * buildSidebarIndex) — consumers READ it rather than re-deriving, so no two consumers can
+ * disagree and no approximation of "is the parent a real top-level row" survives.
+ */
+export interface SidebarIndex {
+    /** Every conversation id, archived or not — distinguishes archived-parent from orphan. */
+    allIds: Set<string>;
+    /** id → conversation. */
+    byId: Map<string, Conversation>;
+    /** id → fully-resolved Active/Favorites placement (memoized, cycle-safe). */
+    placement: Map<string, ChildSidebarPlacement>;
+    /**
+     * Parent ids that host at least one subagent child row — a running child whose direct parent
+     * is a real, non-archived top-level row (i.e. the child renders nested, or WOULD render nested
+     * if the parent were not collapsed). Independent of the collapsed set, so the sidebar row menu
+     * can gate its "Collapse/Show subagents" item on the child rows EXISTING, even while they are
+     * hidden by an active collapse.
+     */
+    parentsWithChildRows: Set<string>;
+}
+
+/**
+ * resolve EVERY conversation's Active/Favorites placement once, through
+ * the SAME recursive classifier, memoized and cycle-safe. This removes the last
+ * approximation — a running child nests ONLY when its direct parent's ACTUAL resolved
+ * placement is "top-level" (a real, rendered top-level row); if the parent is archived,
+ * hidden, or itself nested, the child cannot nest and follows the transient rule directly
+ * (running → "top-level", done/idle → "hidden"). So a running descendant is always
+ * reachable — nested under a real top-level parent, or top-level itself — never lost, at
+ * any tree depth.
+ *
+ * Placement rules per conversation:
+ *  - not a subchat → "top-level" (its Active presence is gated by archived at call sites).
+ *  - subchat, parent missing / self-referential / cyclic → "top-level" (orphan recovery).
+ *  - subchat, parent present, NOT running → "hidden" (one-shot: a finished child lingers
+ *    nowhere in Active).
+ *  - subchat, parent present, running → "nested" iff the parent is a non-archived row whose
+ *    resolved placement is "top-level" AND the user has not collapsed that parent; if the parent
+ *    is a valid host but collapsed, the child is "hidden" (suppressed from the sidebar, but the
+ *    parent still hosts it, so it is counted in `parentsWithChildRows`); otherwise (parent not a
+ *    valid host) "top-level".
+ */
+export function buildSidebarIndex(
+    conversations: Conversation[],
+    archivedIds: ReadonlySet<string>,
+    collapsedParentIds: ReadonlySet<string> = EMPTY_ID_SET,
+): SidebarIndex {
+    const allIds = new Set<string>();
+    const byId = new Map<string, Conversation>();
+    for (const conversation of conversations) {
+        allIds.add(conversation.id);
+        byId.set(conversation.id, conversation);
+    }
+
+    const placement = new Map<string, ChildSidebarPlacement>();
+    const parentsWithChildRows = new Set<string>();
+    const resolving = new Set<string>(); // in-progress ids → parent-chain cycle guard
+
+    const resolve = (conversation: Conversation): ChildSidebarPlacement => {
+        const cached = placement.get(conversation.id);
+        if (cached) return cached;
+        // Re-entered while its own resolution is in progress → a parent_convo_id cycle. Break
+        // it by treating this node as top-level (recovery) so a running descendant is reachable
+        // and resolution terminates. Not cached here; the outermost call caches the real value.
+        if (resolving.has(conversation.id)) return "top-level";
+
+        if (!isSubChat(conversation)) {
+            placement.set(conversation.id, "top-level");
+            return "top-level";
+        }
+        const parentId = conversation.parent_convo_id;
+        if (parentId == null || parentId === "" || parentId === conversation.id || !allIds.has(parentId)) {
+            placement.set(conversation.id, "top-level"); // orphan / missing parent → recovery
+            return "top-level";
+        }
+        if (conversation.session_state !== "running") {
+            placement.set(conversation.id, "hidden"); // parent present, not running → transient hide
+            return "hidden";
+        }
+        // Running child: nest ONLY under a real top-level row — the parent's ACTUAL resolved
+        // placement, not an approximation. Archived parents are never hosts.
+        resolving.add(conversation.id);
+        const parent = byId.get(parentId);
+        const parentIsTopLevelRow = parent != null && !archivedIds.has(parent.id) && resolve(parent) === "top-level";
+        resolving.delete(conversation.id);
+
+        // An ARCHIVED child is rendered in the Archived tab, never as a nested Active row, so it
+        // must NOT register its parent as a host — otherwise the parent offers a dead "Collapse
+        // subagents" control that hides nothing (the render splice + the collapsed count already
+        // skip archived children with `!archivedIds.has(child.id)`). Fall through to top-level;
+        // archivedIds filters it out of Active regardless of placement.
+        if (parentIsTopLevelRow && parent != null && !archivedIds.has(conversation.id)) {
+            // This is a real subagent child row for `parent` — record the host relationship
+            // regardless of collapse (drives the menu gate + the collapsed-count affordance).
+            parentsWithChildRows.add(parent.id);
+            // Collapse suppresses the row: "hidden" excludes it from EVERY consumer that reads
+            // placement (render/nested-splice, auto-select, unread, badge, mark-all) in lock-step.
+            const result: ChildSidebarPlacement = collapsedParentIds.has(parent.id) ? "hidden" : "nested";
+            placement.set(conversation.id, result);
+            return result;
+        }
+        placement.set(conversation.id, "top-level");
+        return "top-level";
+    };
+
+    for (const conversation of conversations) resolve(conversation);
+    return { allIds, byId, placement, parentsWithChildRows };
+}
+
+/**
+ * the SINGLE source of truth for where a subagent conversation lands in the Active/
+ * Favorites sidebar — a pure lookup of the placement resolved once in buildSidebarIndex, so
+ * all call sites (rendering, selection, unread, badge, mark-all) stay in lock-step. Defaults
+ * to "top-level" for an id absent from the index (orphan-style recovery).
+ */
+export function childSidebarPlacement(conversation: Conversation, index: SidebarIndex): ChildSidebarPlacement {
+    return index.placement.get(conversation.id) ?? "top-level";
+}
+
+/**
+ * the ONE canonical "does this conversation render as a TOP-LEVEL sidebar row?"
+ * predicate. A non-child always does; a child does only when its resolved placement is
+ * "top-level" (orphan, archived-parent-running, or a running descendant that cannot nest).
+ * Used by rendering, auto-selection, unread aggregation, the desktop badge, and mark-all so
+ * a row that is not rendered can never be silently auto-selected or counted. Callers still
+ * exclude archived ids separately where a tab or aggregate requires it.
+ */
+export function rendersAsTopLevelRow(conversation: Conversation, index: SidebarIndex): boolean {
+    return !isSubChat(conversation) || childSidebarPlacement(conversation, index) === "top-level";
+}
+
+/**
+ * does this conversation currently host any subagent child rows? True when at least one running
+ * child nests (or would nest, if the parent is collapsed) directly beneath it. Gates the sidebar-
+ * row-menu "Collapse subagents" / "Show subagents" toggle so it appears ONLY for a parent that
+ * actually has child rows — collapse state does not change the answer.
+ */
+export function hasSubagentChildRows(conversation: Pick<Conversation, "id">, index: SidebarIndex): boolean {
+    return index.parentsWithChildRows.has(conversation.id);
+}
+
+export function isNearBottom(scrollTop: number, scrollHeight: number, clientHeight: number, thresholdPx = 80): boolean {
+    return scrollHeight - scrollTop - clientHeight <= thresholdPx;
+}
+
+export function isObject(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function asString(value: unknown, fallback = ""): string {
+    return typeof value === "string" ? value : fallback;
+}
+
+export function asNumber(value: unknown, fallback = 0): number {
+    return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+// Image intrinsic pixel dimensions, normalized to `{ width, height }` for this client. The value
+// is OPTIONAL and originates UPSTREAM of the bridge: the bridge is a pure pass-through and passes
+// Matrix's values when present. Matrix `m.image` `info` spells them `w`/`h`, so `payload.dims` may
+// arrive as `{ w, h }` OR `{ width, height }` — parseMediaDims accepts both. When present, the web
+// client reserves an aspect-ratio box BEFORE the blob decodes, avoiding the thread reflow that
+// otherwise happens as each image finishes loading.
+export interface MediaDims {
+    width: number;
+    height: number;
+}
+
+// Parse `payload.dims`, accepting BOTH the Matrix `{ w, h }` spelling and the `{ width, height }`
+// spelling. Returns undefined when absent or non-positive (images with no upstream dims / clients
+// that did not measure) so the caller falls back to the un-reserved render.
+export function parseMediaDims(value: unknown): MediaDims | undefined {
+    if (!isObject(value)) return undefined;
+    const width = asNumber(value.width ?? value.w, 0);
+    const height = asNumber(value.height ?? value.h, 0);
+    return width > 0 && height > 0 ? { width, height } : undefined;
+}
+
+// Single authoritative source for the image-frame height cap. Emitted at runtime as the
+// `--mj-image-frame-max-height` CSS custom property on the `.mj_Image` figure (see AuthenticatedMedia),
+// which BOTH `.mj_ImageFrame_sized` and `.mj_Image img` consume via `var(...)` in journal.pcss — so
+// the JS cap and the CSS caps cannot drift. A non-replaced <div> sized by CSS `aspect-ratio` does not
+// back-shrink its width when the computed height hits `max-height` (that ratio-preserving
+// back-propagation only happens for replaced elements like a bare <img>), so the cap is also baked
+// into the seeded width in JS — see imageFrameStyle.
+export const IMAGE_FRAME_MAX_HEIGHT_PX = 520;
+
+// Inline style that reserves an image's box before the blob decodes, so the thread doesn't reflow
+// on load. `aspectRatio` holds the shape; `width` seeds the intrinsic size (further capped by the
+// CSS max-width for the column). The width is pre-shrunk so that when the ratio-derived height
+// would exceed IMAGE_FRAME_MAX_HEIGHT_PX the box shrinks in BOTH dimensions — replicating replaced-
+// element sizing. Without this, portrait/square images get an over-wide frame and the inner
+// object-fit:contain <img> letterboxes with dead margins.
+export function imageFrameStyle(dims: MediaDims): { aspectRatio: string; width: number } {
+    return {
+        aspectRatio: `${dims.width} / ${dims.height}`,
+        width: Math.min(dims.width, dims.width * (IMAGE_FRAME_MAX_HEIGHT_PX / dims.height)),
+    };
+}
+
+// Coarse file buckets used to pick a file-tile affordance from a MIME type. A few sensible
+// buckets plus a generic fallback; deliberately NOT an exhaustive icon library.
+export type FileKind = "image" | "pdf" | "text" | "audio" | "video" | "archive" | "generic";
+
+const ARCHIVE_MIME = /(zip|tar|gzip|x-7z-compressed|x-rar|x-bzip|compress)/;
+
+// Map a MIME (`payload.content_type`) to a coarse FileKind. Absent/blank maps to "generic".
+export function fileKindFromMime(contentType: unknown): FileKind {
+    const mime = asString(contentType).trim().toLowerCase();
+    if (!mime) return "generic";
+    if (mime.startsWith("image/")) return "image";
+    if (mime.startsWith("audio/")) return "audio";
+    if (mime.startsWith("video/")) return "video";
+    if (mime === "application/pdf") return "pdf";
+    if (mime.startsWith("text/")) return "text";
+    if (ARCHIVE_MIME.test(mime)) return "archive";
+    return "generic";
+}
+
+export function displaySender(sender: string): string {
+    const separator = sender.indexOf(":");
+    return separator === -1 ? sender : sender.slice(separator + 1);
+}
+
+export function conversationTitle(conversation: Conversation): string {
+    return conversation.title.trim() || conversation.id;
+}
+
+export type SpawnOutcomeKind = "started" | "declined" | "expired" | "failed" | "unknown";
+
+/** Classifies a journaled `spawn_outcome` payload; unrecognised values collapse to "unknown"
+    so a future outcome (or bridge bug) never crashes the timeline (see spawnOutcomeSnippet). */
+export function spawnOutcomeKind(payload: EventPayload): SpawnOutcomeKind {
+    const outcome = asString(payload.outcome);
+    if (outcome === "started" || outcome === "declined" || outcome === "expired" || outcome === "failed") {
+        return outcome;
+    }
+    return "unknown";
+}
+
+export function spawnOutcomeSnippet(payload: EventPayload): string {
+    switch (spawnOutcomeKind(payload)) {
+        case "started":
+            return "🚀 Spawned session started";
+        case "declined":
+            return "🚫 Spawn declined";
+        case "expired":
+            return "⌛ Spawn request expired";
+        case "failed": {
+            const errorCode = asString(payload.error_code);
+            return errorCode ? `❌ Spawn failed — ${errorCode}` : "❌ Spawn failed";
+        }
+        default:
+            return "Spawn request resolved";
+    }
+}
+
+export function eventSnippet(type: string, payload: EventPayload): string {
+    if (type === "text") return asString(payload.body).slice(0, 120);
+    if (type === "file") return `📎 ${asString(payload.caption) || asString(payload.filename, "File")}`.slice(0, 120);
+    if (type === "image") return `🖼 ${asString(payload.caption) || asString(payload.filename, "Image")}`.slice(0, 120);
+    if (type === "prompt") return `? ${asString(payload.question).slice(0, 110)}`;
+    if (type === "permission_request") {
+        // agent_spawn payloads carry no `description` (that's a generic-permission field) — the
+        // sidebar row would otherwise read the empty "Permission: " (Task 1 review finding).
+        // Fixed copy, not derived from topic/task: the server mints this same literal string
+        // into the snapshot snippet, and the two must be byte-exact or the sidebar row
+        // flip-flops across a resume (same ruling just applied to the Android client).
+        if (asString(payload.kind) === "agent_spawn") return "🤝 Agent spawn request";
+        return `Permission: ${asString(payload.description).slice(0, 100)}`;
+    }
+    if (type === "spawn_outcome") {
+        // Byte-exact with the server's own snapshot snippet strings — bare, no error-code
+        // suffix, and a terse bracketed fallback for an unrecognised outcome. Deliberately NOT
+        // spawnOutcomeSnippet: that richer copy (error code suffix, "Spawn request resolved")
+        // is for the timeline row only, where local judgement calls don't need to match the
+        // server's minted string.
+        switch (spawnOutcomeKind(payload)) {
+            case "started":
+                return "🚀 Spawned session started";
+            case "declined":
+                return "🚫 Spawn declined";
+            case "expired":
+                return "⌛ Spawn request expired";
+            case "failed":
+                return "❌ Spawn failed";
+            default:
+                return "[spawn_outcome]";
+        }
+    }
+    if (type === "item") {
+        // Tracker item marker (payload: {num,kind,title,action,awaiting?,...}). Titles can be
+        // absent across a privacy boundary — fall back to `#num`. `📌` mirrors the server's own
+        // minted marker text so the sidebar preview reads consistently with the timeline card.
+        const num = asNumber(payload.num);
+        const kind = asString(payload.kind, "item");
+        const title = asString(payload.title).trim();
+        const needsUser = asString(payload.awaiting) === "user";
+        const head = num ? `${kind} #${num}` : kind;
+        const label = needsUser ? `📌 Needs you — ${head}` : `📌 ${head}`;
+        return (title ? `${label}: ${title}` : label).slice(0, 120);
+    }
+    if (type === "milestone") {
+        // Milestone marker (payload: {num,kind,title,...}). user_input milestones are the urgent
+        // "needs you" kind; still preview title-first, falling back to `#num`.
+        const num = asNumber(payload.num);
+        const title = asString(payload.title).trim();
+        const label = num ? `🏁 Milestone #${num}` : "🏁 Milestone";
+        return (title ? `${label}: ${title}` : label).slice(0, 120);
+    }
+    if (type === "mission") {
+        // Mission marker (payload: {num,title,action}). Mirrors MissionNotice's timeline copy at a
+        // sidebar-preview length; title falls back to `#num`.
+        const num = asNumber(payload.num);
+        const title = asString(payload.title).trim();
+        const label = num ? `🏁 Mission #${num}` : "🏁 Mission";
+        return (title ? `${label}: ${title}` : label).slice(0, 120);
+    }
+    if (type === "memory") {
+        // Memory marker (payload: {memory_id, action, created, by, name?, description?}); the name
+        // is absent across a privacy boundary. Mirrors MemoryNotice's timeline copy.
+        const name = asString(payload.name).trim();
+        const action = asString(payload.action);
+        const verb = action === "deleted" ? "deleted" : payload.created === true ? "saved" : "updated";
+        return (name ? `🧠 Memory ${verb}: ${name}` : `🧠 Memory ${verb}`).slice(0, 120);
+    }
+    if (typeof payload.snippet === "string") return payload.snippet.slice(0, 120);
+    if (type === "tool_output" && typeof payload.command === "string") return `$ ${payload.command}`.slice(0, 120);
+    return `[${type}]`;
+}
+
+export function normalizeServerUrl(raw: string): string {
+    const value = raw.trim();
+    const withScheme = value.startsWith("/")
+        ? new URL(value, window.location.origin).href
+        : /^[a-z][a-z\d+.-]*:\/\//i.test(value)
+          ? value
+          : `https://${value}`;
+    let url: URL;
+    try {
+        url = new URL(withScheme);
+    } catch {
+        throw new Error("Enter a valid journal server URL.");
+    }
+
+    if (url.username || url.password || url.search || url.hash) {
+        throw new Error("The server URL cannot contain credentials, a query, or a fragment.");
+    }
+    const isLoopback = url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]";
+    if (url.protocol !== "https:" && !(url.protocol === "http:" && isLoopback)) {
+        throw new Error("Use HTTPS (HTTP is only allowed for a local development server).");
+    }
+    url.pathname = url.pathname.replace(/\/+$/, "");
+    return url.href.replace(/\/$/, "");
+}
+
+export function endpointUrl(serverUrl: string, path: string): URL {
+    const base = new URL(`${serverUrl.replace(/\/+$/, "")}/`);
+    const prefix = base.pathname.replace(/\/+$/, "");
+    const relative = new URL(path, "https://matron.invalid");
+    base.pathname = `${prefix}/${relative.pathname.replace(/^\/+/, "")}`;
+    base.search = relative.search;
+    return base;
+}
+
+export function websocketUrl(serverUrl: string): string {
+    const url = endpointUrl(serverUrl, "/ws");
+    url.protocol = url.protocol === "http:" ? "ws:" : "wss:";
+    return url.href;
+}
+
+export function utf8Length(value: string): number {
+    return new TextEncoder().encode(value).length;
+}
+
+export function trimUtf8Prefix(value: string, bytes: number): string {
+    if (bytes <= 0) return value;
+    const encoded = new TextEncoder().encode(value);
+    if (bytes >= encoded.length) return "";
+    return new TextDecoder().decode(encoded.slice(bytes));
+}
+
+export const TOOL_LOG_TTL_MS = 24 * 60 * 60 * 1000;
+
+export function enforceToolLogTtl(event: JournalEvent, now = Date.now()): JournalEvent {
+    if (
+        event.type !== "tool_output" ||
+        event.payload.live_log !== true ||
+        event.payload.expired === true ||
+        event.ts + TOOL_LOG_TTL_MS > now
+    ) {
+        return event;
+    }
+
+    const payload: EventPayload = { ...event.payload, expired: true, blob_ref: null };
+    delete payload.snippet;
+    return { ...event, payload };
+}

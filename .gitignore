@@ -1,0 +1,16 @@
+**/node_modules
+.DS_Store
+.env
+.env.*
+.npmrc
+*.log
+*.tsbuildinfo
+/coverage/
+/dist/
+/.nx/
+/packages/
+/src/modules.js
+/webapp/
+package-lock.json
+.codex-session-tmp/
+.fixtures-dist/
