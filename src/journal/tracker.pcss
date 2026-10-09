@@ -998,13 +998,20 @@ Please see LICENSE files in the repository root for full details.
     font: var(--cpd-font-label);
     color: var(--cpd-color-text-primary);
 }
-/* The conversation that wrote an agent's comment: the part of the header that gives way when the
-   row is narrow, so the box and the time always show. */
-.mj_TrackerComment_author,
+/* The conversation that wrote an agent's comment is the part of the header that gives way first
+   when the row is narrow; a very long box name truncates after it. The time always shows. */
 .mj_TrackerComment_time {
     flex: none;
 }
+.mj_TrackerComment_author {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
 .mj_TrackerComment_convo {
+    flex: 0 1000 auto;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
