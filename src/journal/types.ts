@@ -797,6 +797,12 @@ export interface TrackerComment {
      *  (null when it answered the item's own buttons). */
     action?: string | null;
     reply_to?: string | null;
+    /** Who wrote an agent's comment: the box's name, and the conversation its session writes from
+     *  when the bridge named one. Absent on a journal that predates the fields; null on the user's
+     *  own comments and wherever the journal cannot say. */
+    device_name?: string | null;
+    convo_id?: string | null;
+    convo_title?: string | null;
 }
 
 /** `POST /items/:id/comments` body. `action` + `reply_to` is a tap on a comment's button. */

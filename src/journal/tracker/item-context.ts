@@ -12,7 +12,7 @@ Please see LICENSE files in the repository root for full details.
 
 import { conversationBox } from "../boxes";
 import { displayRawTitle } from "../SessionTag";
-import type { AgentRosterEntry, Conversation, Mission, TrackerItem } from "../types";
+import type { AgentRosterEntry, Conversation, Mission, TrackerComment, TrackerItem } from "../types";
 import { itemOriginTitle } from "./format";
 
 /** The label for a conversation no source could name. */
@@ -73,4 +73,35 @@ export function itemOriginLabel(
         (convo && conversationBox(convo, agents)?.name) ||
         agents?.find((entry) => entry.device_id === item.origin_device_id)?.name;
     return conversationLabel(box, title);
+}
+
+/** Who an agent's comment is headed with: its box and, when known, the conversation that wrote it
+ *  (`convoId` is set only then, so the header can open it). */
+export interface CommentAuthor {
+    box: string | null;
+    conversation: string | null;
+    convoId: string | null;
+}
+
+/**
+ * The author of an agent's comment, so a thread several sessions post in says which one wrote
+ * what. The box is the name the journal put on the comment, else the roster's for the writing
+ * device (comments from a journal that predates the field). The conversation is named from the
+ * loaded list first (it tracks renames), then from the title on the comment. Null for the user's
+ * own comment, which is headed "You".
+ */
+export function commentAuthor(
+    comment: Pick<TrackerComment, "author" | "device_id" | "device_name" | "convo_id" | "convo_title">,
+    conversations: Conversation[],
+    agents: AgentRosterEntry[] | undefined,
+): CommentAuthor | null {
+    if (comment.author !== "agent") return null;
+    const box =
+        comment.device_name?.trim() || agents?.find((entry) => entry.device_id === comment.device_id)?.name || null;
+    const convoId = comment.convo_id || null;
+    const convo = convoId ? conversations.find((candidate) => candidate.id === convoId) : undefined;
+    const conversation = convoId
+        ? (convo && topic(convo.title, convo.auto_title)) || topic(comment.convo_title, null)
+        : null;
+    return { box, conversation, convoId };
 }
