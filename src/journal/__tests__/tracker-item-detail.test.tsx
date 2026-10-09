@@ -476,6 +476,87 @@ describe("ItemDetail", () => {
         expect(thread.querySelector(".mj_TrackerComment .mj_TrackerProse")?.textContent).toBe("Context note");
     });
 
+    describe("comment author", () => {
+        const heads = (container: HTMLElement): string[][] =>
+            Array.from(container.querySelectorAll(".mj_TrackerComment_head")).map((head) =>
+                Array.from(head.querySelectorAll(".mj_TrackerComment_author, .mj_TrackerComment_convo")).map(
+                    (node) => node.textContent ?? "",
+                ),
+            );
+
+        it("heads each agent comment with the box and conversation that wrote it", async () => {
+            const client = fakeClient();
+            client.getSnapshot.mockReturnValue({
+                selectedConversationId: "c1",
+                conversations: [{ id: "c-b", title: "Renamed chat" }],
+                agents: [{ device_id: 7, name: "box-c" }],
+            });
+            const { container } = await mount(
+                <ItemDetail
+                    item={trackerItem({})}
+                    comments={[
+                        trackerComment({
+                            author: "agent",
+                            id: "1",
+                            device_name: "box-a",
+                            convo_id: "c-a",
+                            convo_title: "Audit",
+                        }),
+                        // The loaded conversation's title wins over the one on the comment.
+                        trackerComment({
+                            author: "agent",
+                            id: "2",
+                            device_name: "box-b",
+                            convo_id: "c-b",
+                            convo_title: "Old name",
+                        }),
+                        // No session named: the box alone.
+                        trackerComment({ author: "agent", id: "3", device_name: "box-b" }),
+                        // A journal from before the fields: the roster names the writing device.
+                        trackerComment({ author: "agent", id: "4", device_id: 7 }),
+                        // Nothing names it.
+                        trackerComment({ author: "agent", id: "5", device_id: 99 }),
+                        trackerComment({ id: "6", author: "user", device_name: "box-a", convo_id: "c-a" }),
+                    ]}
+                    client={client as unknown as MatronJournalClient}
+                    onBack={jest.fn()}
+                />,
+            );
+            expect(heads(container)).toEqual([
+                ["box-a", "Audit"],
+                ["box-b", "Renamed chat"],
+                ["box-b"],
+                ["box-c"],
+                ["Agent"],
+                ["You"],
+            ]);
+        });
+
+        it("opens the writing conversation from the header", async () => {
+            const client = fakeClient();
+            const { container } = await mount(
+                <ItemDetail
+                    item={trackerItem({})}
+                    comments={[
+                        trackerComment({
+                            author: "agent",
+                            device_name: "box-a",
+                            convo_id: "c-a",
+                            convo_title: "Audit",
+                        }),
+                    ]}
+                    client={client as unknown as MatronJournalClient}
+                    onBack={jest.fn()}
+                />,
+            );
+            await act(async () => {
+                container.querySelector<HTMLButtonElement>(".mj_TrackerComment_convo")!.click();
+            });
+            expect(client.closeTrackerView).toHaveBeenCalled();
+            expect(client.selectConversation).toHaveBeenCalledWith("c-a");
+        });
+    });
+
     describe("origin line", () => {
         it("falls back to the journal-supplied origin title for a conversation not in the loaded list", async () => {
             const client = fakeClient();

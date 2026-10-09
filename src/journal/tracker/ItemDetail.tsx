@@ -45,7 +45,7 @@ import {
     statusRowText,
 } from "./format";
 import { CommentBubbleGlyph, MissionGlyph, TrackerGlyph } from "./glyphs";
-import { itemMission, itemMissionText, itemOriginLabel } from "./item-context";
+import { type CommentAuthor, commentAuthor, itemMission, itemMissionText, itemOriginLabel } from "./item-context";
 import { buildTrackerMediaCorpus, InlineBody } from "./ItemAttachments";
 
 /** Answers one of a comment's buttons; resolves once the tap is sent (or has failed). */
@@ -97,21 +97,39 @@ function CommentActions({
 function CommentCard({
     client,
     comment,
+    author,
+    onOpenConvo,
     onTrackerLink,
     actionsDisabled,
     onTap,
 }: {
     client: MatronJournalClient;
     comment: TrackerComment;
+    author: CommentAuthor | null;
+    onOpenConvo: (convoId: string) => void;
     onTrackerLink: TrackerLinkHandler;
     actionsDisabled: boolean;
     onTap: TapAction;
 }): React.ReactElement {
-    const who = comment.author === "user" ? "You" : "Agent";
+    // An agent's comment is headed with the box that wrote it and, when the journal knows it, the
+    // conversation (which opens on click); "Agent" only when neither is known.
+    const who = comment.author === "user" ? "You" : author?.box || (author?.conversation ? null : "Agent");
+    const convoId = author?.convoId;
     return (
         <div className={`mj_TrackerComment mj_TrackerComment_${comment.author}`}>
             <div className="mj_TrackerComment_head">
-                <span className="mj_TrackerComment_author">{who}</span>
+                {who ? <span className="mj_TrackerComment_author">{who}</span> : null}
+                {author?.conversation && convoId ? (
+                    <button
+                        type="button"
+                        className="mj_TrackerComment_convo"
+                        aria-label={`Open the conversation ${author.conversation}`}
+                        title={author.conversation}
+                        onClick={() => onOpenConvo(convoId)}
+                    >
+                        {author.conversation}
+                    </button>
+                ) : null}
                 <span className="mj_TrackerComment_time">{formatRelativeTime(comment.created_at)}</span>
             </div>
             <InlineBody
@@ -134,12 +152,16 @@ function CommentCard({
 function CommentRow({
     client,
     comment,
+    author,
+    onOpenConvo,
     onTrackerLink,
     actionsDisabled,
     onTap,
 }: {
     client: MatronJournalClient;
     comment: TrackerComment;
+    author: CommentAuthor | null;
+    onOpenConvo: (convoId: string) => void;
     onTrackerLink: TrackerLinkHandler;
     actionsDisabled: boolean;
     onTap: TapAction;
@@ -148,6 +170,8 @@ function CommentRow({
         <CommentCard
             client={client}
             comment={comment}
+            author={author}
+            onOpenConvo={onOpenConvo}
             onTrackerLink={onTrackerLink}
             actionsDisabled={actionsDisabled}
             onTap={onTap}
@@ -571,10 +595,11 @@ export function ItemDetail({
         }
     };
 
-    const openToConvo = (): void => {
+    const openConvo = (convoId: string): void => {
         client.closeTrackerView();
-        void client.selectConversation(item.origin_convo_id);
+        void client.selectConversation(convoId);
     };
+    const openToConvo = (): void => openConvo(item.origin_convo_id);
     const openMission = (): void => {
         if (missionNum) client.openTrackerMission(missionNum);
     };
@@ -752,6 +777,8 @@ export function ItemDetail({
                                 key={comment.id}
                                 client={client}
                                 comment={comment}
+                                author={commentAuthor(comment, conversations, agents)}
+                                onOpenConvo={openConvo}
                                 onTrackerLink={onTrackerLink}
                                 actionsDisabled={busy || item.state === "closed"}
                                 onTap={tap}
