@@ -12,6 +12,7 @@ import { TextEncoder as NodeTextEncoder } from "node:util";
 import { JournalApiError } from "../api";
 import { favoriteStore, MatronJournalClient, pinnedStore, unreadStore } from "../client";
 import { MatronApp } from "../components";
+import { readDeveloperView, resetDeveloperViewForTests } from "../developer-view";
 import { getSnapshot, setTheme } from "../theme";
 import type { ClientState, Conversation, DeviceDTO, ServerFrame, Session, UserDefaults } from "../types";
 
@@ -66,6 +67,7 @@ describe("Settings sheet (Mac grouped form)", () => {
 
     beforeEach(() => {
         localStorage.clear();
+        resetDeveloperViewForTests();
         setTheme(null);
         container = document.createElement("div");
         document.body.append(container);
@@ -102,6 +104,7 @@ describe("Settings sheet (Mac grouped form)", () => {
             "Security",
             "Devices",
             "Notifications",
+            "Conversation",
             "New chats",
         ]);
         expect(dialog.querySelector('button[data-action="sign-out"]')?.textContent).toBe("Sign out");
@@ -117,6 +120,20 @@ describe("Settings sheet (Mac grouped form)", () => {
         expect(option("dark").getAttribute("aria-pressed")).toBe("true");
         await act(async () => option("system").click());
         expect(getSnapshot()).toBeNull();
+    });
+
+    it("toggles Developer view from the Conversation group, backed by the shared preference", async () => {
+        await openSettings();
+        const toggle = (): HTMLButtonElement =>
+            sheet()!.querySelector<HTMLButtonElement>('button[data-setting="developer-view"]')!;
+        expect(toggle().getAttribute("role")).toBe("switch");
+        expect(toggle().getAttribute("aria-checked")).toBe("false");
+        expect(readDeveloperView()).toBe(false);
+        await act(async () => toggle().click());
+        expect(toggle().getAttribute("aria-checked")).toBe("true");
+        expect(readDeveloperView()).toBe(true);
+        await act(async () => toggle().click());
+        expect(readDeveloperView()).toBe(false);
     });
 
     it("signs out from the sheet and closes on Escape", async () => {
@@ -814,7 +831,7 @@ describe("Settings sheet: Boxes defaults", () => {
             [...document.querySelectorAll(".mj_SettingsSheet .mj_SettingsSheet_groupTitle")].map(
                 (el) => el.textContent,
             ),
-        ).toEqual(["Account", "Appearance", "Security", "Devices", "Notifications", "New chats", "Boxes"]);
+        ).toEqual(["Account", "Appearance", "Security", "Devices", "Notifications", "Conversation", "New chats", "Boxes"]);
         expect(box(10).querySelector(".mj_SettingsSheet_boxName")?.textContent).toBe("elm");
         expect(optionValues(10, "agent")).toEqual(["", "claude", "codex"]);
         expect([...field(10, "agent").options].map((option) => option.textContent)).toEqual([
