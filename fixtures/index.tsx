@@ -27,13 +27,15 @@ import { JournalApi, JournalApiError } from "../src/journal/api";
 import { archiveStore, favoriteStore, MatronJournalClient, pinnedStore, unreadStore } from "../src/journal/client";
 import { MatronApp } from "../src/journal/components";
 import type { Routine } from "../src/journal/routines";
-import type { ClientState, Conversation, JournalEvent, Session } from "../src/journal/types";
+import type { ClientState, Conversation, JournalEvent, Session, SessionStatus } from "../src/journal/types";
 import { DEVELOPER_VIEW_KEY } from "../src/journal/developer-view";
 import { turnFixture, type TurnScenario } from "./turn-thread-fixture";
+import { REAL_STATUS, subagentFixture, type SubagentScenario } from "./subagents";
 import "../src/journal/shell.pcss";
 import "../src/journal/journal.pcss";
 import "../src/journal/tracker.pcss";
 import "../src/journal/coordinator.pcss";
+import "../src/journal/subagents.pcss";
 
 const SESSION: Session = {
     serverUrl: "https://journal.example",
@@ -899,6 +901,23 @@ if (turnScenario) {
     state.conversations = state.conversations.map((conversation) =>
         conversation.id === "c1" ? { ...conversation, session_state: fixture.sessionState } : conversation,
     );
+}
+
+// Subagent cards + sidebar child rows: `?sub=thread|child|codex` swaps in a parent session with
+// Claude subagents and a Codex exec child (fixtures/subagents.ts).
+const subScenario = turnParams.get("sub") as SubagentScenario | null;
+if (subScenario) {
+    const fixture = subagentFixture(subScenario);
+    state.conversations = fixture.conversations;
+    state.selectedConversationId = fixture.selected;
+    state.events = fixture.events;
+    state.activity = fixture.activity;
+    state.toolStreams = {};
+    (client as unknown as { conversationEvents: (id: string) => Promise<JournalEvent[]> }).conversationEvents = async (
+        id: string,
+    ) => fixture.childEvents[id] ?? [];
+    (client as unknown as { refreshConversationTail: () => Promise<boolean> }).refreshConversationTail = async () =>
+        false;
 }
 
 // The client keeps its state private; mirror the test harness's internal override.
@@ -1951,6 +1970,19 @@ if (fixtureParams.get("badges") === "1") {
     const tracker = state as unknown as Record<string, unknown>;
     tracker.inboxItems = [question("it_a", "c2", "ms_a"), question("it_b", "c2", null), question("it_c", "c1", "ms_b")];
     state.newConversationIds = new Set(["c3"]);
+// A real helper thread (`?sub=real-*`): the header's context gauge goes through the client's own
+// helper correction (statusFor), from the statuses an older bridge publishes.
+if (subScenario === "real-claude" || subScenario === "real-tests") {
+    const internals = client as unknown as {
+        statuses: Map<string, SessionStatus>;
+        statusFor: (id: string) => SessionStatus | undefined;
+    };
+    internals.statuses.set("p1", REAL_STATUS.parent);
+    internals.statuses.set(state.selectedConversationId!, REAL_STATUS.child);
+    state.sessionStatus =
+        typeof internals.statusFor !== "function" || new URLSearchParams(location.search).has("rawctx")
+            ? REAL_STATUS.child
+            : internals.statusFor.call(client, state.selectedConversationId!);
 }
 
 // Stub the new-session data path so a driver click on "New session" reaches the folders
