@@ -27,6 +27,7 @@ Please see LICENSE files in the repository root for full details.
  * isInjectedTurnStart() fall back to an allowlist of the bridge's fixed wordings.
  */
 
+import { indicatorStep, payloadStep } from "./activity-text";
 import { type JournalEvent } from "./types";
 import { type Step, stepsOf, type TurnItem } from "./turn-grouping";
 
@@ -161,6 +162,11 @@ export function isInjectedTurnStart(event: JournalEvent, flagged = false): boole
 /** A Codex generic completed item the bridge publishes as a one-token code span. */
 const CODEX_ITEM_TEXT = /^`([A-Z][A-Za-z0-9 ]{0,79})`$/;
 
+/** A Codex generic item line: the bridge publishes it when the item has completed. */
+export function isCodexItemLine(event: JournalEvent): boolean {
+    return CODEX_ITEM_TEXT.test(agentText(event).trim());
+}
+
 /** Body of an agent text event, or "" when it is not a plain agent text. */
 function agentText(event: JournalEvent): string {
     if (event.type !== "text" || isOperatorEvent(event)) return "";
@@ -215,7 +221,14 @@ export function eventToStep(event: JournalEvent, previousTs?: number): Step | nu
             source: event,
         };
     }
-    const codexItem = CODEX_ITEM_TEXT.exec(agentText(event).trim());
+    // A tool call the bridge reports as a text line (a Claude subagent's calls, and the parent's
+    // Task / WebSearch indicators): `payload.step` from a newer bridge, else the fixed wording.
+    const body = agentText(event);
+    const indicator = body
+        ? (payloadStep(payload.step, `e${event.seq}`) ?? indicatorStep(body, `e${event.seq}`))
+        : null;
+    if (indicator) return { ...indicator, ms, source: event };
+    const codexItem = CODEX_ITEM_TEXT.exec(body.trim());
     if (codexItem) {
         const name = codexItem[1];
         return {

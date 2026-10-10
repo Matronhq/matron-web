@@ -88,6 +88,7 @@ Please see LICENSE files in the repository root for full details.
     --cpd-dur-group-expand: var(--cpd-dur-fast);
     --cpd-dur-deep-open: var(--cpd-dur-med);
     --cpd-dur-resolve: var(--cpd-dur-med);
+    --cpd-font-mono-sm: 400 12px/18px var(--cpd-font-family-mono);
 
     /* --- v2 motion + focus --- */
     --cpd-focus-ring: 0 0 0 2px var(--cpd-color-bg-canvas-default), 0 0 0 4px var(--cpd-color-text-action-accent);
@@ -558,35 +559,10 @@ button {
     background: var(--cpd-state-selected);
 }
 
-/* subagent child row: indented under its parent, muted name, ↳ connector. The leading
-   glyph (spinner while running / idle dot) sits in the normal status column. */
-.mj_RoomListItem_sub {
-    padding-left: 26px;
-}
-
+/* subagent child row: indented under its parent with a muted name. The rail, elbow and
+   status glyph live in subagents.pcss. */
 .mj_RoomListItem_sub .mj_RoomListName {
     color: var(--cpd-color-text-secondary);
-}
-
-.mj_RoomListSubArrow {
-    color: var(--cpd-color-text-tertiary);
-}
-
-.mj_RoomListWorkerGlyphs {
-    display: inline-flex;
-    width: 28px;
-    height: 12px;
-    flex: 0 0 28px;
-    align-items: center;
-    gap: 4px;
-}
-
-.mj_RoomListWorkerMark,
-.mj_RoomListOutcomeGlyph,
-.mj_RoomListSubSpinner {
-    width: 12px;
-    height: 12px;
-    flex: 0 0 12px;
 }
 
 /* Leading 8px status column: running = pulsing teal dot, idle = strong-line dot. */
