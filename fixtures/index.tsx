@@ -25,10 +25,14 @@ import "@fontsource/inter/latin-600.css";
 
 import { archiveStore, favoriteStore, MatronJournalClient, pinnedStore, unreadStore } from "../src/journal/client";
 import { MatronApp } from "../src/journal/components";
-import type { ClientState, Conversation, JournalEvent, Session } from "../src/journal/types";
+import type { ClientState, Conversation, JournalEvent, Session, SessionStatus } from "../src/journal/types";
+import { DEVELOPER_VIEW_KEY } from "../src/journal/developer-view";
+import { turnFixture, type TurnScenario } from "./turn-thread-fixture";
+import { REAL_STATUS, subagentFixture, type SubagentScenario } from "./subagents";
 import "../src/journal/shell.pcss";
 import "../src/journal/journal.pcss";
 import "../src/journal/tracker.pcss";
+import "../src/journal/subagents.pcss";
 
 const SESSION: Session = {
     serverUrl: "https://journal.example",
@@ -313,6 +317,39 @@ const signedOutState: ClientState = {
     phase: "signed-out",
     config: fixtureParams.has("fixed") ? { journal_server_url: "/" } : {},
 };
+// Turn cards: `?turns=<scenario>` swaps in a six-turn thread built from real journal shapes;
+// `?work=on` turns Developer view on (the rendering before turn cards).
+const turnParams = new URLSearchParams(window.location.search);
+const turnScenario = turnParams.get("turns") as TurnScenario | null;
+if (turnParams.get("work") === "on") localStorage.setItem(DEVELOPER_VIEW_KEY, "true");
+else localStorage.removeItem(DEVELOPER_VIEW_KEY);
+if (turnScenario) {
+    const fixture = turnFixture(turnScenario);
+    state.events = fixture.events;
+    state.toolStreams = fixture.toolStreams;
+    state.activity = fixture.activity;
+    state.conversations = state.conversations.map((conversation) =>
+        conversation.id === "c1" ? { ...conversation, session_state: fixture.sessionState } : conversation,
+    );
+}
+
+// Subagent cards + sidebar child rows: `?sub=thread|child|codex` swaps in a parent session with
+// Claude subagents and a Codex exec child (fixtures/subagents.ts).
+const subScenario = turnParams.get("sub") as SubagentScenario | null;
+if (subScenario) {
+    const fixture = subagentFixture(subScenario);
+    state.conversations = fixture.conversations;
+    state.selectedConversationId = fixture.selected;
+    state.events = fixture.events;
+    state.activity = fixture.activity;
+    state.toolStreams = {};
+    (client as unknown as { conversationEvents: (id: string) => Promise<JournalEvent[]> }).conversationEvents = async (
+        id: string,
+    ) => fixture.childEvents[id] ?? [];
+    (client as unknown as { refreshConversationTail: () => Promise<boolean> }).refreshConversationTail = async () =>
+        false;
+}
+
 // The client keeps its state private; mirror the test harness's internal override.
 (client as unknown as { state: ClientState }).state = fixtureParams.get("screen") === "login" ? signedOutState : state;
 
@@ -684,6 +721,21 @@ if (trackerMode === "inbox" || trackerMode === "item") {
             ],
         };
     }
+}
+
+// A real helper thread (`?sub=real-*`): the header's context gauge goes through the client's own
+// helper correction (statusFor), from the statuses an older bridge publishes.
+if (subScenario === "real-claude" || subScenario === "real-tests") {
+    const internals = client as unknown as {
+        statuses: Map<string, SessionStatus>;
+        statusFor: (id: string) => SessionStatus | undefined;
+    };
+    internals.statuses.set("p1", REAL_STATUS.parent);
+    internals.statuses.set(state.selectedConversationId!, REAL_STATUS.child);
+    state.sessionStatus =
+        typeof internals.statusFor !== "function" || new URLSearchParams(location.search).has("rawctx")
+            ? REAL_STATUS.child
+            : internals.statusFor.call(client, state.selectedConversationId!);
 }
 
 // Stub the new-session data path so a driver click on "New session" reaches the folders
