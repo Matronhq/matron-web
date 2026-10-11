@@ -118,6 +118,19 @@ import {
     makeRecentFoldersStore,
     recentFolderArgument,
 } from "./slash-palette";
+import { useDeveloperView } from "./developer-view";
+import {
+    assembleTurns,
+    isOperatorEvent,
+    noticeBody,
+    shownReplies,
+    type Turn,
+    threadRows,
+    type ThreadRow,
+} from "./turn-assembly";
+import { noticeText, TurnCard, type TurnCardMode, TurnErrorRow } from "./turn-card";
+import { applyPaneBand } from "./pane-width";
+import { type Step, stepsOf } from "./turn-grouping";
 import {
     compactTokens,
     formatSampleAge,
@@ -2174,6 +2187,8 @@ export function useAdaptiveHeader(
         const observer = new ResizeObserver((entries) => {
             const entry = entries[0];
             latestWidth = entry.borderBoxSize?.[0]?.inlineSize ?? entry.contentRect.width;
+            // The same observer drives the chat-pane breakpoints (data-pane).
+            applyPaneBand(bodyEl, latestWidth);
             if (frame != null) return;
             frame = requestAnimationFrame(() => {
                 frame = null;
@@ -3145,6 +3160,11 @@ function PromptCard({
     const normalizedAnsweredChoice = answeredChoice?.trim().toLocaleLowerCase();
     const durablyDenied = permission && resolved && normalizedAnsweredChoice === "deny";
     const durablyAllowed = permission && resolved && !durablyDenied;
+    // The picked option, by its label when the reply names one of ours. With Developer view off
+    // the reply row is hidden, so this line is where the operator's pick stays visible.
+    const pickedLabel = answeredChoice
+        ? (options.find((option) => option.value === answeredChoice)?.label ?? answeredChoice)
+        : undefined;
 
     useEffect(() => {
         if (!permission || resolved || expiresAt === undefined || advisoryExpired) return;
@@ -3260,7 +3280,13 @@ function PromptCard({
                                   : undefined
                         }
                     >
-                        {durablyDenied ? "Denied" : durablyAllowed ? "Allowed" : "Answered"}
+                        {durablyDenied
+                            ? "Denied"
+                            : durablyAllowed
+                              ? "Allowed"
+                              : pickedLabel
+                                ? `Answered: ${pickedLabel}`
+                                : "Answered"}
                     </span>
                 </div>
             )}
@@ -3628,7 +3654,16 @@ function SpawnOutcomeRow({ client, event }: { client: MatronJournalClient; event
     );
 }
 
-function ToolOutput({ client, event }: { client: MatronJournalClient; event: JournalEvent }): React.ReactElement {
+function ToolOutput({
+    client,
+    event,
+    defaultOpen = false,
+}: {
+    client: MatronJournalClient;
+    event: JournalEvent;
+    /** Deep detail inside the turn card opens the card expanded. */
+    defaultOpen?: boolean;
+}): React.ReactElement {
     const payload = event.payload;
     const command = asString(payload.command).trim() || asString(payload.tool_name).trim() || "Tool output";
     const exitCode = typeof payload.exit_code === "number" ? payload.exit_code : undefined;
@@ -3660,7 +3695,7 @@ function ToolOutput({ client, event }: { client: MatronJournalClient; event: Jou
     };
 
     return (
-        <details className={`mj_ToolCard ${failed ? "mj_ToolCard_failed" : ""}`}>
+        <details className={`mj_ToolCard ${failed ? "mj_ToolCard_failed" : ""}`} open={defaultOpen || undefined}>
             <summary title={command} aria-label={`${command}, ${failed ? `failed, ${outcome}` : outcome}`}>
                 <ChevronDownIcon className="mj_ToolCard_chevron" aria-hidden="true" />
                 {/* Mac: a green check or a red octagon says how it went; no exit badge, no time here. */}
@@ -4375,6 +4410,215 @@ function EventRow({
     );
 }
 
+/**
+ * The step an activity detail names (the bridge's ephemeral "tool" activity): a Bash command
+ * from Claude, or one of Codex's tool indicators. Drives the live line when no tool stream is
+ * open for the running step.
+ */
+export function activityStep(detail: string, id = "activity"): Step | null {
+    const text = detail.trim();
+    if (!text) return null;
+    const make = (tool: string, input: Step["input"]): Step => ({ kind: "step", id, tool, input, status: "running" });
+    let match: RegExpExecArray | null;
+    if ((match = /^🔧\s*`?([\s\S]*?)`?$/u.exec(text))) return make("Bash", { command: match[1] });
+    if ((match = /^📖\s*(.+)$/u.exec(text))) return make("Read", { path: match[1] });
+    if ((match = /^✏️?\s*(?:(?:Editing|Writing|Creating)\s+)?(.+)$/u.exec(text)))
+        return make("apply_patch", { path: match[1].split(", ")[0] });
+    if ((match = /^🔍\s*(.+)$/u.exec(text))) return make("Grep", { pattern: match[1] });
+    if ((match = /^🌐\s*(.+)$/u.exec(text)))
+        return make(/^https?:/.test(match[1]) ? "WebFetch" : "WebSearch", { url: match[1] });
+    if ((match = /^🔀\s*Subtask:\s*(.+)$/u.exec(text))) return make("Task", { description: match[1] });
+    if (/^\p{Extended_Pictographic}/u.test(text)) return make("tool", {});
+    return make("Bash", { command: text });
+}
+
+/** First sentence of the agent's narration, trimmed to 90 characters. */
+export function narrationLiveLine(text: string): string {
+    const flat = text.replace(/\s+/g, " ").trim();
+    const sentence = /^(.+?[.!?…])(\s|$)/.exec(flat)?.[1] ?? flat;
+    return sentence.length > 90 ? `${sentence.slice(0, 89).trimEnd()}…` : sentence;
+}
+
+/** Is this prompt / permission request still waiting on the operator? */
+function isUnansweredAsk(
+    event: JournalEvent,
+    answeredPromptReplies: ReadonlyMap<string, { choice?: string }>,
+    spawnOutcomes: ReadonlyMap<string, EventPayload>,
+): boolean {
+    if (event.type !== "prompt" && event.type !== "permission_request") return false;
+    if (asString(event.payload.kind) === "queued_release") return false;
+    if (answeredPromptReplies.has(`${event.convo_id}:${event.seq}`)) return false;
+    if (asString(event.payload.kind) === "agent_spawn") {
+        const requestId = asString(event.payload.request_id);
+        return Boolean(requestId) && !spawnOutcomes.has(requestId);
+    }
+    return true;
+}
+
+/** A turn block that keeps the per-event row menu (Copy / View source) and search anchor. */
+function TurnBlock({
+    event,
+    rowHandlers,
+    live = true,
+    children,
+}: {
+    event: JournalEvent;
+    rowHandlers: RowContextMenu<JournalEvent>["rowHandlers"];
+    /** Announce new content politely; off where the child is already an alert. */
+    live?: boolean;
+    children: React.ReactNode;
+}): React.ReactElement {
+    const ref = useRef<HTMLDivElement>(null);
+    const handlers = rowHandlers(event, () => ref.current);
+    return (
+        <div
+            ref={ref}
+            className="mj_TurnBlock"
+            data-event-id={event.seq}
+            aria-live={live ? "polite" : undefined}
+            aria-atomic={live ? "true" : undefined}
+            {...handlers}
+        >
+            {children}
+        </div>
+    );
+}
+
+export interface TurnLive {
+    mode: TurnCardMode;
+    running?: Step | null;
+    liveText?: string;
+    runningSince?: number;
+}
+
+/**
+ * One agent tile per operator turn (Developer view OFF): the turn card when the turn
+ * has at least one step, then its break-throughs in the order they happened, then a
+ * turn-ending error, then the answer prose.
+ */
+function AgentTurnRow({
+    client,
+    turn,
+    live,
+    answeredPromptReplies,
+    spawnOutcomes,
+    isReadOnly,
+    resolvedAction,
+    rowHandlers,
+}: {
+    client: MatronJournalClient;
+    turn: Turn;
+    live: TurnLive;
+    answeredPromptReplies: ReadonlyMap<string, { choice?: string }>;
+    spawnOutcomes: ReadonlyMap<string, EventPayload>;
+    isReadOnly: boolean;
+    resolvedAction: (itemId: string) => "send" | "cancel" | undefined;
+    rowHandlers: RowContextMenu<JournalEvent>["rowHandlers"];
+}): React.ReactElement {
+    // The tile speaks for the agent: its header never takes the operator's own reply.
+    const first =
+        turn.events.find((event) => event.sender.startsWith("agent:")) ??
+        turn.events.find((event) => !isOperatorEvent(event));
+    const hasCard = stepsOf(turn.items).length > 0 || Boolean(live.running);
+    // A reply the prompt card already shows (a picked option) is not repeated; a free-text
+    // reply the card cannot show stays visible, in order among the break-throughs.
+    const breaks = [...turn.breaks, ...shownReplies(turn)].sort((left, right) => left.seq - right.seq);
+    const renderDetail = useCallback(
+        (step: Step): React.ReactNode => {
+            const source = step.source as JournalEvent | undefined;
+            if (!source) return null;
+            if (source.type === "tool_output") return <ToolOutput client={client} event={source} defaultOpen />;
+            if (source.type === "diff") return <DiffCard data={parseDiffPayload(source.payload)} />;
+            return (
+                <div className="mj_TurnCard_detailText">
+                    <MarkdownBody text={asString(source.payload.body)} label={String(source.seq)} />
+                </div>
+            );
+        },
+        [client],
+    );
+    const block = (event: JournalEvent): React.ReactElement => (
+        <TurnBlock key={event.seq} event={event} rowHandlers={rowHandlers}>
+            <EventContent
+                client={client}
+                event={event}
+                answeredPromptReplies={answeredPromptReplies}
+                spawnOutcomes={spawnOutcomes}
+                isReadOnly={isReadOnly}
+                resolvedAction={resolvedAction}
+            />
+        </TurnBlock>
+    );
+    return (
+        <li
+            className="mx_EventTile mx_EventTile_lastInSection mj_AgentTurn"
+            tabIndex={-1}
+            data-layout="bubble"
+            data-self="false"
+            data-turn={turn.key}
+        >
+            {first && (
+                <span className="mx_DisambiguatedProfile">
+                    <MsgAvatar />
+                    <span className="mx_DisambiguatedProfile_displayName">{displaySender(first.sender)}</span>
+                    <a href={`#event-${first.seq}`} onClick={(clickEvent) => clickEvent.preventDefault()}>
+                        <time className="mx_MessageTimestamp" dateTime={new Date(first.ts).toISOString()}>
+                            {formatTime(first.ts)}
+                        </time>
+                    </a>
+                </span>
+            )}
+            <div className="mx_EventTile_line">
+                <div className="mx_MTextBody mx_EventTile_content">
+                    <div className="markdown-body mj_AgentTurn_blocks">
+                        {hasCard && (
+                            <TurnCard
+                                turnKey={turn.key}
+                                items={turn.items}
+                                mode={live.mode}
+                                running={live.running}
+                                liveText={live.liveText}
+                                runningSince={live.runningSince}
+                                durationMs={turn.endTs - turn.startTs}
+                                renderDetail={renderDetail}
+                                renderNarration={(text) => (
+                                    <MarkdownBody
+                                        text={text}
+                                        label={`narration-${turn.key}`}
+                                        onTrackerLink={(kind, num) => client.openTrackerLink(kind, num)}
+                                    />
+                                )}
+                            />
+                        )}
+                        {breaks.map(block)}
+                        {turn.errors.map((event) => (
+                            <TurnBlock key={event.seq} event={event} rowHandlers={rowHandlers} live={false}>
+                                <TurnErrorRow
+                                    text={asString(event.payload.body)
+                                        .trim()
+                                        .replace(/^⚠️?\s*/u, "")
+                                        .replace(/^\[(.*)\]$/, "$1")}
+                                />
+                            </TurnBlock>
+                        ))}
+                        {turn.answer.map(block)}
+                    </div>
+                </div>
+            </div>
+        </li>
+    );
+}
+
+/** A bridge system notice or journal marker (`.mj_SystemNotice`): one tertiary meta line, no avatar. */
+function SystemNoticeRow({ event }: { event: JournalEvent }): React.ReactElement {
+    const body = noticeBody(event);
+    return (
+        <li className="mj_SystemNotice" data-event-id={event.seq} aria-live="polite" title={body}>
+            {noticeText(body)}
+        </li>
+    );
+}
+
 function MsgAvatar(): React.ReactElement {
     const mask = `url("${matronLogo}")`;
 
@@ -4515,6 +4759,22 @@ function PendingAttachment({
     );
 }
 
+/** The operator message nearest the top of the scroll pane, and its offset from the top. */
+function operatorAnchor(node: HTMLElement | null): { seq: string; offset: number } | undefined {
+    if (!node) return undefined;
+    const paneTop = node.getBoundingClientRect().top;
+    let best: { seq: string; offset: number } | undefined;
+    for (const row of node.querySelectorAll<HTMLElement>('li[data-self="true"][data-event-id]')) {
+        const offset = row.getBoundingClientRect().top - paneTop;
+        const seq = row.dataset.eventId;
+        if (!seq) continue;
+        // The first row at or below the top edge wins; otherwise the last one above it.
+        if (offset >= 0) return { seq, offset };
+        best = { seq, offset };
+    }
+    return best;
+}
+
 function Timeline({
     client,
     state,
@@ -4529,6 +4789,16 @@ function Timeline({
     const selectedConversationId = useRef(state.selectedConversationId);
     const [isFollowingTail, setFollow] = useState(true);
     const [sourceEvent, setSourceEvent] = useState<JournalEvent>();
+    const [developerView] = useDeveloperView();
+    // Developer view toggled: re-render instantly, keeping the operator message nearest the top
+    // where it was. Captured during render, while the DOM still shows the
+    // previous rendering; restored in the layout effect below.
+    const developerViewRef = useRef(developerView);
+    const toggleAnchorRef = useRef<{ seq: string; offset: number } | undefined>(undefined);
+    if (developerViewRef.current !== developerView) {
+        developerViewRef.current = developerView;
+        toggleAnchorRef.current = operatorAnchor(scrollRef.current);
+    }
     const menu = useRowContextMenu<JournalEvent>();
     const sourceOpenerRef = useRef<HTMLElement | null>(null);
     // Media viewer: the corpus is every image/file event in this conversation;
@@ -4717,7 +4987,18 @@ function Timeline({
         state.toolStreams,
         state.loadingHistory,
         isFollowingTail,
+        developerView,
     ]);
+
+    useLayoutEffect(() => {
+        const anchor = toggleAnchorRef.current;
+        toggleAnchorRef.current = undefined;
+        const node = scrollRef.current;
+        if (!anchor || !node || isFollowingTail) return;
+        const row = node.querySelector<HTMLElement>(`[data-event-id="${anchor.seq}"]`);
+        if (!row) return;
+        node.scrollTop += row.getBoundingClientRect().top - node.getBoundingClientRect().top - anchor.offset;
+    }, [developerView]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const loadEarlierMessages = (): void => {
         const node = scrollRef.current;
@@ -4739,6 +5020,253 @@ function Timeline({
     // on the durable, replayed run-state: only render while the session is actually running; the
     // model reconcile (refreshConversations) prunes any tool card that lingers in the map.
     const sessionRunning = client.selectedConversation()?.session_state === "running";
+    const sessionState = client.selectedConversation()?.session_state;
+
+    // ---- Developer view off: one agent tile per operator turn, with its turn card.
+    const turns = useMemo(() => (developerView ? [] : assembleTurns(visibleEvents)), [developerView, visibleEvents]);
+    const lastTurn = turns[turns.length - 1];
+    // First-seen time of each live step, so the elapsed counter and slow state survive re-renders.
+    const liveSeenRef = useRef(new Map<string, number>());
+    const liveStreams = useMemo(
+        () => (sessionRunning ? Object.values(state.toolStreams) : []),
+        [sessionRunning, state.toolStreams],
+    );
+    const activityDetail = sessionRunning && state.activity?.state === "tool" ? state.activity.detail || "" : "";
+    // The running step, stable across stream chunks (keyed on the stream, not its content).
+    const lastStream = liveStreams.at(-1);
+    const streamKey = lastStream
+        ? `${lastStream.messageRef}\u0000${lastStream.command ?? ""}\u0000${lastStream.tool ?? ""}`
+        : "";
+    const streamStep = useMemo((): Step | null => {
+        if (!streamKey) return null;
+        const [messageRef, command, tool] = streamKey.split("\u0000");
+        return {
+            kind: "step",
+            id: `live-${messageRef}`,
+            tool: tool && tool !== "Bash" && !command ? tool : "Bash",
+            input: { command: command || tool },
+            status: "running",
+        };
+    }, [streamKey]);
+    const activityRunning = useMemo(
+        () => (activityDetail ? activityStep(activityDetail, "live-activity") : null),
+        [activityDetail],
+    );
+    const lastTurnLive = useMemo((): TurnLive => {
+        if (!lastTurn) return { mode: "done" };
+        const lastStep = stepsOf(lastTurn.items).at(-1);
+        const waiting =
+            (sessionState === "running" || sessionState === "waiting") &&
+            lastTurn.breaks.some((event) => isUnansweredAsk(event, answeredPromptReplies, spawnOutcomes));
+        if (waiting) return { mode: "waiting" };
+        if (!sessionRunning) return { mode: lastStep?.status === "stopped" ? "stopped" : "done" };
+        const seen = liveSeenRef.current;
+        // Only the step running NOW keeps a clock: a repeat of the same command later starts fresh.
+        const since = (key: string): number => {
+            for (const known of [...seen.keys()]) if (known !== key) seen.delete(known);
+            const known = seen.get(key);
+            if (known !== undefined) return known;
+            const now = Date.now();
+            seen.set(key, now);
+            return now;
+        };
+        if (streamStep) {
+            return { mode: "running", running: streamStep, runningSince: since(`stream:${streamStep.id}`) };
+        }
+        if (activityRunning) {
+            return { mode: "running", running: activityRunning, runningSince: since(`activity:${activityDetail}`) };
+        }
+        seen.clear();
+        const thinking =
+            state.activity?.state === "thinking" && state.activity.detail
+                ? narrationLiveLine(state.activity.detail)
+                : undefined;
+        return { mode: "running", liveText: thinking ?? "Thinking…" };
+    }, [
+        lastTurn,
+        sessionState,
+        sessionRunning,
+        state.activity,
+        streamStep,
+        activityRunning,
+        activityDetail,
+        answeredPromptReplies,
+        spawnOutcomes,
+    ]);
+    const rows = useMemo(
+        () => threadRows(turns, { liveLastTurn: lastTurnLive.mode === "running" && Boolean(lastTurnLive.running) }),
+        [turns, lastTurnLive],
+    );
+    // Forget first-seen stamps once nothing is running, so a later step starts its own clock.
+    useEffect(() => {
+        if (!sessionRunning) liveSeenRef.current.clear();
+    }, [sessionRunning]);
+    // With Developer view OFF the card's live line replaces the typing indicator — except while
+    // the turn has no card yet (the agent is thinking before its first step).
+    const lastTurnHasCard = Boolean(lastTurn) && (stepsOf(lastTurn.items).length > 0 || Boolean(lastTurnLive.running));
+    const showActivityIndicator = developerView || !lastTurnHasCard;
+
+    const pendingTimeline = useMemo(() => timeline.filter((item) => item.kind === "pending"), [timeline]);
+    // Developer view off: a message still sending sits among the rows at its own time (a delayed
+    // or failed send can be older than later replies), never inside a turn.
+    const offSequence = useMemo(() => {
+        type Entry =
+            | { kind: "row"; row: ThreadRow; index: number }
+            | { kind: "pending"; item: (typeof pendingTimeline)[number]; previousTimestamp?: number };
+        const out: Entry[] = [];
+        if (developerView) return out;
+        const startTs = (row: ThreadRow): number =>
+            row.kind === "turn" ? (row.turn.events[0]?.ts ?? row.turn.startTs) : row.event.ts;
+        const endTs = (row: ThreadRow): number =>
+            row.kind === "turn" ? (row.turn.events.at(-1)?.ts ?? row.turn.endTs) : row.event.ts;
+        let next = 0;
+        let previousTimestamp: number | undefined;
+        const pendingBefore = (limit: number): void => {
+            while (next < pendingTimeline.length && pendingTimeline[next].timestamp < limit) {
+                const item = pendingTimeline[next];
+                out.push({ kind: "pending", item, previousTimestamp });
+                previousTimestamp = item.timestamp;
+                next += 1;
+            }
+        };
+        rows.forEach((row, index) => {
+            pendingBefore(startTs(row));
+            out.push({ kind: "row", row, index });
+            previousTimestamp = endTs(row);
+        });
+        pendingBefore(Number.POSITIVE_INFINITY);
+        return out;
+    }, [developerView, rows, pendingTimeline]);
+
+    const renderOffRow = (row: ThreadRow, index: number): React.ReactElement => {
+        const previous = rows[index - 1];
+        const rowTs = (candidate: ThreadRow | undefined): number | undefined =>
+            candidate === undefined
+                ? undefined
+                : candidate.kind === "turn"
+                  ? (candidate.turn.events[0]?.ts ?? candidate.turn.startTs)
+                  : candidate.event.ts;
+        const ts = rowTs(row)!;
+        const previousTs = rowTs(previous);
+        const divider =
+            previousTs === undefined || !sameCalendarDay(ts, previousTs) ? (
+                <li className="mj_DateDivider" role="separator">
+                    <span className="mj_DateDivider_rule" aria-hidden="true" />
+                    <span className="mj_DateDivider_label">{formatDayDivider(ts)}</span>
+                    <span className="mj_DateDivider_rule" aria-hidden="true" />
+                </li>
+            ) : null;
+        if (row.kind === "turn") {
+            return (
+                <React.Fragment key={`t-${row.turn.key}`}>
+                    {divider}
+                    <AgentTurnRow
+                        client={client}
+                        turn={row.turn}
+                        live={
+                            row.turn === lastTurn
+                                ? lastTurnLive
+                                : { mode: stepsOf(row.turn.items).at(-1)?.status === "stopped" ? "stopped" : "done" }
+                        }
+                        answeredPromptReplies={answeredPromptReplies}
+                        spawnOutcomes={spawnOutcomes}
+                        isReadOnly={isReadOnly}
+                        resolvedAction={resolvedAction}
+                        rowHandlers={menu.rowHandlers}
+                    />
+                </React.Fragment>
+            );
+        }
+        if (row.kind === "notice") {
+            return (
+                <React.Fragment key={`n-${row.event.seq}`}>
+                    {divider}
+                    <SystemNoticeRow event={row.event} />
+                </React.Fragment>
+            );
+        }
+        const next = rows[index + 1];
+        const sameSenderAs = (candidate: ThreadRow | undefined): boolean =>
+            candidate !== undefined && candidate.kind === "operator" && candidate.event.sender === row.event.sender;
+        return (
+            <React.Fragment key={`e-${row.event.seq}`}>
+                {divider}
+                <EventRow
+                    client={client}
+                    event={row.event}
+                    answeredPromptReplies={answeredPromptReplies}
+                    spawnOutcomes={spawnOutcomes}
+                    isReadOnly={isReadOnly}
+                    resolvedAction={resolvedAction}
+                    continuation={sameSenderAs(previous) && !divider}
+                    lastInSection={!sameSenderAs(next)}
+                    rowHandlers={menu.rowHandlers}
+                />
+            </React.Fragment>
+        );
+    };
+
+    const renderTimelineItem = (
+        item: (typeof timeline)[number],
+        previousTimestamp: number | undefined,
+        previous: (typeof timeline)[number] | undefined,
+        next: (typeof timeline)[number] | undefined,
+    ): React.ReactElement => {
+        // A day divider precedes the first row of each new calendar day (§ upload-first
+        // ref): a centred dated label flanked by hairline rules.
+        const divider =
+            previousTimestamp === undefined || !sameCalendarDay(item.timestamp, previousTimestamp) ? (
+                <li className="mj_DateDivider" role="separator">
+                    <span className="mj_DateDivider_rule" aria-hidden="true" />
+                    <span className="mj_DateDivider_label">{formatDayDivider(item.timestamp)}</span>
+                    <span className="mj_DateDivider_rule" aria-hidden="true" />
+                </li>
+            ) : null;
+        if (item.kind === "event") {
+            return (
+                <React.Fragment key={`e-${item.event.seq}`}>
+                    {divider}
+                    <EventRow
+                        client={client}
+                        event={item.event}
+                        answeredPromptReplies={answeredPromptReplies}
+                        spawnOutcomes={spawnOutcomes}
+                        isReadOnly={isReadOnly}
+                        resolvedAction={resolvedAction}
+                        continuation={
+                            previous?.kind === "event" && previous.event.sender === item.event.sender && !divider
+                        }
+                        lastInSection={next?.kind !== "event" || next.event.sender !== item.event.sender}
+                        rowHandlers={menu.rowHandlers}
+                    />
+                </React.Fragment>
+            );
+        }
+        const message = item.message;
+        return (
+            <React.Fragment key={`m-${message.localId}`}>
+                {divider}
+                {message.kind === "image" || message.kind === "file" ? (
+                    <PendingAttachment client={client} message={message} isReadOnly={isReadOnly} />
+                ) : (
+                    <li
+                        className="mx_EventTile mx_EventTile_sending mx_EventTile_lastInSection"
+                        data-layout="bubble"
+                        data-self="true"
+                    >
+                        <div className="mx_EventTile_line">
+                            <div className="mx_MTextBody mx_EventTile_content">
+                                <div className="mj_Markdown">
+                                    <MarkdownBody text={message.body} label={message.localId} />
+                                </div>
+                            </div>
+                        </div>
+                        <span className="mj_SendingLabel">Sending…</span>
+                    </li>
+                )}
+            </React.Fragment>
+        );
+    };
 
     const timelineMain = (
         <main className="mx_RoomView_timeline" data-testid="timeline">
@@ -4756,68 +5284,16 @@ function Timeline({
                                 </button>
                             </li>
                         )}
-                        {timeline.map((item, index) => {
-                            const previous = timeline[index - 1];
-                            // A day divider precedes the first row of each new calendar day (§ upload-first
-                            // ref): a centred dated label flanked by hairline rules.
-                            const divider =
-                                !previous || !sameCalendarDay(item.timestamp, previous.timestamp) ? (
-                                    <li className="mj_DateDivider" role="separator">
-                                        <span className="mj_DateDivider_rule" aria-hidden="true" />
-                                        <span className="mj_DateDivider_label">{formatDayDivider(item.timestamp)}</span>
-                                        <span className="mj_DateDivider_rule" aria-hidden="true" />
-                                    </li>
-                                ) : null;
-                            if (item.kind === "event") {
-                                const next = timeline[index + 1];
-                                return (
-                                    <React.Fragment key={`e-${item.event.seq}`}>
-                                        {divider}
-                                        <EventRow
-                                            client={client}
-                                            event={item.event}
-                                            answeredPromptReplies={answeredPromptReplies}
-                                            spawnOutcomes={spawnOutcomes}
-                                            isReadOnly={isReadOnly}
-                                            resolvedAction={resolvedAction}
-                                            continuation={
-                                                previous?.kind === "event" &&
-                                                previous.event.sender === item.event.sender &&
-                                                !divider
-                                            }
-                                            lastInSection={
-                                                next?.kind !== "event" || next.event.sender !== item.event.sender
-                                            }
-                                            rowHandlers={menu.rowHandlers}
-                                        />
-                                    </React.Fragment>
-                                );
-                            }
-                            const message = item.message;
-                            return (
-                                <React.Fragment key={`m-${message.localId}`}>
-                                    {divider}
-                                    {message.kind === "image" || message.kind === "file" ? (
-                                        <PendingAttachment client={client} message={message} isReadOnly={isReadOnly} />
-                                    ) : (
-                                        <li
-                                            className="mx_EventTile mx_EventTile_sending mx_EventTile_lastInSection"
-                                            data-layout="bubble"
-                                            data-self="true"
-                                        >
-                                            <div className="mx_EventTile_line">
-                                                <div className="mx_MTextBody mx_EventTile_content">
-                                                    <div className="mj_Markdown">
-                                                        <MarkdownBody text={message.body} label={message.localId} />
-                                                    </div>
-                                                </div>
-                                            </div>
-                                            <span className="mj_SendingLabel">Sending…</span>
-                                        </li>
-                                    )}
-                                </React.Fragment>
-                            );
-                        })}
+                        {!developerView &&
+                            offSequence.map((entry) =>
+                                entry.kind === "row"
+                                    ? renderOffRow(entry.row, entry.index)
+                                    : renderTimelineItem(entry.item, entry.previousTimestamp, undefined, undefined),
+                            )}
+                        {developerView &&
+                            timeline.map((item, index, list) =>
+                                renderTimelineItem(item, list[index - 1]?.timestamp, list[index - 1], list[index + 1]),
+                            )}
                         {Object.values(state.textStreams).map((text, index) => (
                             <li
                                 className="mx_EventTile mx_EventTile_lastInSection"
@@ -4840,19 +5316,23 @@ function Timeline({
                             </li>
                         ))}
                         {sessionRunning &&
+                            developerView &&
                             Object.values(state.toolStreams).map((stream) => (
                                 <ToolStream key={stream.messageRef} stream={stream} />
                             ))}
-                        {state.activity && state.activity.state !== "idle" && sessionRunning && (
-                            <li className="mx_WhoIsTypingTile mj_Activity">
-                                <span />
-                                <span />
-                                <span />
-                                {state.activity.state === "thinking"
-                                    ? "Thinking"
-                                    : `Running ${state.activity.detail || "a tool"}`}
-                            </li>
-                        )}
+                        {showActivityIndicator &&
+                            state.activity &&
+                            state.activity.state !== "idle" &&
+                            sessionRunning && (
+                                <li className="mx_WhoIsTypingTile mj_Activity">
+                                    <span />
+                                    <span />
+                                    <span />
+                                    {state.activity.state === "thinking"
+                                        ? "Thinking"
+                                        : `Running ${state.activity.detail || "a tool"}`}
+                                </li>
+                            )}
                     </ol>
                 </div>
             </div>

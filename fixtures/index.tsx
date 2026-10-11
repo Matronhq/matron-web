@@ -26,6 +26,8 @@ import "@fontsource/inter/latin-600.css";
 import { archiveStore, favoriteStore, MatronJournalClient, pinnedStore, unreadStore } from "../src/journal/client";
 import { MatronApp } from "../src/journal/components";
 import type { ClientState, Conversation, JournalEvent, Session } from "../src/journal/types";
+import { DEVELOPER_VIEW_KEY } from "../src/journal/developer-view";
+import { turnFixture, type TurnScenario } from "./turn-thread-fixture";
 import "../src/journal/shell.pcss";
 import "../src/journal/journal.pcss";
 import "../src/journal/tracker.pcss";
@@ -313,6 +315,22 @@ const signedOutState: ClientState = {
     phase: "signed-out",
     config: fixtureParams.has("fixed") ? { journal_server_url: "/" } : {},
 };
+// Turn cards: `?turns=<scenario>` swaps in a six-turn thread built from real journal shapes;
+// `?work=on` turns Developer view on (the rendering before turn cards).
+const turnParams = new URLSearchParams(window.location.search);
+const turnScenario = turnParams.get("turns") as TurnScenario | null;
+if (turnParams.get("work") === "on") localStorage.setItem(DEVELOPER_VIEW_KEY, "true");
+else localStorage.removeItem(DEVELOPER_VIEW_KEY);
+if (turnScenario) {
+    const fixture = turnFixture(turnScenario);
+    state.events = fixture.events;
+    state.toolStreams = fixture.toolStreams;
+    state.activity = fixture.activity;
+    state.conversations = state.conversations.map((conversation) =>
+        conversation.id === "c1" ? { ...conversation, session_state: fixture.sessionState } : conversation,
+    );
+}
+
 // The client keeps its state private; mirror the test harness's internal override.
 (client as unknown as { state: ClientState }).state = fixtureParams.get("screen") === "login" ? signedOutState : state;
 
