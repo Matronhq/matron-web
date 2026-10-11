@@ -1023,6 +1023,22 @@ describe("MatronJournalClient handleTrackerMarker (WS invalidation)", () => {
         expect(state.api.item).not.toHaveBeenCalled();
     });
 
+    it("re-reads the item now open when its event lands inside the previous item's window", async () => {
+        const { state } = makeClient({
+            trackerView: OPEN,
+            trackerItem: { item: item({ num: 2, origin_convo_id: "c1" }), comments: [] },
+        });
+        state.api = { item: jest.fn().mockResolvedValue({ item: item({ num: 3 }), comments: [] }) };
+        state.handleTrackerMarker({ ...marker("session_status", { state: "running" }), convo_id: "c1" });
+        jest.advanceTimersByTime(100);
+        state.state = { ...state.state, trackerItem: { item: item({ num: 3, origin_convo_id: "c7" }), comments: [] } };
+        state.handleTrackerMarker({ ...marker("session_status", { state: "running" }), convo_id: "c7" });
+        jest.advanceTimersByTime(250);
+        await flush();
+        expect(state.api.item).toHaveBeenCalledTimes(1);
+        expect(state.api.item).toHaveBeenCalledWith(3);
+    });
+
     it("fires the marker refetch through handleJournal", async () => {
         const { client, state } = makeClient({
             trackerView: OPEN,

@@ -629,16 +629,21 @@ export function ItemDetail({
     useEffect(() => setViewerMediaId(undefined), [item.id]);
 
     // The indicator is the last thing in the thread. When it appears for a reader who is already
-    // at the foot of the thread (they have just tapped or replied), bring it into view; a reader
-    // further up is left where they are.
+    // near the foot of the thread (they have just tapped or replied), bring it into view; a reader
+    // further up is left where they are. Only an indicator that APPEARS moves anything: an item
+    // opened while its session is already busy starts at the top, like any other.
     const working = useWorkingLabel(item.working);
     const scrollRef = useRef<HTMLDivElement>(null);
     const showsWorking = working !== null;
+    const shownFor = useRef<{ id: string; shown: boolean } | null>(null);
     useEffect(() => {
+        const prior = shownFor.current;
+        shownFor.current = { id: item.id, shown: showsWorking };
+        if (!prior || prior.id !== item.id || prior.shown || !showsWorking) return;
         const node = scrollRef.current;
-        if (!showsWorking || !node) return;
-        if (node.scrollHeight - node.scrollTop - node.clientHeight < 160) node.scrollTop = node.scrollHeight;
-    }, [showsWorking]);
+        // Room for the reply that was just added above the indicator.
+        if (node && node.scrollHeight - node.scrollTop - node.clientHeight < 320) node.scrollTop = node.scrollHeight;
+    }, [item.id, showsWorking]);
     const viewerOpen = viewerMediaId !== undefined && mediaCorpus.some((entry) => entry.mediaId === viewerMediaId);
 
     const detail = (

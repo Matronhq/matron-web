@@ -5,7 +5,7 @@ SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
 Please see LICENSE files in the repository root for full details.
 */
 
-import { act } from "react";
+import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
 import type { MatronJournalClient } from "../client";
@@ -30,22 +30,40 @@ function fakeClient(): MatronJournalClient {
     } as unknown as MatronJournalClient;
 }
 
+function detail(working: TrackerWorking | null | undefined, client: MatronJournalClient): React.ReactElement {
+    return (
+        <ItemDetail
+            item={trackerItem({ working })}
+            comments={[trackerComment({ id: "ic_1", body: "On it" })]}
+            client={client}
+            onBack={jest.fn()}
+        />
+    );
+}
+
 async function mount(working: TrackerWorking | null | undefined): Promise<{ container: HTMLDivElement; root: Root }> {
     const container = document.createElement("div");
     document.body.append(container);
     let root!: Root;
     await act(async () => {
         root = createRoot(container);
-        root.render(
-            <ItemDetail
-                item={trackerItem({ working })}
-                comments={[trackerComment({ id: "ic_1", body: "On it" })]}
-                client={fakeClient()}
-                onBack={jest.fn()}
-            />,
-        );
+        root.render(detail(working, fakeClient()));
     });
     return { container, root };
+}
+
+/** jsdom lays nothing out: give the scrolling region a size, and record what is written to its
+ *  scrollTop. `overflow` is how far the reader is from the foot of the thread. */
+function fakeScroll(node: Element, overflow: number): { writes: number[] } {
+    const writes: number[] = [];
+    Object.defineProperty(node, "scrollHeight", { configurable: true, get: () => 1000 });
+    Object.defineProperty(node, "clientHeight", { configurable: true, get: () => 400 });
+    Object.defineProperty(node, "scrollTop", {
+        configurable: true,
+        get: () => 600 - overflow,
+        set: (value: number) => void writes.push(value),
+    });
+    return { writes };
 }
 
 const indicator = (container: HTMLElement): HTMLElement | null => container.querySelector(".mj_TrackerWorking");
@@ -118,5 +136,28 @@ describe("ItemDetail working indicator", () => {
         const { container, root } = await mount({ state: "queued", since: NOW - 120_000, until: NOW - 1 });
         expect(indicator(container)).toBeNull();
         act(() => root.unmount());
+    });
+
+    it("leaves an item opened mid-turn at the top of its thread", async () => {
+        const spy = jest.spyOn(Element.prototype, "scrollTop", "set");
+        const { root } = await mount({ state: "running", since: NOW - 5000, until: null });
+        expect(spy).not.toHaveBeenCalled();
+        spy.mockRestore();
+        act(() => root.unmount());
+    });
+
+    it("brings an indicator that appears into view for a reader near the foot, and no other", async () => {
+        const client = fakeClient();
+        const running: TrackerWorking = { state: "running", since: NOW, until: null };
+        for (const [overflow, moved] of [
+            [40, true],
+            [500, false],
+        ] as const) {
+            const { container, root } = await mount(null);
+            const { writes } = fakeScroll(container.querySelector(".mj_TrackerDetail_scroll")!, overflow);
+            await act(async () => root.render(detail(running, client)));
+            expect(writes).toEqual(moved ? [1000] : []);
+            act(() => root.unmount());
+        }
     });
 });

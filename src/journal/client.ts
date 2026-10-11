@@ -378,6 +378,7 @@ export class MatronJournalClient {
     private trackerMemoriesGen = 0;
     private trackerMemoriesRefetchTimer?: number;
     private trackerItemWorkingRefetchTimer?: number;
+    private trackerItemWorkingRefetchNum?: number;
     // Coordinator briefing: a request-generation guard like the tracker loaders', and the timer
     // that refetches once a pending refresh's expires_at passes (the journal then reports it
     // timed_out, which no frame announces).
@@ -2768,10 +2769,15 @@ export class MatronJournalClient {
         }, 250);
     }
 
-    // A turn ending and the queued one starting arrive back to back; one read covers both. The item
-    // may have been closed or swapped by the time the timer fires.
+    // A turn ending and the queued one starting arrive back to back; one read covers both. The timer
+    // serves one item: an event for a different open item replaces it, so that item's read is not
+    // lost to a timer armed for the one before. The item may have been closed by the time it fires.
     private scheduleItemWorkingRefetch(num: number): void {
-        if (this.trackerItemWorkingRefetchTimer !== undefined) return;
+        if (this.trackerItemWorkingRefetchTimer !== undefined) {
+            if (this.trackerItemWorkingRefetchNum === num) return;
+            window.clearTimeout(this.trackerItemWorkingRefetchTimer);
+        }
+        this.trackerItemWorkingRefetchNum = num;
         this.trackerItemWorkingRefetchTimer = window.setTimeout(() => {
             this.trackerItemWorkingRefetchTimer = undefined;
             if (this.state.trackerView?.open && this.state.trackerItem?.item.num === num) void this.loadItem(num);
