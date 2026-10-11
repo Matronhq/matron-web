@@ -974,6 +974,55 @@ describe("MatronJournalClient handleTrackerMarker (WS invalidation)", () => {
         expect(state.api.mission).toHaveBeenCalledWith(5);
     });
 
+    it("re-reads the open item when its owning conversation's session state changes", async () => {
+        const { state } = makeClient({
+            trackerView: OPEN,
+            trackerItem: { item: item({ num: 2, origin_convo_id: "c1" }), comments: [] },
+        });
+        state.api = { item: jest.fn().mockResolvedValue({ item: item({ num: 2 }), comments: [] }), items: jest.fn() };
+
+        // A turn ending and the next one starting arrive back to back: one read.
+        state.handleTrackerMarker({ ...marker("session_status", { state: "waiting" }), convo_id: "c1" });
+        state.handleTrackerMarker({ ...marker("session_status", { state: "running" }), convo_id: "c1" });
+        expect(state.api.item).not.toHaveBeenCalled();
+        jest.advanceTimersByTime(250);
+        await flush();
+        expect(state.api.item).toHaveBeenCalledTimes(1);
+        expect(state.api.item).toHaveBeenCalledWith(2);
+        expect(state.api.items).not.toHaveBeenCalled();
+    });
+
+    it("ignores another conversation's session state, and any while the pane is closed", async () => {
+        const open = makeClient({
+            trackerView: OPEN,
+            trackerItem: { item: item({ num: 2, origin_convo_id: "c1" }), comments: [] },
+        }).state;
+        open.api = { item: jest.fn() };
+        open.handleTrackerMarker({ ...marker("session_status", { state: "running" }), convo_id: "c9" });
+
+        const closed = makeClient({ trackerItem: { item: item({ num: 2 }), comments: [] } }).state;
+        closed.api = { item: jest.fn() };
+        closed.handleTrackerMarker({ ...marker("session_status", { state: "running" }), convo_id: "c1" });
+
+        jest.advanceTimersByTime(250);
+        await flush();
+        expect(open.api.item).not.toHaveBeenCalled();
+        expect(closed.api.item).not.toHaveBeenCalled();
+    });
+
+    it("drops the pending re-read when another item was opened before it fired", async () => {
+        const { state } = makeClient({
+            trackerView: OPEN,
+            trackerItem: { item: item({ num: 2, origin_convo_id: "c1" }), comments: [] },
+        });
+        state.api = { item: jest.fn().mockResolvedValue({ item: item({ num: 3 }), comments: [] }) };
+        state.handleTrackerMarker({ ...marker("session_status", { state: "running" }), convo_id: "c1" });
+        state.state = { ...state.state, trackerItem: { item: item({ num: 3, origin_convo_id: "c7" }), comments: [] } };
+        jest.advanceTimersByTime(250);
+        await flush();
+        expect(state.api.item).not.toHaveBeenCalled();
+    });
+
     it("fires the marker refetch through handleJournal", async () => {
         const { client, state } = makeClient({
             trackerView: OPEN,

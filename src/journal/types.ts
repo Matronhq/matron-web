@@ -744,6 +744,15 @@ export interface StatusSnapshot {
     awaiting: TrackerAwaiting | null;
 }
 
+/** Whether the session that owns an item is busy (the journal's `working` block). `running`: that
+ *  conversation is mid-turn. `queued`: the user wrote on the item and the agent's turn has not
+ *  started yet; it lapses at `until` (ms) if nothing else happens. */
+export interface TrackerWorking {
+    state: "running" | "queued";
+    since: number | null;
+    until: number | null;
+}
+
 export interface TrackerItem {
     id: string;
     num: number;
@@ -776,6 +785,9 @@ export interface TrackerItem {
     /** The item's own one-tap answers (a notice offers "Seen"). Absent on a journal that predates
      *  item actions. */
     actions?: string[];
+    /** Null when the owning session is idle; absent on a journal that predates the field and on
+     *  another person's item. */
+    working?: TrackerWorking | null;
 }
 
 export interface TrackerComment {

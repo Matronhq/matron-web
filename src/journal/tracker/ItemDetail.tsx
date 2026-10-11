@@ -47,6 +47,7 @@ import {
 import { CommentBubbleGlyph, MissionGlyph, TrackerGlyph } from "./glyphs";
 import { type CommentAuthor, commentAuthor, itemMission, itemMissionText, itemOriginLabel } from "./item-context";
 import { buildTrackerMediaCorpus, InlineBody } from "./ItemAttachments";
+import { useWorkingLabel, WorkingIndicator } from "./working";
 
 /** Answers one of a comment's buttons; resolves once the tap is sent (or has failed). */
 type TapAction = (comment: TrackerComment, label: string) => Promise<void>;
@@ -626,6 +627,18 @@ export function ItemDetail({
         [],
     );
     useEffect(() => setViewerMediaId(undefined), [item.id]);
+
+    // The indicator is the last thing in the thread. When it appears for a reader who is already
+    // at the foot of the thread (they have just tapped or replied), bring it into view; a reader
+    // further up is left where they are.
+    const working = useWorkingLabel(item.working);
+    const scrollRef = useRef<HTMLDivElement>(null);
+    const showsWorking = working !== null;
+    useEffect(() => {
+        const node = scrollRef.current;
+        if (!showsWorking || !node) return;
+        if (node.scrollHeight - node.scrollTop - node.clientHeight < 160) node.scrollTop = node.scrollHeight;
+    }, [showsWorking]);
     const viewerOpen = viewerMediaId !== undefined && mediaCorpus.some((entry) => entry.mediaId === viewerMediaId);
 
     const detail = (
@@ -691,7 +704,7 @@ export function ItemDetail({
                 ) : null}
             </div>
 
-            <div className="mj_TrackerDetail_scroll">
+            <div className="mj_TrackerDetail_scroll" ref={scrollRef}>
                 {missionNum || showOrigin ? (
                     <div className="mj_TrackerContext">
                         {missionNum ? (
@@ -786,6 +799,8 @@ export function ItemDetail({
                         ))}
                     </div>
                 ) : null}
+
+                <WorkingIndicator label={working} />
             </div>
 
             <div className="mj_TrackerComposer" ref={voice.containerRef}>

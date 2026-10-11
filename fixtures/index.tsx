@@ -617,8 +617,17 @@ if (trackerMode === "inbox" || trackerMode === "item") {
     tracker.trackerView =
         trackerMode === "item" ? { open: true, view: "inbox", selectedItemId: 1755 } : { open: true, view: "inbox" };
     if (trackerMode === "item") {
+        // ?working=running|queued: the indicator at the foot of the thread while the owning
+        // session is mid-turn, or between the user's tap and the turn starting.
+        const workingParam = fixtureParams.get("working");
+        const working =
+            workingParam === "running"
+                ? { state: "running", since: now - 20_000, until: null }
+                : workingParam === "queued"
+                  ? { state: "queued", since: now - 2_000, until: now + 10 * 60_000 }
+                  : null;
         tracker.trackerItem = {
-            item: items[0],
+            item: { ...items[0], working },
             comments: [
                 {
                     id: "cm_1",
