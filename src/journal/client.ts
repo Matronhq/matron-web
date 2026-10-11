@@ -377,6 +377,8 @@ export class MatronJournalClient {
     private trackerMissionsRefetchTimer?: number;
     private trackerMemoriesGen = 0;
     private trackerMemoriesRefetchTimer?: number;
+    private trackerItemWorkingRefetchTimer?: number;
+    private trackerItemWorkingRefetchNum?: number;
     // Coordinator briefing: a request-generation guard like the tracker loaders', and the timer
     // that refetches once a pending refresh's expires_at passes (the journal then reports it
     // timed_out, which no frame announces).
@@ -2713,6 +2715,14 @@ export class MatronJournalClient {
         // pane is closed; everything else is refetched only for an open pane.
         if (event.type === "item" && this.inboxTracked()) this.scheduleInboxRefetch();
         if (!this.state.trackerView?.open) return;
+        // The open item's `working` block follows the conversation that owns it: a turn starting
+        // or ending there changes what the thread's indicator should say, and no item marker
+        // announces it.
+        if (event.type === "session_status") {
+            const open = this.state.trackerItem?.item;
+            if (open && open.origin_convo_id === event.convo_id) this.scheduleItemWorkingRefetch(open.num);
+            return;
+        }
         if (event.type === "item") {
             const num = asNumber(event.payload.num, 0);
             if (num && this.state.trackerItem && this.state.trackerItem.item.num === num) {
@@ -2756,6 +2766,21 @@ export class MatronJournalClient {
         this.trackerInboxRefetchTimer = window.setTimeout(() => {
             this.trackerInboxRefetchTimer = undefined;
             if (this.inboxTracked()) void this.loadInbox();
+        }, 250);
+    }
+
+    // A turn ending and the queued one starting arrive back to back; one read covers both. The timer
+    // serves one item: an event for a different open item replaces it, so that item's read is not
+    // lost to a timer armed for the one before. The item may have been closed by the time it fires.
+    private scheduleItemWorkingRefetch(num: number): void {
+        if (this.trackerItemWorkingRefetchTimer !== undefined) {
+            if (this.trackerItemWorkingRefetchNum === num) return;
+            window.clearTimeout(this.trackerItemWorkingRefetchTimer);
+        }
+        this.trackerItemWorkingRefetchNum = num;
+        this.trackerItemWorkingRefetchTimer = window.setTimeout(() => {
+            this.trackerItemWorkingRefetchTimer = undefined;
+            if (this.state.trackerView?.open && this.state.trackerItem?.item.num === num) void this.loadItem(num);
         }, 250);
     }
 
@@ -3678,6 +3703,8 @@ export class MatronJournalClient {
         if (this.trackerMissionsRefetchTimer !== undefined) window.clearTimeout(this.trackerMissionsRefetchTimer);
         this.trackerMissionsRefetchTimer = undefined;
         this.trackerMissionRefetchPending = false;
+        if (this.trackerItemWorkingRefetchTimer !== undefined) window.clearTimeout(this.trackerItemWorkingRefetchTimer);
+        this.trackerItemWorkingRefetchTimer = undefined;
         if (this.briefingExpiryTimer !== undefined) window.clearTimeout(this.briefingExpiryTimer);
         this.briefingExpiryTimer = undefined;
         this.briefingGen += 1;
