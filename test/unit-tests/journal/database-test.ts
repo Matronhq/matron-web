@@ -51,7 +51,7 @@ describe("JournalDatabase", () => {
     });
 
     it("records the last message's tool call for the plain-English sidebar preview", async () => {
-        const database = await JournalDatabase.open("https://last-step.example", 12, "dan");
+        const database = await JournalDatabase.open("https://last-step.example", 12, "alice");
         await database.replaceWithSnapshot({
             seq: 0,
             conversations: [
@@ -89,7 +89,7 @@ describe("JournalDatabase", () => {
     });
 
     it("keeps the recorded last step across a snapshot of the same state, and only then", async () => {
-        const database = await JournalDatabase.open("https://last-step-snapshot.example", 12, "dan");
+        const database = await JournalDatabase.open("https://last-step-snapshot.example", 12, "alice");
         const row = (last_seq: number, snippet: string, last_ts: number) => ({
             id: "c1",
             title: "Agent",
