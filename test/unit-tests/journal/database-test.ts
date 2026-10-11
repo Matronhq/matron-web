@@ -62,7 +62,7 @@ describe("JournalDatabase", () => {
     });
 
     it("records the last message's tool call for the plain-English sidebar preview", async () => {
-        const database = await JournalDatabase.open("https://last-step.example", 12, "dan");
+        const database = await JournalDatabase.open("https://last-step.example", 12, "alice");
         await database.replaceWithSnapshot({
             seq: 0,
             conversations: [
