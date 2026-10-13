@@ -396,6 +396,27 @@ describe("MatronJournalClient tracker loaders", () => {
         expect(client.getSnapshot().inboxDone?.items.map((row) => row.num)).toEqual([5, 3]);
     });
 
+    it("a Done refresh that shares no row with the loaded ones starts the list again", async () => {
+        const { client, state } = makeClient();
+        const closed = (num: number, updated_at: number): ReturnType<typeof item> =>
+            item({ id: `it_${num}`, num, state: "closed", updated_at });
+        state.api = {
+            items: jest
+                .fn()
+                .mockResolvedValueOnce({ items: [closed(3, 30), closed(2, 20)], next_cursor: "c1" })
+                .mockResolvedValueOnce({ items: [closed(1, 10)], next_cursor: null })
+                // Many items closed since: the fresh page stops short of the rows already loaded.
+                .mockResolvedValueOnce({ items: [closed(9, 90), closed(8, 80)], next_cursor: "c9" }),
+        };
+        await client.loadInboxDone();
+        await client.loadMoreInboxDone();
+        await client.loadInboxDone();
+
+        const done = client.getSnapshot().inboxDone!;
+        expect(done.items.map((row) => row.num)).toEqual([9, 8]);
+        expect(done.nextCursor).toBe("c9");
+    });
+
     it("a failed Done load keeps the rows it had and reports the error", async () => {
         const { client, state } = makeClient();
         state.api = {

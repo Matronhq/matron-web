@@ -2779,11 +2779,15 @@ export class MatronJournalClient {
             // Below the fresh page only: anything newer that it does not list is no longer closed.
             // The latest rows in state, not the ones from before the request: a row reopened
             // while it was in flight has already been dropped from them.
-            const older = oldest
-                ? (this.state.inboxDone?.items ?? []).filter(
-                      (row) => !fresh.has(row.id) && !open.has(row.id) && sortsAfter(row, oldest),
-                  )
-                : [];
+            // Kept only when the fresh page reaches the rows already loaded (it lists one of them)
+            // and there is more beyond it. A page that shares nothing with them leaves a gap the
+            // old cursor would never fetch, so the list starts again from this page.
+            const loaded = this.state.inboxDone?.items ?? [];
+            const joins = next_cursor !== null && loaded.some((row) => fresh.has(row.id));
+            const older =
+                oldest && joins
+                    ? loaded.filter((row) => !fresh.has(row.id) && !open.has(row.id) && sortsAfter(row, oldest))
+                    : [];
             this.patch({
                 inboxDone: {
                     items: [...items, ...older],
