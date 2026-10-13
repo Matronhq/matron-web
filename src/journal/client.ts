@@ -3928,9 +3928,9 @@ export function errorMessage(error: unknown): string {
 
 /**
  * Why an item comment was not written. A refusal (a 4xx other than an expired or refused session
- * or a rate limit) says what the journal said: its `message`, else its `reason` (with the limit,
- * for too many attachments), else the sentence for an error code this client knows, else that the
- * server refused it and with what status. Anything else — offline, a timeout, a 5xx, auth, a rate
+ * or a rate limit) says what the journal said: its `message`, else — for `too_many_attachments` —
+ * the limit (the response's `max`), else its `reason`, else the sentence for an error code this
+ * client knows, else that the server refused it and with what status. Anything else — offline, a timeout, a 5xx, auth, a rate
  * limit with its wait — is the ordinary error message.
  */
 export function commentFailureMessage(error: unknown): string {
@@ -3946,7 +3946,7 @@ export function commentFailureMessage(error: unknown): string {
     }
     const body = error.body ?? {};
     if (typeof body.message === "string" && body.message.trim()) return body.message.trim();
-    if (body.reason === "too_many_attachments") {
+    if (error.code === "too_many_attachments") {
         const max = typeof body.max === "number" && body.max > 0 ? body.max : JOURNAL_ATTACHMENTS_MAX;
         return `The journal takes at most ${max} attachments on one comment.`;
     }

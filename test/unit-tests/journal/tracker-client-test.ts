@@ -733,11 +733,13 @@ describe("MatronJournalClient tracker mutations", () => {
     // back instead of raising the pane's banner; commentItem (taps, Seen) still raises the banner.
     it("postTrackerComment returns a refusal's reason without raising the banner; commentItem raises it", async () => {
         const { client, state } = makeClient();
-        const refusal = new JournalApiError("The journal server returned HTTP 400.", 400, "bad_request", undefined, {
-            error: "bad_request",
-            reason: "too_many_attachments",
-            max: 20,
-        });
+        const refusal = new JournalApiError(
+            "The journal server returned HTTP 400.",
+            400,
+            "too_many_attachments",
+            undefined,
+            { error: "too_many_attachments", max: 20 },
+        );
         state.api = {
             postItemComment: jest.fn().mockRejectedValue(refusal),
             item: jest.fn(),
@@ -1724,8 +1726,7 @@ describe("commentFailureMessage", () => {
 
     it("uses the journal's message when it gives one", () => {
         const error = refused(400, {
-            error: "bad_request",
-            reason: "too_many_attachments",
+            error: "too_many_attachments",
             max: 20,
             message: "A comment can carry at most 20 attachments.",
         });
@@ -1733,12 +1734,12 @@ describe("commentFailureMessage", () => {
     });
 
     it("names the limit for too many attachments, from the journal's max", () => {
-        const error = refused(400, { error: "bad_request", reason: "too_many_attachments", max: 10 });
+        const error = refused(400, { error: "too_many_attachments", max: 10 });
         expect(commentFailureMessage(error)).toBe("The journal takes at most 10 attachments on one comment.");
     });
 
     it("falls back to this client's limit when too many attachments comes without a max", () => {
-        const error = refused(400, { error: "bad_request", reason: "too_many_attachments" });
+        const error = refused(400, { error: "too_many_attachments" });
         expect(commentFailureMessage(error)).toBe("The journal takes at most 20 attachments on one comment.");
     });
 
