@@ -143,7 +143,54 @@ describe("useGoToNumberShortcut", () => {
 });
 
 describe("GoToNumberDialog", () => {
-    it("opens what the number is and closes", async () => {
+    const typeNumber = async (value: string): Promise<void> => {
+        await act(async () => type(document.querySelector<HTMLInputElement>("#mj-goto-number")!, value));
+    };
+    const settle = async (): Promise<void> => {
+        await act(async () => {
+            jest.advanceTimersByTime(NUMBER_SEARCH_DEBOUNCE_MS);
+            await Promise.resolve();
+        });
+    };
+    const row = (): HTMLButtonElement | null => document.querySelector("#mj-goto-result button.mj_SearchHit");
+    const goButton = (): HTMLButtonElement => document.querySelector<HTMLButtonElement>(".mj_UploadConfirm_send")!;
+
+    it("shows what the number names as it is typed, and the row opens it", async () => {
+        jest.useFakeTimers();
+        const hit = { kind: "item" as const, id: "it_1", num: 412, title: "Fix the header" };
+        const client = fakeClient({ status: "found", hit });
+        await mount(<GoToNumberDialog client={asClient(client)} />);
+
+        await typeNumber("#412");
+        expect(message()).toBe("Looking…");
+        expect(client.lookupNumber).not.toHaveBeenCalled();
+        await settle();
+
+        expect(client.lookupNumber).toHaveBeenCalledWith(412, expect.any(AbortSignal));
+        expect(row()!.textContent).toBe(`Item #${412}Fix the header`);
+        expect(client.closeGoToNumber).not.toHaveBeenCalled();
+
+        await act(async () => row()!.click());
+        expect(client.openNumberHit).toHaveBeenCalledWith(hit, 412);
+        expect(client.closeGoToNumber).toHaveBeenCalledTimes(1);
+    });
+
+    it("Enter opens the row that is showing without asking again", async () => {
+        jest.useFakeTimers();
+        const hit = { kind: "mission" as const, id: "ms_1", num: 7 };
+        const client = fakeClient({ status: "found", hit });
+        await mount(<GoToNumberDialog client={asClient(client)} />);
+        await typeNumber("7");
+        await settle();
+
+        await act(async () => document.querySelector<HTMLFormElement>(".mj_GoToSheet")!.requestSubmit());
+
+        expect(client.lookupNumber).toHaveBeenCalledTimes(1);
+        expect(client.openNumberHit).toHaveBeenCalledWith(hit, 7);
+        expect(client.closeGoToNumber).toHaveBeenCalledTimes(1);
+    });
+
+    it("Enter before the answer asks at once and opens what it finds", async () => {
         const hit = { kind: "item" as const, id: "it_1", num: 412 };
         const client = fakeClient({ status: "found", hit });
         await mount(<GoToNumberDialog client={asClient(client)} />);
@@ -155,43 +202,79 @@ describe("GoToNumberDialog", () => {
         expect(client.closeGoToNumber).toHaveBeenCalledTimes(1);
     });
 
-    it("says so inline when nothing carries the number, and stays open", async () => {
+    it("says in plain words when nothing carries the number, and stays open", async () => {
+        jest.useFakeTimers();
         const client = fakeClient({ status: "none" });
         await mount(<GoToNumberDialog client={asClient(client)} />);
 
-        await submit("412");
+        await typeNumber("412");
+        await settle();
 
-        expect(message()).toBe("No #412");
-        expect(client.openNumberHit).not.toHaveBeenCalled();
+        expect(message()).toBe("Nothing is numbered 412.");
+        expect(document.querySelector("#mj-goto-message")!.getAttribute("role")).toBe("status");
+        expect(goButton().disabled).toBe(true);
         expect(client.closeGoToNumber).not.toHaveBeenCalled();
 
-        // Editing the field clears the message.
-        await act(async () => type(document.querySelector<HTMLInputElement>("#mj-goto-number")!, "41"));
-        expect(message()).toBeUndefined();
+        // The answer belongs to the number it was given for: editing the field drops it.
+        await typeNumber("41");
+        expect(message()).toBe("Looking…");
+        expect(goButton().disabled).toBe(false);
     });
 
     it("tells a failed lookup apart from a missing number", async () => {
+        jest.useFakeTimers();
         const client = fakeClient({ status: "failed" });
         await mount(<GoToNumberDialog client={asClient(client)} />);
-        await submit("412");
+        await typeNumber("412");
+        await settle();
         expect(message()).toBe("Couldn't look up #412. Try again in a moment.");
+        expect(document.querySelector("#mj-goto-message")!.getAttribute("role")).toBe("alert");
+
+        // Go tries again.
+        client.lookupNumber.mockResolvedValue({ status: "found", hit: { kind: "item", id: "it_1", num: 412 } });
+        await act(async () => document.querySelector<HTMLFormElement>(".mj_GoToSheet")!.requestSubmit());
+        expect(client.lookupNumber).toHaveBeenCalledTimes(2);
+        expect(client.closeGoToNumber).toHaveBeenCalledTimes(1);
     });
 
     it("explains a milestone that has nowhere to open", async () => {
+        jest.useFakeTimers();
         const client = fakeClient({ status: "found", hit: { kind: "milestone", id: "ml_1" } });
-        client.openNumberHit.mockReturnValue(false);
         await mount(<GoToNumberDialog client={asClient(client)} />);
-        await submit("412");
+        await typeNumber("412");
+        await settle();
         expect(message()).toBe("#412 is a milestone, and its mission can't be opened here.");
+        expect(row()).toBeNull();
+
+        await act(async () => document.querySelector<HTMLFormElement>(".mj_GoToSheet")!.requestSubmit());
+        expect(client.openNumberHit).not.toHaveBeenCalled();
         expect(client.closeGoToNumber).not.toHaveBeenCalled();
     });
 
-    it("asks for a number without calling the journal when the text is not one", async () => {
+    it("shows nothing and asks nothing while the text is not a number", async () => {
+        jest.useFakeTimers();
         const client = fakeClient();
         await mount(<GoToNumberDialog client={asClient(client)} />);
-        await submit("four");
-        expect(message()).toBe("Enter a number, like 412.");
+        await typeNumber("four");
+        await settle();
+        expect(message()).toBeUndefined();
+        expect(goButton().disabled).toBe(true);
+        await act(async () => document.querySelector<HTMLFormElement>(".mj_GoToSheet")!.requestSubmit());
         expect(client.lookupNumber).not.toHaveBeenCalled();
+    });
+
+    it("never shows an earlier number's answer under a later one", async () => {
+        jest.useFakeTimers();
+        const client = fakeClient({ status: "found", hit: { kind: "item", id: "it_1", num: 41 } });
+        await mount(<GoToNumberDialog client={asClient(client)} />);
+        await typeNumber("41");
+        await settle();
+        expect(row()!.textContent).toBe("Item #41");
+
+        client.lookupNumber.mockReturnValue(new Promise(() => undefined));
+        await typeNumber("412");
+        expect(row()).toBeNull();
+        expect(message()).toBe("Looking…");
     });
 
     it("Escape closes it", async () => {
