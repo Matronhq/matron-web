@@ -19,7 +19,8 @@ Please see LICENSE files in the repository root for full details.
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
-import { type MatronJournalClient, voiceNoteFile } from "../client";
+import { JOURNAL_ATTACHMENTS_MAX } from "../api";
+import { type MatronJournalClient, type TrackerCommentOutcome, voiceNoteFile } from "../client";
 import { ChevronLeftIcon, CloseIcon, KebabIcon, PlusCircleIcon, SendIcon } from "../icons";
 import { parseTrackerHref } from "../markdown";
 import { MediaViewer, MediaViewerContext, type MediaViewerContextValue } from "../media-viewer";
@@ -238,9 +239,6 @@ function LinkChip({
     );
 }
 
-/** The journal takes at most this many attachments on one comment. */
-const MAX_COMMENT_ATTACHMENTS = 20;
-
 /** A file waiting in the reply box's tray; `preview` is an object URL for an image's thumbnail. */
 interface StagedFile {
     id: string;
@@ -299,6 +297,47 @@ function draftOf(body: string, files: StagedFile[]): string {
 }
 
 /**
+ * A reply's files split into the comments that carry them: at most JOURNAL_ATTACHMENTS_MAX each,
+ * in order. A reply with no files is one comment with none.
+ */
+function attachmentBatches<T>(files: readonly T[]): T[][] {
+    if (files.length === 0) return [[]];
+    const batches: T[][] = [];
+    for (let start = 0; start < files.length; start += JOURNAL_ATTACHMENTS_MAX) {
+        batches.push(files.slice(start, start + JOURNAL_ATTACHMENTS_MAX));
+    }
+    return batches;
+}
+
+/**
+ * A typed reply the journal did not take, shown beside the box until the next send or a discard.
+ * The text and the files that did not go stay in the box, so Send retries exactly them.
+ */
+interface ReplyFailure {
+    /** Why, in the journal's words when it gave any. */
+    reason: string;
+    /** Files that went out in earlier comments of the same reply before this one failed. */
+    sentFiles: number;
+    /** Files of the reply that did not go. */
+    unsentFiles: number;
+}
+
+/** The voice error line for a note that did not go: the journal's reason when it gave one. */
+function voiceFailureMessage(outcome: TrackerCommentOutcome): string {
+    const reason = outcome.ok ? undefined : outcome.reason;
+    return reason ? `Couldn't send the voice note — ${reason}` : "Couldn't send the voice note — try again.";
+}
+
+const plural = (count: number, noun: string): string => `${count} ${noun}${count === 1 ? "" : "s"}`;
+
+/** "Reply not sent." or, after earlier comments of the reply went, which of its files did not. */
+function replyFailureHeadline(failure: ReplyFailure): string {
+    if (failure.sentFiles === 0) return "Reply not sent.";
+    const total = failure.sentFiles + failure.unsentFiles;
+    return `${failure.sentFiles} of ${plural(total, "file")} sent; ${failure.unsentFiles} not sent.`;
+}
+
+/**
  * A voice note that had to go alone (the tray was full, or a typed send held the draft) and failed.
  * It is held beside the box, not put in the tray, so it never displaces a staged file and its retry
  * is exactly the same comment: the same idempotency key and the same uploaded blob ref.
@@ -322,6 +361,7 @@ export function ItemDetail({
     const [reply, setReply] = useState("");
     const [staged, setStaged] = useState<StagedFile[]>([]);
     const [busy, setBusy] = useState(false);
+    const [replyFailure, setReplyFailure] = useState<ReplyFailure | null>(null);
     const [menuOpen, setMenuOpen] = useState(false);
     // The voice-note path reads the draft and tray from a callback that outlives renders.
     const replyRef = useRef(reply);
@@ -362,12 +402,10 @@ export function ItemDetail({
         [],
     );
 
+    // Every file is kept: a reply with more than the journal takes on one comment goes as several.
     const addFiles = (files: File[]): void => {
         if (files.length === 0) return;
-        setStaged((current) => [
-            ...current,
-            ...files.slice(0, Math.max(0, MAX_COMMENT_ATTACHMENTS - current.length)).map(stageFile),
-        ]);
+        setStaged((current) => [...current, ...files.map(stageFile)]);
     };
     const removeStaged = (id: string): void => {
         setStaged((current) => {
@@ -399,13 +437,14 @@ export function ItemDetail({
         return attachments.every((attachment) => attachment !== null) ? (attachments as TrackerAttachment[]) : null;
     };
 
-    /** Uploads (or reuses) the files and posts one comment; false when anything failed. */
-    const postComment = async (body: string, files: StagedFile[], key: string): Promise<boolean> => {
+    /** Uploads (or reuses) the files and posts one comment. An upload failure has already been
+     *  reported by the client, naming the file. */
+    const postComment = async (body: string, files: StagedFile[], key: string): Promise<TrackerCommentOutcome> => {
         const attachments = await uploadStaged(files);
-        if (!attachments) return false;
+        if (!attachments) return { ok: false, reason: "A file did not upload." };
         const write: TrackerCommentWrite = body ? { body } : {};
         if (attachments.length > 0) write.attachments = attachments;
-        return client.commentItem(item.num, write, key);
+        return client.postTrackerComment(item.num, write, key);
     };
 
     const urgent = needsUser(item);
@@ -438,44 +477,70 @@ export function ItemDetail({
         void client.loadMissions();
     }, [client, missionNum, missions, missionListed]);
 
+    // A typed reply is one comment, or — with more files than the journal takes on one — several,
+    // in order: the text and the first JOURNAL_ATTACHMENTS_MAX files, then the rest in batches
+    // with no text. Each comment that lands takes its files out of the tray (and the first, the
+    // text); the first that fails stops the send and says why beside the box, keeping its files,
+    // every later one, and the text if it had not gone, so nothing is ever dropped (F2). Send then
+    // retries exactly what is left, and each comment keeps its key across retries of the same
+    // draft so the server can dedupe an ambiguous-delivery replay (F1).
     const send = async (): Promise<void> => {
         const body = reply.trim();
         const files = staged;
-        if ((!body && files.length === 0) || busy || files.length > MAX_COMMENT_ATTACHMENTS) return;
+        if ((!body && files.length === 0) || busy) return;
         setBusy(true);
+        setReplyFailure(null);
         try {
-            // Reuse the key across retries of an identical draft so the server can dedupe an
-            // ambiguous-delivery replay (F1).
-            const draft = draftOf(body, files);
-            const key = keyFor(draft);
-            // Clear the draft ONLY on a confirmed successful post — a failed send (offline/auth/5xx)
-            // resolves false and keeps the typed text and the files so they aren't silently lost (F2).
-            const ok = await postComment(body, files, key);
-            if (ok) {
-                setReply("");
-                forgetSent(files);
-                setStaged((current) => current.filter((entry) => !files.includes(entry)));
+            let sentFiles = 0;
+            for (const [index, batch] of attachmentBatches(files).entries()) {
+                const batchBody = index === 0 ? body : "";
+                const draft = draftOf(batchBody, batch);
+                const outcome = await postComment(batchBody, batch, keyFor(draft));
+                if (!outcome.ok) {
+                    setReplyFailure({
+                        reason: outcome.reason ?? "The reply did not go.",
+                        sentFiles,
+                        unsentFiles: files.length - sentFiles,
+                    });
+                    return;
+                }
+                if (index === 0) setReply("");
+                forgetSent(batch);
+                setStaged((current) => current.filter((entry) => !batch.includes(entry)));
                 draftKeysRef.current.delete(draft);
+                sentFiles += batch.length;
             }
         } finally {
             setBusy(false);
         }
     };
 
+    /** Drops a reply the journal did not take: its text and every file still in the tray. */
+    const discardReply = (): void => {
+        for (const entry of stagedRef.current) {
+            releaseStaged(entry);
+            uploadsRef.current.delete(entry.id);
+        }
+        draftKeysRef.current.clear();
+        setStaged([]);
+        setReply("");
+        setReplyFailure(null);
+    };
+
     // A finished voice note is ONE comment: the typed text as its body, the recording as the first
-    // attachment, then the staged files — unless a typed send is already taking those, or the tray
-    // is full (no room for the recording), when the note goes alone. Like the chat composer, the
-    // draft and tray clear as the send starts. On failure nothing is ever dropped:
+    // attachment, then the staged files — unless a typed send is already taking those, or the
+    // recording and the tray would not fit on one comment, when the note goes alone. Like the chat
+    // composer, the draft and tray clear as the send starts. On failure nothing is ever dropped:
     //  - a note that took the draft puts the recording back first in the tray, the files after it,
-    //    then anything staged meanwhile — the tray may then exceed the limit, and Send stays blocked
-    //    until it is trimmed (it says so); the text comes back only if nothing new was typed.
+    //    then anything staged meanwhile (Send splits a tray that is now over the journal's limit);
+    //    the text comes back only if nothing new was typed.
     //  - a note that went alone is held beside the box (Retry / Discard), never in the tray.
     // Either way the retry is the same comment under the same key with the same uploaded blob refs
     // (the recording's upload is remembered under its staged id), so an ambiguous delivery is not
     // duplicated.
     const sendVoiceNote = async (blob: Blob): Promise<void> => {
         const recording = stageFile(voiceNoteFile(blob));
-        const takeDraft = !busyRef.current && stagedRef.current.length < MAX_COMMENT_ATTACHMENTS;
+        const takeDraft = !busyRef.current && stagedRef.current.length < JOURNAL_ATTACHMENTS_MAX;
         const body = takeDraft ? replyRef.current.trim() : "";
         const files = takeDraft ? stagedRef.current : [];
         if (takeDraft) {
@@ -484,17 +549,19 @@ export function ItemDetail({
             stagedRef.current = [];
             setReply("");
             setStaged([]);
+            // The draft a failure notice was about is going out with the note.
+            setReplyFailure(null);
         }
         const parts = [recording, ...files];
         const draft = draftOf(body, parts);
         const key = keyFor(draft);
-        let ok = false;
+        let outcome: TrackerCommentOutcome;
         try {
-            ok = await postComment(body, parts, key);
+            outcome = await postComment(body, parts, key);
         } catch {
-            ok = false;
+            outcome = { ok: false };
         }
-        if (ok) {
+        if (outcome.ok) {
             forgetSent(parts);
             draftKeysRef.current.delete(draft);
             return;
@@ -506,23 +573,23 @@ export function ItemDetail({
             draftKeysRef.current.delete(draft);
             setHeldVoice((current) => [...current, { entry: recording, key }]);
         }
-        voice.reportSendFailure("Couldn't send the voice note — try again.");
+        voice.reportSendFailure(voiceFailureMessage(outcome));
     };
     const retryHeldVoice = async (held: HeldVoiceNote): Promise<void> => {
         if (busy) return;
         setBusy(true);
         try {
-            let ok = false;
+            let outcome: TrackerCommentOutcome;
             try {
-                ok = await postComment("", [held.entry], held.key);
+                outcome = await postComment("", [held.entry], held.key);
             } catch {
-                ok = false;
+                outcome = { ok: false };
             }
-            if (ok) {
+            if (outcome.ok) {
                 forgetSent([held.entry]);
                 setHeldVoice((current) => current.filter((entry) => entry !== held));
             } else {
-                voice.reportSendFailure("Couldn't send the voice note — try again.");
+                voice.reportSendFailure(voiceFailureMessage(outcome));
             }
         } finally {
             setBusy(false);
@@ -833,11 +900,36 @@ export function ItemDetail({
                         </button>
                     </div>
                 ))}
+                {replyFailure && (reply.trim() || staged.length > 0) ? (
+                    <div className="mj_TrackerComposer_failure" role="alert">
+                        <span className="mj_TrackerComposer_failureText">
+                            {replyFailureHeadline(replyFailure)} {replyFailure.reason}
+                        </span>
+                        <button
+                            type="button"
+                            className="mj_TrackerComposer_failureRetry"
+                            aria-label="Retry the reply"
+                            disabled={busy}
+                            onClick={() => void send()}
+                        >
+                            Retry
+                        </button>
+                        <button
+                            type="button"
+                            className="mj_TrackerComposer_failureDiscard"
+                            aria-label="Discard the reply"
+                            disabled={busy}
+                            onClick={discardReply}
+                        >
+                            Discard
+                        </button>
+                    </div>
+                ) : null}
                 <StagedTray staged={staged} onRemove={removeStaged} />
-                {staged.length > MAX_COMMENT_ATTACHMENTS ? (
+                {staged.length > JOURNAL_ATTACHMENTS_MAX ? (
                     <div className="mj_TrackerComposer_limit" role="status">
-                        Up to {MAX_COMMENT_ATTACHMENTS} attachments per reply — remove{" "}
-                        {staged.length - MAX_COMMENT_ATTACHMENTS} to send.
+                        {staged.length} files will go as {attachmentBatches(staged).length} replies of up to{" "}
+                        {JOURNAL_ATTACHMENTS_MAX}.
                     </div>
                 ) : null}
                 {voice.voiceState === "recording" ? (
@@ -849,7 +941,7 @@ export function ItemDetail({
                             className="mj_ComposerControl mj_ComposerAttach mj_TrackerComposer_attach"
                             aria-label="Attach photos or files"
                             title="Attach photos or files"
-                            disabled={busy || staged.length >= MAX_COMMENT_ATTACHMENTS}
+                            disabled={busy}
                             onClick={() => fileInput.current?.click()}
                         >
                             <PlusCircleIcon />
@@ -895,11 +987,7 @@ export function ItemDetail({
                             type="button"
                             className="mj_TrackerComposer_send"
                             aria-label="Send reply"
-                            disabled={
-                                (!reply.trim() && staged.length === 0) ||
-                                busy ||
-                                staged.length > MAX_COMMENT_ATTACHMENTS
-                            }
+                            disabled={(!reply.trim() && staged.length === 0) || busy}
                             onClick={() => void send()}
                         >
                             <SendIcon />
