@@ -252,9 +252,11 @@ export function TrackerPane({
                         ) : null}
                         <ProjectPage
                             detail={state.trackerProject}
+                            loadingMore={!!state.trackerProjectFeedLoading}
                             onBack={() => switchView("missions")}
                             onOpenMission={(num) => client.openTrackerView({ view: "missions", missionId: num })}
                             onOpenItem={(num) => client.openTrackerItem(num, { keepProject: true })}
+                            onLoadMore={() => void client.loadMoreProjectActivity()}
                         />
                     </>
                 );

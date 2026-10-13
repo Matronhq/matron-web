@@ -34,6 +34,8 @@ import {
     type MemoryWrite,
     type Project,
     type ProjectDetail,
+    type ProjectFeedKind,
+    type ProjectFeedPage,
     type UserDefaults,
 } from "./types";
 
@@ -282,7 +284,18 @@ export async function loadMatronConfig(): Promise<MatronConfig> {
     }
 }
 
+/**
+ * The most attachments the journal takes on one item or comment; a write with more is refused
+ * (HTTP 400). Mirrors the journal's own limit, so a client that has more to send splits them.
+ */
+export const JOURNAL_ATTACHMENTS_MAX = 20;
+
 function messageForCode(code: string | undefined, status: number): string {
+    return knownErrorMessage(code) ?? `The journal server returned HTTP ${status}.`;
+}
+
+/** The sentence for a journal error code this client knows, or undefined for any other code. */
+export function knownErrorMessage(code: string | undefined): string | undefined {
     switch (code) {
         case "bad_credentials":
             return "The username or password is incorrect.";
@@ -309,7 +322,7 @@ function messageForCode(code: string | undefined, status: number): string {
         case "not_agent_device":
             return "That device is not an agent box.";
         default:
-            return `The journal server returned HTTP ${status}.`;
+            return undefined;
     }
 }
 
@@ -428,6 +441,16 @@ export class JournalApi {
     /** GET /projects/:id — the project with its missions, needs-you items, recent milestones and sessions by box. */
     public project(id: string | number): Promise<ProjectDetail> {
         return this.json<ProjectDetail>(`/projects/${encodeTrackerId(id)}`);
+    }
+
+    /** GET /projects/:id/feed — the next (older) page of one roll-up kind, from a `next_before` cursor. */
+    public projectFeed<Row = unknown>(
+        id: string | number,
+        kind: ProjectFeedKind,
+        before: string,
+    ): Promise<ProjectFeedPage<Row>> {
+        const query = new URLSearchParams({ kind, before });
+        return this.json<ProjectFeedPage<Row>>(`/projects/${encodeTrackerId(id)}/feed?${query.toString()}`);
     }
 
     /** GET /missions/:id — full detail (mission + milestones newest-first + open items + convos). */
