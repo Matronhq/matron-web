@@ -1202,7 +1202,11 @@ Please see LICENSE files in the repository root for full details.
     width: 12px;
     height: 12px;
 }
-.mj_TrackerComposer_chipRemove:hover {
+.mj_TrackerComposer_chipRemove:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+.mj_TrackerComposer_chipRemove:hover:not(:disabled) {
     background: var(--cpd-state-hover);
     color: var(--cpd-color-text-primary);
 }

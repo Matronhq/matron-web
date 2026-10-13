@@ -402,6 +402,61 @@ describe("ItemDetail reply box", () => {
             expect(client.postTrackerComment).toHaveBeenCalledTimes(1);
         });
 
+        it("locks the tray while a reply goes, so a file can't be removed after its comment is planned", async () => {
+            const client = fakeClient();
+            const first = deferred<TrackerCommentOutcome>();
+            client.postTrackerComment.mockImplementationOnce(() => first.promise);
+            const container = await renderItem(client);
+            const files = many(25);
+            await pick(container, files);
+
+            await click(sendButton(container));
+            const remove = container.querySelector<HTMLButtonElement>('[aria-label="Remove f22.png"]')!;
+            expect(remove.disabled).toBe(true);
+            await click(remove);
+            await act(async () => {
+                first.resolve({ ok: true });
+            });
+
+            expect(client.postTrackerComment).toHaveBeenCalledTimes(2);
+            expect(postedNames(client, 1)).toEqual(names(files.slice(20)));
+            expect(chips(container)).toEqual([]);
+            // Unlocked again once the reply has gone.
+            await pick(container, many(1));
+            expect(container.querySelector<HTMLButtonElement>('[aria-label="Remove f0.png"]')!.disabled).toBe(false);
+        });
+
+        it("a failure notice goes when the text is edited", async () => {
+            const client = fakeClient();
+            client.postTrackerComment.mockResolvedValueOnce({ ok: false, reason: "Item is closed." });
+            const container = await renderItem(client);
+            await type(container, "first try");
+            await click(sendButton(container));
+            expect(failure(container)).toContain("Item is closed.");
+
+            await type(container, "first try, reworded");
+
+            expect(failure(container)).toBeUndefined();
+        });
+
+        it("a failure notice goes when a leftover file is removed, and does not come back", async () => {
+            const client = fakeClient();
+            client.postTrackerComment
+                .mockResolvedValueOnce({ ok: true })
+                .mockResolvedValueOnce({ ok: false, reason: refusal });
+            const container = await renderItem(client);
+            await pick(container, many(22));
+            await click(sendButton(container));
+            expect(failure(container)).toContain("20 of 22 files sent; 2 not sent.");
+
+            await click(container.querySelector<HTMLButtonElement>('[aria-label="Remove f20.png"]'));
+            expect(failure(container)).toBeUndefined();
+            await click(container.querySelector<HTMLButtonElement>('[aria-label="Remove f21.png"]'));
+            await type(container, "a new reply");
+
+            expect(failure(container)).toBeUndefined();
+        });
+
         it("a refused text-only reply keeps the text and says why", async () => {
             const client = fakeClient();
             client.postTrackerComment.mockResolvedValueOnce({ ok: false, reason: "Item is closed." });
@@ -587,6 +642,38 @@ describe("ItemDetail reply box", () => {
             const posted = client.postTrackerComment.mock.calls.slice(1).map((call) => call[1].attachments.length);
             expect(posted).toEqual([20, 20]);
             expect(client.postTrackerComment.mock.calls[1][1].attachments[0].name).toBe("voice-note.webm");
+            expect(chips(container)).toEqual([]);
+        });
+
+        it("Send retries a failed note as the same comment, then the files staged meanwhile", async () => {
+            const client = fakeClient();
+            const post = deferred<TrackerCommentOutcome>();
+            client.postTrackerComment.mockImplementationOnce(() => post.promise);
+            const container = await renderItem(client);
+            const first = Array.from({ length: 5 }, (_, i) => new File(["a"], `a${i}.png`, { type: "image/png" }));
+            await pick(container, first);
+
+            await recordVoiceNote(container);
+            // While the note is in flight more files are staged; with the note's six they would fit
+            // on one comment, but that would be a different comment from the one that may have landed.
+            const later = Array.from({ length: 3 }, (_, i) => new File(["b"], `b${i}.png`, { type: "image/png" }));
+            await pick(container, later);
+            await act(async () => {
+                post.resolve({ ok: false });
+            });
+            expect(chips(container)).toHaveLength(9);
+            const uploads = client.uploadTrackerAttachment.mock.calls.length;
+
+            await click(sendButton(container));
+
+            expect(client.postTrackerComment).toHaveBeenCalledTimes(3);
+            const [note, retry, rest] = client.postTrackerComment.mock.calls;
+            expect(retry[1]).toEqual(note[1]);
+            expect(retry[2]).toBe(note[2]);
+            expect(rest[1].attachments.map((a: TrackerAttachment) => a.name)).toEqual(later.map((file) => file.name));
+            expect(rest[2]).not.toBe(note[2]);
+            // Only the files staged meanwhile were uploaded; the note's were remembered.
+            expect(client.uploadTrackerAttachment.mock.calls.length).toBe(uploads + 3);
             expect(chips(container)).toEqual([]);
         });
 

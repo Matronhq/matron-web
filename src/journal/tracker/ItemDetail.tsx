@@ -258,12 +258,15 @@ function releaseStaged(staged: StagedFile): void {
     if (staged.preview && typeof URL.revokeObjectURL === "function") URL.revokeObjectURL(staged.preview);
 }
 
-/** The staged files above the reply box: a thumbnail or a name chip each, with a remove button. */
+/** The staged files above the reply box: a thumbnail or a name chip each, with a remove button.
+ *  `locked` while a send is taking them, so a file can't leave the tray after its comment is planned. */
 function StagedTray({
     staged,
+    locked,
     onRemove,
 }: {
     staged: StagedFile[];
+    locked: boolean;
     onRemove: (id: string) => void;
 }): React.ReactElement | null {
     if (staged.length === 0) return null;
@@ -281,6 +284,7 @@ function StagedTray({
                         type="button"
                         className="mj_TrackerComposer_chipRemove"
                         aria-label={`Remove ${file.name}`}
+                        disabled={locked}
                         onClick={() => onRemove(id)}
                     >
                         <CloseIcon />
@@ -297,15 +301,37 @@ function draftOf(body: string, files: StagedFile[]): string {
 }
 
 /**
- * A reply's files split into the comments that carry them: at most JOURNAL_ATTACHMENTS_MAX each,
- * in order. A reply with no files is one comment with none.
+ * The comments a reply's files go out as, in tray order. A run of files that already went out
+ * together as one comment and failed (`attempted`, by staged id) goes again as exactly that
+ * comment, so its retry carries the same idempotency key and a copy that did land is not posted
+ * twice; the files around it are split into comments of at most JOURNAL_ATTACHMENTS_MAX. A reply
+ * with no files is one comment with none.
  */
-function attachmentBatches<T>(files: readonly T[]): T[][] {
+function commentBatches(files: readonly StagedFile[], attempted: readonly (readonly string[])[]): StagedFile[][] {
     if (files.length === 0) return [[]];
-    const batches: T[][] = [];
-    for (let start = 0; start < files.length; start += JOURNAL_ATTACHMENTS_MAX) {
-        batches.push(files.slice(start, start + JOURNAL_ATTACHMENTS_MAX));
+    const batches: StagedFile[][] = [];
+    let run: StagedFile[] = [];
+    const flushRun = (): void => {
+        for (let start = 0; start < run.length; start += JOURNAL_ATTACHMENTS_MAX) {
+            batches.push(run.slice(start, start + JOURNAL_ATTACHMENTS_MAX));
+        }
+        run = [];
+    };
+    let index = 0;
+    while (index < files.length) {
+        const group = attempted.find(
+            (ids) => ids.length > 0 && ids.every((id, offset) => files[index + offset]?.id === id),
+        );
+        if (group) {
+            flushRun();
+            batches.push(files.slice(index, index + group.length));
+            index += group.length;
+        } else {
+            run.push(files[index]);
+            index += 1;
+        }
     }
+    flushRun();
     return batches;
 }
 
@@ -392,6 +418,18 @@ export function ItemDetail({
     // Each staged file's upload, kept until it is sent: a retry posts the same blob refs (so the
     // retried payload matches the key) and does not upload the file again.
     const uploadsRef = useRef<Map<string, TrackerAttachment>>(new Map());
+    // The staged ids of each comment that went out from the tray and failed, so Send goes out with
+    // that same comment again rather than a different split of the tray (commentBatches). A group
+    // is dropped once it is sent, or when one of its files is removed (it is a new comment then).
+    const attemptedRef = useRef<string[][]>([]);
+    const forgetAttempted = (ids: readonly string[]): void => {
+        attemptedRef.current = attemptedRef.current.filter((group) => !group.some((id) => ids.includes(id)));
+    };
+    const rememberAttempted = (files: readonly StagedFile[]): void => {
+        const ids = files.map((entry) => entry.id);
+        forgetAttempted(ids);
+        if (ids.length > 0) attemptedRef.current = [...attemptedRef.current, ids];
+    };
 
     // The tray's thumbnails are object URLs; let them go with the box.
     useEffect(
@@ -403,11 +441,20 @@ export function ItemDetail({
     );
 
     // Every file is kept: a reply with more than the journal takes on one comment goes as several.
+    // Any edit of the draft (text, a file added or removed) makes it a different reply from the one
+    // a failure notice describes, so the notice goes; the next failed send raises a fresh one.
+    const editReply = (text: string): void => {
+        setReply(text);
+        setReplyFailure(null);
+    };
     const addFiles = (files: File[]): void => {
         if (files.length === 0) return;
         setStaged((current) => [...current, ...files.map(stageFile)]);
+        setReplyFailure(null);
     };
     const removeStaged = (id: string): void => {
+        forgetAttempted([id]);
+        setReplyFailure(null);
         setStaged((current) => {
             const gone = current.find((entry) => entry.id === id);
             if (gone) releaseStaged(gone);
@@ -417,6 +464,7 @@ export function ItemDetail({
     };
     // The files went out with a comment: drop their thumbnails and remembered uploads.
     const forgetSent = (sent: StagedFile[]): void => {
+        forgetAttempted(sent.map((entry) => entry.id));
         for (const entry of sent) {
             releaseStaged(entry);
             uploadsRef.current.delete(entry.id);
@@ -479,11 +527,13 @@ export function ItemDetail({
 
     // A typed reply is one comment, or — with more files than the journal takes on one — several,
     // in order: the text and the first JOURNAL_ATTACHMENTS_MAX files, then the rest in batches
-    // with no text. Each comment that lands takes its files out of the tray (and the first, the
-    // text); the first that fails stops the send and says why beside the box, keeping its files,
-    // every later one, and the text if it had not gone, so nothing is ever dropped (F2). Send then
-    // retries exactly what is left, and each comment keeps its key across retries of the same
-    // draft so the server can dedupe an ambiguous-delivery replay (F1).
+    // with no text (commentBatches). The tray is locked while they go, so the planned comments are
+    // the files the user sees. Each comment that lands takes its files out of the tray (and the
+    // first, the text); the first that fails stops the send and says why beside the box, keeping
+    // its files, every later one, and the text if it had not gone, so nothing is ever dropped (F2).
+    // Send then retries exactly what is left: the failed comment again as the same files, and each
+    // comment keeps its key across retries of the same draft so the server can dedupe an
+    // ambiguous-delivery replay (F1).
     const send = async (): Promise<void> => {
         const body = reply.trim();
         const files = staged;
@@ -492,11 +542,12 @@ export function ItemDetail({
         setReplyFailure(null);
         try {
             let sentFiles = 0;
-            for (const [index, batch] of attachmentBatches(files).entries()) {
+            for (const [index, batch] of commentBatches(files, attemptedRef.current).entries()) {
                 const batchBody = index === 0 ? body : "";
                 const draft = draftOf(batchBody, batch);
                 const outcome = await postComment(batchBody, batch, keyFor(draft));
                 if (!outcome.ok) {
+                    rememberAttempted(batch);
                     setReplyFailure({
                         reason: outcome.reason ?? "The reply did not go.",
                         sentFiles,
@@ -522,6 +573,7 @@ export function ItemDetail({
             uploadsRef.current.delete(entry.id);
         }
         draftKeysRef.current.clear();
+        attemptedRef.current = [];
         setStaged([]);
         setReply("");
         setReplyFailure(null);
@@ -532,8 +584,8 @@ export function ItemDetail({
     // recording and the tray would not fit on one comment, when the note goes alone. Like the chat
     // composer, the draft and tray clear as the send starts. On failure nothing is ever dropped:
     //  - a note that took the draft puts the recording back first in the tray, the files after it,
-    //    then anything staged meanwhile (Send splits a tray that is now over the journal's limit);
-    //    the text comes back only if nothing new was typed.
+    //    then anything staged meanwhile; Send goes out with the note's comment as it was, then the
+    //    rest (commentBatches). The text comes back only if nothing new was typed.
     //  - a note that went alone is held beside the box (Retry / Discard), never in the tray.
     // Either way the retry is the same comment under the same key with the same uploaded blob refs
     // (the recording's upload is remembered under its staged id), so an ambiguous delivery is not
@@ -567,6 +619,7 @@ export function ItemDetail({
             return;
         }
         if (takeDraft) {
+            rememberAttempted(parts);
             setStaged((current) => [...parts, ...current]);
             if (body && !replyRef.current.trim()) setReply(body);
         } else {
@@ -925,11 +978,11 @@ export function ItemDetail({
                         </button>
                     </div>
                 ) : null}
-                <StagedTray staged={staged} onRemove={removeStaged} />
+                <StagedTray staged={staged} locked={busy} onRemove={removeStaged} />
                 {staged.length > JOURNAL_ATTACHMENTS_MAX ? (
                     <div className="mj_TrackerComposer_limit" role="status">
-                        {staged.length} files will go as {attachmentBatches(staged).length} replies of up to{" "}
-                        {JOURNAL_ATTACHMENTS_MAX}.
+                        {staged.length} files will go as {commentBatches(staged, attemptedRef.current).length} replies
+                        of up to {JOURNAL_ATTACHMENTS_MAX}.
                     </div>
                 ) : null}
                 {voice.voiceState === "recording" ? (
@@ -963,7 +1016,7 @@ export function ItemDetail({
                             placeholder="Reply…"
                             value={reply}
                             disabled={busy}
-                            onChange={(event) => setReply(event.target.value)}
+                            onChange={(event) => editReply(event.target.value)}
                             onPaste={(event) => {
                                 const files = [...(event.clipboardData?.files ?? [])];
                                 if (files.length > 0) {
