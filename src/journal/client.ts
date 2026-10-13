@@ -32,6 +32,7 @@ import {
     writeCachedPins,
 } from "./pins";
 import { mergeSessionStatus } from "./status";
+import { appendFeedPage, kindsWithMore } from "./tracker/projectActivity";
 import {
     asNumber,
     buildSidebarIndex,
@@ -2431,6 +2432,38 @@ export class MatronJournalClient {
         } catch (error) {
             if (this.api !== api || this.trackerProjectGen !== gen) return;
             this.patch({ projectLoadError: { id: key, message: errorMessage(error) } });
+        }
+    }
+
+    /** The project page's "Show more" once every loaded row of its Latest feed shows: the next page
+     *  of every roll-up kind that still has one, fetched together and appended. A page that lands
+     *  after the page moved to another project is dropped; a failed fetch keeps the list as it is. */
+    public async loadMoreProjectActivity(): Promise<void> {
+        const api = this.api;
+        const detail = this.state.trackerProject;
+        if (!api || !detail || this.state.trackerProjectFeedLoading) return;
+        const kinds = kindsWithMore(detail);
+        if (kinds.length === 0) return;
+        const gen = this.trackerProjectGen;
+        this.patch({ trackerProjectFeedLoading: true });
+        try {
+            const pages = await Promise.all(
+                kinds.map(
+                    async (kind) =>
+                        [kind, await api.projectFeed(detail.project.id, kind, detail[kind]!.next_before!)] as const,
+                ),
+            );
+            // The pages continue the detail they were asked for. A refresh that landed meanwhile
+            // replaced it (new first pages, new cursors), so they are dropped: the next Show more
+            // pages on from the new cursors instead of leaving a gap.
+            if (this.api !== api || this.trackerProjectGen !== gen || this.state.trackerProject !== detail) return;
+            let current = detail;
+            for (const [kind, page] of pages) current = appendFeedPage(current, kind, page);
+            this.patch({ trackerProject: current });
+        } catch {
+            // The rows already on the page stay; the button offers the fetch again.
+        } finally {
+            if (this.api === api) this.patch({ trackerProjectFeedLoading: false });
         }
     }
 

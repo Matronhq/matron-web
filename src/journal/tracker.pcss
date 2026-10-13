@@ -1891,6 +1891,51 @@ button.mj_TrackerCard {
     font: 400 12px/16px var(--cpd-font-family-ui);
 }
 
+/* The pulse line under the title: mission counts with their dots, then the sessions clause. */
+.mj_ProjectPulse {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 10px;
+}
+
+.mj_ProjectPulse_part {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.mj_ProjectPulse_dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--cpd-color-text-tertiary);
+}
+
+.mj_ProjectPulse_dot_running {
+    background: var(--cpd-color-usage-low);
+}
+
+.mj_ProjectPulse_dot_waiting {
+    background: var(--cpd-color-usage-medium);
+}
+
+.mj_ProjectPulse_dot_quiet,
+.mj_ProjectPulse_dot_closed {
+    opacity: 0.5;
+}
+
+.mj_ProjectPulse_sessions::before {
+    content: "·";
+    margin-right: 10px;
+}
+
+.mj_ProjectPulse_part:first-child + .mj_ProjectPulse_sessions::before,
+.mj_ProjectPulse_sessions:first-child::before {
+    content: none;
+    margin: 0;
+}
+
 /* Mac: the Needs-you card is red-tinted with white rows. */
 .mj_ProjectNeedsYou {
     border-color: rgb(255 59 48 / 0.25);
@@ -2050,6 +2095,192 @@ button.mj_TrackerCard {
     margin: 0;
     color: var(--cpd-color-text-secondary);
     font: 400 13px/18px var(--cpd-font-family-ui);
+}
+
+.mj_ProjectNeedsYou_age {
+    flex: none;
+    min-width: 32px;
+    color: var(--cpd-color-text-secondary);
+    text-align: right;
+    font: 400 12px/16px var(--cpd-font-family-ui);
+    font-variant-numeric: tabular-nums;
+}
+
+/* — Latest: the merged feed, by day. — */
+.mj_ProjectDay_label {
+    margin: 8px 0 0;
+    padding-bottom: 4px;
+    border-bottom: 1px solid var(--cpd-color-border-subtle);
+    color: var(--cpd-color-text-secondary);
+    font: 600 12px/16px var(--cpd-font-family-ui);
+}
+
+.mj_ProjectActivity {
+    display: flex;
+    flex-direction: column;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.mj_ProjectActivity > li + li {
+    border-top: 1px solid var(--cpd-color-border-subtle);
+}
+
+.mj_ProjectActivity_row {
+    display: flex;
+    width: 100%;
+    align-items: flex-start;
+    gap: 10px;
+    border: 0;
+    background: transparent;
+    color: var(--cpd-color-text-primary);
+    cursor: pointer;
+    padding: 9px 0;
+    text-align: left;
+    font: 400 14px/19px var(--cpd-font-family-ui);
+}
+
+.mj_ProjectActivity_row_static {
+    cursor: default;
+}
+
+.mj_ProjectActivity_glyph {
+    flex: none;
+    width: 16px;
+    height: 16px;
+    margin-top: 1px;
+    font-size: 16px;
+}
+
+.mj_ProjectActivity_glyph_needsYou {
+    color: var(--cpd-color-text-critical-primary);
+}
+
+.mj_ProjectActivity_glyph_answered {
+    color: var(--cpd-color-text-action-accent);
+}
+
+.mj_ProjectActivity_glyph_decided {
+    color: var(--cpd-color-usage-low);
+}
+
+.mj_ProjectActivity_glyph_reversed {
+    color: var(--cpd-color-text-secondary);
+}
+
+.mj_ProjectActivity_fileGlyph {
+    border: 1.5px solid currentColor;
+    border-radius: 3px;
+    color: var(--cpd-color-text-secondary);
+    box-sizing: border-box;
+}
+
+.mj_ProjectActivity_fileGlyph_image {
+    border-style: dashed;
+}
+
+.mj_ProjectActivity_main {
+    display: flex;
+    min-width: 0;
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.mj_ProjectActivity_title {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+}
+
+.mj_ProjectActivity_struck {
+    color: var(--cpd-color-text-secondary);
+    text-decoration: line-through;
+}
+
+.mj_ProjectActivity_note {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    color: var(--cpd-color-text-secondary);
+    font: 400 13px/18px var(--cpd-font-family-ui);
+}
+
+.mj_ProjectActivity_answer {
+    padding-left: 8px;
+    border-left: 2px solid var(--cpd-color-border-interactive-secondary);
+}
+
+.mj_ProjectActivity_meta {
+    display: flex;
+    flex: none;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 2px;
+}
+
+.mj_ProjectActivity_time {
+    color: var(--cpd-color-text-secondary);
+    font: 400 12px/16px var(--cpd-font-family-ui);
+    font-variant-numeric: tabular-nums;
+}
+
+.mj_ProjectLatest_more {
+    align-self: flex-start;
+    margin-top: 4px;
+}
+
+/* — Reference folds: a card whose heading opens it in place. — */
+.mj_ProjectFold {
+    gap: 0;
+    padding: 0;
+}
+
+.mj_ProjectFold_summary {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    cursor: pointer;
+    padding: 14px 20px;
+    list-style: none;
+}
+
+.mj_ProjectFold_summary::-webkit-details-marker {
+    display: none;
+}
+
+.mj_ProjectFold_summary .mj_ProjectSection_count {
+    margin-left: auto;
+}
+
+.mj_ProjectFold_chevron {
+    width: 7px;
+    height: 7px;
+    flex: none;
+    border-right: 1.5px solid var(--cpd-color-text-secondary);
+    border-bottom: 1.5px solid var(--cpd-color-text-secondary);
+    transform: translateY(-2px) rotate(-45deg);
+    transition: transform 120ms ease;
+}
+
+.mj_ProjectFold[open] .mj_ProjectFold_chevron {
+    transform: translateY(-3px) rotate(45deg);
+}
+
+.mj_ProjectFold_body {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 0 20px 16px;
+}
+
+.mj_ProjectFold_body .mj_ProjectPage_body {
+    margin: 0;
+    /* Read as a paragraph here, not a caption: the secondary grey is too dim for one. */
+    color: var(--cpd-color-text-primary);
 }
 
 .mj_ProjectsUnfiled {

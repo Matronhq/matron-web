@@ -524,6 +524,8 @@ export interface ClientState {
     /** Last failed project-detail load, keyed by its number (like missionLoadError). */
     projectLoadError?: { id: string; message: string };
     trackerProject?: ProjectDetail | null;
+    /** True while the project page's Latest feed fetches its next pages. */
+    trackerProjectFeedLoading?: boolean;
     trackerItem?: { item: TrackerItem; comments: TrackerComment[] } | null;
     trackerMission?: MissionDetail | null;
     /** True while ANY tracker fetch is in flight (v1: one detail/list open at a time). */
@@ -939,13 +941,58 @@ export interface Project {
     last_activity_at: number;
 }
 
-/** `GET /projects/:id`. */
+/** The project roll-up's kinds (`GET /projects/:id/feed?kind=`). */
+export type ProjectFeedKind = "decisions" | "files" | "milestones";
+
+/** One page of a roll-up kind: `total` across every page, `next_before` the cursor for the next
+ *  (older) page, null on the last. */
+export interface ProjectFeedPage<Row> {
+    total: number;
+    rows: Row[];
+    next_before: string | null;
+}
+
+/** A decision item (open = in force; closed = decided, done or reversed), or a question closed as
+ *  answered, on one of the project's missions. */
+export interface ProjectDecisionRow {
+    id: string;
+    num: number;
+    kind: "decision" | "question";
+    state: TrackerItemState;
+    resolution: TrackerResolution | null;
+    title: string;
+    supersedes?: string | null;
+    created_at: number;
+    closed_at: number | null;
+    mission_id?: string | null;
+    mission_num?: number | null;
+    /** A question's answer: the user's newest comment, else a voice note's transcript. */
+    answer?: string | null;
+}
+
+/** A file or image on the project's items or in its missions' chats. */
+export interface ProjectFileRow {
+    blob_id: string;
+    name?: string | null;
+    content_type?: string | null;
+    size?: number | null;
+    caption?: string | null;
+    mission_num?: number | null;
+    source: { item_num: number } | { convo_id: string; seq: number };
+    posted_at?: number | null;
+}
+
+/** `GET /projects/:id`. The three roll-up pages come from a journal with Projects view v2; an
+ *  older one sends none of them. */
 export interface ProjectDetail {
     project: Project;
     missions: Array<Mission & { status?: string | null; activity?: string }>;
     needs_you: Array<MissionItemRef & { mission_id: string; mission_num: number }>;
     recent_milestones: Array<Milestone & { mission_num: number }>;
     sessions_by_box: Record<string, number>;
+    decisions?: ProjectFeedPage<ProjectDecisionRow>;
+    files?: ProjectFeedPage<ProjectFileRow>;
+    milestones?: ProjectFeedPage<Milestone & { mission_num: number | null }>;
     /** Set when the asked-for project was merged: this detail is the project it went into. */
     merged_from?: { id: string; num: number };
 }
