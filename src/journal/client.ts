@@ -49,6 +49,9 @@ import {
     type JournalBoxStatusFrame,
     isSubChat,
     type MatronLinkKind,
+    type NumberLookup,
+    type NumberLookupKind,
+    type NumberLookupOutcome,
     type JournalEphemeralFrame,
     type JournalEvent,
     MESSAGE_EVENT_TYPES,
@@ -87,6 +90,27 @@ const MESSAGE_SEARCH_LIMIT = 20;
 const MESSAGE_SEARCH_MAX_QUERY_LEN = 256;
 // Transport-agnostic deadline: abort a /search that never settles so "Searching…" can't hang.
 const MESSAGE_SEARCH_TIMEOUT_MS = 15_000;
+
+const NUMBER_LOOKUP_KINDS: readonly NumberLookupKind[] = ["item", "mission", "milestone", "project"];
+const isTrackerNumber = (value: unknown): value is number =>
+    typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+
+/** A `/lookup` answer reduced to the fields this app understands; null when it names no known kind. */
+function sanitizeNumberLookup(raw: unknown): NumberLookup | null {
+    if (!raw || typeof raw !== "object") return null;
+    const { kind, id, num, title, mission } = raw as Record<string, unknown>;
+    if (typeof id !== "string" || !NUMBER_LOOKUP_KINDS.includes(kind as NumberLookupKind)) return null;
+    const hit: NumberLookup = { kind: kind as NumberLookupKind, id };
+    if (isTrackerNumber(num)) hit.num = num;
+    if (typeof title === "string" && title) hit.title = title;
+    if (mission && typeof mission === "object") {
+        const parent = mission as Record<string, unknown>;
+        if (typeof parent.id === "string" && isTrackerNumber(parent.num)) {
+            hit.mission = { id: parent.id, num: parent.num };
+        }
+    }
+    return hit;
+}
 
 /**
  * Runtime guard for the GET /search response. The producer is a separate service, so we parse at
@@ -1790,6 +1814,51 @@ export class MatronJournalClient {
         if (kind === "item") this.openTrackerItem(num);
         else if (kind === "mission") this.openTrackerMission(num);
         else this.openTrackerProject(num);
+    }
+
+    // ── Go to number ────────────────────────────────────────────────────────
+    // Items, missions, milestones and projects share one per-user number space, and each kind
+    // opens differently, so "go to 412" first asks the journal which kind 412 is.
+
+    public openGoToNumber(): void {
+        if (!this.state.goToNumberOpen) this.patch({ goToNumberOpen: true });
+    }
+
+    public closeGoToNumber(): void {
+        if (this.state.goToNumberOpen) this.patch({ goToNumberOpen: false });
+    }
+
+    /**
+     * Asks the journal what the signed-in user's number `num` is. Never throws: a 404 is `none`
+     * (no such number), anything else that goes wrong is `failed`. The payload is checked field
+     * by field, since the journal is a separate service that may be older or newer than this app.
+     */
+    public async lookupNumber(num: number, signal?: AbortSignal): Promise<NumberLookupOutcome> {
+        const api = this.api;
+        const user = this.state.session?.username;
+        if (!api || !user || !Number.isSafeInteger(num) || num <= 0) return { status: "failed" };
+        try {
+            const hit = sanitizeNumberLookup(await api.lookup(user, num, signal));
+            return hit ? { status: "found", hit } : { status: "failed" };
+        } catch (error) {
+            if (error instanceof JournalApiError && error.status === 404) return { status: "none" };
+            return { status: "failed" };
+        }
+    }
+
+    /**
+     * Opens what a lookup found; `asked` is the number that was looked up, used when an older
+     * journal's answer does not carry the row's own number. A milestone has no page of its own,
+     * so it opens the mission it sits on. Returns false when there is nothing to open.
+     */
+    public openNumberHit(hit: NumberLookup, asked: number): boolean {
+        const num = hit.num ?? asked;
+        if (hit.kind === "item") this.openTrackerItem(num);
+        else if (hit.kind === "mission") this.openTrackerMission(num);
+        else if (hit.kind === "project") this.openTrackerProject(num);
+        else if (hit.mission) this.openTrackerMission(hit.mission.num);
+        else return false;
+        return true;
     }
 
     // ── Coordinator briefing (top of the Projects tab) ──────────────────────
@@ -3709,6 +3778,7 @@ export class MatronJournalClient {
         this.searchAbort = undefined;
         this.searchSeq += 1;
         if (this.state.messageSearch) this.patch({ messageSearch: undefined });
+        this.closeGoToNumber();
         for (const timer of this.readTimers.values()) window.clearTimeout(timer);
         if (this.ackTimer !== undefined) window.clearTimeout(this.ackTimer);
         if (this.trackerInboxRefetchTimer !== undefined) window.clearTimeout(this.trackerInboxRefetchTimer);

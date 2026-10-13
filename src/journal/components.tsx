@@ -34,6 +34,7 @@ import { copyText } from "./clipboard";
 import { type DraftStore, makeDraftStore } from "./composer-drafts";
 import { effectiveUnread } from "./conversation-flags";
 import { type RowContextMenu, useRowContextMenu } from "./context-menu";
+import { GoToNumberDialog, goToNumberShortcutLabel, NumberSearchResult, useGoToNumberShortcut } from "./goto-number";
 import { PinDialog, type PinDialogTarget } from "./PinDialogs";
 import { pinGlyph, successorHintText } from "./pins";
 import {
@@ -63,6 +64,7 @@ import {
     VideoFileIcon,
     MarkdownIcon,
     MarkAllReadIcon,
+    NumberSignIcon,
     MarkReadIcon,
     MarkUnreadIcon,
     OpenAIMark,
@@ -1719,6 +1721,15 @@ function ConversationList({
                                                 <MarkAllReadIcon />
                                             </button>
                                         )}
+                                        <button
+                                            className="mj_IconButton"
+                                            type="button"
+                                            aria-label="Go to number"
+                                            title={`Go to number (${goToNumberShortcutLabel()})`}
+                                            onClick={() => client.openGoToNumber()}
+                                        >
+                                            <NumberSignIcon />
+                                        </button>
                                         {/* Mac: New Chat is the toolbar's square.and.pencil glyph, not a button row. */}
                                         <button
                                             className="mj_IconButton"
@@ -1801,6 +1812,7 @@ function ConversationList({
                                     </span>
                                 )}
                                 <div className="mj_RoomList" data-testid="room-list">
+                                    <NumberSearchResult client={client} query={query} />
                                     {/* Active/Favorites render each parent row, then splice
                                         its NON-ARCHIVED subagent children in beneath (indented) —
                                         archiving a child removes it from these tabs. The Archived
@@ -5974,6 +5986,9 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
         return () => document.removeEventListener("keydown", onKey);
     }, [hasParent, parentId, state.stagedUploads, client]);
 
+    // The field is modal, so the shortcut stays off while the upload sheet holds the app inert.
+    useGoToNumberShortcut(client, !state.stagedUploads);
+
     return (
         <MarkdownPreviewContext.Provider value={markdownPreview.context}>
             <div className="mx_MatrixChat_wrapper">
@@ -6074,6 +6089,7 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                     ) : null}
                 </div>
                 {state.stagedUploads && <UploadConfirmDialog client={client} staged={state.stagedUploads} />}
+                {state.goToNumberOpen && !state.stagedUploads && <GoToNumberDialog client={client} />}
             </div>
         </MarkdownPreviewContext.Provider>
     );

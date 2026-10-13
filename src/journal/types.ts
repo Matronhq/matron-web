@@ -187,6 +187,23 @@ export interface SearchResponse {
 }
 
 /**
+ * What a tracker number is (`GET /lookup`). Items, missions, milestones and projects share one
+ * per-user number space, so a number alone does not say which kind it names. `num` and `title`
+ * are absent on an older journal; `mission` is the mission a milestone sits on.
+ */
+export type NumberLookupKind = "item" | "mission" | "milestone" | "project";
+export interface NumberLookup {
+    kind: NumberLookupKind;
+    id: string;
+    num?: number;
+    title?: string;
+    mission?: { id: string; num: number };
+}
+
+/** `none`: no such number (or not visible to this user). `failed`: the journal could not be asked. */
+export type NumberLookupOutcome = { status: "found"; hit: NumberLookup } | { status: "none" } | { status: "failed" };
+
+/**
  * Message-content search state (Apple-parity "Messages" section). The room-list search box
  * filters chat titles in-memory (the "Chats" behaviour); this holds the server-side content
  * hits for the same query. `query` is the query the current `hits` belong to, so the view can
@@ -495,6 +512,8 @@ export interface ClientState {
     //   trackerMission       = the open mission detail, null = none.
     // Undefined = never loaded this session.
     trackerView?: TrackerViewState;
+    /** The "Go to number" field is open (the shortcut and both header buttons set it). */
+    goToNumberOpen?: boolean;
     missions?: Mission[];
     inboxItems?: TrackerItem[];
     /** Projects (unify step 7): the dashboard rows and the open project's detail. */

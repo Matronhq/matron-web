@@ -19,6 +19,7 @@ import {
     type MessagesResponse,
     type Mission,
     type MissionDetail,
+    type NumberLookup,
     type SearchResponse,
     type SnapshotResponse,
     type TrackerAwaiting,
@@ -661,6 +662,15 @@ export class JournalApi {
     public search(query: string, limit = 20, signal?: AbortSignal): Promise<SearchResponse> {
         const params = new URLSearchParams({ q: query, limit: String(limit) });
         return this.json<SearchResponse>(`/search?${params.toString()}`, { signal });
+    }
+
+    /**
+     * GET /lookup — which of `user`'s tracker rows carries number `num` (item, mission, milestone
+     * or project). 404 when there is none, or the caller may not see it.
+     */
+    public lookup(user: string, num: number, signal?: AbortSignal): Promise<NumberLookup> {
+        const params = new URLSearchParams({ user, num: String(num) });
+        return this.json<NumberLookup>(`/lookup?${params.toString()}`, { signal });
     }
 
     public async media(mediaId: string): Promise<Blob> {

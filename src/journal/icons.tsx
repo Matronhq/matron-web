@@ -93,6 +93,18 @@ export function SearchIcon(props: IconProps): React.ReactElement {
     );
 }
 
+/** A number sign: the "Go to number" action. */
+export function NumberSignIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            <path d="M5 9h14" />
+            <path d="M4 15h14" />
+            <path d="M10 4 8 20" />
+            <path d="m16 4-2 16" />
+        </Icon>
+    );
+}
+
 export function MarkAllReadIcon(props: IconProps): React.ReactElement {
     return (
         <Icon {...props}>
