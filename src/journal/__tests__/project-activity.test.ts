@@ -14,6 +14,8 @@ import {
     activityNote,
     activityRows,
     appendFeedPage,
+    canOpen,
+    decisionMark,
     headlineCaption,
     headlineText,
     kindsWithMore,
@@ -101,6 +103,34 @@ describe("project activity feed", () => {
         expect(kindsWithMore(next)).toEqual(["milestones"]);
         const plain = trackerProjectDetail();
         expect(appendFeedPage(plain, "files", older as never)).toBe(plain);
+    });
+
+    it("leaves an undated file out of the feed and out of the horizon", () => {
+        const detail = trackerProjectDetailWithFeed({
+            files: {
+                total: 1,
+                rows: [{ blob_id: "b9", name: "Undated.pdf", source: { item_num: 41 }, posted_at: null }],
+                next_before: "f-cursor",
+            },
+            decisions: undefined,
+            milestones: undefined,
+        });
+        expect(activityEvents(detail).some((event) => event.kind === "file")).toBe(false);
+        expect(activityHorizon(detail)).toBeNull();
+        expect(kindsWithMore(detail)).toEqual(["files"]);
+    });
+
+    it("knows which rows open something, and a reversed decision's mark", () => {
+        const events = activityEvents(trackerProjectDetailWithFeed());
+        const byId = Object.fromEntries(events.map((event) => [event.id, event]));
+        expect(canOpen(byId["milestone:ml_1"])).toBe(true);
+        expect(canOpen({ ...byId["milestone:ml_1"], missionNum: null })).toBe(false);
+        expect(canOpen(byId["file:item:41:b1"])).toBe(true);
+        expect(canOpen(byId["file:chat:c1:12"])).toBe(false);
+        expect(canOpen(byId["decision:it_39"])).toBe(true);
+        expect(decisionMark({ kind: "question", resolution: "answered" })).toBe("answered");
+        expect(decisionMark({ kind: "decision", resolution: "reversed" })).toBe("reversed");
+        expect(decisionMark({ kind: "decision", resolution: null })).toBe("decided");
     });
 
     it("says what each row is", () => {

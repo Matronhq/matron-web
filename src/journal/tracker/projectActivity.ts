@@ -67,6 +67,7 @@ function feedMilestones(detail: ProjectDetail): Array<Milestone & { mission_num:
 
 /** Every event the detail holds, newest first; at the same instant by kind, then by id. The
  *  detail's items are the needs-you rows, which carry only `updated_at`, so that is their time. */
+// (Undated files are left out below; the horizon ignores them too.)
 export function activityEvents(detail: ProjectDetail): ActivityEvent[] {
     const events: ActivityEvent[] = [];
     for (const milestone of feedMilestones(detail)) {
@@ -87,11 +88,13 @@ export function activityEvents(detail: ProjectDetail): ActivityEvent[] {
             decision,
         });
     }
+    // A file the journal sent no posted_at for has no place in time: it stays in the Files fold.
     for (const file of detail.files?.rows ?? []) {
+        if (!file.posted_at) continue;
         events.push({
             kind: "file",
             id: `file:${fileRowId(file)}`,
-            at: file.posted_at ?? 0,
+            at: file.posted_at,
             missionNum: file.mission_num ?? null,
             file,
         });
@@ -246,6 +249,28 @@ export function activityNote(event: ActivityEvent): string | null {
 /** A reversed decision's title is struck through. */
 export function isStruck(event: ActivityEvent): boolean {
     return event.kind === "decision" && event.decision.resolution === "reversed";
+}
+
+/** The glyph's state for a decision row: answered, reversed, else decided (in force). */
+export function decisionMark(
+    decision: Pick<ProjectDecisionRow, "kind" | "resolution">,
+): "answered" | "reversed" | "decided" {
+    if (decision.kind === "question") return "answered";
+    return decision.resolution === "reversed" ? "reversed" : "decided";
+}
+
+/** Whether a click on the row goes somewhere: a milestone to its mission, a decision or item to
+ *  the item, a file to the item it is on. A chat file and a milestone of an unknown mission have
+ *  nowhere to go on this page, so their rows are not buttons. */
+export function canOpen(event: ActivityEvent): boolean {
+    switch (event.kind) {
+        case "milestone":
+            return event.missionNum != null;
+        case "file":
+            return "item_num" in event.file.source;
+        default:
+            return true;
+    }
 }
 
 /** "09:54": the row's time within its day. */

@@ -25,8 +25,10 @@ import {
     activityRows,
     activityTitle,
     type ActivityEvent,
+    canOpen,
     dayLabel,
     decisionAt,
+    decisionMark,
     FIRST_PAGE_LIMIT,
     fileName,
     fileRowId,
@@ -172,11 +174,7 @@ export function ProjectPage({
                                     <ul className="mj_ProjectActivity">
                                         {day.events.map((event) => (
                                             <li key={event.id}>
-                                                <button
-                                                    type="button"
-                                                    className="mj_ProjectActivity_row"
-                                                    onClick={() => open(event)}
-                                                >
+                                                <ActivityRowShell event={event} onOpen={open}>
                                                     <ActivityGlyph event={event} />
                                                     <span className="mj_ProjectActivity_main">
                                                         <span
@@ -198,7 +196,7 @@ export function ProjectPage({
                                                             {timeOfDay(event.at)}
                                                         </span>
                                                     </span>
-                                                </button>
+                                                </ActivityRowShell>
                                             </li>
                                         ))}
                                     </ul>
@@ -318,6 +316,25 @@ function Fold({
     );
 }
 
+/** A feed row: a button when the row opens something, a plain row otherwise. */
+function ActivityRowShell({
+    event,
+    onOpen,
+    children,
+}: {
+    event: ActivityEvent;
+    onOpen: (event: ActivityEvent) => void;
+    children: React.ReactNode;
+}): React.ReactElement {
+    return canOpen(event) ? (
+        <button type="button" className="mj_ProjectActivity_row" onClick={() => onOpen(event)}>
+            {children}
+        </button>
+    ) : (
+        <span className="mj_ProjectActivity_row mj_ProjectActivity_row_static">{children}</span>
+    );
+}
+
 /** The feed row's glyph: a milestone's marker, a decision's mark, a file, an item's kind. */
 function ActivityGlyph({ event }: { event: ActivityEvent }): React.ReactElement {
     switch (event.kind) {
@@ -327,7 +344,7 @@ function ActivityGlyph({ event }: { event: ActivityEvent }): React.ReactElement 
             return (
                 <TrackerGlyph
                     kind={event.decision.kind}
-                    className={`mj_ProjectActivity_glyph mj_ProjectActivity_glyph_${event.decision.kind === "question" ? "answered" : "decided"}`}
+                    className={`mj_ProjectActivity_glyph mj_ProjectActivity_glyph_${decisionMark(event.decision)}`}
                 />
             );
         case "file":
@@ -363,7 +380,7 @@ function DecisionRow({
         <button type="button" className="mj_ProjectActivity_row" onClick={() => onOpen(decision.num)}>
             <TrackerGlyph
                 kind={decision.kind}
-                className={`mj_ProjectActivity_glyph mj_ProjectActivity_glyph_${decision.kind === "question" ? "answered" : struck ? "reversed" : "decided"}`}
+                className={`mj_ProjectActivity_glyph mj_ProjectActivity_glyph_${decisionMark(decision)}`}
             />
             <span className="mj_ProjectActivity_main">
                 <span className={`mj_ProjectActivity_title${struck ? " mj_ProjectActivity_struck" : ""}`}>

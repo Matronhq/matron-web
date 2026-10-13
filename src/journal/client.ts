@@ -2447,9 +2447,11 @@ export class MatronJournalClient {
                         [kind, await api.projectFeed(detail.project.id, kind, detail[kind]!.next_before!)] as const,
                 ),
             );
-            if (this.api !== api || this.trackerProjectGen !== gen) return;
-            let current = this.state.trackerProject;
-            if (!current || current.project.id !== detail.project.id) return;
+            // The pages continue the detail they were asked for. A refresh that landed meanwhile
+            // replaced it (new first pages, new cursors), so they are dropped: the next Show more
+            // pages on from the new cursors instead of leaving a gap.
+            if (this.api !== api || this.trackerProjectGen !== gen || this.state.trackerProject !== detail) return;
+            let current = detail;
             for (const [kind, page] of pages) current = appendFeedPage(current, kind, page);
             this.patch({ trackerProject: current });
         } catch {

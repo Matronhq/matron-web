@@ -279,6 +279,7 @@ describe("ProjectPage", () => {
         expect(container.querySelector(".mj_ProjectFold_decisions .mj_ProjectActivity_struck")?.textContent).toBe(
             "Keep the old sign-in page",
         );
+        expect(container.querySelector(".mj_ProjectFold_decisions .mj_ProjectActivity_glyph_reversed")).not.toBeNull();
     });
 
     it("omits the needs-you card when nothing waits on you, and leads with the description when there is no status", async () => {
