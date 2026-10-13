@@ -457,6 +457,31 @@ describe("ItemDetail reply box", () => {
             expect(failure(container)).toBeUndefined();
         });
 
+        it("a failed comment goes again with its original text when the text was edited", async () => {
+            const client = fakeClient();
+            client.postTrackerComment.mockResolvedValueOnce({ ok: false, reason: "The server refused it (HTTP 400)." });
+            const container = await renderItem(client);
+            const files = many(22);
+            await pick(container, files);
+            await type(container, "version one");
+            await click(sendButton(container));
+
+            await type(container, "version two");
+            await click(sendButton(container));
+
+            // The first comment may have landed, so it is replayed exactly: same text, files and key.
+            expect(client.postTrackerComment).toHaveBeenCalledTimes(3);
+            const [first, retry, rest] = client.postTrackerComment.mock.calls;
+            expect(retry[1]).toEqual(first[1]);
+            expect(retry[1].body).toBe("version one");
+            expect(retry[2]).toBe(first[2]);
+            // The new wording goes with the files that follow.
+            expect(rest[1].body).toBe("version two");
+            expect(postedNames(client, 2)).toEqual(names(files.slice(20)));
+            expect(input(container).value).toBe("");
+            expect(chips(container)).toEqual([]);
+        });
+
         it("a refused text-only reply keeps the text and says why", async () => {
             const client = fakeClient();
             client.postTrackerComment.mockResolvedValueOnce({ ok: false, reason: "Item is closed." });
@@ -675,6 +700,58 @@ describe("ItemDetail reply box", () => {
             // Only the files staged meanwhile were uploaded; the note's were remembered.
             expect(client.uploadTrackerAttachment.mock.calls.length).toBe(uploads + 3);
             expect(chips(container)).toEqual([]);
+        });
+
+        it("a failed note goes again with its own text; text typed meanwhile goes on a new comment", async () => {
+            const client = fakeClient();
+            const post = deferred<TrackerCommentOutcome>();
+            client.postTrackerComment.mockImplementationOnce(() => post.promise);
+            const container = await renderItem(client);
+            await pick(container, [new File(["a"], "a0.png", { type: "image/png" })]);
+            await type(container, "first thought");
+
+            await recordVoiceNote(container);
+            await type(container, "second thought");
+            const later = new File(["b"], "b0.png", { type: "image/png" });
+            await pick(container, [later]);
+            await act(async () => {
+                post.resolve({ ok: false });
+            });
+            expect(input(container).value).toBe("second thought");
+
+            await click(sendButton(container));
+
+            expect(client.postTrackerComment).toHaveBeenCalledTimes(3);
+            const [note, retry, fresh] = client.postTrackerComment.mock.calls;
+            expect(note[1].body).toBe("first thought");
+            expect(retry[1]).toEqual(note[1]);
+            expect(retry[2]).toBe(note[2]);
+            expect(fresh[1]).toEqual({ body: "second thought", attachments: [uploaded(later)] });
+            expect(input(container).value).toBe("");
+            expect(chips(container)).toEqual([]);
+        });
+
+        it("text typed while a failed note was in flight gets a comment of its own when no file is left", async () => {
+            const client = fakeClient();
+            const post = deferred<TrackerCommentOutcome>();
+            client.postTrackerComment.mockImplementationOnce(() => post.promise);
+            const container = await renderItem(client);
+            await type(container, "first thought");
+
+            await recordVoiceNote(container);
+            await type(container, "second thought");
+            await act(async () => {
+                post.resolve({ ok: false });
+            });
+
+            await click(sendButton(container));
+
+            expect(client.postTrackerComment).toHaveBeenCalledTimes(3);
+            const [note, retry, fresh] = client.postTrackerComment.mock.calls;
+            expect(retry[1]).toEqual(note[1]);
+            expect(retry[2]).toBe(note[2]);
+            expect(fresh[1]).toEqual({ body: "second thought" });
+            expect(input(container).value).toBe("");
         });
 
         it("a retry with Send after a failed note reuses its upload and its idempotency key", async () => {
