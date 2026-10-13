@@ -1572,3 +1572,30 @@ label.mj_SettingsSheet_row {
 .mj_NavRail_settings {
     position: relative;
 }
+
+/* The exact match for a number query sits at the top of the list, so it needs no divider above. */
+.mj_NumberSearchResult {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: 0;
+}
+
+/* Go to number: what the typed number names sits between the field and the buttons. The space is
+   held while it is empty so the sheet does not jump as the answer arrives. */
+.mj_GoToSheet_result {
+    display: flex;
+    min-height: 52px;
+    align-items: center;
+}
+
+.mj_GoToSheet_result .mj_SearchHit {
+    width: 100%;
+    margin: 0;
+    background: var(--cpd-state-hover);
+}
+
+.mj_GoToSheet_note {
+    margin: 0;
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-body-sm-regular);
+}
