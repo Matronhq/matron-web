@@ -199,6 +199,167 @@ describe("NewSessionSheet", () => {
         expect(select).not.toHaveBeenCalled();
     });
 
+    // An offline box is a sleeping one: its row carries a Wake button that boots it from the list.
+    describe("waking a box from its row", () => {
+        const ASLEEP_B: DeviceDTO = { ...AGENT_B, connected: false, last_seen_at: 1_700_000_000 };
+        const ASLEEP_C: DeviceDTO = {
+            device_id: 12,
+            kind: "agent",
+            name: "Box C",
+            connected: false,
+            is_self: false,
+        };
+
+        function row(container: HTMLElement, name: string): HTMLElement {
+            const match = [...container.querySelectorAll<HTMLElement>('[role="listitem"]')].find((item) =>
+                item.textContent?.startsWith(name),
+            );
+            if (!match) throw new Error(`Missing row: ${name}`);
+            return match;
+        }
+
+        function wakeButton(container: HTMLElement, name: string): HTMLButtonElement | null {
+            return container.querySelector<HTMLButtonElement>(`button[aria-label="Wake ${name}"]`);
+        }
+
+        afterEach(() => {
+            jest.useRealTimers();
+        });
+
+        it("shows the list, with Wake on offline rows only, when one box is up among sleeping ones", async () => {
+            const client = new MatronJournalClient();
+            jest.spyOn(client, "listAgents").mockResolvedValue([AGENT_A, ASLEEP_B]);
+
+            rendered = await render(React.createElement(NewSessionSheet, { client, onClose: jest.fn() }));
+
+            expect(wakeButton(rendered.container, "Box A")).toBeNull();
+            expect(wakeButton(rendered.container, "Box B")).not.toBeNull();
+            expect(row(rendered.container, "Box B").querySelector<HTMLButtonElement>("button")!.disabled).toBe(true);
+        });
+
+        it("re-asks a booting box until it answers, then the row is connected and opens", async () => {
+            jest.useFakeTimers();
+            const client = new MatronJournalClient();
+            jest.spyOn(client, "listAgents").mockResolvedValue([AGENT_A, ASLEEP_B]);
+            const probe = jest
+                .spyOn(client, "probeAgent")
+                .mockResolvedValueOnce("booting")
+                .mockResolvedValueOnce("booting")
+                .mockResolvedValueOnce("up");
+            jest.spyOn(client, "recentFolders").mockResolvedValue([]);
+
+            rendered = await render(React.createElement(NewSessionSheet, { client, onClose: jest.fn() }));
+            await act(async () => wakeButton(rendered!.container, "Box B")!.click());
+
+            expect(row(rendered.container, "Box B").textContent).toBe("Box BWaking…");
+            expect(wakeButton(rendered.container, "Box B")).toBeNull();
+            expect(probe).toHaveBeenCalledTimes(1);
+
+            await act(async () => jest.advanceTimersByTimeAsync(3_000));
+            expect(probe).toHaveBeenCalledTimes(2);
+            await act(async () => jest.advanceTimersByTimeAsync(3_000));
+
+            expect(probe).toHaveBeenCalledTimes(3);
+            expect(row(rendered.container, "Box B").textContent).toBe("Box BConnected");
+            // Rows keep their order.
+            expect(
+                [...rendered.container.querySelectorAll('[role="listitem"] strong')].map((name) => name.textContent),
+            ).toEqual(["Box A", "Box B"]);
+
+            await act(async () => textButton(rendered!.container, "Box BConnected").click());
+            expect(rendered.container.textContent).toContain("Start on Box B");
+        });
+
+        it("wakes several boxes at once, each on its own loop", async () => {
+            const client = new MatronJournalClient();
+            jest.spyOn(client, "listAgents").mockResolvedValue([AGENT_A, ASLEEP_B, ASLEEP_C]);
+            const answers = new Map([
+                [ASLEEP_B.device_id, deferred<"up">()],
+                [ASLEEP_C.device_id, deferred<"up">()],
+            ]);
+            const probe = jest.spyOn(client, "probeAgent").mockImplementation((id) => answers.get(id)!.promise);
+
+            rendered = await render(React.createElement(NewSessionSheet, { client, onClose: jest.fn() }));
+            await act(async () => wakeButton(rendered!.container, "Box B")!.click());
+            await act(async () => wakeButton(rendered!.container, "Box C")!.click());
+
+            expect(probe.mock.calls.map(([id]) => id)).toEqual([ASLEEP_B.device_id, ASLEEP_C.device_id]);
+            expect(row(rendered.container, "Box B").textContent).toBe("Box BWaking…");
+            expect(row(rendered.container, "Box C").textContent).toBe("Box CWaking…");
+
+            await act(async () => answers.get(ASLEEP_C.device_id)!.resolve("up"));
+
+            expect(row(rendered.container, "Box B").textContent).toBe("Box BWaking…");
+            expect(row(rendered.container, "Box C").textContent).toBe("Box CConnected");
+        });
+
+        it("says so when the box never answers, and offers Wake again", async () => {
+            jest.useFakeTimers();
+            const client = new MatronJournalClient();
+            jest.spyOn(client, "listAgents").mockResolvedValue([AGENT_A, ASLEEP_B]);
+            const probe = jest.spyOn(client, "probeAgent").mockResolvedValue("booting");
+
+            rendered = await render(React.createElement(NewSessionSheet, { client, onClose: jest.fn() }));
+            await act(async () => wakeButton(rendered!.container, "Box B")!.click());
+            await act(async () => jest.advanceTimersByTimeAsync(121_000));
+
+            // Forty asks, three seconds apart, then no more.
+            expect(probe).toHaveBeenCalledTimes(40);
+            await act(async () => jest.advanceTimersByTimeAsync(30_000));
+            expect(probe).toHaveBeenCalledTimes(40);
+            expect(row(rendered.container, "Box B").textContent).toBe("Box BDidn't wake — try again" + "Wake");
+
+            probe.mockResolvedValue("up");
+            await act(async () => wakeButton(rendered!.container, "Box B")!.click());
+            expect(row(rendered.container, "Box B").textContent).toBe("Box BConnected");
+        });
+
+        it("fails at once when the ask cannot reach the journal", async () => {
+            const client = new MatronJournalClient();
+            jest.spyOn(client, "listAgents").mockResolvedValue([AGENT_A, ASLEEP_B]);
+            const probe = jest.spyOn(client, "probeAgent").mockResolvedValue("failed");
+
+            rendered = await render(React.createElement(NewSessionSheet, { client, onClose: jest.fn() }));
+            await act(async () => wakeButton(rendered!.container, "Box B")!.click());
+
+            expect(probe).toHaveBeenCalledTimes(1);
+            expect(row(rendered.container, "Box B").textContent).toContain("Didn't wake — try again");
+        });
+
+        it("keeps waking behind another box's folder step, and Back shows the box awake", async () => {
+            const client = new MatronJournalClient();
+            jest.spyOn(client, "listAgents").mockResolvedValue([AGENT_A, ASLEEP_B]);
+            const answer = deferred<"up">();
+            jest.spyOn(client, "probeAgent").mockReturnValue(answer.promise);
+            jest.spyOn(client, "recentFolders").mockResolvedValue([]);
+
+            rendered = await render(React.createElement(NewSessionSheet, { client, onClose: jest.fn() }));
+            await act(async () => wakeButton(rendered!.container, "Box B")!.click());
+            await act(async () => textButton(rendered!.container, "Box AConnected").click());
+            await act(async () => answer.resolve("up"));
+
+            expect(rendered.container.textContent).toContain("Start on Box A");
+            await act(async () => textButton(rendered!.container, "Back").click());
+            expect(row(rendered.container, "Box B").textContent).toBe("Box BConnected");
+        });
+
+        it("stops asking once the sheet is closed", async () => {
+            jest.useFakeTimers();
+            const client = new MatronJournalClient();
+            jest.spyOn(client, "listAgents").mockResolvedValue([AGENT_A, ASLEEP_B]);
+            const probe = jest.spyOn(client, "probeAgent").mockResolvedValue("booting");
+
+            rendered = await render(React.createElement(NewSessionSheet, { client, onClose: jest.fn() }));
+            await act(async () => wakeButton(rendered!.container, "Box B")!.click());
+            await act(async () =>
+                rendered!.container.querySelector<HTMLButtonElement>('button[aria-label="Close"]')!.click(),
+            );
+            await act(async () => jest.advanceTimersByTimeAsync(30_000));
+
+            expect(probe).toHaveBeenCalledTimes(1);
+        });
+    });
+
     // Box usage (protocol.md "Box status"): the sheet renders each box's last capacity report
     // from client state — limits with reset times, live sessions, disk, and an "as of" caption.
     describe("box usage", () => {

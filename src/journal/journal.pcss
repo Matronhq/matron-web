@@ -2319,9 +2319,77 @@ textarea {
     outline-offset: 2px;
 }
 
+/* An agent row is a card holding two controls side by side: the box itself, and for an
+   offline box a Wake button. The card keeps the list item's border; the box button fills it. */
+.mj_NewSessionSheet [role="listitem"].mj_NewSessionSheet_agentRow {
+    flex-direction: row;
+    align-items: center;
+    gap: 0;
+    padding: 0;
+    cursor: default;
+}
+
+.mj_NewSessionSheet [role="listitem"].mj_NewSessionSheet_agentRow:hover {
+    background: transparent;
+}
+
+.mj_NewSessionSheet_agent {
+    display: flex;
+    min-width: 0;
+    flex: 1 1 auto;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    border: 0;
+    border-radius: 7px;
+    background: transparent;
+    color: inherit;
+    padding: 8px 12px;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.mj_NewSessionSheet_agent:hover:not(:disabled) {
+    background: var(--cpd-color-bg-subtle-primary);
+}
+
+.mj_NewSessionSheet_agent:disabled {
+    cursor: default;
+    opacity: 0.5;
+}
+
+/* Outlined secondary, like the upload dialog's Skip. Full strength beside its dimmed row. */
+.mj_NewSessionSheet_wake {
+    flex: 0 0 auto;
+    margin-right: 8px;
+    border: 1px solid var(--cpd-color-border-interactive-secondary);
+    border-radius: var(--cpd-radius-md);
+    background: transparent;
+    color: var(--cpd-color-text-primary);
+    padding: var(--cpd-space-1x) var(--cpd-space-3x);
+    font: 500 12.5px/16px var(--cpd-font-family-ui);
+    cursor: pointer;
+}
+
+.mj_NewSessionSheet_wake:hover {
+    background: var(--cpd-color-bg-subtle-primary);
+}
+
+.mj_NewSessionSheet_agent:focus-visible,
+.mj_NewSessionSheet_wake:focus-visible {
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: 2px;
+}
+
+.mj_NewSessionSheet_waking {
+    flex: 0 0 auto;
+    margin-right: 12px;
+}
+
 /* Box usage under an agent (and above the folder list once one is chosen): the box's last
    capacity report — limits with reset times, live sessions, disk — and an "as of" caption
-   saying how old the numbers are. Spans, not divs: the agent row is a <button>. */
+   saying how old the numbers are. Spans, not divs: it sits inside the agent's <button>. */
 .mj_NewSessionSheet_usage {
     display: flex;
     flex-direction: column;
