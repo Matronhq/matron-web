@@ -63,9 +63,12 @@ export function filterProjects(terms: string[], projects: Project[], missions: M
         }
         const titles = missionTitles(project, missions);
         if (!matches(terms, [...own, ...titles])) continue;
+        // The whole query in one mission, else the mission with a word the project's own title lacks.
+        const foldedOwn = own.map(fold);
+        const missing = terms.filter((term) => !foldedOwn.some((text) => text.includes(term)));
         const matchedMission =
             titles.find((title) => matches(terms, [title])) ??
-            titles.find((title) => terms.some((term) => fold(title).includes(term)));
+            titles.find((title) => missing.some((term) => fold(title).includes(term)));
         byMission.push({ project, matchedMission });
     }
     return [...byTitle, ...byMission];

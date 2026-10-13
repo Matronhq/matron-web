@@ -162,6 +162,23 @@ describe("ProjectsDashboard", () => {
             );
         });
 
+        it("names the mission that supplied the word the title lacks", async () => {
+            const container = await mount(
+                <ProjectsDashboard
+                    projects={[trackerProject({ id: "pj_2", num: 2, title: "Print pipeline" })]}
+                    unfiled={[
+                        trackerMission({ id: "ms_10", num: 10, title: "Print queue", project_id: "pj_2" }),
+                        trackerMission({ id: "ms_11", num: 11, title: "Spine width on the cover", project_id: "pj_2" }),
+                    ]}
+                    onOpenProject={jest.fn()}
+                />,
+            );
+            await type(container, "print cover");
+            expect(container.querySelector(".mj_ProjectCard_match")?.textContent).toBe(
+                "Mission: Spine width on the cover",
+            );
+        });
+
         it("brings the whole page back when cleared", async () => {
             const container = await mount(dashboard);
             await type(container, "cover");
