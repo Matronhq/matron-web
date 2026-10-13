@@ -90,6 +90,8 @@ const MESSAGE_SEARCH_LIMIT = 20;
 const MESSAGE_SEARCH_MAX_QUERY_LEN = 256;
 // Transport-agnostic deadline: abort a /search that never settles so "Searching…" can't hang.
 const MESSAGE_SEARCH_TIMEOUT_MS = 15_000;
+/** How long "go to number" waits for the journal before reporting a failed lookup. */
+export const NUMBER_LOOKUP_TIMEOUT_MS = 15_000;
 
 const NUMBER_LOOKUP_KINDS: readonly NumberLookupKind[] = ["item", "mission", "milestone", "project"];
 const isTrackerNumber = (value: unknown): value is number =>
@@ -1837,12 +1839,22 @@ export class MatronJournalClient {
         const api = this.api;
         const user = this.state.session?.username;
         if (!api || !user || !Number.isSafeInteger(num) || num <= 0) return { status: "failed" };
+        // Bounded like searchMessages: a transport that ignores the abort signal must not leave
+        // the field waiting for ever.
+        const call = api.lookup(user, num, signal);
+        void call.catch(() => undefined);
+        let timer: ReturnType<typeof setTimeout>;
+        const timeout = new Promise<never>((_resolve, reject) => {
+            timer = setTimeout(() => reject(new Error("timeout")), NUMBER_LOOKUP_TIMEOUT_MS);
+        });
         try {
-            const hit = sanitizeNumberLookup(await api.lookup(user, num, signal));
+            const hit = sanitizeNumberLookup(await Promise.race([call, timeout]));
             return hit ? { status: "found", hit } : { status: "failed" };
         } catch (error) {
             if (error instanceof JournalApiError && error.status === 404) return { status: "none" };
             return { status: "failed" };
+        } finally {
+            clearTimeout(timer!);
         }
     }
 

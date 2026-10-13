@@ -8,7 +8,7 @@ Please see LICENSE files in the repository root for full details.
 import { TextDecoder as NodeTextDecoder, TextEncoder as NodeTextEncoder } from "node:util";
 
 import { JournalApi, JournalApiError } from "../../../src/journal/api";
-import { MatronJournalClient } from "../../../src/journal/client";
+import { MatronJournalClient, NUMBER_LOOKUP_TIMEOUT_MS } from "../../../src/journal/client";
 import type { ClientState } from "../../../src/journal/types";
 
 interface Internals {
@@ -90,6 +90,18 @@ describe("MatronJournalClient go to number", () => {
         expect(await client.lookupNumber(0)).toEqual({ status: "failed" });
         expect(await client.lookupNumber(1.5)).toEqual({ status: "failed" });
         expect(lookup).not.toHaveBeenCalled();
+    });
+
+    it("gives up on a journal that never answers", async () => {
+        jest.useFakeTimers();
+        try {
+            const client = makeClient(jest.fn().mockReturnValue(new Promise(() => undefined)));
+            const outcome = client.lookupNumber(412);
+            jest.advanceTimersByTime(NUMBER_LOOKUP_TIMEOUT_MS);
+            expect(await outcome).toEqual({ status: "failed" });
+        } finally {
+            jest.useRealTimers();
+        }
     });
 
     it("opens each kind in its own view; a milestone opens its mission", () => {
