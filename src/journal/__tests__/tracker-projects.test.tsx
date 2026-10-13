@@ -106,6 +106,89 @@ describe("ProjectsDashboard", () => {
         expect(container.querySelector(".mj_ProjectCard")?.hasAttribute("aria-label")).toBe(false);
     });
 
+    describe("filter field", () => {
+        async function type(container: HTMLElement, value: string): Promise<void> {
+            const input = container.querySelector<HTMLInputElement>(".mj_ProjectsFilter_input")!;
+            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+            await act(async () => {
+                setter.call(input, value);
+                input.dispatchEvent(new Event("input", { bubbles: true }));
+            });
+        }
+        const titles = (container: HTMLElement): string[] =>
+            [...container.querySelectorAll(".mj_ProjectCard_title")].map((node) => node.textContent ?? "");
+        const dashboard = (
+            <ProjectsDashboard
+                projects={[
+                    trackerProject({ id: "pj_1", num: 1, title: "Docs site launch" }),
+                    trackerProject({ id: "pj_2", num: 2, title: "Print pipeline" }),
+                    trackerProject({ id: "pj_3", num: 3, title: "Cover designer" }),
+                    trackerProject({ id: "pj_4", num: 4, title: "Old cover tool", state: "closed" }),
+                ]}
+                unfiled={[
+                    trackerMission({
+                        id: "ms_11",
+                        num: 11,
+                        title: "Spine width",
+                        name: "Cóver spine",
+                        project_id: "pj_2",
+                    }),
+                    trackerMission({ id: "ms_12", num: 12, title: "Cover photo upload", project_id: null }),
+                    trackerMission({ id: "ms_13", num: 13, title: "Tidy the icons", project_id: null }),
+                ]}
+                onOpenProject={jest.fn()}
+            />
+        );
+
+        it("narrows to projects named by their title or by a mission, title matches first", async () => {
+            const container = await mount(dashboard);
+            expect(titles(container)).toEqual(["Docs site launch", "Print pipeline", "Cover designer"]);
+            await type(container, "COVER");
+            expect(titles(container)).toEqual(["Cover designer", "Print pipeline", "Old cover tool"]);
+            expect(container.querySelector(".mj_ProjectCard_match")?.textContent).toBe("Mission: Cóver spine");
+            expect(container.querySelector(".mj_ProjectsFilter_count")?.textContent).toBe("2 of 3");
+            expect(container.querySelectorAll(".mj_ProjectsUnfiled .mj_ProjectMission")).toHaveLength(1);
+            expect(container.querySelector(".mj_ProjectsClosedToggle")).toBeNull();
+        });
+
+        it("needs every word, in any order", async () => {
+            const container = await mount(dashboard);
+            await type(container, "spine print");
+            expect(titles(container)).toEqual(["Print pipeline"]);
+            await type(container, "cover zebra");
+            expect(titles(container)).toEqual([]);
+            expect(container.querySelector(".mj_TrackerEmpty_title")?.textContent).toBe(
+                "No projects match “cover zebra”",
+            );
+        });
+
+        it("names the mission that supplied the word the title lacks", async () => {
+            const container = await mount(
+                <ProjectsDashboard
+                    projects={[trackerProject({ id: "pj_2", num: 2, title: "Print pipeline" })]}
+                    unfiled={[
+                        trackerMission({ id: "ms_10", num: 10, title: "Print queue", project_id: "pj_2" }),
+                        trackerMission({ id: "ms_11", num: 11, title: "Spine width on the cover", project_id: "pj_2" }),
+                    ]}
+                    onOpenProject={jest.fn()}
+                />,
+            );
+            await type(container, "print cover");
+            expect(container.querySelector(".mj_ProjectCard_match")?.textContent).toBe(
+                "Mission: Spine width on the cover",
+            );
+        });
+
+        it("brings the whole page back when cleared", async () => {
+            const container = await mount(dashboard);
+            await type(container, "cover");
+            await type(container, "");
+            expect(titles(container)).toEqual(["Docs site launch", "Print pipeline", "Cover designer"]);
+            expect(container.querySelector(".mj_ProjectsClosedToggle")?.textContent).toBe("Closed (1)");
+            expect(container.querySelectorAll(".mj_ProjectsUnfiled .mj_ProjectMission")).toHaveLength(2);
+        });
+    });
+
     it("shows an empty state", async () => {
         const container = await mount(<ProjectsDashboard projects={[]} onOpenProject={jest.fn()} />);
         expect(container.querySelector(".mj_TrackerEmpty_title")?.textContent).toBe("No projects yet");

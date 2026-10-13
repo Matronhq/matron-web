@@ -9,13 +9,15 @@ Please see LICENSE files in the repository root for full details.
  * The Projects home (unify step 7): the Mac's card dashboard (MacProjectsHome / ProjectCardView).
  * One card per open project — title, a red "Needs you · n" pill, the status preview (or "No status
  * yet"), and a footer with the open-mission count and the last activity. Closed projects sit behind
- * a toggle. Presentational: the pane owns loading and routing.
+ * a toggle. A filter field narrows the page to the projects and missions the typed words name.
+ * Presentational: the pane owns loading and routing.
  */
 
 import React, { useState } from "react";
 
 import type { Mission, Project } from "../types";
 import { formatRelativeTime, oneLine } from "./format";
+import { filterProjects, filterTerms, missionMatches } from "./projectsFilter";
 
 /** The row dot both project views use: running, waiting (a waiting rollup or anything needing you), or idle. */
 export function activityClass(activity: string | undefined, needsYou: number, open: boolean): string {
@@ -39,7 +41,16 @@ export function plural(count: number, noun: string, nounPlural = `${noun}s`): st
     return `${count} ${count === 1 ? noun : nounPlural}`;
 }
 
-function ProjectCard({ project, onOpen }: { project: Project; onOpen: (num: number) => void }): React.ReactElement {
+function ProjectCard({
+    project,
+    matchedMission,
+    onOpen,
+}: {
+    project: Project;
+    /** Filtering: the mission that put this project in the results, when its title didn't. */
+    matchedMission?: string;
+    onOpen: (num: number) => void;
+}): React.ReactElement {
     const status = project.status ? oneLine(project.status) : null;
     return (
         <button
@@ -54,6 +65,7 @@ function ProjectCard({ project, onOpen }: { project: Project; onOpen: (num: numb
             <span className={`mj_ProjectCard_status${status ? "" : " mj_ProjectCard_status_empty"}`}>
                 {status ?? "No status yet"}
             </span>
+            {matchedMission ? <span className="mj_ProjectCard_match">Mission: {matchedMission}</span> : null}
             <span className="mj_ProjectCard_footer">
                 {plural(openMissionCount(project), "open mission")} · last activity{" "}
                 {formatRelativeTime(project.last_activity_at)}
@@ -78,12 +90,24 @@ export function ProjectsDashboard({
     onOpenMission?: (num: number) => void;
 }): React.ReactElement {
     const [showClosed, setShowClosed] = useState(false);
-    const open = projects.filter((project) => project.state === "open");
+    const [query, setQuery] = useState("");
+    const terms = filterTerms(query);
+    const filtering = terms.length > 0;
+    const allOpen = projects.filter((project) => project.state === "open");
+    const open = filterProjects(terms, allOpen, unfiled);
     // Merged projects are closed into another; their missions moved, so they are not listed.
-    const closed = projects.filter((project) => project.state !== "open" && project.merged_into_num == null);
-    const loose = unfiled.filter((mission) => mission.state === "open" && !mission.project_id);
+    const closed = filterProjects(
+        terms,
+        projects.filter((project) => project.state !== "open" && project.merged_into_num == null),
+        unfiled,
+    );
+    const loose = unfiled.filter(
+        (mission) => mission.state === "open" && !mission.project_id && missionMatches(terms, mission),
+    );
+    // Closed projects that match are results too, so the filter shows them without the toggle.
+    const closedShown = showClosed || filtering;
 
-    if (projects.length === 0 && loose.length === 0) {
+    if (projects.length === 0 && loose.length === 0 && !filtering) {
         const empty = (
             <div className="mj_TrackerEmpty">
                 <p className="mj_TrackerEmpty_title">No projects yet</p>
@@ -103,12 +127,53 @@ export function ProjectsDashboard({
     return (
         <div className="mj_ProjectsDashboard">
             {header}
+            <div className="mj_ProjectsFilter">
+                <input
+                    type="search"
+                    className="mj_ProjectsFilter_input"
+                    placeholder="Filter projects"
+                    aria-label="Filter projects"
+                    autoComplete="off"
+                    spellCheck={false}
+                    value={query}
+                    onChange={(event) => setQuery(event.target.value)}
+                    onKeyDown={(event) => {
+                        if (event.key === "Escape" && query) {
+                            event.stopPropagation();
+                            setQuery("");
+                        }
+                    }}
+                />
+                {filtering ? (
+                    <span className="mj_ProjectsFilter_count" role="status">
+                        {open.length} of {allOpen.length}
+                    </span>
+                ) : null}
+            </div>
+            {filtering && open.length === 0 && closed.length === 0 && loose.length === 0 ? (
+                <div className="mj_TrackerEmpty">
+                    <p className="mj_TrackerEmpty_title">No projects match “{query.trim()}”</p>
+                    <p className="mj_TrackerEmpty_hint">Check the spelling or try another word.</p>
+                </div>
+            ) : null}
             <div className="mj_ProjectsGrid">
-                {open.map((project) => (
-                    <ProjectCard key={project.id} project={project} onOpen={onOpenProject} />
+                {open.map(({ project, matchedMission }) => (
+                    <ProjectCard
+                        key={project.id}
+                        project={project}
+                        matchedMission={matchedMission}
+                        onOpen={onOpenProject}
+                    />
                 ))}
-                {showClosed &&
-                    closed.map((project) => <ProjectCard key={project.id} project={project} onOpen={onOpenProject} />)}
+                {closedShown &&
+                    closed.map(({ project, matchedMission }) => (
+                        <ProjectCard
+                            key={project.id}
+                            project={project}
+                            matchedMission={matchedMission}
+                            onOpen={onOpenProject}
+                        />
+                    ))}
             </div>
             {loose.length > 0 && (
                 <section className="mj_ProjectCardSection mj_ProjectsUnfiled">
@@ -141,7 +206,7 @@ export function ProjectsDashboard({
                     ))}
                 </section>
             )}
-            {closed.length > 0 && (
+            {closed.length > 0 && !filtering && (
                 <button
                     type="button"
                     className="mj_TrackerTextButton mj_ProjectsClosedToggle"

@@ -1646,6 +1646,39 @@ button.mj_TrackerCard {
     padding: 16px;
 }
 
+.mj_ProjectsFilter {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 0 0 16px;
+}
+
+.mj_ProjectsFilter_input {
+    width: 100%;
+    max-width: 360px;
+    box-sizing: border-box;
+    padding: 7px 10px;
+    border: 1px solid rgb(128 128 128 / 0.2);
+    border-radius: 9px;
+    background: var(--cpd-color-bg-subtle-secondary);
+    color: var(--cpd-color-text-primary);
+    font: inherit;
+}
+
+.mj_ProjectsFilter_count {
+    flex-shrink: 0;
+    color: var(--cpd-color-text-secondary);
+    font-size: 12px;
+}
+
+.mj_ProjectCard_match {
+    overflow: hidden;
+    color: var(--cpd-color-text-secondary);
+    font-size: 12px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .mj_ProjectsGrid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr));
