@@ -281,7 +281,18 @@ export async function loadMatronConfig(): Promise<MatronConfig> {
     }
 }
 
+/**
+ * The most attachments the journal takes on one item or comment; a write with more is refused
+ * (HTTP 400). Mirrors the journal's own limit, so a client that has more to send splits them.
+ */
+export const JOURNAL_ATTACHMENTS_MAX = 20;
+
 function messageForCode(code: string | undefined, status: number): string {
+    return knownErrorMessage(code) ?? `The journal server returned HTTP ${status}.`;
+}
+
+/** The sentence for a journal error code this client knows, or undefined for any other code. */
+export function knownErrorMessage(code: string | undefined): string | undefined {
     switch (code) {
         case "bad_credentials":
             return "The username or password is incorrect.";
@@ -308,7 +319,7 @@ function messageForCode(code: string | undefined, status: number): string {
         case "not_agent_device":
             return "That device is not an agent box.";
         default:
-            return `The journal server returned HTTP ${status}.`;
+            return undefined;
     }
 }
 

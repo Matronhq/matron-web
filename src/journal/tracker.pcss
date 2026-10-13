@@ -1202,7 +1202,11 @@ Please see LICENSE files in the repository root for full details.
     width: 12px;
     height: 12px;
 }
-.mj_TrackerComposer_chipRemove:hover {
+.mj_TrackerComposer_chipRemove:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+.mj_TrackerComposer_chipRemove:hover:not(:disabled) {
     background: var(--cpd-state-hover);
     color: var(--cpd-color-text-primary);
 }
@@ -1210,19 +1214,24 @@ Please see LICENSE files in the repository root for full details.
     outline: 2px solid var(--cpd-color-text-action-accent);
     outline-offset: 0;
 }
-/* A voice note that went alone and failed: held beside the box with Retry / Discard. */
-.mj_TrackerComposer_heldVoice {
+/* A voice note that went alone and failed: held beside the box with Retry / Discard. A typed reply
+   the journal did not take says so the same way, its text and files kept in the box below. */
+.mj_TrackerComposer_heldVoice,
+.mj_TrackerComposer_failure {
     display: flex;
     align-items: center;
     gap: var(--cpd-space-2x);
     color: var(--cpd-color-text-critical-primary);
     font: var(--cpd-font-meta);
 }
-.mj_TrackerComposer_heldVoiceText {
+.mj_TrackerComposer_heldVoiceText,
+.mj_TrackerComposer_failureText {
     flex: 1 1 auto;
 }
 .mj_TrackerComposer_heldVoiceRetry,
-.mj_TrackerComposer_heldVoiceDiscard {
+.mj_TrackerComposer_heldVoiceDiscard,
+.mj_TrackerComposer_failureRetry,
+.mj_TrackerComposer_failureDiscard {
     padding: 2px var(--cpd-space-2x);
     border: 1px solid var(--cpd-color-border-subtle);
     border-radius: var(--cpd-radius-sm);
@@ -1232,13 +1241,15 @@ Please see LICENSE files in the repository root for full details.
     cursor: pointer;
 }
 .mj_TrackerComposer_heldVoiceRetry:disabled,
-.mj_TrackerComposer_heldVoiceDiscard:disabled {
+.mj_TrackerComposer_heldVoiceDiscard:disabled,
+.mj_TrackerComposer_failureRetry:disabled,
+.mj_TrackerComposer_failureDiscard:disabled {
     opacity: 0.5;
     cursor: default;
 }
-/* The tray holds more than one reply can carry (a failed voice note came back): Send waits. */
+/* The tray holds more files than one comment can carry: Send splits them, and this says so. */
 .mj_TrackerComposer_limit {
-    color: var(--cpd-color-text-critical-primary);
+    color: var(--cpd-color-text-secondary);
     font: var(--cpd-font-meta);
 }
 .mj_TrackerComposer_attach:disabled {

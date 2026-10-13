@@ -16,6 +16,7 @@ import { trackerComment, trackerItem, trackerMission } from "./tracker-fixtures"
 interface FakeClient {
     getSnapshot: jest.Mock;
     commentItem: jest.Mock;
+    postTrackerComment: jest.Mock;
     closeTrackerItem: jest.Mock;
     reopenTrackerItem: jest.Mock;
     closeTrackerView: jest.Mock;
@@ -29,6 +30,7 @@ function fakeClient(): FakeClient {
     return {
         getSnapshot: jest.fn().mockReturnValue({ selectedConversationId: "c1", conversations: [] }),
         commentItem: jest.fn().mockResolvedValue(true),
+        postTrackerComment: jest.fn().mockResolvedValue({ ok: true }),
         closeTrackerItem: jest.fn().mockResolvedValue(true),
         reopenTrackerItem: jest.fn().mockResolvedValue(true),
         closeTrackerView: jest.fn(),
@@ -191,7 +193,7 @@ describe("ItemDetail", () => {
         expect(client.closeTrackerItem).toHaveBeenCalledWith(12, "done");
     });
 
-    it("sends a reply through client.commentItem", async () => {
+    it("sends a reply through client.postTrackerComment", async () => {
         const client = fakeClient();
         const { container } = await mount(
             <ItemDetail
@@ -212,14 +214,18 @@ describe("ItemDetail", () => {
             container.querySelector<HTMLButtonElement>(".mj_TrackerComposer_send")!.click();
         });
 
-        expect(client.commentItem).toHaveBeenCalledWith(12, { body: "on it, deploying now" }, expect.any(String));
+        expect(client.postTrackerComment).toHaveBeenCalledWith(
+            12,
+            { body: "on it, deploying now" },
+            expect.any(String),
+        );
     });
 
     // F1: a failed send keeps the draft; retrying the SAME text must reuse the idempotency key so the
     // server can dedupe a comment that committed before its response was lost. New text → new key.
     it("reuses the idempotency key across retries of the same draft, mints a new one when it changes", async () => {
         const client = fakeClient();
-        client.commentItem.mockResolvedValue(false); // every send fails → draft (and key) persist
+        client.postTrackerComment.mockResolvedValue({ ok: false }); // every send fails → draft (and key) persist
         const { container } = await mount(
             <ItemDetail
                 item={trackerItem({ num: 12 })}
@@ -246,13 +252,13 @@ describe("ItemDetail", () => {
         await type("please retry cleanly");
         await clickSend();
         await clickSend(); // retry of identical text
-        const key1a = client.commentItem.mock.calls[0][2];
-        const key1b = client.commentItem.mock.calls[1][2];
+        const key1a = client.postTrackerComment.mock.calls[0][2];
+        const key1b = client.postTrackerComment.mock.calls[1][2];
         expect(key1a).toBe(key1b);
 
         await type("actually a different comment");
         await clickSend();
-        const key2 = client.commentItem.mock.calls[2][2];
+        const key2 = client.postTrackerComment.mock.calls[2][2];
         expect(key2).not.toBe(key1a);
     });
 
@@ -260,7 +266,7 @@ describe("ItemDetail", () => {
     // user's only copy, and destroying it on offline/auth/5xx is silent data loss.
     it("keeps the reply draft intact when the send fails", async () => {
         const client = fakeClient();
-        client.commentItem.mockResolvedValue(false);
+        client.postTrackerComment.mockResolvedValue({ ok: false });
         const { container } = await mount(
             <ItemDetail
                 item={trackerItem({ num: 12 })}
@@ -280,7 +286,7 @@ describe("ItemDetail", () => {
             container.querySelector<HTMLButtonElement>(".mj_TrackerComposer_send")!.click();
         });
 
-        expect(client.commentItem).toHaveBeenCalledWith(
+        expect(client.postTrackerComment).toHaveBeenCalledWith(
             12,
             { body: "important context I do not want to lose" },
             expect.any(String),

@@ -7,7 +7,13 @@ Please see LICENSE files in the repository root for full details.
 
 import { webcrypto } from "node:crypto";
 
-import { BROWSER_MEMORY_SAFETY_MAX_BYTES, MatronJournalClient, voiceNoteFile } from "../../../src/journal/client";
+import { JournalApiError } from "../../../src/journal/api";
+import {
+    BROWSER_MEMORY_SAFETY_MAX_BYTES,
+    commentFailureMessage,
+    MatronJournalClient,
+    voiceNoteFile,
+} from "../../../src/journal/client";
 import type {
     ClientState,
     JournalEvent,
@@ -721,6 +727,46 @@ describe("MatronJournalClient tracker mutations", () => {
         await expect(client.commentItem(1, { body: "landed" })).resolves.toBe(true);
         await expect(client.commentItem(1, { body: "failed" })).resolves.toBe(false);
         expect(client.getSnapshot().trackerError).toBe("offline");
+    });
+
+    // The reply box shows a refusal beside the kept draft, so postTrackerComment hands the reason
+    // back instead of raising the pane's banner; commentItem (taps, Seen) still raises the banner.
+    it("postTrackerComment returns a refusal's reason without raising the banner; commentItem raises it", async () => {
+        const { client, state } = makeClient();
+        const refusal = new JournalApiError(
+            "The journal server returned HTTP 400.",
+            400,
+            "too_many_attachments",
+            undefined,
+            { error: "too_many_attachments", max: 20 },
+        );
+        state.api = {
+            postItemComment: jest.fn().mockRejectedValue(refusal),
+            item: jest.fn(),
+            items: jest.fn(),
+        };
+        const why = "The journal takes at most 20 attachments on one comment.";
+
+        await expect(client.postTrackerComment(1, { body: "too many" }, "k")).resolves.toEqual({
+            ok: false,
+            reason: why,
+        });
+        expect(client.getSnapshot().trackerError).toBeUndefined();
+
+        await expect(client.commentItem(1, { body: "too many" })).resolves.toBe(false);
+        expect(client.getSnapshot().trackerError).toBe(why);
+    });
+
+    it("postTrackerComment resolves ok on a confirmed write", async () => {
+        const { client, state } = makeClient();
+        state.api = {
+            postItemComment: jest.fn().mockResolvedValue({}),
+            item: jest.fn().mockResolvedValue({ item: item(), comments: [] }),
+            items: jest.fn(),
+        };
+
+        await expect(client.postTrackerComment(1, { body: "landed" }, "k")).resolves.toEqual({ ok: true });
+        expect(state.api.postItemComment).toHaveBeenCalledWith(1, { body: "landed" }, "k");
     });
 
     // The user can go Back and open another item while a write is in flight. Refetching the mutated
@@ -1665,5 +1711,66 @@ describe("MatronJournalClient notices and user settings", () => {
         expect(client.getSnapshot().userSettings).toEqual({ notices: false });
         expect(internal.api.items).toHaveBeenCalledWith({ state: "open" });
         expect(client.getSnapshot().inboxItems).toHaveLength(1);
+    });
+});
+
+describe("commentFailureMessage", () => {
+    const refused = (status: number, body: Record<string, unknown>): JournalApiError =>
+        new JournalApiError(
+            `The journal server returned HTTP ${status}.`,
+            status,
+            typeof body.error === "string" ? body.error : undefined,
+            undefined,
+            body,
+        );
+
+    it("uses the journal's message when it gives one", () => {
+        const error = refused(400, {
+            error: "too_many_attachments",
+            max: 20,
+            message: "A comment can carry at most 20 attachments.",
+        });
+        expect(commentFailureMessage(error)).toBe("A comment can carry at most 20 attachments.");
+    });
+
+    it("names the limit for too many attachments, from the journal's max", () => {
+        const error = refused(400, { error: "too_many_attachments", max: 10 });
+        expect(commentFailureMessage(error)).toBe("The journal takes at most 10 attachments on one comment.");
+    });
+
+    it("falls back to this client's limit when too many attachments comes without a max", () => {
+        const error = refused(400, { error: "too_many_attachments" });
+        expect(commentFailureMessage(error)).toBe("The journal takes at most 20 attachments on one comment.");
+    });
+
+    it("passes any other reason on", () => {
+        const error = refused(400, { error: "bad_request", reason: "body_too_long" });
+        expect(commentFailureMessage(error)).toBe("The server refused it: body too long.");
+    });
+
+    it("says the server refused it, with the status, for a bare bad request", () => {
+        expect(commentFailureMessage(refused(400, { error: "bad_request" }))).toBe("The server refused it (HTTP 400).");
+        expect(commentFailureMessage(refused(422, {}))).toBe("The server refused it (HTTP 422).");
+    });
+
+    it("keeps the sentence for an error code this client knows", () => {
+        expect(commentFailureMessage(refused(404, { error: "not_found" }))).toBe("The requested item was not found.");
+    });
+
+    it("leaves auth, rate-limit, server and network failures to the ordinary message", () => {
+        const auth = new JournalApiError("This device session is no longer valid.", 401, "unauthenticated");
+        const server = new JournalApiError("The journal server returned HTTP 503.", 503, undefined, undefined, {
+            message: "maintenance",
+        });
+        const limited = new JournalApiError(
+            "Too many sign-in attempts. Try again in a minute.",
+            429,
+            "rate_limited",
+            30,
+        );
+        expect(commentFailureMessage(auth)).toBe("This device session is no longer valid.");
+        expect(commentFailureMessage(limited)).toBe("Too many sign-in attempts. Try again in a minute. (30s)");
+        expect(commentFailureMessage(server)).toBe("The journal server returned HTTP 503.");
+        expect(commentFailureMessage(new Error("offline"))).toBe("offline");
     });
 });

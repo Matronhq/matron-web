@@ -6,8 +6,10 @@ Please see LICENSE files in the repository root for full details.
 */
 
 import {
+    JOURNAL_ATTACHMENTS_MAX,
     JournalApi,
     JournalApiError,
+    knownErrorMessage,
     loadMatronConfig,
     parseBoxDefaultsState,
     parseBoxStatus,
@@ -213,6 +215,10 @@ export type StartOutcome =
     { kind: "created"; convoId: string } | { kind: "error"; message: string } | { kind: "uncertain" };
 
 export type WorkerKind = "claude" | "codex";
+
+/** How one item comment went: written, or not — with why, unless the session ended meanwhile
+ *  (signed out, or another account signed in), when there is nothing left to report it to. */
+export type TrackerCommentOutcome = { ok: true } | { ok: false; reason?: string };
 
 export function workerKind(conversation: Conversation): WorkerKind | null {
     if (!isSubChat(conversation)) return null;
@@ -2607,23 +2613,37 @@ export class MatronJournalClient {
         body: TrackerCommentWrite,
         idempotencyKey?: string,
     ): Promise<boolean> {
+        const outcome = await this.postTrackerComment(id, body, idempotencyKey);
+        if (!outcome.ok && outcome.reason !== undefined) this.patch({ trackerError: outcome.reason });
+        return outcome.ok;
+    }
+
+    /**
+     * commentItem for the reply box: the same write and refetches, but a failure comes back with
+     * its reason instead of raising the tracker's error banner, so the box can say beside the kept
+     * draft which reply did not go and why.
+     */
+    public async postTrackerComment(
+        id: number | string,
+        body: TrackerCommentWrite,
+        idempotencyKey?: string,
+    ): Promise<TrackerCommentOutcome> {
         const api = this.api;
-        if (!api) return false;
+        if (!api) return { ok: false };
         let written: TrackerItem | undefined;
         try {
             ({ item: written } = await api.postItemComment(id, body, idempotencyKey ?? crypto.randomUUID()));
         } catch (error) {
-            if (this.api === api) this.patch({ trackerError: errorMessage(error) });
-            return false;
+            return this.api === api ? { ok: false, reason: commentFailureMessage(error) } : { ok: false };
         }
-        if (this.api !== api) return true;
+        if (this.api !== api) return { ok: true };
         // Reflect the written item at once (a Seen tap closes a notice in the same write), so the
         // row leaves "Needs you" and the badge drops before the refetches below land.
         if (written) this.applyWrittenItem(written);
         if (this.isSelectedTrackerItem(id)) await this.loadItem(id);
         if (this.inboxTracked()) await this.loadInbox();
         if (this.state.missions) await this.loadMissions();
-        return true;
+        return { ok: true };
     }
 
     /**
@@ -3904,6 +3924,36 @@ export function errorMessage(error: unknown): string {
         return `${error.message} (${error.retryAfter}s)`;
     }
     return error instanceof Error ? error.message : "Something went wrong.";
+}
+
+/**
+ * Why an item comment was not written. A refusal (a 4xx other than an expired or refused session
+ * or a rate limit) says what the journal said: its `message`, else — for `too_many_attachments` —
+ * the limit (the response's `max`), else its `reason`, else the sentence for an error code this
+ * client knows, else that the server refused it and with what status. Anything else — offline, a timeout, a 5xx, auth, a rate
+ * limit with its wait — is the ordinary error message.
+ */
+export function commentFailureMessage(error: unknown): string {
+    if (
+        !(error instanceof JournalApiError) ||
+        error.status < 400 ||
+        error.status >= 500 ||
+        error.status === 401 ||
+        error.status === 403 ||
+        error.status === 429
+    ) {
+        return errorMessage(error);
+    }
+    const body = error.body ?? {};
+    if (typeof body.message === "string" && body.message.trim()) return body.message.trim();
+    if (error.code === "too_many_attachments") {
+        const max = typeof body.max === "number" && body.max > 0 ? body.max : JOURNAL_ATTACHMENTS_MAX;
+        return `The journal takes at most ${max} attachments on one comment.`;
+    }
+    if (typeof body.reason === "string" && body.reason.trim()) {
+        return `The server refused it: ${body.reason.trim().replace(/_/g, " ")}.`;
+    }
+    return knownErrorMessage(error.code) ?? `The server refused it (HTTP ${error.status}).`;
 }
 
 /** The label of a notice's one-tap answer; the journal closes the notice when it is tapped. */
