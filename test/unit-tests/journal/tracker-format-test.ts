@@ -15,6 +15,7 @@ import {
     missionLabel,
     needsUser,
     oneLine,
+    closedStatusLabel,
     resolutionLabel,
     resolveActionLabel,
     statusRowText,
@@ -90,6 +91,18 @@ describe("resolveActionLabel", () => {
     ];
     it.each(cases)("labels %s as %s", (resolution, label) => {
         expect(resolveActionLabel(resolution)).toBe(label);
+    });
+});
+
+describe("closedStatusLabel", () => {
+    it("says Seen for a notice the user closed with its own button", () => {
+        expect(closedStatusLabel({ kind: "notice", resolution: "done", chosen_action: "Seen" })).toBe("Seen");
+        expect(closedStatusLabel({ kind: "notice", resolution: "done", chosen_action: "seen" })).toBe("Seen");
+    });
+    it("keeps the resolution for anything else, and Closed when there is none", () => {
+        expect(closedStatusLabel({ kind: "notice", resolution: "done", chosen_action: null })).toBe("Done");
+        expect(closedStatusLabel({ kind: "question", resolution: "answered", chosen_action: "Seen" })).toBe("Answered");
+        expect(closedStatusLabel({ kind: "decision", resolution: null })).toBe("Closed");
     });
 });
 

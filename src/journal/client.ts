@@ -389,6 +389,7 @@ export class MatronJournalClient {
     private trackerItemGen = 0;
     private trackerMissionGen = 0;
     private trackerInboxGen = 0;
+    private trackerInboxDoneGen = 0;
     // True while a loadInbox walk is in flight. The first connect-time walk publishes only at the
     // end, so until then inboxItems is undefined; writes and item markers that land meanwhile must
     // still count (see inboxTracked / applyWrittenItem) or the walk's older pages overwrite them.
@@ -2622,6 +2623,7 @@ export class MatronJournalClient {
         if (written) this.applyWrittenItem(written);
         if (this.isSelectedTrackerItem(id)) await this.loadItem(id);
         if (this.inboxTracked()) await this.loadInbox();
+        if (this.state.inboxDone) void this.loadInboxDone();
         if (this.state.missions) await this.loadMissions();
         return true;
     }
@@ -2687,6 +2689,72 @@ export class MatronJournalClient {
                 : {}),
             ...(detail && detail.item.id === item.id ? { trackerItem: { ...detail, item } } : {}),
         });
+    }
+
+    /**
+     * For you's Done tab: the newest page of closed questions, decisions and notices (tasks are the
+     * agents' work list, not something the user answered or read). Also the refresh: rows already
+     * loaded beyond the first page stay, except one the fresh page should have carried and does
+     * not, which has been reopened.
+     */
+    public async loadInboxDone(): Promise<void> {
+        const api = this.api;
+        if (!api) return;
+        const gen = ++this.trackerInboxDoneGen;
+        const prior = this.state.inboxDone;
+        this.patch({ inboxDone: { items: prior?.items ?? [], nextCursor: prior?.nextCursor ?? null, loading: true } });
+        try {
+            const { items, next_cursor } = await api.items(INBOX_DONE_FILTER);
+            if (this.api !== api || this.trackerInboxDoneGen !== gen) return;
+            const fresh = new Set(items.map((item) => item.id));
+            const oldest = items[items.length - 1];
+            // Below the fresh page only: anything newer that it does not list is no longer closed.
+            const older = oldest
+                ? (prior?.items ?? []).filter((row) => !fresh.has(row.id) && sortsAfter(row, oldest))
+                : [];
+            this.patch({
+                inboxDone: {
+                    items: [...items, ...older],
+                    nextCursor: older.length > 0 ? (prior?.nextCursor ?? null) : next_cursor,
+                    loading: false,
+                },
+            });
+        } catch (error) {
+            if (this.api !== api || this.trackerInboxDoneGen !== gen) return;
+            const kept = this.state.inboxDone;
+            this.patch({
+                inboxDone: {
+                    items: kept?.items ?? [],
+                    nextCursor: kept?.nextCursor ?? null,
+                    loading: false,
+                    error: errorMessage(error),
+                },
+            });
+        }
+    }
+
+    /** The Done tab's "Show more": the next page, appended. */
+    public async loadMoreInboxDone(): Promise<void> {
+        const api = this.api;
+        const done = this.state.inboxDone;
+        if (!api || !done || done.loading || !done.nextCursor) return;
+        const gen = ++this.trackerInboxDoneGen;
+        this.patch({ inboxDone: { ...done, loading: true, error: undefined } });
+        try {
+            const { items, next_cursor } = await api.items({ ...INBOX_DONE_FILTER, cursor: done.nextCursor });
+            if (this.api !== api || this.trackerInboxDoneGen !== gen) return;
+            const have = new Set(done.items.map((item) => item.id));
+            this.patch({
+                inboxDone: {
+                    items: [...done.items, ...items.filter((item) => !have.has(item.id))],
+                    nextCursor: next_cursor,
+                    loading: false,
+                },
+            });
+        } catch (error) {
+            if (this.api !== api || this.trackerInboxDoneGen !== gen) return;
+            this.patch({ inboxDone: { ...done, loading: false, error: errorMessage(error) } });
+        }
     }
 
     // PUT is an upsert by name and idempotent by construction, so no Idempotency-Key: a retried
@@ -2809,7 +2877,7 @@ export class MatronJournalClient {
     private handleTrackerMarker(event: JournalEvent): void {
         // The inbox feeds the For you badge on the rail, so it follows item markers even while the
         // pane is closed; everything else is refetched only for an open pane.
-        if (event.type === "item" && this.inboxTracked()) this.scheduleInboxRefetch();
+        if (event.type === "item" && (this.inboxTracked() || this.state.inboxDone)) this.scheduleInboxRefetch();
         if (!this.state.trackerView?.open) return;
         // The open item's `working` block follows the conversation that owns it: a turn starting
         // or ending there changes what the thread's indicator should say, and no item marker
@@ -2862,6 +2930,7 @@ export class MatronJournalClient {
         this.trackerInboxRefetchTimer = window.setTimeout(() => {
             this.trackerInboxRefetchTimer = undefined;
             if (this.inboxTracked()) void this.loadInbox();
+            if (this.state.inboxDone) void this.loadInboxDone();
         }, 250);
     }
 
@@ -3904,6 +3973,20 @@ export function errorMessage(error: unknown): string {
         return `${error.message} (${error.retryAfter}s)`;
     }
     return error instanceof Error ? error.message : "Something went wrong.";
+}
+
+/** The Done tab's page: what the user answered, decided or read, most recently touched first. */
+const INBOX_DONE_FILTER = {
+    state: "closed",
+    kind: ["question", "decision", "notice"],
+    sort: "updated",
+    limit: 50,
+} as const;
+
+/** True when `row` comes after `mark` in the journal's `sort=updated` order (newest first, then
+ *  the higher number). */
+function sortsAfter(row: TrackerItem, mark: TrackerItem): boolean {
+    return row.updated_at < mark.updated_at || (row.updated_at === mark.updated_at && row.num < mark.num);
 }
 
 /** The label of a notice's one-tap answer; the journal closes the notice when it is tapped. */

@@ -315,6 +315,46 @@ describe("MatronJournalClient tracker loaders", () => {
         expect(client.getSnapshot().inboxItems).toEqual([item()]);
     });
 
+    it("loadInboxDone refreshes the first page and keeps the older rows already loaded", async () => {
+        const { client, state } = makeClient();
+        const closed = (num: number, updated_at: number): ReturnType<typeof item> =>
+            item({ id: `it_${num}`, num, state: "closed", updated_at });
+        state.api = {
+            items: jest
+                .fn()
+                .mockResolvedValueOnce({ items: [closed(5, 50), closed(4, 40)], next_cursor: "c1" })
+                .mockResolvedValueOnce({ items: [closed(3, 30), closed(2, 20)], next_cursor: "c2" })
+                // The refresh: 6 is newly closed, 5 was reopened (gone), 4 is still there.
+                .mockResolvedValueOnce({ items: [closed(6, 60), closed(4, 40)], next_cursor: "c9" }),
+        };
+
+        await client.loadInboxDone();
+        await client.loadMoreInboxDone();
+        expect(client.getSnapshot().inboxDone?.items.map((row) => row.num)).toEqual([5, 4, 3, 2]);
+
+        await client.loadInboxDone();
+
+        const done = client.getSnapshot().inboxDone!;
+        expect(done.items.map((row) => row.num)).toEqual([6, 4, 3, 2]);
+        expect(done.nextCursor).toBe("c2");
+        expect(done.loading).toBe(false);
+    });
+
+    it("a failed Done load keeps the rows it had and reports the error", async () => {
+        const { client, state } = makeClient();
+        state.api = {
+            items: jest
+                .fn()
+                .mockResolvedValueOnce({ items: [item({ state: "closed" })], next_cursor: null })
+                .mockRejectedValueOnce(new Error("offline")),
+        };
+        await client.loadInboxDone();
+        await client.loadInboxDone();
+        const done = client.getSnapshot().inboxDone!;
+        expect(done.items).toHaveLength(1);
+        expect(done.error).toBe("offline");
+    });
+
     // F3: the item list is cursor-paginated. loadInbox must follow next_cursor to the end and dedupe,
     // or the inbox (and its "Needs you" section) silently drops every open item past the first page.
     it("loadInbox follows next_cursor across pages and dedupes by id", async () => {

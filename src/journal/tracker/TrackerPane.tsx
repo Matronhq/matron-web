@@ -401,6 +401,7 @@ export function TrackerPane({
         return (
             <ItemsInbox
                 items={state.inboxItems ?? []}
+                done={state.inboxDone}
                 client={client}
                 onOpenItem={(num) => client.openTrackerItem(num)}
             />

@@ -70,7 +70,8 @@ type TrackerMissionListState = "open" | "closed";
 /** `GET /items` query params (all optional; server clamps `limit` to ≤500). */
 interface ItemsFilter {
     state?: TrackerItemState;
-    kind?: TrackerItemKind;
+    /** One kind, or several: any of them (a journal that predates the list form answers 400). */
+    kind?: TrackerItemKind | readonly TrackerItemKind[];
     awaiting?: TrackerAwaiting;
     label?: string;
     sort?: "rank" | "updated";
@@ -438,7 +439,7 @@ export class JournalApi {
     public items(filter: ItemsFilter = {}): Promise<{ items: TrackerItem[]; next_cursor: string | null }> {
         const query = new URLSearchParams();
         if (filter.state) query.set("state", filter.state);
-        if (filter.kind) query.set("kind", filter.kind);
+        if (filter.kind) query.set("kind", typeof filter.kind === "string" ? filter.kind : filter.kind.join(","));
         if (filter.awaiting) query.set("awaiting", filter.awaiting);
         if (filter.label) query.set("label", filter.label);
         if (filter.sort) query.set("sort", filter.sort);
