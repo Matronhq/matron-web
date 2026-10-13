@@ -10,7 +10,7 @@ import { createRoot } from "react-dom/client";
 
 import { ProjectPage } from "../tracker/ProjectPage";
 import { ProjectsDashboard } from "../tracker/ProjectsDashboard";
-import { trackerMission, trackerProject, trackerProjectDetail } from "./tracker-fixtures";
+import { trackerMission, trackerProject, trackerProjectDetail, trackerProjectDetailWithFeed } from "./tracker-fixtures";
 
 async function mount(element: React.ReactElement): Promise<HTMLElement> {
     const container = document.createElement("div");
@@ -196,7 +196,7 @@ describe("ProjectsDashboard", () => {
 });
 
 describe("ProjectPage", () => {
-    it("lays out header, status, needs you, missions, milestones and sessions", async () => {
+    it("leads with the status and pulse, then needs you, latest, missions and the folds", async () => {
         const onOpenMission = jest.fn();
         const onOpenItem = jest.fn();
         const container = await mount(
@@ -208,12 +208,19 @@ describe("ProjectPage", () => {
             />,
         );
         expect(container.querySelector(".mj_ProjectPage_title")?.textContent).toBe("Web/Mac design unification");
-        expect(container.querySelector(".mj_ProjectPage_meta")?.textContent).toMatch(
-            /^2 missions · 2 sessions on 2 boxes · last activity /,
+        expect(container.querySelector(".mj_ProjectPulse")?.textContent).toMatch(
+            /^1 running1 waiting1 closed2 sessions on 2 boxes · last activity /,
         );
+        expect(container.querySelector(".mj_ProjectPage_statusLabel")?.textContent).toBe("Status");
         expect(container.querySelector(".mj_ProjectPage_status")?.textContent).toContain("Phase 2 running");
         const titles = [...container.querySelectorAll(".mj_ProjectSection_title")].map((el) => el.textContent);
-        expect(titles).toEqual(["Needs you", "Recent milestones", "Missions", "Sessions on it now"]);
+        expect(titles).toEqual(["Needs you", "Latest", "Missions", "Sessions on it now", "About this project"]);
+        // Without the roll-up the feed is the latest milestone and the question for you.
+        const feed = [...container.querySelectorAll(".mj_ProjectLatest .mj_ProjectActivity_title")].map(
+            (el) => el.textContent,
+        );
+        expect(feed).toEqual(["Token PR merged", "Merge unify step 2?"]);
+        expect(container.querySelector(".mj_ProjectLatest_more")).toBeNull();
         await act(async () => container.querySelector<HTMLButtonElement>(".mj_ProjectNeedsYou_row")!.click());
         expect(onOpenItem).toHaveBeenCalledWith(3939);
         const missionRows = container.querySelectorAll<HTMLButtonElement>(".mj_ProjectMission");
@@ -221,18 +228,70 @@ describe("ProjectPage", () => {
         expect(missionRows[0].querySelector(".mj_ProjectMission_dot_running")).not.toBeNull();
         await act(async () => missionRows[1].click());
         expect(onOpenMission).toHaveBeenCalledWith(1594);
+        // The folds are closed until opened; their content is still in the page.
+        const folds = container.querySelectorAll<HTMLDetailsElement>(".mj_ProjectFold");
+        expect([...folds].every((fold) => !fold.open)).toBe(true);
         expect(container.querySelector(".mj_ProjectSessions")?.textContent).toContain("build-box 1");
+        expect(container.querySelector(".mj_ProjectFold_about")?.textContent).toContain(
+            "Audit, then the Mac app leads.",
+        );
     });
 
-    it("omits the needs-you card when nothing waits on you", async () => {
+    it("merges the roll-up into Latest and offers Show more while pages are left", async () => {
+        const onLoadMore = jest.fn();
+        const onOpenItem = jest.fn();
         const container = await mount(
             <ProjectPage
-                detail={trackerProjectDetail({ needs_you: [] })}
+                detail={trackerProjectDetailWithFeed()}
                 onBack={jest.fn()}
                 onOpenMission={jest.fn()}
-                onOpenItem={jest.fn()}
+                onOpenItem={onOpenItem}
+                onLoadMore={onLoadMore}
             />,
         );
+        const rows = [...container.querySelectorAll(".mj_ProjectLatest .mj_ProjectActivity_row")];
+        const titles = rows.map((row) => row.querySelector(".mj_ProjectActivity_title")?.textContent);
+        expect(titles).toEqual([
+            "Token PR merged",
+            "Ship the sign-in change with the tokens?",
+            "Sign-in, dark.png",
+            "Alice: tokens first, then sign-in",
+        ]);
+        expect(rows[1].querySelector(".mj_ProjectActivity_note")?.textContent).toBe("Answered: “Yes, both together.”");
+        expect(rows[3].querySelector(".mj_ProjectActivity_note")?.textContent).toBe("Your input");
+        // The fixture's times are relative to the clock, so only the grouping itself is asserted.
+        expect(container.querySelectorAll(".mj_ProjectDay_label").length).toBeGreaterThanOrEqual(1);
+        await act(async () => (rows[1] as HTMLButtonElement).click());
+        expect(onOpenItem).toHaveBeenCalledWith(41);
+        // Every loaded row shows, so Show more asks for the next pages.
+        await act(async () => container.querySelector<HTMLButtonElement>(".mj_ProjectLatest_more")!.click());
+        expect(onLoadMore).toHaveBeenCalledTimes(1);
+        const titlesAll = [...container.querySelectorAll(".mj_ProjectSection_title")].map((el) => el.textContent);
+        expect(titlesAll).toEqual([
+            "Needs you",
+            "Latest",
+            "Missions",
+            "Decisions",
+            "Files and images",
+            "Sessions on it now",
+            "About this project",
+        ]);
+        expect(container.querySelector(".mj_ProjectFold_decisions .mj_ProjectActivity_struck")?.textContent).toBe(
+            "Keep the old sign-in page",
+        );
+    });
+
+    it("omits the needs-you card when nothing waits on you, and leads with the description when there is no status", async () => {
+        const detail = trackerProjectDetail({ needs_you: [] });
+        detail.project = { ...detail.project, status: null };
+        const container = await mount(
+            <ProjectPage detail={detail} onBack={jest.fn()} onOpenMission={jest.fn()} onOpenItem={jest.fn()} />,
+        );
         expect(container.querySelector(".mj_ProjectNeedsYou")).toBeNull();
+        expect(container.querySelector(".mj_ProjectPage_statusLabel")?.textContent).toBe("About");
+        expect(container.querySelector(".mj_ProjectPage_statusText")?.textContent).toBe(
+            "Audit, then the Mac app leads.",
+        );
+        expect(container.querySelector(".mj_ProjectFold_about")).toBeNull();
     });
 });

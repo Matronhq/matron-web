@@ -34,6 +34,8 @@ import {
     type MemoryWrite,
     type Project,
     type ProjectDetail,
+    type ProjectFeedKind,
+    type ProjectFeedPage,
     type UserDefaults,
 } from "./types";
 
@@ -427,6 +429,16 @@ export class JournalApi {
     /** GET /projects/:id — the project with its missions, needs-you items, recent milestones and sessions by box. */
     public project(id: string | number): Promise<ProjectDetail> {
         return this.json<ProjectDetail>(`/projects/${encodeTrackerId(id)}`);
+    }
+
+    /** GET /projects/:id/feed — the next (older) page of one roll-up kind, from a `next_before` cursor. */
+    public projectFeed<Row = unknown>(
+        id: string | number,
+        kind: ProjectFeedKind,
+        before: string,
+    ): Promise<ProjectFeedPage<Row>> {
+        const query = new URLSearchParams({ kind, before });
+        return this.json<ProjectFeedPage<Row>>(`/projects/${encodeTrackerId(id)}/feed?${query.toString()}`);
     }
 
     /** GET /missions/:id — full detail (mission + milestones newest-first + open items + convos). */
