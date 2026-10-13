@@ -179,6 +179,10 @@ interface AttachmentOwner {
 type PersistPendingAttachmentOutcome =
     { kind: "persisted-uploadable" } | { kind: "persisted-terminal" } | { kind: "persist-failed" };
 
+/** What one ask of a possibly sleeping box found: it answered, it is still booting, or the ask
+ *  never reached the journal. */
+export type AgentProbe = "up" | "booting" | "failed";
+
 export type StartOutcome =
     { kind: "created"; convoId: string } | { kind: "error"; message: string } | { kind: "uncertain" };
 
@@ -632,6 +636,17 @@ export class MatronJournalClient {
             }
             return [{ path: folder.path, last_used: folder.last_used }];
         });
+    }
+
+    // One ask of a box that may be asleep. The journal boots an idle-stopped box whenever a
+    // request targets it and refuses that request with `agent_unreachable`, so the first refused
+    // ask is the wake and re-asking until the box answers is how a caller learns it is up. A
+    // timeout also reads as booting: mid-boot the socket can be up before the bridge is.
+    public async probeAgent(agentDeviceId: number): Promise<AgentProbe> {
+        const reply = await this.agentRpc(agentDeviceId, "recent_folders", {});
+        if (reply.ok || reply.origin === "agent") return "up";
+        if (reply.code === "agent_unreachable" || reply.origin === "timeout") return "booting";
+        return "failed";
     }
 
     public startSessionRpc(agentDeviceId: number, workdir: string, browser: boolean): Promise<StartOutcome> {

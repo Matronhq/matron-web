@@ -23,6 +23,7 @@ import matronLogo from "../../res/matron-logo-simple.svg";
 import { INITIAL_SGR_STATE, parseAnsi, stripLeadingSgrFragment } from "./ansi";
 import { JournalApiError } from "./api";
 import {
+    type AgentProbe,
     BROWSER_MEMORY_SAFETY_MAX_BYTES,
     errorMessage,
     type MatronJournalClient,
@@ -485,12 +486,22 @@ type SheetState =
     | { step: "uncertain" }
     | { step: "error"; agent: DeviceDTO; message: string };
 
+// What an offline box's row says while its Wake button is at work. Absent = not being woken.
+type RowWake = "waking" | "failed";
+
+// The wake loop re-asks a booting box this often, and gives up after this many asks or this long.
+const WAKE_RETRY_DELAY_MS = 3_000;
+const WAKE_ATTEMPT_LIMIT = 40;
+const WAKE_DEADLINE_MS = 120_000;
+
 function agentName(agent: DeviceDTO): string {
     return agent.name?.trim() || `Agent ${agent.device_id}`;
 }
 
-function agentStatus(agent: DeviceDTO): string {
+function agentStatus(agent: DeviceDTO, wake?: RowWake): string {
     if (agent.connected) return "Connected";
+    if (wake === "waking") return "Waking…";
+    if (wake === "failed") return "Didn't wake — try again";
     if (agent.last_seen_at === undefined) return "Offline · last seen unknown";
     const timestamp = agent.last_seen_at < 1_000_000_000_000 ? agent.last_seen_at * 1000 : agent.last_seen_at;
     return `Offline · last seen ${new Date(timestamp).toLocaleString()}`;
@@ -562,11 +573,49 @@ export function NewSessionSheet({
     const startingRef = useRef(false);
     const mountedRef = useRef(false);
     const dismissedRef = useRef(false);
+    const [rowWakes, setRowWakes] = useState<Record<number, RowWake>>({});
+    const wakingRef = useRef(new Set<number>());
 
     const transition = useCallback((next: SheetState): void => {
         sheetStateRef.current = next;
         setSheetState(next);
     }, []);
+
+    // Wakes an offline box from its row, without leaving the list. Each box runs its own loop,
+    // so several can be woken at once; a loop carries on behind another box's folder step and
+    // stops only when the sheet goes away. A box that answers turns "Connected" where it
+    // stands: rows don't move under someone working down the list.
+    const wake = useCallback(
+        async (agent: DeviceDTO): Promise<void> => {
+            const id = agent.device_id;
+            if (wakingRef.current.has(id) || dismissedRef.current) return;
+            wakingRef.current.add(id);
+            setRowWakes((current) => ({ ...current, [id]: "waking" }));
+            const gone = (): boolean => !mountedRef.current || dismissedRef.current;
+            const began = Date.now();
+            let outcome: AgentProbe = "booting";
+            for (let attempt = 1; attempt <= WAKE_ATTEMPT_LIMIT; attempt += 1) {
+                outcome = await client.probeAgent(id).catch((): AgentProbe => "failed");
+                if (gone()) return;
+                if (outcome !== "booting") break;
+                if (attempt === WAKE_ATTEMPT_LIMIT || Date.now() - began >= WAKE_DEADLINE_MS) break;
+                await new Promise((resolve) => window.setTimeout(resolve, WAKE_RETRY_DELAY_MS));
+                if (gone()) return;
+            }
+            wakingRef.current.delete(id);
+            if (outcome !== "up") {
+                setRowWakes((current) => ({ ...current, [id]: "failed" }));
+                return;
+            }
+            setRowWakes(({ [id]: _woken, ...rest }) => rest);
+            agentsRef.current = agentsRef.current.map((candidate) =>
+                candidate.device_id === id ? { ...candidate, connected: true } : candidate,
+            );
+            const current = sheetStateRef.current;
+            if (current.step === "agents") transition({ step: "agents", agents: agentsRef.current });
+        },
+        [client, transition],
+    );
 
     const loadFolders = useCallback(
         (agent: DeviceDTO, backAvailable: boolean): void => {
@@ -614,9 +663,10 @@ export function NewSessionSheet({
                     return;
                 }
                 agentsRef.current = agents;
-                const connectedAgents = agents.filter((agent) => agent.connected);
-                if (connectedAgents.length === 1) {
-                    loadFolders(connectedAgents[0], false);
+                // Only a fleet of one skips the list. One box awake among sleeping ones is the
+                // usual state, and skipping to it would leave the others with no row to wake from.
+                if (agents.length === 1 && agents[0].connected) {
+                    loadFolders(agents[0], false);
                 } else {
                     setShowBack(true);
                     transition({ step: "agents", agents });
@@ -712,19 +762,46 @@ export function NewSessionSheet({
                             <p>No agents connected — start the bridge on your box.</p>
                         ) : (
                             <div role="list" aria-label="Agents">
-                                {sheetState.agents.map((agent) => (
-                                    <button
-                                        key={agent.device_id}
-                                        type="button"
-                                        role="listitem"
-                                        disabled={!agent.connected}
-                                        onClick={() => loadFolders(agent, true)}
-                                    >
-                                        <strong>{agentName(agent)}</strong>
-                                        <span>{agentStatus(agent)}</span>
-                                        <BoxUsage status={boxStatuses[agent.device_id]} now={now} />
-                                    </button>
-                                ))}
+                                {sheetState.agents.map((agent) => {
+                                    const rowWake = agent.connected ? undefined : rowWakes[agent.device_id];
+                                    return (
+                                        <div
+                                            key={agent.device_id}
+                                            role="listitem"
+                                            className="mj_NewSessionSheet_agentRow"
+                                        >
+                                            <button
+                                                type="button"
+                                                className="mj_NewSessionSheet_agent"
+                                                disabled={!agent.connected}
+                                                onClick={() => loadFolders(agent, true)}
+                                            >
+                                                <strong>{agentName(agent)}</strong>
+                                                <span role={rowWake ? "status" : undefined}>
+                                                    {agentStatus(agent, rowWake)}
+                                                </span>
+                                                <BoxUsage status={boxStatuses[agent.device_id]} now={now} />
+                                            </button>
+                                            {rowWake === "waking" ? (
+                                                <span
+                                                    className="mj_Spinner mj_NewSessionSheet_waking"
+                                                    aria-hidden="true"
+                                                />
+                                            ) : (
+                                                !agent.connected && (
+                                                    <button
+                                                        type="button"
+                                                        className="mj_NewSessionSheet_wake"
+                                                        aria-label={`Wake ${agentName(agent)}`}
+                                                        onClick={() => void wake(agent)}
+                                                    >
+                                                        Wake
+                                                    </button>
+                                                )
+                                            )}
+                                        </div>
+                                    );
+                                })}
                             </div>
                         )}
                     </>

@@ -3211,6 +3211,21 @@ describe("session creation orchestration", () => {
         await expect(client.recentFolders(9)).resolves.toEqual([]);
     });
 
+    // A sleeping box is booted by the first ask it refuses; the probe says whether to ask again.
+    it.each([
+        [{ ok: true, origin: "agent", result: { folders: [] } }, "up"],
+        [{ ok: false, origin: "agent", code: "internal" }, "up"],
+        [{ ok: false, origin: "relay", code: "agent_unreachable" }, "booting"],
+        [{ ok: false, origin: "timeout", code: "timeout" }, "booting"],
+        [{ ok: false, origin: "relay", code: "not_connected" }, "failed"],
+        [{ ok: false, origin: "teardown", code: "teardown" }, "failed"],
+    ])("probes a box with recent_folders: %j reads as %s", async (reply, expected) => {
+        const client = withAgentReply(reply);
+
+        await expect(client.probeAgent(9)).resolves.toBe(expected);
+        expect(internals(client).connection?.agentRequest).toHaveBeenCalledWith(9, "recent_folders", {});
+    });
+
     it("drops malformed folder items while retaining valid ones", async () => {
         const client = withAgentReply({
             ok: true,
