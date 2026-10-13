@@ -46,6 +46,15 @@ describe("itemStatusText", () => {
     });
     it("shows a bare Closed for a closed item with no resolution", () => {
         expect(itemStatusText({ state: "closed", awaiting: null, resolution: null })).toBe("Closed");
+        expect(
+            itemStatusText({
+                state: "closed",
+                awaiting: null,
+                resolution: "done",
+                kind: "notice",
+                chosen_action: "Seen",
+            }),
+        ).toBe("Closed · Seen");
     });
     it("shows With the agent for an open agent-side item", () => {
         expect(itemStatusText({ state: "open", awaiting: "agent", resolution: null })).toBe("With the agent");

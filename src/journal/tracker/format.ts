@@ -69,9 +69,12 @@ export function closedStatusLabel(item: Pick<TrackerItem, "kind" | "resolution" 
     return item.resolution ? resolutionLabel(item.resolution) : "Closed";
 }
 
-export function itemStatusText(item: Pick<TrackerItem, "state" | "awaiting" | "resolution">): string {
+export function itemStatusText(
+    item: Pick<TrackerItem, "state" | "awaiting" | "resolution"> & Partial<Pick<TrackerItem, "kind" | "chosen_action">>,
+): string {
     if (needsUser(item)) return "Needs you";
     if (item.state === "closed") {
+        if (item.kind === "notice" && item.chosen_action?.toLowerCase() === "seen") return "Closed · Seen";
         return item.resolution ? `Closed · ${resolutionLabel(item.resolution)}` : "Closed";
     }
     if (item.awaiting === "agent") return "With the agent";

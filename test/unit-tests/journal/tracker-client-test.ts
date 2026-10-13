@@ -340,6 +340,30 @@ describe("MatronJournalClient tracker loaders", () => {
         expect(done.loading).toBe(false);
     });
 
+    it("a Done row loaded from a later page leaves when the item is reopened", async () => {
+        const { client, state } = makeClient();
+        const closed = (num: number, updated_at: number): ReturnType<typeof item> =>
+            item({ id: `it_${num}`, num, state: "closed", updated_at });
+        const reopened = item({ id: "it_2", num: 2, state: "open", updated_at: 70 });
+        state.api = {
+            items: jest.fn(async (filter: { state?: string; cursor?: string }) => {
+                if (filter.state === "open") return { items: [reopened], next_cursor: null };
+                if (filter.cursor) return { items: [closed(3, 30), closed(2, 20)], next_cursor: null };
+                return { items: [closed(5, 50), closed(4, 40)], next_cursor: "c1" };
+            }),
+        };
+        await client.loadInboxDone();
+        await client.loadMoreInboxDone();
+        expect(client.getSnapshot().inboxDone?.items.map((row) => row.num)).toEqual([5, 4, 3, 2]);
+
+        await client.loadInbox();
+        expect(client.getSnapshot().inboxDone?.items.map((row) => row.num)).toEqual([5, 4, 3]);
+
+        // A later refresh of the first page does not bring it back.
+        await client.loadInboxDone();
+        expect(client.getSnapshot().inboxDone?.items.map((row) => row.num)).toEqual([5, 4, 3]);
+    });
+
     it("a failed Done load keeps the rows it had and reports the error", async () => {
         const { client, state } = makeClient();
         state.api = {

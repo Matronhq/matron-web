@@ -2495,6 +2495,7 @@ export class MatronJournalClient {
             const merged = this.mergeInboxPendingWrites(accumulated);
             this.patch({
                 inboxItems: merged,
+                ...this.doneWithoutOpen(merged),
                 trackerLoading: false,
                 trackerError: truncated
                     ? "Showing a partial inbox — too many open items to load them all. Some rows may be missing."
@@ -2670,6 +2671,18 @@ export class MatronJournalClient {
         return this.commentItem(id, { action: SEEN_ACTION, body: SEEN_ACTION });
     }
 
+    /**
+     * The Done rows minus any of `open`. A refresh only re-reads the first page, so a row loaded
+     * from a later page that has since been reopened would otherwise stay listed as done.
+     */
+    private doneWithoutOpen(open: TrackerItem[]): Partial<ClientState> {
+        const done = this.state.inboxDone;
+        if (!done || open.length === 0) return {};
+        const ids = new Set(open.map((item) => item.id));
+        const items = done.items.filter((row) => !ids.has(row.id));
+        return items.length === done.items.length ? {} : { inboxDone: { ...done, items } };
+    }
+
     private applyWrittenItem(item: TrackerItem): void {
         if (!item || typeof item !== "object" || typeof item.id !== "string") return;
         const inbox = this.state.inboxItems;
@@ -2687,6 +2700,7 @@ export class MatronJournalClient {
                               : inbox.filter((row) => row.id !== item.id),
                   }
                 : {}),
+            ...(item.state === "open" ? this.doneWithoutOpen([item]) : {}),
             ...(detail && detail.item.id === item.id ? { trackerItem: { ...detail, item } } : {}),
         });
     }
@@ -2707,10 +2721,15 @@ export class MatronJournalClient {
             const { items, next_cursor } = await api.items(INBOX_DONE_FILTER);
             if (this.api !== api || this.trackerInboxDoneGen !== gen) return;
             const fresh = new Set(items.map((item) => item.id));
+            const open = new Set((this.state.inboxItems ?? []).map((item) => item.id));
             const oldest = items[items.length - 1];
             // Below the fresh page only: anything newer that it does not list is no longer closed.
+            // The latest rows in state, not the ones from before the request: a row reopened
+            // while it was in flight has already been dropped from them.
             const older = oldest
-                ? (prior?.items ?? []).filter((row) => !fresh.has(row.id) && sortsAfter(row, oldest))
+                ? (this.state.inboxDone?.items ?? []).filter(
+                      (row) => !fresh.has(row.id) && !open.has(row.id) && sortsAfter(row, oldest),
+                  )
                 : [];
             this.patch({
                 inboxDone: {
