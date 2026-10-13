@@ -2762,17 +2762,21 @@ export class MatronJournalClient {
         try {
             const { items, next_cursor } = await api.items({ ...INBOX_DONE_FILTER, cursor: done.nextCursor });
             if (this.api !== api || this.trackerInboxDoneGen !== gen) return;
-            const have = new Set(done.items.map((item) => item.id));
+            // The rows in state now, not the ones from before the request: a row reopened while
+            // it was in flight has been dropped from them and must stay dropped.
+            const rows = this.state.inboxDone?.items ?? done.items;
+            const skip = new Set([...rows, ...(this.state.inboxItems ?? [])].map((item) => item.id));
             this.patch({
                 inboxDone: {
-                    items: [...done.items, ...items.filter((item) => !have.has(item.id))],
+                    items: [...rows, ...items.filter((item) => !skip.has(item.id))],
                     nextCursor: next_cursor,
                     loading: false,
                 },
             });
         } catch (error) {
             if (this.api !== api || this.trackerInboxDoneGen !== gen) return;
-            this.patch({ inboxDone: { ...done, loading: false, error: errorMessage(error) } });
+            const kept = this.state.inboxDone ?? done;
+            this.patch({ inboxDone: { ...kept, loading: false, error: errorMessage(error) } });
         }
     }
 
@@ -2824,6 +2828,7 @@ export class MatronJournalClient {
         if (this.api !== api) return true;
         if (this.isSelectedTrackerItem(id)) await this.loadItem(id);
         if (this.inboxTracked()) await this.loadInbox();
+        if (this.state.inboxDone) void this.loadInboxDone();
         if (this.state.missions) await this.loadMissions();
         return true;
     }
@@ -2840,6 +2845,7 @@ export class MatronJournalClient {
         if (this.api !== api) return true;
         if (this.isSelectedTrackerItem(id)) await this.loadItem(id);
         if (this.inboxTracked()) await this.loadInbox();
+        if (this.state.inboxDone) void this.loadInboxDone();
         if (this.state.missions) await this.loadMissions();
         return true;
     }
@@ -3455,6 +3461,7 @@ export class MatronJournalClient {
         // The For you badge counts open items awaiting the user, so the inbox loads on every
         // (re)connect, not only when the tracker opens: markers missed while offline never replay.
         void this.loadInbox();
+        if (this.state.inboxDone) void this.loadInboxDone();
 
         // A briefing frame missed while offline is never replayed: refetch the card on (re)connect.
         this.refetchBriefingIfShown();

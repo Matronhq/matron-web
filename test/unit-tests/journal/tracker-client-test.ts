@@ -364,6 +364,32 @@ describe("MatronJournalClient tracker loaders", () => {
         expect(client.getSnapshot().inboxDone?.items.map((row) => row.num)).toEqual([5, 4, 3]);
     });
 
+    it("Show more does not restore a row reopened while it was loading", async () => {
+        const { client, state } = makeClient();
+        const closed = (num: number, updated_at: number): ReturnType<typeof item> =>
+            item({ id: `it_${num}`, num, state: "closed", updated_at });
+        let releaseMore: (page: { items: ReturnType<typeof item>[]; next_cursor: null }) => void = () => {};
+        state.api = {
+            items: jest.fn((filter: { state?: string; cursor?: string }) => {
+                if (filter.state === "open") {
+                    return Promise.resolve({
+                        items: [item({ id: "it_4", num: 4, state: "open", updated_at: 70 })],
+                        next_cursor: null,
+                    });
+                }
+                if (filter.cursor) return new Promise((resolve) => (releaseMore = resolve));
+                return Promise.resolve({ items: [closed(5, 50), closed(4, 40)], next_cursor: "c1" });
+            }),
+        };
+        await client.loadInboxDone();
+        const more = client.loadMoreInboxDone();
+        await client.loadInbox();
+        releaseMore({ items: [closed(3, 30)], next_cursor: null });
+        await more;
+
+        expect(client.getSnapshot().inboxDone?.items.map((row) => row.num)).toEqual([5, 3]);
+    });
+
     it("a failed Done load keeps the rows it had and reports the error", async () => {
         const { client, state } = makeClient();
         state.api = {
