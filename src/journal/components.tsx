@@ -67,12 +67,7 @@ import {
 } from "./coordinator-consent";
 import { CoordinatorEventNotice, isUnrenderableNoticeEvent } from "./coordinator-notices";
 import { dateTimeFormat } from "./date-format";
-import {
-    FOCUS_HIGHLIGHT_MS,
-    focusScrollTop,
-    jumpToLastOwnShortcutLabel,
-    landingSeq,
-} from "./jump-to-message";
+import { FOCUS_HIGHLIGHT_MS, focusScrollTop, jumpToLastOwnShortcutLabel, landingSeq } from "./jump-to-message";
 import { GoToNumberDialog, goToNumberShortcutLabel, NumberSearchResult, useGoToNumberShortcut } from "./goto-number";
 import { PinDialog, type PinDialogTarget } from "./PinDialogs";
 import { CommandPalette } from "./CommandPalette";

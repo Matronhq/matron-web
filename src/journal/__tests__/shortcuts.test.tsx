@@ -220,6 +220,20 @@ describe("app shortcuts", () => {
         expect(composer().value).toBe("");
     });
 
+    it("keeps Tab inside the palette and gives focus back on close", async () => {
+        await render(signedInClient());
+        composer().focus();
+        await press("k", {}, composer());
+        const input = document.querySelector<HTMLInputElement>(".mj_CommandPalette_input")!;
+        expect(input.getAttribute("role")).toBe("combobox");
+        expect(document.querySelector('[role="dialog"][aria-modal="true"]')).not.toBeNull();
+        const tab = await press("Tab", { ctrlKey: false }, input);
+        expect(tab.defaultPrevented).toBe(true);
+        await press("Escape", { ctrlKey: false }, input);
+        expect(palette()).toBeNull();
+        expect(document.activeElement).toBe(composer());
+    });
+
     it("⌘K does nothing without a conversation on screen", async () => {
         const client = signedInClient();
         await render(client);

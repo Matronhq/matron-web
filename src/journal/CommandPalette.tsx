@@ -36,12 +36,24 @@ export function CommandPalette({
     const [query, setQuery] = useState("");
     const [highlighted, setHighlighted] = useState(0);
     const highlightedRow = useRef<HTMLDivElement>(null);
+    const inputRef = useRef<HTMLInputElement>(null);
     const rows = filterCommands(commands, query);
     const active = rows.length > 0 ? Math.min(highlighted, rows.length - 1) : null;
 
     useEffect(() => {
         highlightedRow.current?.scrollIntoView?.({ block: "nearest" });
     }, [active]);
+
+    // Focus goes back where it was when the palette closes without a pick (a pick moves it to the
+    // composer itself, a frame later). Read at first render, before the field's autoFocus.
+    const [opener] = useState(() => (document.activeElement instanceof HTMLElement ? document.activeElement : null));
+    useEffect(() => {
+        return () => {
+            if (opener?.isConnected && (!document.activeElement || document.activeElement === document.body)) {
+                opener.focus({ preventScroll: true });
+            }
+        };
+    }, [opener]);
 
     // ⌘K closes it wherever focus has gone (the app's own handler stands aside while a dialog is up).
     const onCloseRef = useRef(onClose);
@@ -70,6 +82,9 @@ export function CommandPalette({
         } else if (event.key === "Enter" && !event.nativeEvent.isComposing) {
             event.preventDefault();
             if (active !== null) onPick(rows[active]);
+        } else if (event.key === "Tab") {
+            // The field is the sheet's only stop (rows are picked by arrow keys): keep focus in it.
+            event.preventDefault();
         }
     };
 
@@ -83,11 +98,19 @@ export function CommandPalette({
                 if (event.target === event.currentTarget) onClose();
             }}
         >
-            <div className="mj_CommandPalette">
+            {/* A click on the sheet's padding keeps focus in the field. */}
+            <div
+                className="mj_CommandPalette"
+                onMouseDown={(event) => {
+                    if (event.target !== inputRef.current) event.preventDefault();
+                }}
+            >
                 <input
                     className="mj_CommandPalette_input"
                     type="text"
+                    ref={inputRef}
                     role="combobox"
+                    aria-autocomplete="list"
                     aria-label="Filter commands"
                     aria-expanded="true"
                     aria-controls={LISTBOX_ID}
@@ -121,12 +144,12 @@ export function CommandPalette({
                             <span className="mj_SlashPalette_summary">{command.summary}</span>
                         </div>
                     ))}
-                    {rows.length === 0 && (
-                        <p className="mj_CommandPalette_empty" role="status">
-                            No command starts with “{query.trim()}”.
-                        </p>
-                    )}
                 </div>
+                {rows.length === 0 && (
+                    <p className="mj_CommandPalette_empty" role="status">
+                        No command starts with “{query.trim()}”.
+                    </p>
+                )}
             </div>
         </div>,
         document.body,

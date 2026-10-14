@@ -2271,8 +2271,9 @@ export class MatronJournalClient {
     }
 
     /**
-     * GET /coordinator: the user's Coordinator conversation, asked fresh each time (⌘1 opens it).
-     * Null for none, a signed-out client or a failed read.
+     * GET /coordinator: the user's Coordinator conversation, asked fresh each time. The one lookup
+     * for anything that opens the Coordinator (⌘1 today); reuse it rather than reading the answer
+     * again. Null for none, a signed-out client or a failed read.
      */
     public async coordinatorConversationId(): Promise<string | null> {
         const api = this.api;
