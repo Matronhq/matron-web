@@ -546,6 +546,12 @@ export interface ClientState {
      * expanded. Threaded into every buildSidebarIndex call so render/selection/unread/mark-all agree.
      */
     collapsedSubagentParentIds: Set<string>;
+    /**
+     * Sessions that arrived while this tab was live without this device asking for them (an
+     * agent, the Coordinator or a routine started them) and that the user has not opened since.
+     * Their rows carry a "New" marker. In memory only: a reload starts clean.
+     */
+    newConversationIds: Set<string>;
     controlError?: string;
     preferencesUnavailable?: boolean;
     selectedConversationId?: string;

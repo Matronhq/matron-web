@@ -35,6 +35,7 @@ import {
     readCachedPins,
     writeCachedPins,
 } from "./pins";
+import { isAgentRoomTitle, isStartCommand, NEW_CONVERSATION_STALE_MS, startedSessionIntents } from "./needs-you";
 import { SeenTracker } from "./seen-tracker";
 import { mergeSessionStatus } from "./status";
 import { appendFeedPage, kindsWithMore } from "./tracker/projectActivity";
@@ -330,6 +331,7 @@ function blankState(): ClientState {
         favoriteIds: new Set(),
         unreadOverrideIds: new Set(),
         collapsedSubagentParentIds: new Set(),
+        newConversationIds: new Set(),
         controlError: undefined,
         events: [],
         pendingMessages: [],
@@ -591,6 +593,14 @@ export class MatronJournalClient {
     private chatSearchSeq = 0;
     private chatSearchAbort?: AbortController;
     private startSessionRequest?: Promise<StartOutcome>;
+    // The session starts this device asked for and has not seen born yet: a conversation that
+    // answers one is the user's own, and never gets the "New" marker.
+    private startIntents = startedSessionIntents();
+    // Live-born conversations whose first frames (a session_status, a title-less meta) could not
+    // yet say whether they are a room, a child or the answer to a start, by id with the first
+    // frame's time. The verdict waits for a titled convo_meta or a message; an entry that never
+    // gets one ages out after NEW_CONVERSATION_STALE_MS.
+    private newVerdictPending = new Map<string, number>();
     private rpcCreateWatchdog?: number;
     private rpcCreateWatchdogConvo?: string;
     private rpcCreateWatchdogGen?: number;
@@ -748,6 +758,8 @@ export class MatronJournalClient {
         for (const url of this.mediaUrls.values()) URL.revokeObjectURL(url);
         this.mediaUrls.clear();
         this.expiredMedia.clear();
+        this.startIntents = startedSessionIntents();
+        this.newVerdictPending.clear();
         // The archived-conversations key is deliberately left in place: it is a per-device
         // preference that re-login should restore. Clearing it here would also go unnoticed
         // by this tab, since storage events only fire in other tabs.
@@ -868,16 +880,32 @@ export class MatronJournalClient {
         if (picks.model) params.model = picks.model;
         if (picks.effort) params.effort = picks.effort;
 
+        // The session this start brings is the user's own: it must not arrive marked "New".
+        this.startIntents.noteBox(agentDeviceId, Date.now());
         const reply = await this.agentRpc(agentDeviceId, "start", params);
         if (reply.ok) {
             if (typeof reply.result !== "object" || reply.result === null || Array.isArray(reply.result)) {
                 return { kind: "uncertain" };
             }
             const convoId = (reply.result as Record<string, unknown>).convo_id;
-            return typeof convoId === "string" && convoId.length > 0
-                ? { kind: "created", convoId }
-                : { kind: "uncertain" };
+            if (typeof convoId === "string" && convoId.length > 0) {
+                // Its first frames may have beaten this reply. If they already settled its verdict,
+                // only the box's ask is left, and any mark it got is undone: it is the user's own
+                // even when the sheet was dismissed and it is not opened. Otherwise (not seen yet,
+                // or its verdict still waits for the titled meta) it is claimed by id.
+                const seen = this.state.conversations.some((candidate) => candidate.id === convoId);
+                if (seen && !this.newVerdictPending.has(convoId)) {
+                    this.startIntents.forgetBox(agentDeviceId);
+                    this.clearNewMark(convoId);
+                } else {
+                    this.startIntents.noteConversation(convoId, agentDeviceId);
+                }
+                return { kind: "created", convoId };
+            }
+            return { kind: "uncertain" };
         }
+        // A refusal brings no session; a session that does arrive on this box later is not this ask's.
+        if (reply.origin !== "timeout") this.startIntents.forgetBox(agentDeviceId);
         if (reply.origin === "relay") {
             return {
                 kind: "error",
@@ -976,6 +1004,8 @@ export class MatronJournalClient {
         // idle session reports "not syncing" as an error.
         if (opts?.fromRpcCreate) this.armRpcCreateWatchdog(conversationId);
         if (opts?.clearUnread ?? true) this.clearUnreadOverride(conversationId);
+        // Opening a conversation, by any route, ends its "New" marker.
+        this.clearNewMark(conversationId);
         storeSelectedConversation(this.state.session, conversationId);
         // Selecting a conversation closes the Tracker pane, so it drops the cached item detail the
         // same way closeTrackerView does.
@@ -1552,6 +1582,10 @@ export class MatronJournalClient {
         };
         await db.addToOutbox(message); // the only awaited durable step
         if (!owns()) return false;
+        if (isStartCommand(body)) {
+            const box = this.state.conversations.find((candidate) => candidate.id === conversationId)?.agent_device_id;
+            this.startIntents.noteBox(box ?? null, Date.now());
+        }
         // sendTick is a synchronous "a send happened → scroll to bottom" signal; bump it now (the
         // message is durably queued) rather than gating it behind the async refresh below.
         if (this.state.selectedConversationId === conversationId) {
@@ -4377,12 +4411,80 @@ export class MatronJournalClient {
 
         await this.refreshConversations();
         this.abortUploadsForChildConvos();
+        if (!previous || this.newVerdictPending.has(event.convo_id)) this.considerNewConversation(event, !previous);
         if (event.convo_id === this.state.selectedConversationId) {
             await this.refreshSelectedConversation(event.convo_id);
             if (MESSAGE_EVENT_TYPES.has(event.type) && !event.sender.startsWith("user:")) {
                 this.scheduleRead(event.convo_id, event.seq);
             }
         }
+    }
+
+    // A conversation this tab sees for the first time, live. One this device asked for is the
+    // user's own and opens the way they started it; any other (an agent, the Coordinator or a
+    // routine started it) never takes the selection, and is marked "New" in the list until opened.
+    // Not for one already on screen, a subagent's child, an agent-chat room, or a reconnect's
+    // replay of sessions born while this tab was away.
+    //
+    // As on the Mac, the verdict waits for a frame that can settle it: a convo_meta carrying the
+    // title (which also names the box), or a message. A new session's first frame is usually its
+    // session_status, ahead of the meta, and judged on that the title is still empty (a room would
+    // pass as a session) and the box unknown (a /start's own session would not answer its ask).
+    private considerNewConversation(event: JournalEvent, firstFrame: boolean): void {
+        const id = event.convo_id;
+        const now = Date.now();
+        if (firstFrame) {
+            // A reconnect's replay of a conversation born while this tab was away.
+            if (typeof event.ts === "number" && event.ts < now - NEW_CONVERSATION_STALE_MS) return;
+        } else {
+            const since = this.newVerdictPending.get(id);
+            if (since === undefined || since < now - NEW_CONVERSATION_STALE_MS) {
+                this.newVerdictPending.delete(id);
+                return;
+            }
+        }
+        const titled = event.type === "convo_meta" && typeof event.payload.title === "string";
+        const conversation = this.state.conversations.find((candidate) => candidate.id === id);
+        const box = conversation?.agent_device_id ?? null;
+        const settles =
+            titled ||
+            (MESSAGE_EVENT_TYPES.has(event.type) &&
+                // A message from a conversation that has not named its box cannot answer an ask
+                // waiting on a particular box, nor rule one out: its title settles it.
+                (box !== null || !this.startIntents.awaitsKnownBox(now)));
+        if (!settles) {
+            if (firstFrame) this.parkNewVerdict(id, now);
+            return;
+        }
+        this.newVerdictPending.delete(id);
+        if (id === this.state.selectedConversationId || this.state.newConversationIds.has(id)) return;
+        // A child's id carries ":sub:" (Claude) or ":codex:" (Codex) before its parent link, learned
+        // from a later convo_meta, lands.
+        if (!conversation || isSubChat(conversation) || /:(?:sub|codex):[^:]+$/.test(id)) return;
+        if (isAgentRoomTitle(conversation.title)) return;
+        if (this.startIntents.claim(conversation, now)) return;
+        // Keep only marks a row can still show, so the set stays the size of what is on screen.
+        const visible = new Set(
+            this.state.conversations
+                .filter((candidate) => !isSubChat(candidate) && !isAgentRoomTitle(candidate.title))
+                .map((candidate) => candidate.id),
+        );
+        const kept = [...this.state.newConversationIds].filter((candidate) => visible.has(candidate));
+        this.patch({ newConversationIds: new Set([...kept, id]) });
+    }
+
+    private clearNewMark(id: string): void {
+        if (!this.state.newConversationIds.has(id)) return;
+        const newConversationIds = new Set(this.state.newConversationIds);
+        newConversationIds.delete(id);
+        this.patch({ newConversationIds });
+    }
+
+    private parkNewVerdict(id: string, now: number): void {
+        for (const [candidate, since] of this.newVerdictPending) {
+            if (since < now - NEW_CONVERSATION_STALE_MS) this.newVerdictPending.delete(candidate);
+        }
+        this.newVerdictPending.set(id, now);
     }
 
     private async reconcilePersistedOwnMessages(database: JournalDatabase): Promise<void> {

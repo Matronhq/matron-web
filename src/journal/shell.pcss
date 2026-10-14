@@ -635,6 +635,38 @@ button {
     gap: var(--mj-space-0-5x);
 }
 
+/* The row's count badges side by side (Mac MacChatRow): New, needs you, unread. */
+.mj_ConversationListBadges {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--mj-space-1x);
+}
+
+/* The needs-you badge on a row keeps the unread badge's metrics, so a row is the same height
+   with or without it and only the orange (and the glyph) tells the two apart. */
+.mj_ConversationListBadges .mj_TrackerNeedsYouBadge {
+    height: 18px;
+    padding: 0 6px;
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 18px;
+}
+
+/* "New" on a session that arrived without the user starting it here and is not opened yet:
+   tinted rather than filled, so it reads quieter than the counts beside it. */
+.mj_ConversationListNew {
+    display: inline-flex;
+    height: 18px;
+    align-items: center;
+    border-radius: var(--mj-radius-pill);
+    background: var(--mj-color-bg-accent-tint);
+    color: var(--mj-color-text-action-accent);
+    padding: 0 6px;
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 18px;
+}
+
 /* Collapsed-subagents count on a parent row — a subtle tertiary chevron+count that signals
    hidden child rows and stays minimal (matches the meta column's muted styling). */
 .mj_ConversationListCollapsedSubs {
