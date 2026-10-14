@@ -20,6 +20,7 @@ import { JournalConnection } from "./connection";
 import { effectiveUnread, makeIdSetStore, type IdSetStore } from "./conversation-flags";
 import { parseCoordinatorConsent, resetSessionStops, spawnConsentRowsIn } from "./coordinator-consent";
 import { JournalDatabase } from "./database";
+import { newestOwnMessageSeq } from "./jump-to-message";
 import { parseOwnTrackerUrl, parseTrackerLinkPath, type TrackerLinkPath } from "./link-path";
 import {
     DEFAULT_PIN_LIMIT,
@@ -96,6 +97,13 @@ const SESSION_KEY = "matron_journal_session_v1";
 const LAST_SERVER_KEY = "matron_journal_last_server";
 const SELECTED_CONVERSATION_KEY_PREFIX = "matron_journal_selected_conversation_v1";
 const HISTORY_PAGE_SIZE = 80;
+// A jump to a message pages history back at most this many pages (80 rows each) before landing on
+// the oldest row loaded: a hit thousands of messages deep must not fetch the whole conversation
+// while the transcript sits still.
+const FOCUS_MAX_PAGES = 20;
+// While another history page is in flight a jump waits for it, polling this often, this many times.
+const FOCUS_WAIT_MS = 50;
+const FOCUS_MAX_WAITS = 300;
 // Message-content search hits per query (server caps at 50; 20 keeps the Messages section tight).
 const MESSAGE_SEARCH_LIMIT = 20;
 // Max query length the server accepts (over this it returns 400); guard client-side so an
@@ -544,6 +552,8 @@ export class MatronJournalClient {
     private ackTimer?: number;
     private pendingAck = 0;
     private historyError?: string;
+    // Bumped by every jump to a message; a paging jump whose token is stale has been superseded.
+    private focusToken = 0;
     private startSessionRequest?: Promise<StartOutcome>;
     private rpcCreateWatchdog?: number;
     private rpcCreateWatchdogConvo?: string;
@@ -945,6 +955,7 @@ export class MatronJournalClient {
             ...(this.state.trackerView ? { trackerItem: null, trackerMission: null, trackerProject: null } : {}),
             events: [],
             pendingMessages: [],
+            focusTarget: undefined,
             loadingHistory: false,
             hasOlderHistory: this.history.get(conversationId)?.hasMore ?? true,
             activity: this.activities.get(conversationId),
@@ -1256,6 +1267,82 @@ export class MatronJournalClient {
                 });
             }
         }
+    }
+
+    // ── Jump to a message ───────────────────────────────────────────────────
+
+    /**
+     * Opens `conversationId` on the row with `seq` (a search hit, a milestone's anchor) instead of
+     * at its tail: pages history back until that seq is loaded, then hands the timeline a
+     * `focusTarget` to scroll to and flash. A seq that is not rendered (a milestone's own marker, a
+     * deleted row) lands on the nearest row before it; one older than the history reached in
+     * FOCUS_MAX_PAGES pages lands on the oldest row loaded. A newer jump, or opening another
+     * conversation, supersedes one still paging. Resolves true when a target was handed over.
+     */
+    public async focusMessage(conversationId: string, seq: number): Promise<boolean> {
+        if (!conversationId || !Number.isSafeInteger(seq) || seq < 0) return false;
+        const token = ++this.focusToken;
+        if (this.state.selectedConversationId !== conversationId) {
+            await this.selectConversation(conversationId, { suppressNotFound: true });
+        } else {
+            this.closeTrackerView();
+        }
+        const loaded = (): boolean => {
+            if (this.state.events.some((event) => event.seq === seq)) return true;
+            const history = this.history.get(conversationId);
+            return Boolean(history?.initialized && history.oldestSeq !== undefined && history.oldestSeq <= seq);
+        };
+        if (!(await this.pageHistoryUntil(conversationId, token, loaded))) return false;
+        this.patch({ focusTarget: { conversationId, seq, token } });
+        return true;
+    }
+
+    /**
+     * Scrolls the open conversation to the newest message the user sent themself — what scrolling
+     * can't find once an agent has run for hours. Pages back until one is loaded (bounded like
+     * focusMessage). Resolves false when there is none to land on; the transcript stays put.
+     */
+    public async jumpToLastOwnMessage(): Promise<boolean> {
+        const conversationId = this.state.selectedConversationId;
+        if (!conversationId || this.state.trackerView) return false;
+        const token = ++this.focusToken;
+        const found = (): boolean => newestOwnMessageSeq(this.state.events) !== undefined;
+        if (!(await this.pageHistoryUntil(conversationId, token, found))) return false;
+        const seq = newestOwnMessageSeq(this.state.events);
+        if (seq === undefined) return false;
+        this.patch({ focusTarget: { conversationId, seq, token } });
+        return true;
+    }
+
+    /** The timeline landed on (or gave up on) the target handed over with `token`. */
+    public clearFocusTarget(token: number): void {
+        if (this.state.focusTarget?.token === token) this.patch({ focusTarget: undefined });
+    }
+
+    /**
+     * Loads older pages of the open conversation until `done()` holds or history runs out, at most
+     * FOCUS_MAX_PAGES pages. A page already in flight (the "Load earlier" button) is waited out
+     * rather than raced; a failed page stops the walk. Resolves false when the jump was superseded
+     * (a newer jump, or another conversation opened) — the caller then lands nothing.
+     */
+    private async pageHistoryUntil(conversationId: string, token: number, done: () => boolean): Promise<boolean> {
+        const current = (): boolean =>
+            this.focusToken === token && this.state.selectedConversationId === conversationId;
+        let pages = 0;
+        let waits = 0;
+        while (current() && !done()) {
+            if (this.history.get(conversationId)?.hasMore === false) break;
+            if (this.state.loadingHistory) {
+                if (++waits > FOCUS_MAX_WAITS) break;
+                await new Promise((resolve) => setTimeout(resolve, FOCUS_WAIT_MS));
+                continue;
+            }
+            if (pages >= FOCUS_MAX_PAGES) break;
+            pages += 1;
+            await this.loadOlderHistory({ suppressNotFound: true });
+            if (this.historyError) break;
+        }
+        return current();
     }
 
     public async sendMessage(bodyInput: string, targetConvoId?: string): Promise<boolean> {
@@ -2125,12 +2212,13 @@ export class MatronJournalClient {
     }
 
     /**
-     * "Open in chat": the Coordinator conversation the briefing was posted to. The client has no
-     * jump-to-seq (search hits open their conversation the same way), so this opens the
-     * conversation; the briefing is its latest message unless the Coordinator has said more since.
+     * "Open in chat": the Coordinator conversation the briefing was posted to, landed on the
+     * briefing's own message. Without a seq (an older journal) it opens at the tail, where the
+     * briefing is unless the Coordinator has said more since.
      */
-    public openBriefingInChat(convoId: string): void {
-        void this.selectConversation(convoId, { suppressNotFound: true });
+    public openBriefingInChat(convoId: string, seq?: number): void {
+        if (seq !== undefined && Number.isSafeInteger(seq)) void this.focusMessage(convoId, seq);
+        else void this.selectConversation(convoId, { suppressNotFound: true });
     }
 
     // GET /briefings/latest. A 404 means the journal predates briefings: the card stays hidden

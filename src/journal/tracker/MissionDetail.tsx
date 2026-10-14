@@ -297,9 +297,9 @@ export function MissionDetail({
     const status = mission.status?.trim() ? mission.status : null;
     const byline = status ? statusByline(mission.status_updated_at, mission.status_by, now) : null;
 
+    // A milestone opens its conversation on the message it was posted at, not at the tail.
     const jump = (milestone: Milestone): void => {
-        client.closeTrackerView();
-        void client.selectConversation(milestone.convo_id);
+        void client.focusMessage(milestone.convo_id, milestone.seq);
     };
 
     // matron://item / matron://mission deep links inside the mission body + close summary open the
