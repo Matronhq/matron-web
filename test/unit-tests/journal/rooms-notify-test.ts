@@ -338,6 +338,24 @@ describe("notification settings store", () => {
         stop();
     });
 
+    it("keeps this device's level from a write when an older read answers after it", async () => {
+        let answerRead!: (value: unknown) => void;
+        const api = {
+            notifySettings: jest.fn().mockResolvedValueOnce(view()),
+            updateNotify: jest.fn().mockResolvedValue(view({ device_level: "needs_me" })),
+        };
+        const { notifier } = storeSetup(api);
+        const stop = notifier.start();
+        await flush();
+        api.notifySettings.mockImplementationOnce(() => new Promise((resolve) => (answerRead = resolve)));
+        const read = notifier.refreshSettings();
+        await notifier.changeSettings({ kind: "device_level", level: "needs_me" });
+        answerRead(view({ device_level: "all" }));
+        await read;
+        expect(notifier.getSettingsSnapshot().view?.device_level).toBe("needs_me");
+        stop();
+    });
+
     it("marks a journal without the route as unsupported", async () => {
         const api = {
             notifySettings: jest.fn().mockRejectedValue(new JournalApiError("not found", 404)),
@@ -421,11 +439,22 @@ describe("chat header rooms and bell", () => {
         );
         await act(async () => container.querySelector<HTMLButtonElement>(".mj_RoomsControl_trigger")!.click());
         const rows = [...container.querySelectorAll<HTMLButtonElement>(".mj_RoomsMenu_item")];
-        expect(rows.map((row) => row.getAttribute("aria-label"))).toEqual([
-            "Running, Busy room",
-            "Waiting, Quiet room",
-        ]);
+        const labels = rows.map((row) => row.getAttribute("aria-label"));
+        expect(labels[0]).toMatch(/^Running, Busy room, notifications off, .+/);
+        expect(labels[1]).toBe("Waiting, Quiet room");
         expect(rows[0].querySelector(".mj_RoomsMenu_peers")?.textContent).toBe("with Bob's session");
+        // The label replaces the row's content, so the peers line is its description.
+        const peersId = rows[0].getAttribute("aria-describedby")!;
+        expect(container.querySelector(`[id="${peersId}"]`)?.textContent).toBe("with Bob's session");
+        rows[0].focus();
+        await act(async () => {
+            rows[0].dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true }));
+        });
+        expect(document.activeElement).toBe(rows[1]);
+        await act(async () => {
+            rows[1].dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true }));
+        });
+        expect(document.activeElement).toBe(rows[0]);
         expect(rows[0].querySelector(".mj_RoomsMenu_time")?.textContent).toBeTruthy();
         expect(rows[0].querySelector(".mj_RoomsMenu_muted")).not.toBeNull();
         expect(rows[1].querySelector(".mj_RoomsMenu_muted")).toBeNull();

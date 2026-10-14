@@ -568,6 +568,7 @@ function NotifySettingsRows({ client }: { client: MatronJournalClient }): React.
                                 <button
                                     type="button"
                                     className="mj_SettingsSheet_clear"
+                                    aria-label={`Clear the override for ${titleOf(row.convo_id)}`}
                                     onClick={() =>
                                         void notifier.changeSettings({ kind: "clear_convo", convoId: row.convo_id })
                                     }

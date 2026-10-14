@@ -19,7 +19,7 @@ Please see LICENSE files in the repository root for full details.
  *   notification settings.
  */
 
-import React, { useCallback, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import React, { useCallback, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
 import type { MatronJournalClient } from "./client";
 import { useDismissablePopover } from "./components";
@@ -45,7 +45,7 @@ import { TaggedTitle } from "./SessionTag";
 import { formatRelativeTime } from "./tracker/format";
 import type { ClientState, Conversation } from "./types";
 
-/** Arrow keys walk the menu's items; Escape closes it and gives focus back to the opener. */
+/** Arrow keys walk the menu's items, Home and End jump to the ends; Escape closes it and gives focus back to the opener. */
 function onMenuKeyDown(
     event: React.KeyboardEvent<HTMLElement>,
     close: () => void,
@@ -55,7 +55,10 @@ function onMenuKeyDown(
         event.currentTarget.querySelectorAll<HTMLElement>('[role="menuitem"], [role="menuitemradio"]'),
     );
     const index = items.findIndex((item) => item === document.activeElement);
-    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    if (event.key === "Home" || event.key === "End") {
+        event.preventDefault();
+        items[event.key === "Home" ? 0 : items.length - 1]?.focus();
+    } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
         event.preventDefault();
         const step = event.key === "ArrowDown" ? 1 : -1;
         const next = index === -1 ? (step === 1 ? 0 : items.length - 1) : (index + step + items.length) % items.length;
@@ -87,14 +90,31 @@ function useHeaderMenu(): {
     return { open, setOpen, close, openerRef, panelRef };
 }
 
-function roomRowLabel(room: ConversationRoom): string {
-    return `${ROOM_STATE_LABEL[room.state]}, ${room.title}`;
+/** What a screen reader reads for a room row: the button's label replaces its content, so the
+ *  muted mark and the time go in here too. The peers line stays as its description. */
+function roomRowLabel(room: ConversationRoom, silenced: boolean, now: number): string {
+    const parts = [ROOM_STATE_LABEL[room.state], room.title];
+    if (silenced) parts.push("notifications off");
+    if (room.lastActivity !== undefined) parts.push(formatRelativeTime(room.lastActivity, now));
+    return parts.join(", ");
 }
 
-function RoomPeers({ room, state }: { room: ConversationRoom; state: ClientState }): React.ReactElement | null {
-    if (room.peers.length === 0 && room.unknownPeers === 0) return null;
+function hasPeers(room: ConversationRoom): boolean {
+    return room.peers.length > 0 || room.unknownPeers > 0;
+}
+
+function RoomPeers({
+    id,
+    room,
+    state,
+}: {
+    id: string;
+    room: ConversationRoom;
+    state: ClientState;
+}): React.ReactElement | null {
+    if (!hasPeers(room)) return null;
     return (
-        <span className="mj_RoomsMenu_peers">
+        <span id={id} className="mj_RoomsMenu_peers">
             with{" "}
             {room.peers.map((peer: Conversation, index) => (
                 <React.Fragment key={peer.id}>
@@ -123,6 +143,7 @@ export function RoomsControl({
     const notifier = notificationsFor(client);
     const settings = useSyncExternalStore(notifier.subscribeSettings, notifier.getSettingsSnapshot);
     const { open, setOpen, close, openerRef, panelRef } = useHeaderMenu();
+    const idPrefix = useId();
     const label = roomsLabel(rooms.length);
     if (!label) return null;
     return (
@@ -152,15 +173,18 @@ export function RoomsControl({
                     aria-label="Agent chat rooms"
                     onKeyDown={(event) => onMenuKeyDown(event, close, openerRef)}
                 >
-                    {rooms.map((room) => {
+                    {rooms.map((room, index) => {
+                        const peersId = `${idPrefix}-peers-${index}`;
                         const silenced = convoNotifyState(settings.view, room.id, settings.now).silenced;
+                        const now = Date.now();
                         return (
                             <button
                                 key={room.id}
                                 type="button"
                                 role="menuitem"
                                 className="mj_RoomsMenu_item"
-                                aria-label={roomRowLabel(room)}
+                                aria-label={roomRowLabel(room, silenced, now)}
+                                aria-describedby={hasPeers(room) ? peersId : undefined}
                                 onClick={() => {
                                     close();
                                     void client.selectConversation(room.id);
@@ -173,15 +197,15 @@ export function RoomsControl({
                                     />
                                     <span className="mj_RoomsMenu_title">{room.title}</span>
                                     {silenced && (
-                                        <BellSlashIcon className="mj_RoomsMenu_muted" aria-label="Notifications off" />
+                                        <BellSlashIcon className="mj_RoomsMenu_muted" aria-hidden />
                                     )}
                                     {room.lastActivity !== undefined && (
                                         <span className="mj_RoomsMenu_time">
-                                            {formatRelativeTime(room.lastActivity, Date.now())}
+                                            {formatRelativeTime(room.lastActivity, now)}
                                         </span>
                                     )}
                                 </span>
-                                <RoomPeers room={room} state={state} />
+                                <RoomPeers id={peersId} room={room} state={state} />
                             </button>
                         );
                     })}
