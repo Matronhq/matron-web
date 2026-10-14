@@ -212,6 +212,9 @@ describe("Coordinator rail entry, chooser and Routines sheet", () => {
         expect(putCoordinator).toHaveBeenCalledWith("c_new");
         expect(document.querySelector("#mj-new-session-title")).toBeNull();
         expect(chooser()).toBeNull();
+        // The rail asked before the assignment landed: no Coordinator yet, but no chooser either.
+        await act(async () => railCoordinator().click());
+        expect(chooser()).toBeNull();
         await act(async () => answer({ convo_id: "c_new", consent: true }));
         expect(chooser()).toBeNull();
         expect(client.getSnapshot().coordinatorConvoId).toBe("c_new");

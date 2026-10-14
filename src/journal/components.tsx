@@ -1954,7 +1954,10 @@ function ConversationListView({
                         setAccountOpen(false);
                         closeConversationMenu();
                         void client.openCoordinator().then((opened) => {
-                            if (!opened) setCoordinatorSheet({ kind: "chooser", fromSettings: false });
+                            // A new coordinator chat being assigned is the answer on its way: its own
+                            // result (Settings back, or the chooser with the error) lands instead.
+                            if (opened || coordinatorSheetRef.current?.kind === "assigning") return;
+                            setCoordinatorSheet({ kind: "chooser", fromSettings: false });
                         });
                     },
                 }}
