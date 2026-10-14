@@ -15,22 +15,18 @@ Please see LICENSE files in the repository root for full details.
     --cpd-color-bg-accent: #0b6e7d;
     --cpd-color-bg-accent-emphasis: #0c7e8f;
     --cpd-color-bg-accent-tint: rgb(11 110 125 / 0.18);
-    --cpd-color-bg-badge: #7d756b;
     /* Mac TerminalStyle: tool output and diff bodies sit on one fixed dark block in BOTH themes. */
     --cpd-color-terminal-bg: #1f1f1f;
     --cpd-color-terminal-fg: #dbdbdb;
     --cpd-color-terminal-add: #73d173;
     --cpd-color-terminal-del: #e65959;
     --cpd-color-terminal-muted: #8c8c8c;
-    --cpd-color-bg-app: #f2f0ea;
     --cpd-color-bg-canvas-default: #fff;
     /* Mac sidebar material, measured: darker than the chat canvas (the audit's biggest 'feel' gap). */
     --cpd-color-bg-sidebar: #e6e4de;
     --cpd-color-bg-canvas-raised: #f7f5f0;
-    --cpd-color-bg-cluster: rgb(247 245 240 / 0.72);
     /* Mac MatronTimelineBackground: a two-stop warm gradient. `background` shorthand only. */
     --cpd-color-bg-room-canvas: linear-gradient(180deg, #f2f0ea 0%, #e8e5dc 100%);
-    --cpd-color-bg-scrim-auth: rgb(255 255 255 / 82%);
     --cpd-color-bg-scrim-drag: rgb(255 255 255 / 90%);
     --cpd-color-bg-self-bubble: #c4f5fb;
     --cpd-color-bg-subtle-primary: #eae8e3;
@@ -51,7 +47,6 @@ Please see LICENSE files in the repository root for full details.
     --cpd-color-text-success: #1e7a34;
     --cpd-color-text-link-external: #0b6e7d;
     --cpd-color-text-on-accent: #fff;
-    --cpd-color-text-on-badge: #fff;
     --cpd-color-text-placeholder: #9a938a;
     --cpd-color-text-primary: #1b1815;
     --cpd-color-text-secondary: #6b655c;
@@ -63,7 +58,6 @@ Please see LICENSE files in the repository root for full details.
     /* --- v2 interaction state layer (Radix 3/4/5 + M3 opacities) --- */
     /* Mac row hover is gray @ 0.08 in both themes. */
     --cpd-state-hover: rgb(128 128 128 / 0.08);
-    --cpd-state-active: rgb(128 128 128 / 0.14);
     --cpd-state-selected: rgb(11 110 125 / 0.1);
 
     /* §10.4 native chrome: no --cpd tokens exist for selection or scrollbar thumbs, so
@@ -77,17 +71,12 @@ Please see LICENSE files in the repository root for full details.
     --mj-scrim-modal: rgb(18 16 14 / 55%);
 
     /* --- v2 motion + focus --- */
-    --cpd-focus-ring: 0 0 0 2px var(--cpd-color-bg-canvas-default), 0 0 0 4px var(--cpd-color-text-action-accent);
     --cpd-dur-fast: 120ms;
-    --cpd-dur-med: 180ms;
     --cpd-ease: cubic-bezier(0.2, 0, 0, 1);
 
     /* --- radii: the Mac is uniformly squarer (bubbles/tool/diff 8, composer 10, prompt cards 12) --- */
-    --cpd-radius-xs: 4px;
     --cpd-radius-sm: 6px;
     --cpd-radius-md: 8px;
-    --cpd-radius-lg: 12px;
-    --cpd-radius-xl: 16px;
     --cpd-radius-pill: 999px;
     --cpd-radius-bubble: 8px;
     --cpd-radius-card: 8px;
@@ -105,7 +94,6 @@ Please see LICENSE files in the repository root for full details.
     --cpd-shadow-float: 0 2px 4px rgb(0 0 0 / 0.15);
 
     /* --- v2 icon sizes --- */
-    --cpd-icon-sm: 14px;
     --cpd-icon-md: 16px;
     --cpd-icon-lg: 20px;
 
@@ -115,13 +103,11 @@ Please see LICENSE files in the repository root for full details.
     --cpd-font-family-mono: ui-monospace, "SF Mono", Menlo, "Fira Code", monospace;
 
     --cpd-font-size-root: 16px;
-    --cpd-font-body-2xs-regular: 400 10px/12px var(--cpd-font-family-ui);
     --cpd-font-body-xs-regular: 400 12px/16px var(--cpd-font-family-ui);
     --cpd-font-body-xs-semibold: 600 12px/16px var(--cpd-font-family-ui);
     --cpd-font-body-sm-regular: 400 13px/17px var(--cpd-font-family-ui);
     --cpd-font-body-md-regular: 400 16px/24px var(--cpd-font-family-ui);
     --cpd-font-heading-sm-semibold: 600 18px/26px var(--cpd-font-family-ui);
-    --cpd-font-heading-md-semibold: 600 20px/26px var(--cpd-font-family-ui);
 
     /* --- role ramp, Mac sizes and leading (SF at ~1.2–1.3) --- */
     --cpd-font-micro: 400 10px/14px var(--cpd-font-family-ui);
@@ -134,10 +120,8 @@ Please see LICENSE files in the repository root for full details.
 
     --cpd-font-size-2xs: 10px;
     --cpd-font-size-xs: 12px;
-    --cpd-font-size-sm: 14px;
     --cpd-font-size-md: 16px;
     --cpd-font-size-lg: 18px;
-    --cpd-font-size-xl: 20px;
 
     /* --- v2 spacing: 4px base, non-linear ramp (Refactoring UI) --- */
     --cpd-space-0-5x: 2px;
@@ -157,20 +141,16 @@ Please see LICENSE files in the repository root for full details.
     --cpd-color-bg-accent: #0b6e7d;
     --cpd-color-bg-accent-emphasis: #0c7e8f;
     --cpd-color-bg-accent-tint: rgb(110 205 220 / 0.18);
-    --cpd-color-bg-badge: #433e37;
     /* Mac TerminalStyle: tool output and diff bodies sit on one fixed dark block in BOTH themes. */
     --cpd-color-terminal-bg: #1f1f1f;
     --cpd-color-terminal-fg: #dbdbdb;
     --cpd-color-terminal-add: #73d173;
     --cpd-color-terminal-del: #e65959;
     --cpd-color-terminal-muted: #8c8c8c;
-    --cpd-color-bg-app: #171512;
     --cpd-color-bg-canvas-default: #262421;
     --cpd-color-bg-sidebar: #2a2926;
     --cpd-color-bg-canvas-raised: #2c2a26;
-    --cpd-color-bg-cluster: rgb(44 42 38 / 0.72);
     --cpd-color-bg-room-canvas: linear-gradient(180deg, #1d1b18 0%, #171512 100%);
-    --cpd-color-bg-scrim-auth: rgb(23 21 18 / 0.86);
     --cpd-color-bg-scrim-drag: rgb(23 21 18 / 0.9);
     --cpd-color-bg-self-bubble: #123a41;
     --cpd-color-bg-subtle-primary: #2c2a26;
@@ -192,7 +172,6 @@ Please see LICENSE files in the repository root for full details.
     /* Accent bg (--cpd-color-bg-accent #0b6e7d) is identical in both themes, so on-accent
        text stays white in dark too; the lighter #6ecddc is only for text, icon and link accents. */
     --cpd-color-text-on-accent: #fff;
-    --cpd-color-text-on-badge: #fff;
     --cpd-color-text-placeholder: #857e74;
     --cpd-color-text-primary: #e7e4df;
     --cpd-color-text-secondary: #9a948b;
@@ -204,7 +183,6 @@ Please see LICENSE files in the repository root for full details.
 
     /* v2 interaction state layer (light-ink overlays on dark) */
     --cpd-state-hover: rgb(128 128 128 / 0.08);
-    --cpd-state-active: rgb(128 128 128 / 0.14);
     --cpd-state-selected: rgb(110 205 220 / 0.14);
 
     /* §10.4 native chrome (dark): accent-tint selection + light-ink scrollbar thumbs. */
@@ -382,23 +360,6 @@ button {
     gap: 4px;
     margin-top: auto;
     padding-bottom: 8px;
-}
-
-.mj_NavRail_avatar {
-    position: relative;
-    display: inline-flex;
-    width: 28px;
-    height: 28px;
-    align-items: center;
-    justify-content: center;
-    margin-top: 4px;
-    border: 0;
-    border-radius: 50%;
-    background: var(--cpd-color-bg-subtle-secondary);
-    color: var(--cpd-color-text-secondary);
-    cursor: pointer;
-    font: 600 11px/1 var(--cpd-font-family-ui);
-    text-transform: uppercase;
 }
 
 .mj_NavRail_status {
