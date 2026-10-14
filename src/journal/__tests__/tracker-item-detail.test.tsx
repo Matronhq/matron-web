@@ -8,8 +8,16 @@ Please see LICENSE files in the repository root for full details.
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
+import { JournalApiError } from "../api";
 import type { MatronJournalClient } from "../client";
-import type { StatusSnapshot, TrackerComment, TrackerHandover, TrackerItem } from "../types";
+import type {
+    JournalEvent,
+    SpawnConsentRows,
+    StatusSnapshot,
+    TrackerComment,
+    TrackerHandover,
+    TrackerItem,
+} from "../types";
 import { ItemDetail } from "../tracker/ItemDetail";
 import { trackerComment, trackerItem, trackerMission } from "./tracker-fixtures";
 
@@ -24,6 +32,9 @@ interface FakeClient {
     openTrackerLink: jest.Mock;
     openTrackerMission: jest.Mock;
     loadMissions: jest.Mock;
+    loadItem: jest.Mock;
+    spawnConsentRows: jest.Mock;
+    answerSpawnConsent: jest.Mock;
 }
 
 function fakeClient(): FakeClient {
@@ -38,6 +49,9 @@ function fakeClient(): FakeClient {
         openTrackerLink: jest.fn(),
         openTrackerMission: jest.fn(),
         loadMissions: jest.fn().mockResolvedValue(undefined),
+        loadItem: jest.fn().mockResolvedValue(undefined),
+        spawnConsentRows: jest.fn().mockResolvedValue({ request: null, outcome: null }),
+        answerSpawnConsent: jest.fn().mockResolvedValue(undefined),
     };
 }
 
@@ -1261,5 +1275,254 @@ describe("ItemDetail context block", () => {
         } finally {
             jest.useRealTimers();
         }
+    });
+});
+
+describe("ItemDetail spawn consent", () => {
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    const spawnCard = (over: Record<string, unknown> = {}): JournalEvent => ({
+        seq: 40,
+        convo_id: "c1",
+        ts: 1700000000000,
+        sender: "agent:box-b",
+        type: "permission_request",
+        payload: {
+            kind: "agent_spawn",
+            request_id: "sp_1",
+            from_name: "box-b",
+            from_convo_title: "Fix the flaky tests",
+            target_name: "box-a",
+            workdir: "/srv/app",
+            task: "Run the suite and fix flakes",
+            topic: "Flake hunt",
+            model: "opus",
+            effort: "high",
+            ...over,
+        },
+    });
+    const consentItem = (over: Partial<TrackerItem> = {}): TrackerItem =>
+        trackerItem({
+            num: 31,
+            kind: "question",
+            title: "Start a session on box-a?",
+            links: [{ url: "matron://consent/spawn/sp_1", title: "Spawn request" }],
+            ...over,
+        });
+    const rows = (over: Partial<SpawnConsentRows> = {}): SpawnConsentRows => ({
+        request: spawnCard(),
+        outcome: null,
+        ...over,
+    });
+
+    function render(client: FakeClient, item: TrackerItem): Promise<{ container: HTMLDivElement; root: Root }> {
+        return mount(
+            <ItemDetail
+                item={item}
+                comments={[]}
+                client={client as unknown as MatronJournalClient}
+                onBack={jest.fn()}
+            />,
+        );
+    }
+
+    const button = (container: HTMLElement, label: string): HTMLButtonElement | undefined =>
+        Array.from(container.querySelectorAll<HTMLButtonElement>(".mj_TrackerConsent button")).find(
+            (node) => node.textContent === label,
+        );
+
+    it("shows the card's own details inside the item, from the conversation that asked", async () => {
+        const client = fakeClient();
+        client.spawnConsentRows.mockResolvedValue(rows());
+        const { container } = await render(client, consentItem());
+
+        expect(client.spawnConsentRows).toHaveBeenCalledWith("c1", "sp_1");
+        const card = container.querySelector(".mj_TrackerConsent .mj_PromptCard_spawn")!;
+        expect(card.querySelector(".mj_SpawnHeadline")?.textContent).toBe("Flake hunt");
+        expect(card.querySelector(".mj_SpawnDetail_target .mj_SpawnDetail_value")?.textContent).toBe("box-a");
+        expect(card.querySelector(".mj_SpawnDetail_folder .mj_SpawnDetail_value")?.textContent).toBe("/srv/app");
+        expect(card.querySelector(".mj_SpawnDetail_runs .mj_SpawnDetail_value")?.textContent).toBe("opus · high");
+        expect(card.querySelector(".mj_SpawnTask")?.textContent).toBe("Run the suite and fix flakes");
+        expect(button(container, "Approve")).toBeDefined();
+        expect(button(container, "Deny")).toBeDefined();
+    });
+
+    it("sits between the links and the body", async () => {
+        const client = fakeClient();
+        client.spawnConsentRows.mockResolvedValue(rows());
+        const { container } = await render(client, consentItem({ body: "Box rules allow it." }));
+
+        const order = Array.from(
+            container.querySelectorAll(".mj_TrackerLinks, .mj_TrackerConsent, .mj_TrackerItemBody"),
+        ).map((node) => node.className);
+        expect(order).toEqual(["mj_TrackerLinks", "mj_TrackerConsent", expect.stringContaining("mj_TrackerItemBody")]);
+    });
+
+    it("approves through the client's consent answer for this item", async () => {
+        const client = fakeClient();
+        client.spawnConsentRows.mockResolvedValue(rows());
+        const { container } = await render(client, consentItem());
+
+        await act(async () => button(container, "Approve")!.click());
+
+        expect(client.answerSpawnConsent).toHaveBeenCalledWith(31, "sp_1", "approve", expect.any(AbortSignal));
+    });
+
+    it("shows sending while the answer is on its way", async () => {
+        const client = fakeClient();
+        client.spawnConsentRows.mockResolvedValue(rows());
+        client.answerSpawnConsent.mockReturnValue(new Promise(() => undefined));
+        const { container } = await render(client, consentItem());
+
+        await act(async () => button(container, "Deny")!.click());
+
+        expect(container.querySelector(".mj_TrackerConsent .mj_PromptResolved_pending")?.textContent).toBe("Sending…");
+        expect(button(container, "Approve")!.disabled).toBe(true);
+    });
+
+    it("says what the user did once the journal closes the item after an accepted approval", async () => {
+        const client = fakeClient();
+        client.spawnConsentRows.mockResolvedValue(rows());
+        const { container, root } = await render(client, consentItem());
+        await act(async () => button(container, "Approve")!.click());
+
+        await act(async () => {
+            root.render(
+                <ItemDetail
+                    item={consentItem({ state: "closed", awaiting: null, resolution: "decided" })}
+                    comments={[]}
+                    client={client as unknown as MatronJournalClient}
+                    onBack={jest.fn()}
+                />,
+            );
+        });
+
+        expect(container.querySelector(".mj_TrackerConsent .mj_PromptResolved_approved")?.textContent).toBe(
+            "Approved — starting the session",
+        );
+        expect(button(container, "Approve")).toBeUndefined();
+    });
+
+    it("reads a closed item with no outcome and no answer from here as answered elsewhere", async () => {
+        const client = fakeClient();
+        client.spawnConsentRows.mockResolvedValue(rows());
+        const { container } = await render(client, consentItem({ state: "closed", awaiting: null }));
+
+        expect(container.querySelector(".mj_TrackerConsent .mj_PromptResolved_expired")?.textContent).toBe(
+            "Already answered or expired",
+        );
+        expect(button(container, "Approve")).toBeUndefined();
+    });
+
+    it("shows the journal's outcome and opens a started session's room", async () => {
+        const client = fakeClient();
+        client.spawnConsentRows.mockResolvedValue(
+            rows({ outcome: { request_id: "sp_1", outcome: "started", room_id: "room_9" } }),
+        );
+        const { container } = await render(client, consentItem({ state: "closed", awaiting: null }));
+
+        expect(container.querySelector(".mj_TrackerConsent .mj_PromptResolved_started .mj_Answered")?.textContent).toBe(
+            "Started",
+        );
+        await act(async () => button(container, "Open")!.click());
+        expect(client.closeTrackerView).toHaveBeenCalled();
+        expect(client.selectConversation).toHaveBeenCalledWith("room_9", { suppressNotFound: true });
+    });
+
+    it("settles a 409 as already answered", async () => {
+        const client = fakeClient();
+        client.spawnConsentRows.mockResolvedValue(rows());
+        client.answerSpawnConsent.mockRejectedValue(new JournalApiError("Already resolved", 409));
+        const { container } = await render(client, consentItem());
+
+        await act(async () => button(container, "Deny")!.click());
+
+        expect(container.querySelector(".mj_TrackerConsent .mj_PromptResolved_expired")?.textContent).toBe(
+            "Already answered or expired",
+        );
+    });
+
+    it("offers no buttons when the card has not reached this browser", async () => {
+        const client = fakeClient();
+        const { container } = await render(client, consentItem());
+
+        const waiting = container.querySelector(".mj_TrackerConsent_waiting");
+        expect(waiting?.textContent).toContain("hasn't reached this browser yet");
+        expect(container.querySelectorAll(".mj_TrackerConsent button")).toHaveLength(0);
+    });
+
+    it("shows how the ask ended when only its outcome is here, with Open for a started session", async () => {
+        const client = fakeClient();
+        client.spawnConsentRows.mockResolvedValue(
+            rows({ request: null, outcome: { request_id: "sp_1", outcome: "started", room_id: "room_9" } }),
+        );
+        const { container } = await render(client, consentItem({ state: "closed", awaiting: null }));
+
+        expect(container.querySelector(".mj_TrackerConsent_note")?.textContent).toBe("🚀 Spawned session started");
+        await act(async () => button(container, "Open")!.click());
+        expect(client.selectConversation).toHaveBeenCalledWith("room_9", { suppressNotFound: true });
+        expect(button(container, "Approve")).toBeUndefined();
+    });
+
+    it("says a closed item's ask is no longer waiting when neither card nor outcome is here", async () => {
+        const client = fakeClient();
+        const { container } = await render(client, consentItem({ state: "closed", awaiting: null }));
+
+        expect(container.querySelector(".mj_TrackerConsent_note")?.textContent).toBe(
+            "This request is no longer waiting for an answer.",
+        );
+        expect(container.querySelectorAll(".mj_TrackerConsent button")).toHaveLength(0);
+    });
+
+    it("reads the ask again when the asking conversation moves", async () => {
+        const client = fakeClient();
+        const conversation = { id: "c1", title: "Fix the flaky tests", last_seq: 40 };
+        client.getSnapshot.mockReturnValue({ selectedConversationId: "c2", conversations: [conversation] });
+        const { container, root } = await render(client, consentItem());
+        expect(container.querySelector(".mj_TrackerConsent_waiting")).not.toBeNull();
+
+        client.spawnConsentRows.mockResolvedValue(rows());
+        client.getSnapshot.mockReturnValue({
+            selectedConversationId: "c2",
+            conversations: [{ ...conversation, last_seq: 41 }],
+        });
+        await act(async () => {
+            root.render(
+                <ItemDetail
+                    item={consentItem()}
+                    comments={[]}
+                    client={client as unknown as MatronJournalClient}
+                    onBack={jest.fn()}
+                />,
+            );
+        });
+
+        expect(client.spawnConsentRows).toHaveBeenCalledTimes(2);
+        expect(button(container, "Approve")).toBeDefined();
+    });
+
+    it("offers no close while the ask waits, and the usual ones once its outcome is in", async () => {
+        const client = fakeClient();
+        client.spawnConsentRows.mockResolvedValue(rows());
+        const waiting = await render(client, consentItem());
+        expect(waiting.container.querySelector(".mj_TrackerMenu_button")).toBeNull();
+
+        client.spawnConsentRows.mockResolvedValue(rows({ outcome: { request_id: "sp_1", outcome: "expired" } }));
+        const done = await render(client, consentItem());
+        await openMenu(done.container);
+        expect(menuLabels(done.container)).toEqual(["Dismiss"]);
+    });
+
+    it("draws no spawn card for an agent-chat consent item", async () => {
+        const client = fakeClient();
+        const { container } = await render(
+            client,
+            trackerItem({ links: [{ url: "matron://consent/chat/room_1/7", title: "Chat request" }] }),
+        );
+
+        expect(client.spawnConsentRows).not.toHaveBeenCalled();
+        expect(container.querySelector(".mj_TrackerConsent")).toBeNull();
     });
 });
