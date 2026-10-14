@@ -216,7 +216,7 @@ async function timed(page, action, predicate, arg) {
     return { readyMs: round(ready - t0), idleMs: round(Math.max(ready, lastEnd) - t0) };
 }
 
-const ROWS = ".mj_RoomList [role=listitem] button[aria-label^='Open ']";
+const ROWS = ".mj_ConversationList [role=listitem] button[aria-label^='Open ']";
 const TILES = "ol.mj_ChatView_messageList > li.mj_EventTile";
 
 // The journal allows five sign-ins a minute per address; keep under it.

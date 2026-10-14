@@ -85,13 +85,13 @@ describe("token layer", () => {
     });
 
     it("uses the Mac timeline gradient for the message canvas in both themes", () => {
-        expect(light.get("--mj-color-bg-room-canvas")).toBe("linear-gradient(180deg, #f2f0ea 0%, #e8e5dc 100%)");
-        expect(dark.get("--mj-color-bg-room-canvas")).toBe("linear-gradient(180deg, #1d1b18 0%, #171512 100%)");
+        expect(light.get("--mj-color-bg-chat-canvas")).toBe("linear-gradient(180deg, #f2f0ea 0%, #e8e5dc 100%)");
+        expect(dark.get("--mj-color-bg-chat-canvas")).toBe("linear-gradient(180deg, #1d1b18 0%, #171512 100%)");
     });
 
     it("never applies the canvas gradient through background-color", () => {
         for (const [path, css] of SHEETS) {
-            expect(`${path}: ${/background-color:\s*var\(--mj-color-bg-room-canvas/.test(css)}`).toBe(`${path}: false`);
+            expect(`${path}: ${/background-color:\s*var\(--mj-color-bg-chat-canvas/.test(css)}`).toBe(`${path}: false`);
         }
     });
 
@@ -521,9 +521,9 @@ describe("sidebar styles", () => {
     });
 
     it("lets the snippet truncate before the time on a row's meta line", () => {
-        expect(rule(".mj_RoomListMeta")).toMatch(/display: flex/);
-        expect(rule(".mj_RoomListSnippet")).toMatch(/text-overflow: ellipsis/);
-        expect(rule(".mj_RoomListTime")).toMatch(/flex: none/);
+        expect(rule(".mj_ConversationListMeta")).toMatch(/display: flex/);
+        expect(rule(".mj_ConversationListSnippet")).toMatch(/text-overflow: ellipsis/);
+        expect(rule(".mj_ConversationListTime")).toMatch(/flex: none/);
     });
 
     it("uses the sidebar surface for the rail and list, and a white search field on it", () => {

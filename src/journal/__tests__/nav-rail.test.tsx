@@ -168,8 +168,8 @@ describe("NavRail", () => {
         await render(signedInClient([convo("c1")]));
         expect(container.querySelector(".mj_Wordmark")).toBeNull();
         expect(container.querySelector(".mj_NewSessionButton")).toBeNull();
-        expect(container.querySelector(".mj_RoomListTitle")?.textContent).toBe("Conversations");
-        expect(container.querySelector('.mj_RoomListHeader button[aria-label="New session"]')).not.toBeNull();
+        expect(container.querySelector(".mj_ConversationListTitle")?.textContent).toBe("Conversations");
+        expect(container.querySelector('.mj_ConversationListHeader button[aria-label="New session"]')).not.toBeNull();
         const footer = container.querySelector('[data-testid="nav-rail"] .mj_NavRail_footer');
         expect(footer?.querySelector('button[aria-label^="Settings"]')).not.toBeNull();
         // Theme moved into the Settings sheet (unify step 6).

@@ -1237,18 +1237,18 @@ export function MessageSearchResults({
                 Messages
             </div>
             {failed ? (
-                <p className="mj_RoomListEmpty" role="status">
+                <p className="mj_ConversationListEmpty" role="status">
                     Search is unavailable right now.
                 </p>
             ) : hits.length === 0 ? (
                 // Hits are bound to their query, so an empty set while loading means the current
                 // query has no results yet — show a searching state, never a prior query's rows.
                 loading ? (
-                    <p className="mj_RoomListEmpty" role="status">
+                    <p className="mj_ConversationListEmpty" role="status">
                         Searching…
                     </p>
                 ) : (
-                    <p className="mj_RoomListEmpty" role="status">
+                    <p className="mj_ConversationListEmpty" role="status">
                         No messages match your search.
                     </p>
                 )
@@ -1290,10 +1290,10 @@ function ConversationListView({
     const [accountOpen, setAccountOpen] = useState(false);
     const [newSessionOpen, setNewSessionOpen] = useState(false);
     const [pinDialog, setPinDialog] = useState<PinDialogTarget>();
-    const [roomMenu, setRoomMenu] = useState<{ conversationId: string; left: number; top: number }>();
-    const roomMenuRef = useRef(roomMenu);
-    const roomMenuElementRef = useRef<HTMLDivElement>(null);
-    const roomMenuOpenerRef = useRef<HTMLElement | null>(null);
+    const [conversationMenu, setConversationMenu] = useState<{ conversationId: string; left: number; top: number }>();
+    const conversationMenuRef = useRef(conversationMenu);
+    const conversationMenuElementRef = useRef<HTMLDivElement>(null);
+    const conversationMenuOpenerRef = useRef<HTMLElement | null>(null);
     // Pending rAF id for the post-menu-action focus restore; cancelled before re-scheduling
     // and on unmount so a stale callback can never steal focus (see restoreFocusAfterMenuAction).
     const restoreFocusFrameRef = useRef<number | undefined>(undefined);
@@ -1301,9 +1301,9 @@ function ConversationListView({
     const longPressTargetRef = useRef<{ conversationId: string; row: HTMLButtonElement } | undefined>(undefined);
     const longPressFiredRef = useRef(false);
     const longPressScrollCleanupRef = useRef<() => void>(() => undefined);
-    const openRoomMenuRef = useRef<(conversationId: string, left: number, top: number, opener: HTMLElement) => void>(
-        () => undefined,
-    );
+    const openConversationMenuRef = useRef<
+        (conversationId: string, left: number, top: number, opener: HTMLElement) => void
+    >(() => undefined);
     const longPressControllerRef = useRef<LongPressController | undefined>(undefined);
     const childOutcomesRef = useRef(
         new Map(
@@ -1358,12 +1358,12 @@ function ConversationListView({
         return () => clearTimeout(timer);
     }, [query, client]);
 
-    roomMenuRef.current = roomMenu;
-    openRoomMenuRef.current = (conversationId, left, top, opener): void => {
+    conversationMenuRef.current = conversationMenu;
+    openConversationMenuRef.current = (conversationId, left, top, opener): void => {
         setAccountOpen(false);
         setNewSessionOpen(false);
-        roomMenuOpenerRef.current = opener;
-        setRoomMenu({ conversationId, left, top });
+        conversationMenuOpenerRef.current = opener;
+        setConversationMenu({ conversationId, left, top });
     };
     if (!longPressControllerRef.current) {
         longPressControllerRef.current = createLongPressController({
@@ -1374,15 +1374,15 @@ function ConversationListView({
                 if (!target) return;
                 const rect = target.row.getBoundingClientRect();
                 longPressFiredRef.current = true;
-                openRoomMenuRef.current(target.conversationId, rect.right, rect.top, target.row);
+                openConversationMenuRef.current(target.conversationId, rect.right, rect.top, target.row);
             },
         });
     }
 
-    const closeRoomMenu = useCallback((restoreFocus = false): void => {
-        if (!roomMenuRef.current) return;
-        setRoomMenu(undefined);
-        if (restoreFocus) roomMenuOpenerRef.current?.focus();
+    const closeConversationMenu = useCallback((restoreFocus = false): void => {
+        if (!conversationMenuRef.current) return;
+        setConversationMenu(undefined);
+        if (restoreFocus) conversationMenuOpenerRef.current?.focus();
     }, []);
 
     // After a menu ACTION (mark-read/archive/unarchive) the focused menuitem unmounts, and
@@ -1391,7 +1391,7 @@ function ConversationListView({
     // connected (mark-read), else the always-present search input, so keyboard focus never falls
     // through to document.body.
     const restoreFocusAfterMenuAction = useCallback((): void => {
-        const opener = roomMenuOpenerRef.current;
+        const opener = conversationMenuOpenerRef.current;
         // Cancel any still-pending restore before scheduling a new one. Without this the
         // leaked callback fires on a LATER tick (or in a later test), finds its opener
         // disconnected, and yanks focus to the search input — a real focus-steal, and the
@@ -1400,7 +1400,7 @@ function ConversationListView({
         restoreFocusFrameRef.current = requestAnimationFrame(() => {
             restoreFocusFrameRef.current = undefined;
             if (opener && opener.isConnected) opener.focus();
-            else document.getElementById("room-list-search-input")?.focus();
+            else document.getElementById("conversation-search-input")?.focus();
         });
     }, []);
 
@@ -1438,16 +1438,17 @@ function ConversationListView({
     );
 
     useEffect(() => {
-        if (!roomMenu) return;
+        if (!conversationMenu) return;
         const onPointerDown = (event: PointerEvent): void => {
-            if (!roomMenuRef.current || roomMenuElementRef.current?.contains(event.target as Node)) return;
-            closeRoomMenu();
+            if (!conversationMenuRef.current || conversationMenuElementRef.current?.contains(event.target as Node))
+                return;
+            closeConversationMenu();
         };
         const onKeyDown = (event: KeyboardEvent): void => {
-            if (roomMenuRef.current && event.key === "Escape") closeRoomMenu(true);
+            if (conversationMenuRef.current && event.key === "Escape") closeConversationMenu(true);
         };
         const onScroll = (): void => {
-            if (roomMenuRef.current) closeRoomMenu();
+            if (conversationMenuRef.current) closeConversationMenu();
         };
         document.addEventListener("pointerdown", onPointerDown);
         document.addEventListener("keydown", onKeyDown);
@@ -1457,22 +1458,22 @@ function ConversationListView({
             document.removeEventListener("keydown", onKeyDown);
             document.removeEventListener("scroll", onScroll, true);
         };
-    }, [Boolean(roomMenu), closeRoomMenu]);
+    }, [Boolean(conversationMenu), closeConversationMenu]);
 
     useLayoutEffect(() => {
-        if (!roomMenu || !roomMenuElementRef.current) return;
-        const rect = roomMenuElementRef.current.getBoundingClientRect();
-        const left = Math.max(8, Math.min(roomMenu.left, window.innerWidth - rect.width - 8));
-        const top = Math.max(8, Math.min(roomMenu.top, window.innerHeight - rect.height - 8));
-        if (left !== roomMenu.left || top !== roomMenu.top) {
-            setRoomMenu({ ...roomMenu, left, top });
+        if (!conversationMenu || !conversationMenuElementRef.current) return;
+        const rect = conversationMenuElementRef.current.getBoundingClientRect();
+        const left = Math.max(8, Math.min(conversationMenu.left, window.innerWidth - rect.width - 8));
+        const top = Math.max(8, Math.min(conversationMenu.top, window.innerHeight - rect.height - 8));
+        if (left !== conversationMenu.left || top !== conversationMenu.top) {
+            setConversationMenu({ ...conversationMenu, left, top });
         }
-    }, [roomMenu]);
+    }, [conversationMenu]);
 
     useLayoutEffect(() => {
-        if (!roomMenu) return;
-        roomMenuElementRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
-    }, [roomMenu]);
+        if (!conversationMenu) return;
+        conversationMenuElementRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+    }, [conversationMenu]);
     // ONE canonical index feeds BOTH sidebar paths here (top-level fallback + nested
     // splice) AND the client-side selection/unread/mark-all consumers, so "rendered" and
     // "selectable/counted" can never diverge. rendersAsTopLevelRow: a non-child always
@@ -1550,17 +1551,17 @@ function ConversationListView({
             !state.archivedIds.has(conversation.id) &&
             isTopLevelRow(conversation),
     );
-    const menuConversation = roomMenu
-        ? state.conversations.find((conversation) => conversation.id === roomMenu.conversationId)
+    const menuConversation = conversationMenu
+        ? state.conversations.find((conversation) => conversation.id === conversationMenu.conversationId)
         : undefined;
 
     useEffect(() => {
-        if (roomMenu && !menuConversation) closeRoomMenu();
-    }, [roomMenu, menuConversation, closeRoomMenu]);
+        if (conversationMenu && !menuConversation) closeConversationMenu();
+    }, [conversationMenu, menuConversation, closeConversationMenu]);
 
     const openAtElement = (conversationId: string, anchor: HTMLElement, opener: HTMLElement = anchor): void => {
         const rect = anchor.getBoundingClientRect();
-        openRoomMenuRef.current(conversationId, rect.right, rect.bottom, opener);
+        openConversationMenuRef.current(conversationId, rect.right, rect.bottom, opener);
     };
 
     // Nav rail: which section is current, and the unread total it badges (archived rows excluded;
@@ -1609,7 +1610,9 @@ function ConversationListView({
             : [];
     // Move up / Move down step through the pins the Pinned section shows (hidden archived pins
     // keep their place but are hopped over, so every step moves the row on screen).
-    const menuPinIndex = roomMenu ? shownPins.findIndex((pin) => pin.convo_id === roomMenu.conversationId) : -1;
+    const menuPinIndex = conversationMenu
+        ? shownPins.findIndex((pin) => pin.convo_id === conversationMenu.conversationId)
+        : -1;
     const shownPinIds = shownPins.map((pin) => pin.convo_id);
     const nestedChildRows = (conversation: Conversation): React.ReactElement[] =>
         tab === "archived"
@@ -1663,9 +1666,9 @@ function ConversationListView({
             effectiveUnread(child, state.unreadOverrideIds),
         );
         return (
-            <div className="mj_RoomListItem_wrapper" role="listitem" key={conversation.id}>
+            <div className="mj_ConversationListItem_wrapper" role="listitem" key={conversation.id}>
                 <button
-                    className={`mj_RoomListItem${selected ? " mj_RoomListItem_selected" : ""}${isSubagent ? " mj_RoomListItem_sub" : ""}`}
+                    className={`mj_ConversationListItem${selected ? " mj_ConversationListItem_selected" : ""}${isSubagent ? " mj_ConversationListItem_sub" : ""}`}
                     type="button"
                     aria-current={selected ? "page" : undefined}
                     aria-label={`Open ${isSubagent ? "subagent" : "room"} ${name}${outcomeStatus ? `, ${outcomeStatus}` : ""}, last activity ${relativeTimestamp}${overrideUnread ? ", marked unread" : ""}${
@@ -1690,7 +1693,12 @@ function ConversationListView({
                             openAtElement(conversation.id, trigger ?? event.currentTarget, event.currentTarget);
                             return;
                         }
-                        openRoomMenuRef.current(conversation.id, event.clientX, event.clientY, event.currentTarget);
+                        openConversationMenuRef.current(
+                            conversation.id,
+                            event.clientX,
+                            event.clientY,
+                            event.currentTarget,
+                        );
                     }}
                     onPointerDown={(event) => {
                         if (event.pointerType !== "touch") return;
@@ -1720,73 +1728,76 @@ function ConversationListView({
                         live/terminal outcome. Parent rows keep the shipped pin-or-status behaviour
                         (star renders separately before the meta). */}
                     {isSubagent ? (
-                        <span className="mj_RoomListWorkerGlyphs" aria-hidden="true">
-                            <WorkerMark conversation={conversation} className="mj_WorkerMark mj_RoomListWorkerMark" />
+                        <span className="mj_ConversationListWorkerGlyphs" aria-hidden="true">
+                            <WorkerMark
+                                conversation={conversation}
+                                className="mj_WorkerMark mj_ConversationListWorkerMark"
+                            />
                             <OutcomeGlyph
                                 conversation={conversation}
-                                className="mj_RoomListOutcomeGlyph"
-                                spinnerClassName="mj_RoomListSubSpinner"
+                                className="mj_ConversationListOutcomeGlyph"
+                                spinnerClassName="mj_ConversationListSubSpinner"
                             />
                         </span>
                     ) : pin ? (
-                        <span className="mj_RoomListPinGlyph mj_PinGlyph" aria-hidden="true">
+                        <span className="mj_ConversationListPinGlyph mj_PinGlyph" aria-hidden="true">
                             {pinGlyph(pin)}
                         </span>
                     ) : isPinned(conversation.id) ? (
-                        <span className="mj_RoomListPinGlyph">
+                        <span className="mj_ConversationListPinGlyph">
                             <PinIcon aria-hidden />
                         </span>
                     ) : (
                         <span
-                            className={`mj_RoomListStatus mj_RoomListStatus_${
+                            className={`mj_ConversationListStatus mj_ConversationListStatus_${
                                 conversation.session_state === "running" ? "running" : "idle"
                             }`}
                             aria-hidden="true"
                         />
                     )}
-                    <span className={`mj_RoomListText${unread ? " mj_RoomListText_unread" : ""}`}>
-                        <span className="mj_RoomListName" title={name} data-testid="room-name">
+                    <span className={`mj_ConversationListText${unread ? " mj_ConversationListText_unread" : ""}`}>
+                        <span className="mj_ConversationListName" title={name} data-testid="conversation-name">
                             {isSubagent && (
-                                <span className="mj_RoomListSubArrow" aria-hidden="true">
+                                <span className="mj_ConversationListSubArrow" aria-hidden="true">
                                     ↳{" "}
                                 </span>
                             )}
                             {pin ? pin.label : <TaggedTitle conversation={conversation} agents={state.agents} />}
                         </span>
                         <span
-                            className="mj_RoomListMeta"
+                            className="mj_ConversationListMeta"
                             title={pin ? displayTitle(conversation) : conversation.snippet}
                         >
                             {pin ? (
                                 <>
-                                    <span className="mj_RoomListSnippet">
+                                    <span className="mj_ConversationListSnippet">
                                         <TaggedTitle conversation={conversation} agents={state.agents} />
                                     </span>
-                                    <span className="mj_RoomListDot"> · </span>
+                                    <span className="mj_ConversationListDot"> · </span>
                                 </>
                             ) : (
                                 conversation.snippet && (
                                     <>
-                                        <span className="mj_RoomListSnippet">{conversation.snippet}</span>
-                                        <span className="mj_RoomListDot"> · </span>
+                                        <span className="mj_ConversationListSnippet">{conversation.snippet}</span>
+                                        <span className="mj_ConversationListDot"> · </span>
                                     </>
                                 )
                             )}
-                            <span className="mj_RoomListTime">{relativeTimestamp}</span>
+                            <span className="mj_ConversationListTime">{relativeTimestamp}</span>
                         </span>
                     </span>
                     {state.favoriteIds.has(conversation.id) && (
-                        <span className="mj_RoomListStarGlyph">
+                        <span className="mj_ConversationListStarGlyph">
                             <StarFilledIcon aria-hidden />
                         </span>
                     )}
-                    <span className="mj_RoomListTrailing">
+                    <span className="mj_ConversationListTrailing">
                         {collapsedSubagentCount > 0 && (
                             // Decorative: the hidden-child count + unread state are announced via the
                             // containing row button's aria-label (a nested label here would be silent to AT).
                             <span
-                                className={`mj_RoomListCollapsedSubs${
-                                    collapsedSubagentUnread ? " mj_RoomListCollapsedSubs_unread" : ""
+                                className={`mj_ConversationListCollapsedSubs${
+                                    collapsedSubagentUnread ? " mj_ConversationListCollapsedSubs_unread" : ""
                                 }`}
                                 aria-hidden="true"
                             >
@@ -1808,10 +1819,10 @@ function ConversationListView({
                     trigger is invisible to mouse users (no hover reveal) but appears on
                     keyboard focus, so keyboard/AT users keep a discoverable, operable route. */}
                 <button
-                    className="mj_RoomItemMenu_trigger"
+                    className="mj_ConversationMenu_trigger"
                     type="button"
                     aria-haspopup="menu"
-                    aria-expanded={roomMenu?.conversationId === conversation.id}
+                    aria-expanded={conversationMenu?.conversationId === conversation.id}
                     aria-label="Conversation options"
                     ref={(element) => {
                         if (element) menuTriggerRefs.current.set(conversation.id, element);
@@ -1830,14 +1841,14 @@ function ConversationListView({
 
     // A pin whose conversation is gone (or not in this client's list): greyed, Move pin… / Unpin only.
     const renderMissingPin = (pin: ConvoPin): React.ReactElement => (
-        <div className="mj_RoomListItem_wrapper mj_PinRow_missing" role="listitem" key={pin.convo_id}>
-            <div className="mj_RoomListItem" aria-label={`Pinned ${pin.label}, conversation unavailable`}>
-                <span className="mj_RoomListPinGlyph mj_PinGlyph" aria-hidden="true">
+        <div className="mj_ConversationListItem_wrapper mj_PinRow_missing" role="listitem" key={pin.convo_id}>
+            <div className="mj_ConversationListItem" aria-label={`Pinned ${pin.label}, conversation unavailable`}>
+                <span className="mj_ConversationListPinGlyph mj_PinGlyph" aria-hidden="true">
                     {pinGlyph(pin)}
                 </span>
-                <span className="mj_RoomListText">
-                    <span className="mj_RoomListName">{pin.label}</span>
-                    <span className="mj_RoomListMeta">Conversation unavailable</span>
+                <span className="mj_ConversationListText">
+                    <span className="mj_ConversationListName">{pin.label}</span>
+                    <span className="mj_ConversationListMeta">Conversation unavailable</span>
                 </span>
             </div>
             <div className="mj_PinRow_actions">
@@ -1883,7 +1894,7 @@ function ConversationListView({
                 counts={{ conversations: unreadTotal, decisions: needsYouTotal }}
                 onSelect={(key) => {
                     setAccountOpen(false);
-                    closeRoomMenu();
+                    closeConversationMenu();
                     if (key === "conversations") client.closeTrackerView();
                     // A rail tap always lands on the section's home, not a page left open inside it.
                     else
@@ -1934,12 +1945,12 @@ function ConversationListView({
                         <div className="mj_Sidebar_listContainer">
                             <nav className="mj_ConversationListPanel" aria-label="Room list">
                                 <header
-                                    className="mj_RoomListHeader"
+                                    className="mj_ConversationListHeader"
                                     aria-label="Room options"
-                                    data-testid="room-list-header"
+                                    data-testid="conversation-list-header"
                                 >
-                                    <h2 className="mj_RoomListTitle">Conversations</h2>
-                                    <div className="mj_RoomListHeaderActions">
+                                    <h2 className="mj_ConversationListTitle">Conversations</h2>
+                                    <div className="mj_ConversationListHeaderActions">
                                         {tab !== "archived" && hasActiveUnread && (
                                             <button
                                                 className="mj_IconButton mj_MarkAllReadButton"
@@ -1967,7 +1978,7 @@ function ConversationListView({
                                             title="New session — runs /start"
                                             onClick={() => {
                                                 setAccountOpen(false);
-                                                closeRoomMenu();
+                                                closeConversationMenu();
                                                 setNewSessionOpen(true);
                                             }}
                                         >
@@ -1975,7 +1986,7 @@ function ConversationListView({
                                         </button>
                                     </div>
                                 </header>
-                                <div className="mj_RoomListTabs" role="group" aria-label="Filter conversations">
+                                <div className="mj_ConversationListTabs" role="group" aria-label="Filter conversations">
                                     {(
                                         [
                                             ["active", "Active"],
@@ -1987,7 +1998,7 @@ function ConversationListView({
                                             key={key}
                                             type="button"
                                             data-tab={key}
-                                            className={`mj_RoomListTab${tab === key ? " mj_RoomListTab_active" : ""}`}
+                                            className={`mj_ConversationListTab${tab === key ? " mj_ConversationListTab_active" : ""}`}
                                             aria-pressed={tab === key}
                                             aria-label={key === "favorites" ? "Favorites" : undefined}
                                             onClick={(event) => {
@@ -1999,14 +2010,14 @@ function ConversationListView({
                                         </button>
                                     ))}
                                 </div>
-                                <div data-testid="room-list-search" className="mj_ConversationSearch" role="search">
+                                <div data-testid="conversation-search" className="mj_ConversationSearch" role="search">
                                     <label
                                         className="mj_ConversationSearch_inputWrapper mj_noTextInput"
-                                        htmlFor="room-list-search-input"
+                                        htmlFor="conversation-search-input"
                                     >
                                         <SearchIcon aria-hidden />
                                         <input
-                                            id="room-list-search-input"
+                                            id="conversation-search-input"
                                             className="mj_ConversationSearch_input"
                                             type="search"
                                             value={query}
@@ -2040,7 +2051,7 @@ function ConversationListView({
                                         {outcomeAnnouncement}
                                     </span>
                                 )}
-                                <div className="mj_RoomList" data-testid="room-list">
+                                <div className="mj_ConversationList" data-testid="conversation-list">
                                     <NumberSearchResult client={client} query={query} />
                                     {/* Active/Favorites render each parent row, then splice
                                         its NON-ARCHIVED subagent children in beneath (indented) —
@@ -2062,8 +2073,8 @@ function ConversationListView({
                                         section first. Each parent row is followed by its nested
                                         running children, as before. */}
                                     {pinSection.length > 0 && (
-                                        <section className="mj_RoomListGroup" aria-label="Pinned">
-                                            <div className="mj_RoomListGroup_label" aria-hidden="true">
+                                        <section className="mj_ConversationListGroup" aria-label="Pinned">
+                                            <div className="mj_ConversationListGroup_label" aria-hidden="true">
                                                 Pinned
                                             </div>
                                             <div role="list">
@@ -2083,11 +2094,11 @@ function ConversationListView({
                                     )}
                                     {rowGroups.map((group) => (
                                         <section
-                                            className="mj_RoomListGroup"
+                                            className="mj_ConversationListGroup"
                                             key={group.label}
                                             aria-label={group.label}
                                         >
-                                            <div className="mj_RoomListGroup_label" aria-hidden="true">
+                                            <div className="mj_ConversationListGroup_label" aria-hidden="true">
                                                 {group.label}
                                             </div>
                                             <div role="list">
@@ -2099,27 +2110,31 @@ function ConversationListView({
                                         </section>
                                     ))}
                                     {tab === "active" && !hasAnyActive && archivedTotal === 0 && !pinSection.length && (
-                                        <p className="mj_RoomListEmpty">Your agent conversations will appear here.</p>
+                                        <p className="mj_ConversationListEmpty">
+                                            Your agent conversations will appear here.
+                                        </p>
                                     )}
                                     {tab === "active" && !hasAnyActive && archivedTotal > 0 && !pinSection.length && (
-                                        <p className="mj_RoomListEmpty">No active conversations.</p>
+                                        <p className="mj_ConversationListEmpty">No active conversations.</p>
                                     )}
                                     {tab === "active" && hasAnyActive && !visibleRows.length && !pinSection.length && (
-                                        <p className="mj_RoomListEmpty">No conversations match your search.</p>
+                                        <p className="mj_ConversationListEmpty">No conversations match your search.</p>
                                     )}
                                     {tab === "favorites" && !hasAnyFavorite && (
-                                        <p className="mj_RoomListEmpty">No favorite conversations yet.</p>
+                                        <p className="mj_ConversationListEmpty">No favorite conversations yet.</p>
                                     )}
                                     {tab === "favorites" && hasAnyFavorite && !visibleRows.length && (
-                                        <p className="mj_RoomListEmpty">No favorites match your search.</p>
+                                        <p className="mj_ConversationListEmpty">No favorites match your search.</p>
                                     )}
                                     {tab === "archived" && archivedTotal === 0 && (
-                                        <p className="mj_RoomListEmpty">No archived conversations.</p>
+                                        <p className="mj_ConversationListEmpty">No archived conversations.</p>
                                     )}
                                     {tab === "archived" && archivedTotal > 0 && !visibleRows.length && (
-                                        <p className="mj_RoomListEmpty">No archived conversations match your search.</p>
+                                        <p className="mj_ConversationListEmpty">
+                                            No archived conversations match your search.
+                                        </p>
                                     )}
-                                    {/* Inside the room-list scroll container so the Messages section
+                                    {/* Inside the conversation list scroll container so the Messages section
                                         scrolls with the chat list — a long hit list stays reachable. */}
                                     <MessageSearchResults
                                         query={query}
@@ -2157,12 +2172,12 @@ function ConversationListView({
                         onClose={() => setPinDialog(undefined)}
                     />
                 )}
-                {roomMenu && menuConversation && (
+                {conversationMenu && menuConversation && (
                     <div
-                        className="mj_HeaderMenu mj_RoomItemMenu"
+                        className="mj_HeaderMenu mj_ConversationMenu"
                         role="menu"
-                        ref={roomMenuElementRef}
-                        style={{ position: "fixed", left: roomMenu.left, top: roomMenu.top }}
+                        ref={conversationMenuElementRef}
+                        style={{ position: "fixed", left: conversationMenu.left, top: conversationMenu.top }}
                         onKeyDown={(event) => {
                             const items = Array.from(
                                 event.currentTarget.querySelectorAll<HTMLElement>('[role="menuitem"]'),
@@ -2186,18 +2201,18 @@ function ConversationListView({
                             } else if (event.key === "Escape") {
                                 event.preventDefault();
                                 event.stopPropagation();
-                                closeRoomMenu(true);
+                                closeConversationMenu(true);
                             }
                         }}
                     >
                         {journalPins ? (
-                            !(roomMenu && journalPinnedIds.has(roomMenu.conversationId)) ? (
+                            !(conversationMenu && journalPinnedIds.has(conversationMenu.conversationId)) ? (
                                 <button
-                                    className="mj_RoomItemMenu_item"
+                                    className="mj_ConversationMenu_item"
                                     type="button"
                                     role="menuitem"
                                     onClick={() => {
-                                        closeRoomMenu();
+                                        closeConversationMenu();
                                         setPinDialog({ kind: "edit", convoId: menuConversation.id });
                                     }}
                                 >
@@ -2207,11 +2222,11 @@ function ConversationListView({
                             ) : (
                                 <>
                                     <button
-                                        className="mj_RoomItemMenu_item"
+                                        className="mj_ConversationMenu_item"
                                         type="button"
                                         role="menuitem"
                                         onClick={() => {
-                                            closeRoomMenu();
+                                            closeConversationMenu();
                                             setPinDialog({ kind: "edit", convoId: menuConversation.id });
                                         }}
                                     >
@@ -2220,11 +2235,11 @@ function ConversationListView({
                                     </button>
                                     {menuPinIndex > 0 && (
                                         <button
-                                            className="mj_RoomItemMenu_item"
+                                            className="mj_ConversationMenu_item"
                                             type="button"
                                             role="menuitem"
                                             onClick={() => {
-                                                closeRoomMenu();
+                                                closeConversationMenu();
                                                 void client.shiftPin(menuConversation.id, "up", shownPinIds);
                                                 restoreFocusAfterMenuAction();
                                             }}
@@ -2235,11 +2250,11 @@ function ConversationListView({
                                     )}
                                     {menuPinIndex >= 0 && menuPinIndex < shownPins.length - 1 && (
                                         <button
-                                            className="mj_RoomItemMenu_item"
+                                            className="mj_ConversationMenu_item"
                                             type="button"
                                             role="menuitem"
                                             onClick={() => {
-                                                closeRoomMenu();
+                                                closeConversationMenu();
                                                 void client.shiftPin(menuConversation.id, "down", shownPinIds);
                                                 restoreFocusAfterMenuAction();
                                             }}
@@ -2249,11 +2264,11 @@ function ConversationListView({
                                         </button>
                                     )}
                                     <button
-                                        className="mj_RoomItemMenu_item"
+                                        className="mj_ConversationMenu_item"
                                         type="button"
                                         role="menuitem"
                                         onClick={() => {
-                                            closeRoomMenu();
+                                            closeConversationMenu();
                                             setPinDialog({ kind: "move", convoId: menuConversation.id });
                                         }}
                                     >
@@ -2261,11 +2276,11 @@ function ConversationListView({
                                         Move pin…
                                     </button>
                                     <button
-                                        className="mj_RoomItemMenu_item"
+                                        className="mj_ConversationMenu_item"
                                         type="button"
                                         role="menuitem"
                                         onClick={() => {
-                                            closeRoomMenu();
+                                            closeConversationMenu();
                                             void client.removePin(menuConversation.id);
                                             restoreFocusAfterMenuAction();
                                         }}
@@ -2277,11 +2292,11 @@ function ConversationListView({
                             )
                         ) : state.pinnedIds.has(menuConversation.id) ? (
                             <button
-                                className="mj_RoomItemMenu_item"
+                                className="mj_ConversationMenu_item"
                                 type="button"
                                 role="menuitem"
                                 onClick={() => {
-                                    closeRoomMenu();
+                                    closeConversationMenu();
                                     client.unpinConversation(menuConversation.id);
                                     restoreFocusAfterMenuAction();
                                 }}
@@ -2291,11 +2306,11 @@ function ConversationListView({
                             </button>
                         ) : (
                             <button
-                                className="mj_RoomItemMenu_item"
+                                className="mj_ConversationMenu_item"
                                 type="button"
                                 role="menuitem"
                                 onClick={() => {
-                                    closeRoomMenu();
+                                    closeConversationMenu();
                                     client.pinConversation(menuConversation.id);
                                     restoreFocusAfterMenuAction();
                                 }}
@@ -2306,11 +2321,11 @@ function ConversationListView({
                         )}
                         {state.favoriteIds.has(menuConversation.id) ? (
                             <button
-                                className="mj_RoomItemMenu_item"
+                                className="mj_ConversationMenu_item"
                                 type="button"
                                 role="menuitem"
                                 onClick={() => {
-                                    closeRoomMenu();
+                                    closeConversationMenu();
                                     client.unfavoriteConversation(menuConversation.id);
                                     restoreFocusAfterMenuAction();
                                 }}
@@ -2320,11 +2335,11 @@ function ConversationListView({
                             </button>
                         ) : (
                             <button
-                                className="mj_RoomItemMenu_item"
+                                className="mj_ConversationMenu_item"
                                 type="button"
                                 role="menuitem"
                                 onClick={() => {
-                                    closeRoomMenu();
+                                    closeConversationMenu();
                                     client.favoriteConversation(menuConversation.id);
                                     restoreFocusAfterMenuAction();
                                 }}
@@ -2336,11 +2351,11 @@ function ConversationListView({
                         {!state.archivedIds.has(menuConversation.id) &&
                             !effectiveUnread(menuConversation, state.unreadOverrideIds) && (
                                 <button
-                                    className="mj_RoomItemMenu_item"
+                                    className="mj_ConversationMenu_item"
                                     type="button"
                                     role="menuitem"
                                     onClick={() => {
-                                        closeRoomMenu();
+                                        closeConversationMenu();
                                         client.markConversationUnread(menuConversation.id);
                                         restoreFocusAfterMenuAction();
                                     }}
@@ -2352,11 +2367,11 @@ function ConversationListView({
                         {!state.archivedIds.has(menuConversation.id) &&
                             effectiveUnread(menuConversation, state.unreadOverrideIds) && (
                                 <button
-                                    className="mj_RoomItemMenu_item"
+                                    className="mj_ConversationMenu_item"
                                     type="button"
                                     role="menuitem"
                                     onClick={() => {
-                                        closeRoomMenu();
+                                        closeConversationMenu();
                                         client.markConversationRead(menuConversation.id);
                                         restoreFocusAfterMenuAction();
                                     }}
@@ -2370,11 +2385,11 @@ function ConversationListView({
                             stays true while collapsed, so "Show subagents" remains reachable). */}
                         {hasSubagentChildRows(menuConversation, sidebarIndex) && (
                             <button
-                                className="mj_RoomItemMenu_item"
+                                className="mj_ConversationMenu_item"
                                 type="button"
                                 role="menuitem"
                                 onClick={() => {
-                                    closeRoomMenu();
+                                    closeConversationMenu();
                                     client.toggleSubagentCollapse(menuConversation.id);
                                     restoreFocusAfterMenuAction();
                                 }}
@@ -2387,11 +2402,11 @@ function ConversationListView({
                         )}
                         {state.archivedIds.has(menuConversation.id) ? (
                             <button
-                                className="mj_RoomItemMenu_item"
+                                className="mj_ConversationMenu_item"
                                 type="button"
                                 role="menuitem"
                                 onClick={() => {
-                                    closeRoomMenu();
+                                    closeConversationMenu();
                                     client.unarchiveConversation(menuConversation.id);
                                     restoreFocusAfterMenuAction();
                                 }}
@@ -2401,11 +2416,11 @@ function ConversationListView({
                             </button>
                         ) : (
                             <button
-                                className="mj_RoomItemMenu_item"
+                                className="mj_ConversationMenu_item"
                                 type="button"
                                 role="menuitem"
                                 onClick={() => {
-                                    closeRoomMenu();
+                                    closeConversationMenu();
                                     client.archiveConversation(menuConversation.id);
                                     restoreFocusAfterMenuAction();
                                 }}
@@ -3038,7 +3053,7 @@ function HeaderOverflowMenu({
             </button>
             {open && (
                 <div
-                    className="mj_HeaderMenu mj_RoomItemMenu"
+                    className="mj_HeaderMenu mj_ConversationMenu"
                     role="menu"
                     ref={panelRef}
                     onKeyDown={(event) => {
@@ -3068,7 +3083,7 @@ function HeaderOverflowMenu({
                         journalPinned ? (
                             <>
                                 <button
-                                    className="mj_RoomItemMenu_item"
+                                    className="mj_ConversationMenu_item"
                                     type="button"
                                     role="menuitem"
                                     onClick={() => openPinDialog({ kind: "edit", convoId: id })}
@@ -3077,7 +3092,7 @@ function HeaderOverflowMenu({
                                     Edit pin…
                                 </button>
                                 <button
-                                    className="mj_RoomItemMenu_item"
+                                    className="mj_ConversationMenu_item"
                                     type="button"
                                     role="menuitem"
                                     onClick={() => openPinDialog({ kind: "move", convoId: id })}
@@ -3086,7 +3101,7 @@ function HeaderOverflowMenu({
                                     Move pin…
                                 </button>
                                 <button
-                                    className="mj_RoomItemMenu_item"
+                                    className="mj_ConversationMenu_item"
                                     type="button"
                                     role="menuitem"
                                     onClick={() => act(() => void client.removePin(id))}
@@ -3097,7 +3112,7 @@ function HeaderOverflowMenu({
                             </>
                         ) : (
                             <button
-                                className="mj_RoomItemMenu_item"
+                                className="mj_ConversationMenu_item"
                                 type="button"
                                 role="menuitem"
                                 onClick={() => openPinDialog({ kind: "edit", convoId: id })}
@@ -3108,7 +3123,7 @@ function HeaderOverflowMenu({
                         )
                     ) : (
                         <button
-                            className="mj_RoomItemMenu_item"
+                            className="mj_ConversationMenu_item"
                             type="button"
                             role="menuitem"
                             onClick={() =>
@@ -3120,7 +3135,7 @@ function HeaderOverflowMenu({
                         </button>
                     )}
                     <button
-                        className="mj_RoomItemMenu_item"
+                        className="mj_ConversationMenu_item"
                         type="button"
                         role="menuitem"
                         onClick={() =>
@@ -3134,7 +3149,7 @@ function HeaderOverflowMenu({
                     </button>
                     {!isArchived && (
                         <button
-                            className="mj_RoomItemMenu_item"
+                            className="mj_ConversationMenu_item"
                             type="button"
                             role="menuitem"
                             onClick={() =>
@@ -3148,7 +3163,7 @@ function HeaderOverflowMenu({
                         </button>
                     )}
                     <button
-                        className="mj_RoomItemMenu_item"
+                        className="mj_ConversationMenu_item"
                         type="button"
                         role="menuitem"
                         onClick={() =>
@@ -5893,7 +5908,7 @@ function Timeline({
                             {/* Copy = readable plain text (markdown stripped); the raw markdown
                                 SOURCE is offered separately below (§10.7 icon per row). */}
                             <button
-                                className="mj_RoomItemMenu_item"
+                                className="mj_ConversationMenu_item"
                                 type="button"
                                 role="menuitem"
                                 onClick={() => {
@@ -5905,7 +5920,7 @@ function Timeline({
                                 <span>Copy</span>
                             </button>
                             <button
-                                className="mj_RoomItemMenu_item"
+                                className="mj_ConversationMenu_item"
                                 type="button"
                                 role="menuitem"
                                 onClick={() => {
@@ -5920,7 +5935,7 @@ function Timeline({
                         </>
                     )}
                     <button
-                        className="mj_RoomItemMenu_item"
+                        className="mj_ConversationMenu_item"
                         type="button"
                         role="menuitem"
                         onClick={() => {
@@ -6957,7 +6972,7 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
             // Any inner overlay still mounted → it owns this press; defer.
             if (
                 document.querySelector(
-                    ".mj_MediaViewer_scrim, .mj_EventSource_scrim, .mj_UploadConfirm_scrim, .mj_NewSessionSheet, .mj_SettingsScrim, .mj_EventRowMenu, .mj_RoomItemMenu, .mj_HeaderMenu, .mj_MdPreview, [role='menu']",
+                    ".mj_MediaViewer_scrim, .mj_EventSource_scrim, .mj_UploadConfirm_scrim, .mj_NewSessionSheet, .mj_SettingsScrim, .mj_EventRowMenu, .mj_ConversationMenu, .mj_HeaderMenu, .mj_MdPreview, [role='menu']",
                 )
             ) {
                 return;

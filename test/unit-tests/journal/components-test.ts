@@ -124,7 +124,7 @@ function tabButton(container: HTMLElement, key: "active" | "favorites" | "archiv
 
 async function openMenu(container: HTMLElement): Promise<void> {
     // The kebab was removed; the row menu opens via right-click (onContextMenu).
-    const row = container.querySelector<HTMLElement>(".mj_RoomListItem");
+    const row = container.querySelector<HTMLElement>(".mj_ConversationListItem");
     if (!row) throw new Error("Missing conversation row");
     await act(async () => {
         row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }));
@@ -3746,7 +3746,7 @@ describe("conversation menu controls", () => {
         await openMenu(rendered.container);
         await act(async () => (menuItem(rendered!.container, "Remove from Favorites") as HTMLElement).click());
 
-        expect(rendered.container.querySelector('[data-testid="room-name"]')).toBeNull();
+        expect(rendered.container.querySelector('[data-testid="conversation-name"]')).toBeNull();
         expect(client.getSnapshot().selectedConversationId).toBe(CONVERSATION.id);
     });
 
@@ -3828,7 +3828,7 @@ describe("conversation row affordances", () => {
         const roomB = { ...CONVERSATION, id: "room-b", title: "Room B" };
         pinnedStore.write(SESSION, new Set(["room-b"]));
         rendered = await renderClient(signedInWithRooms([roomA, roomB]));
-        const names = [...rendered.container.querySelectorAll('[data-testid="room-name"]')].map(
+        const names = [...rendered.container.querySelectorAll('[data-testid="conversation-name"]')].map(
             (element) => element.textContent,
         );
         expect(names[0]).toBe("Room B");
@@ -3838,7 +3838,7 @@ describe("conversation row affordances", () => {
     it("includes the visible last-activity timestamp in the row button's accessible name", async () => {
         rendered = await renderClient(signedInClient());
         const row = rendered.container.querySelector<HTMLButtonElement>('button[aria-label^="Open room"]');
-        const timestamp = rendered.container.querySelector(".mj_RoomListTime")?.textContent;
+        const timestamp = rendered.container.querySelector(".mj_ConversationListTime")?.textContent;
         expect(timestamp).toBeTruthy();
         expect(row?.getAttribute("aria-label")).toContain(`last activity ${timestamp}`);
     });
@@ -3884,7 +3884,7 @@ describe("conversation timestamp midnight invalidation", () => {
         internals(client).state = { ...client.getSnapshot(), selectedConversationId: undefined };
         rendered = await renderClient(client);
         const timestamp = (): string | null =>
-            rendered!.container.querySelector(".mj_RoomListTime")?.textContent ?? null;
+            rendered!.container.querySelector(".mj_ConversationListTime")?.textContent ?? null;
         const expectedClock = new Intl.DateTimeFormat(undefined, {
             hour: "numeric",
             minute: "2-digit",
@@ -3945,7 +3945,7 @@ describe("conversation timestamp midnight invalidation", () => {
         const expectedWeekday = new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(
             new Date(lastTimestamp),
         );
-        expect(container.querySelector(".mj_RoomListTime")?.textContent).toBe(expectedWeekday);
+        expect(container.querySelector(".mj_ConversationListTime")?.textContent).toBe(expectedWeekday);
     });
 });
 
@@ -4012,7 +4012,7 @@ describe("conversation list tabs", () => {
         archiveStore.write(SESSION, new Set(["archived"]));
         rendered = await renderClient(signedInWithRooms([fav, other, archived]));
         const names = (): Array<string | null> =>
-            [...rendered!.container.querySelectorAll('[data-testid="room-name"]')].map(
+            [...rendered!.container.querySelectorAll('[data-testid="conversation-name"]')].map(
                 (element) => element.textContent,
             );
 
@@ -4050,7 +4050,7 @@ describe("conversation list tabs", () => {
         favoriteStore.write(SESSION, new Set(["fav"]));
         rendered = await renderClient(signedInWithRooms([fav]));
         await act(async () => tabButton(rendered!.container, "favorites").click());
-        const search = rendered.container.querySelector<HTMLInputElement>("#room-list-search-input")!;
+        const search = rendered.container.querySelector<HTMLInputElement>("#conversation-search-input")!;
         await act(async () => {
             const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
             setter?.call(search, "zzz-no-match");
@@ -4089,7 +4089,7 @@ describe("conversation list tabs", () => {
 
     it("shows the active search-empty state when active conversations are hidden by search", async () => {
         rendered = await renderClient(signedInClient());
-        const search = rendered.container.querySelector<HTMLInputElement>("#room-list-search-input")!;
+        const search = rendered.container.querySelector<HTMLInputElement>("#conversation-search-input")!;
         await act(async () => {
             const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
             setter?.call(search, "zzz-no-match");
@@ -4108,7 +4108,7 @@ describe("conversation list tabs", () => {
         archiveStore.write(SESSION, new Set([CONVERSATION.id]));
         rendered = await renderClient(signedInClient());
         await act(async () => tabButton(rendered!.container, "archived").click());
-        const search = rendered.container.querySelector<HTMLInputElement>("#room-list-search-input")!;
+        const search = rendered.container.querySelector<HTMLInputElement>("#conversation-search-input")!;
         await act(async () => {
             const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
             setter?.call(search, "zzz-no-match");

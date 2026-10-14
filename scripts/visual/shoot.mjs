@@ -114,7 +114,7 @@ const SHOTS_SPEC = [
         comp: "sidebar",
         state: "with-subagents",
         clip: ".mj_ConversationListPanel",
-        setup: async (p) => p.waitForSelector(".mj_RoomListItem_sub"),
+        setup: async (p) => p.waitForSelector(".mj_ConversationListItem_sub"),
     },
     {
         comp: "header",
