@@ -366,6 +366,25 @@ describe("find bar", () => {
         expect(container.querySelector(".mj_FindInChat")).toBeNull();
     });
 
+    it("leaves Ctrl+F to the browser while a modal dialog is up", async () => {
+        const client = openClient();
+        const container = await render(client);
+        const dialog = document.createElement("div");
+        dialog.setAttribute("role", "dialog");
+        dialog.setAttribute("aria-modal", "true");
+        document.body.appendChild(dialog);
+        let keydown!: KeyboardEvent;
+        try {
+            await act(async () => {
+                keydown = press(document, { key: "f", ctrlKey: true });
+            });
+        } finally {
+            dialog.remove();
+        }
+        expect(keydown.defaultPrevented).toBe(false);
+        expect(container.querySelector(".mj_FindInChat")).toBeNull();
+    });
+
     it("Enter searches, Enter again steps older, Shift+Enter newer, Escape closes", async () => {
         const client = openClient();
         const begin = jest.spyOn(client, "beginChatSearch").mockImplementation(async (query) => {

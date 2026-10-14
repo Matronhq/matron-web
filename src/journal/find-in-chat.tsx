@@ -15,7 +15,7 @@ import React, { useEffect, useRef, useState } from "react";
 
 import type { MatronJournalClient } from "./client";
 import { ChevronDownIcon, ChevronUpIcon, CloseIcon, SearchIcon } from "./icons";
-import { isMacPlatform } from "./jump-to-message";
+import { isMacPlatform, modalDialogOpen } from "./jump-to-message";
 import type { ChatSearchState } from "./types";
 
 /** True for the shortcut that opens the bar: ⌘F on a Mac, Ctrl+F elsewhere. */
@@ -28,14 +28,17 @@ export function isFindInChatShortcut(
 }
 
 /**
- * Binds Ctrl/⌘F to the bar while `enabled` (a conversation is on screen and nothing modal is up).
+ * Binds Ctrl/⌘F to the bar while `enabled` (a conversation is on screen) and no modal dialog is up.
  * With it off the key is left alone, so the browser's find works on every other page.
  */
 export function useFindInChatShortcut(client: MatronJournalClient, enabled: boolean): void {
     useEffect(() => {
         if (!enabled) return undefined;
         const onKeyDown = (event: KeyboardEvent): void => {
-            if (event.defaultPrevented || !isFindInChatShortcut(event, isMacPlatform())) return;
+            if (event.defaultPrevented || event.isComposing || !isFindInChatShortcut(event, isMacPlatform())) return;
+            // Under a modal dialog the conversation is not what the reader is looking at: the
+            // browser's find keeps the key rather than the bar opening (and taking focus) behind it.
+            if (modalDialogOpen()) return;
             event.preventDefault();
             client.openChatSearch();
         };
