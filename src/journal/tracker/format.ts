@@ -62,9 +62,19 @@ export function resolutionLabel(resolution: TrackerResolution): string {
 }
 
 /** One-line status text for an item row / detail pill. */
-export function itemStatusText(item: Pick<TrackerItem, "state" | "awaiting" | "resolution">): string {
+/** A closed row's one-word status. A notice the user closed with its own button was read, not
+ *  done, so it says "Seen". */
+export function closedStatusLabel(item: Pick<TrackerItem, "kind" | "resolution" | "chosen_action">): string {
+    if (item.kind === "notice" && item.chosen_action?.toLowerCase() === "seen") return "Seen";
+    return item.resolution ? resolutionLabel(item.resolution) : "Closed";
+}
+
+export function itemStatusText(
+    item: Pick<TrackerItem, "state" | "awaiting" | "resolution"> & Partial<Pick<TrackerItem, "kind" | "chosen_action">>,
+): string {
     if (needsUser(item)) return "Needs you";
     if (item.state === "closed") {
+        if (item.kind === "notice" && item.chosen_action?.toLowerCase() === "seen") return "Closed · Seen";
         return item.resolution ? `Closed · ${resolutionLabel(item.resolution)}` : "Closed";
     }
     if (item.awaiting === "agent") return "With the agent";

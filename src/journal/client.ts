@@ -396,6 +396,7 @@ export class MatronJournalClient {
     private trackerItemGen = 0;
     private trackerMissionGen = 0;
     private trackerInboxGen = 0;
+    private trackerInboxDoneGen = 0;
     // True while a loadInbox walk is in flight. The first connect-time walk publishes only at the
     // end, so until then inboxItems is undefined; writes and item markers that land meanwhile must
     // still count (see inboxTracked / applyWrittenItem) or the walk's older pages overwrite them.
@@ -2533,6 +2534,7 @@ export class MatronJournalClient {
             const merged = this.mergeInboxPendingWrites(accumulated);
             this.patch({
                 inboxItems: merged,
+                ...this.doneWithoutOpen(merged),
                 trackerLoading: false,
                 trackerError: truncated
                     ? "Showing a partial inbox — too many open items to load them all. Some rows may be missing."
@@ -2675,6 +2677,7 @@ export class MatronJournalClient {
         if (written) this.applyWrittenItem(written);
         if (this.isSelectedTrackerItem(id)) await this.loadItem(id);
         if (this.inboxTracked()) await this.loadInbox();
+        if (this.state.inboxDone) void this.loadInboxDone();
         if (this.state.missions) await this.loadMissions();
         return { ok: true };
     }
@@ -2721,6 +2724,18 @@ export class MatronJournalClient {
         return this.commentItem(id, { action: SEEN_ACTION, body: SEEN_ACTION });
     }
 
+    /**
+     * The Done rows minus any of `open`. A refresh only re-reads the first page, so a row loaded
+     * from a later page that has since been reopened would otherwise stay listed as done.
+     */
+    private doneWithoutOpen(open: TrackerItem[]): Partial<ClientState> {
+        const done = this.state.inboxDone;
+        if (!done || open.length === 0) return {};
+        const ids = new Set(open.map((item) => item.id));
+        const items = done.items.filter((row) => !ids.has(row.id));
+        return items.length === done.items.length ? {} : { inboxDone: { ...done, items } };
+    }
+
     private applyWrittenItem(item: TrackerItem): void {
         if (!item || typeof item !== "object" || typeof item.id !== "string") return;
         const inbox = this.state.inboxItems;
@@ -2738,8 +2753,88 @@ export class MatronJournalClient {
                               : inbox.filter((row) => row.id !== item.id),
                   }
                 : {}),
+            ...(item.state === "open" ? this.doneWithoutOpen([item]) : {}),
             ...(detail && detail.item.id === item.id ? { trackerItem: { ...detail, item } } : {}),
         });
+    }
+
+    /**
+     * For you's Done tab: the newest page of closed questions, decisions and notices (tasks are the
+     * agents' work list, not something the user answered or read). Also the refresh: rows already
+     * loaded beyond the first page stay, except one the fresh page should have carried and does
+     * not, which has been reopened.
+     */
+    public async loadInboxDone(): Promise<void> {
+        const api = this.api;
+        if (!api) return;
+        const gen = ++this.trackerInboxDoneGen;
+        const prior = this.state.inboxDone;
+        this.patch({ inboxDone: { items: prior?.items ?? [], nextCursor: prior?.nextCursor ?? null, loading: true } });
+        try {
+            const { items, next_cursor } = await api.items(INBOX_DONE_FILTER);
+            if (this.api !== api || this.trackerInboxDoneGen !== gen) return;
+            const fresh = new Set(items.map((item) => item.id));
+            const open = new Set((this.state.inboxItems ?? []).map((item) => item.id));
+            const oldest = items[items.length - 1];
+            // Below the fresh page only: anything newer that it does not list is no longer closed.
+            // The latest rows in state, not the ones from before the request: a row reopened
+            // while it was in flight has already been dropped from them.
+            // Kept only when the fresh page reaches the rows already loaded (it lists one of them)
+            // and there is more beyond it. A page that shares nothing with them leaves a gap the
+            // old cursor would never fetch, so the list starts again from this page.
+            const loaded = this.state.inboxDone?.items ?? [];
+            const joins = next_cursor !== null && loaded.some((row) => fresh.has(row.id));
+            const older =
+                oldest && joins
+                    ? loaded.filter((row) => !fresh.has(row.id) && !open.has(row.id) && sortsAfter(row, oldest))
+                    : [];
+            this.patch({
+                inboxDone: {
+                    items: [...items, ...older],
+                    nextCursor: older.length > 0 ? (prior?.nextCursor ?? null) : next_cursor,
+                    loading: false,
+                },
+            });
+        } catch (error) {
+            if (this.api !== api || this.trackerInboxDoneGen !== gen) return;
+            const kept = this.state.inboxDone;
+            this.patch({
+                inboxDone: {
+                    items: kept?.items ?? [],
+                    nextCursor: kept?.nextCursor ?? null,
+                    loading: false,
+                    error: errorMessage(error),
+                },
+            });
+        }
+    }
+
+    /** The Done tab's "Show more": the next page, appended. */
+    public async loadMoreInboxDone(): Promise<void> {
+        const api = this.api;
+        const done = this.state.inboxDone;
+        if (!api || !done || done.loading || !done.nextCursor) return;
+        const gen = ++this.trackerInboxDoneGen;
+        this.patch({ inboxDone: { ...done, loading: true, error: undefined } });
+        try {
+            const { items, next_cursor } = await api.items({ ...INBOX_DONE_FILTER, cursor: done.nextCursor });
+            if (this.api !== api || this.trackerInboxDoneGen !== gen) return;
+            // The rows in state now, not the ones from before the request: a row reopened while
+            // it was in flight has been dropped from them and must stay dropped.
+            const rows = this.state.inboxDone?.items ?? done.items;
+            const skip = new Set([...rows, ...(this.state.inboxItems ?? [])].map((item) => item.id));
+            this.patch({
+                inboxDone: {
+                    items: [...rows, ...items.filter((item) => !skip.has(item.id))],
+                    nextCursor: next_cursor,
+                    loading: false,
+                },
+            });
+        } catch (error) {
+            if (this.api !== api || this.trackerInboxDoneGen !== gen) return;
+            const kept = this.state.inboxDone ?? done;
+            this.patch({ inboxDone: { ...kept, loading: false, error: errorMessage(error) } });
+        }
     }
 
     // PUT is an upsert by name and idempotent by construction, so no Idempotency-Key: a retried
@@ -2790,6 +2885,7 @@ export class MatronJournalClient {
         if (this.api !== api) return true;
         if (this.isSelectedTrackerItem(id)) await this.loadItem(id);
         if (this.inboxTracked()) await this.loadInbox();
+        if (this.state.inboxDone) void this.loadInboxDone();
         if (this.state.missions) await this.loadMissions();
         return true;
     }
@@ -2806,6 +2902,7 @@ export class MatronJournalClient {
         if (this.api !== api) return true;
         if (this.isSelectedTrackerItem(id)) await this.loadItem(id);
         if (this.inboxTracked()) await this.loadInbox();
+        if (this.state.inboxDone) void this.loadInboxDone();
         if (this.state.missions) await this.loadMissions();
         return true;
     }
@@ -2862,7 +2959,7 @@ export class MatronJournalClient {
     private handleTrackerMarker(event: JournalEvent): void {
         // The inbox feeds the For you badge on the rail, so it follows item markers even while the
         // pane is closed; everything else is refetched only for an open pane.
-        if (event.type === "item" && this.inboxTracked()) this.scheduleInboxRefetch();
+        if (event.type === "item" && (this.inboxTracked() || this.state.inboxDone)) this.scheduleInboxRefetch();
         if (!this.state.trackerView?.open) return;
         // The open item's `working` block follows the conversation that owns it: a turn starting
         // or ending there changes what the thread's indicator should say, and no item marker
@@ -2915,6 +3012,7 @@ export class MatronJournalClient {
         this.trackerInboxRefetchTimer = window.setTimeout(() => {
             this.trackerInboxRefetchTimer = undefined;
             if (this.inboxTracked()) void this.loadInbox();
+            if (this.state.inboxDone) void this.loadInboxDone();
         }, 250);
     }
 
@@ -3420,6 +3518,7 @@ export class MatronJournalClient {
         // The For you badge counts open items awaiting the user, so the inbox loads on every
         // (re)connect, not only when the tracker opens: markers missed while offline never replay.
         void this.loadInbox();
+        if (this.state.inboxDone) void this.loadInboxDone();
 
         // A briefing frame missed while offline is never replayed: refetch the card on (re)connect.
         this.refetchBriefingIfShown();
@@ -3987,6 +4086,20 @@ export function commentFailureMessage(error: unknown): string {
         return `The server refused it: ${body.reason.trim().replace(/_/g, " ")}.`;
     }
     return knownErrorMessage(error.code) ?? `The server refused it (HTTP ${error.status}).`;
+}
+
+/** The Done tab's page: what the user answered, decided or read, most recently touched first. */
+const INBOX_DONE_FILTER = {
+    state: "closed",
+    kind: ["question", "decision", "notice"],
+    sort: "updated",
+    limit: 50,
+} as const;
+
+/** True when `row` comes after `mark` in the journal's `sort=updated` order (newest first, then
+ *  the higher number). */
+function sortsAfter(row: TrackerItem, mark: TrackerItem): boolean {
+    return row.updated_at < mark.updated_at || (row.updated_at === mark.updated_at && row.num < mark.num);
 }
 
 /** The label of a notice's one-tap answer; the journal closes the notice when it is tapped. */

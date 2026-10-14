@@ -473,6 +473,26 @@ Please see LICENSE files in the repository root for full details.
     box-shadow: var(--cpd-shadow-sm);
 }
 
+/* The Done tab's next page: a quiet full-width row under the list. */
+.mj_TrackerShowMore {
+    display: block;
+    width: 100%;
+    padding: var(--cpd-space-3x) var(--cpd-space-4x);
+    border: 0;
+    background: transparent;
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-body-sm-regular);
+    text-align: center;
+    cursor: pointer;
+}
+.mj_TrackerShowMore:hover:not(:disabled) {
+    background: var(--cpd-state-hover);
+    color: var(--cpd-color-text-primary);
+}
+.mj_TrackerShowMore:disabled {
+    cursor: default;
+}
+
 /* — Detail shell — */
 .mj_TrackerDetail {
     display: flex;

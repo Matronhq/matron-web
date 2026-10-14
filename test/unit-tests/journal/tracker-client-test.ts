@@ -321,6 +321,117 @@ describe("MatronJournalClient tracker loaders", () => {
         expect(client.getSnapshot().inboxItems).toEqual([item()]);
     });
 
+    it("loadInboxDone refreshes the first page and keeps the older rows already loaded", async () => {
+        const { client, state } = makeClient();
+        const closed = (num: number, updated_at: number): ReturnType<typeof item> =>
+            item({ id: `it_${num}`, num, state: "closed", updated_at });
+        state.api = {
+            items: jest
+                .fn()
+                .mockResolvedValueOnce({ items: [closed(5, 50), closed(4, 40)], next_cursor: "c1" })
+                .mockResolvedValueOnce({ items: [closed(3, 30), closed(2, 20)], next_cursor: "c2" })
+                // The refresh: 6 is newly closed, 5 was reopened (gone), 4 is still there.
+                .mockResolvedValueOnce({ items: [closed(6, 60), closed(4, 40)], next_cursor: "c9" }),
+        };
+
+        await client.loadInboxDone();
+        await client.loadMoreInboxDone();
+        expect(client.getSnapshot().inboxDone?.items.map((row) => row.num)).toEqual([5, 4, 3, 2]);
+
+        await client.loadInboxDone();
+
+        const done = client.getSnapshot().inboxDone!;
+        expect(done.items.map((row) => row.num)).toEqual([6, 4, 3, 2]);
+        expect(done.nextCursor).toBe("c2");
+        expect(done.loading).toBe(false);
+    });
+
+    it("a Done row loaded from a later page leaves when the item is reopened", async () => {
+        const { client, state } = makeClient();
+        const closed = (num: number, updated_at: number): ReturnType<typeof item> =>
+            item({ id: `it_${num}`, num, state: "closed", updated_at });
+        const reopened = item({ id: "it_2", num: 2, state: "open", updated_at: 70 });
+        state.api = {
+            items: jest.fn(async (filter: { state?: string; cursor?: string }) => {
+                if (filter.state === "open") return { items: [reopened], next_cursor: null };
+                if (filter.cursor) return { items: [closed(3, 30), closed(2, 20)], next_cursor: null };
+                return { items: [closed(5, 50), closed(4, 40)], next_cursor: "c1" };
+            }),
+        };
+        await client.loadInboxDone();
+        await client.loadMoreInboxDone();
+        expect(client.getSnapshot().inboxDone?.items.map((row) => row.num)).toEqual([5, 4, 3, 2]);
+
+        await client.loadInbox();
+        expect(client.getSnapshot().inboxDone?.items.map((row) => row.num)).toEqual([5, 4, 3]);
+
+        // A later refresh of the first page does not bring it back.
+        await client.loadInboxDone();
+        expect(client.getSnapshot().inboxDone?.items.map((row) => row.num)).toEqual([5, 4, 3]);
+    });
+
+    it("Show more does not restore a row reopened while it was loading", async () => {
+        const { client, state } = makeClient();
+        const closed = (num: number, updated_at: number): ReturnType<typeof item> =>
+            item({ id: `it_${num}`, num, state: "closed", updated_at });
+        let releaseMore: (page: { items: ReturnType<typeof item>[]; next_cursor: null }) => void = () => {};
+        state.api = {
+            items: jest.fn((filter: { state?: string; cursor?: string }) => {
+                if (filter.state === "open") {
+                    return Promise.resolve({
+                        items: [item({ id: "it_4", num: 4, state: "open", updated_at: 70 })],
+                        next_cursor: null,
+                    });
+                }
+                if (filter.cursor) return new Promise((resolve) => (releaseMore = resolve));
+                return Promise.resolve({ items: [closed(5, 50), closed(4, 40)], next_cursor: "c1" });
+            }),
+        };
+        await client.loadInboxDone();
+        const more = client.loadMoreInboxDone();
+        await client.loadInbox();
+        releaseMore({ items: [closed(3, 30)], next_cursor: null });
+        await more;
+
+        expect(client.getSnapshot().inboxDone?.items.map((row) => row.num)).toEqual([5, 3]);
+    });
+
+    it("a Done refresh that shares no row with the loaded ones starts the list again", async () => {
+        const { client, state } = makeClient();
+        const closed = (num: number, updated_at: number): ReturnType<typeof item> =>
+            item({ id: `it_${num}`, num, state: "closed", updated_at });
+        state.api = {
+            items: jest
+                .fn()
+                .mockResolvedValueOnce({ items: [closed(3, 30), closed(2, 20)], next_cursor: "c1" })
+                .mockResolvedValueOnce({ items: [closed(1, 10)], next_cursor: null })
+                // Many items closed since: the fresh page stops short of the rows already loaded.
+                .mockResolvedValueOnce({ items: [closed(9, 90), closed(8, 80)], next_cursor: "c9" }),
+        };
+        await client.loadInboxDone();
+        await client.loadMoreInboxDone();
+        await client.loadInboxDone();
+
+        const done = client.getSnapshot().inboxDone!;
+        expect(done.items.map((row) => row.num)).toEqual([9, 8]);
+        expect(done.nextCursor).toBe("c9");
+    });
+
+    it("a failed Done load keeps the rows it had and reports the error", async () => {
+        const { client, state } = makeClient();
+        state.api = {
+            items: jest
+                .fn()
+                .mockResolvedValueOnce({ items: [item({ state: "closed" })], next_cursor: null })
+                .mockRejectedValueOnce(new Error("offline")),
+        };
+        await client.loadInboxDone();
+        await client.loadInboxDone();
+        const done = client.getSnapshot().inboxDone!;
+        expect(done.items).toHaveLength(1);
+        expect(done.error).toBe("offline");
+    });
+
     // F3: the item list is cursor-paginated. loadInbox must follow next_cursor to the end and dedupe,
     // or the inbox (and its "Needs you" section) silently drops every open item past the first page.
     it("loadInbox follows next_cursor across pages and dedupes by id", async () => {

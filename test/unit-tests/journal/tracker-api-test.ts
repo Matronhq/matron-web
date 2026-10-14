@@ -84,6 +84,11 @@ describe("JournalApi tracker routes", () => {
         );
     });
 
+    it("GET /items sends several kinds as one comma-separated value", async () => {
+        await api().items({ state: "closed", kind: ["question", "decision", "notice"], sort: "updated" });
+        expect(url()).toBe("https://journal.example/items?state=closed&kind=question%2Cdecision%2Cnotice&sort=updated");
+    });
+
     it("GET /items includes a since=0 boundary but drops an undefined cursor", async () => {
         await api().items({ since: 0 });
         expect(url()).toBe("https://journal.example/items?since=0");

@@ -27,7 +27,7 @@ import {
     kindLabel,
     needsUser,
     oneLine,
-    resolutionLabel,
+    closedStatusLabel,
 } from "./format";
 import { CommentBubbleGlyph, ImagePlaceholderGlyph, MissionGlyph, TrackerGlyph } from "./glyphs";
 import { inlineRefsToText } from "./inline-attachments";
@@ -67,9 +67,7 @@ export function ItemRow({
     ) : notice && needsUser(item) ? (
         <span className="mj_TrackerItemRow_status mj_TrackerItemRow_status_muted">To read</span>
     ) : item.state === "closed" ? (
-        <span className="mj_TrackerItemRow_status mj_TrackerItemRow_status_muted">
-            {item.resolution ? resolutionLabel(item.resolution) : "Closed"}
-        </span>
+        <span className="mj_TrackerItemRow_status mj_TrackerItemRow_status_muted">{closedStatusLabel(item)}</span>
     ) : item.awaiting === "agent" ? (
         <span className="mj_TrackerItemRow_status mj_TrackerItemRow_status_muted">With the agent</span>
     ) : null;

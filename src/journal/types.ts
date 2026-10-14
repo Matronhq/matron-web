@@ -459,6 +459,15 @@ export interface StagedUploads {
     persistError?: boolean;
 }
 
+/** The loaded part of For you's Done list. `error` is the last load's failure; the rows it could
+ *  not replace stay. */
+export interface InboxDone {
+    items: TrackerItem[];
+    nextCursor: string | null;
+    loading: boolean;
+    error?: string;
+}
+
 export interface ClientState {
     phase: "loading" | "signed-out" | "signed-in";
     config: MatronConfig;
@@ -516,6 +525,9 @@ export interface ClientState {
     goToNumberOpen?: boolean;
     missions?: Mission[];
     inboxItems?: TrackerItem[];
+    /** For you's Done tab: closed questions, decisions and notices, newest first. Undefined until
+     *  the tab is first opened; `nextCursor` null = everything is loaded. */
+    inboxDone?: InboxDone;
     /** Projects (unify step 7): the dashboard rows and the open project's detail. */
     projects?: Project[];
     projectsError?: string;
@@ -806,6 +818,8 @@ export interface TrackerItem {
     /** The item's own one-tap answers (a notice offers "Seen"). Absent on a journal that predates
      *  item actions. */
     actions?: string[];
+    /** The action the user last tapped on the item itself ("Seen" on a notice they have read). */
+    chosen_action?: string | null;
     /** Null when the owning session is idle; absent on a journal that predates the field and on
      *  another person's item. */
     working?: TrackerWorking | null;
