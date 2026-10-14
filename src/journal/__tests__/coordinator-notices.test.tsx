@@ -82,6 +82,10 @@ describe("consentDecisionNotice", () => {
             consentDecisionNotice({ kind: "spawn", decision: "approve", reason: "Follows the box rules\nfor box-a" })
                 ?.text,
         ).toBe("Coordinator approved the spawn request — Follows the box rules for box-a");
+        expect(
+            consentDecisionNotice({ kind: "chat", decision: "approve", reason: "First line\r\n\r\nsecond\u2028third" })
+                ?.text,
+        ).toBe("Coordinator approved the chat request — First line second third");
         expect(consentDecisionNotice({ kind: "chat", decision: "decline", reason: "  " })?.text).toBe(
             "Coordinator declined the chat request",
         );
@@ -128,6 +132,8 @@ describe("CoordinatorEventNotice", () => {
         const notice = container.querySelector(".mj_CoordinatorNotice");
         expect(notice?.textContent).toBe("Routine missed · deploy-window");
         expect(notice?.tagName).toBe("DIV");
+        // The row truncates; the full line stays reachable on hover.
+        expect(notice?.getAttribute("title")).toBe("Routine missed · deploy-window");
         expect(container.querySelector("button")).toBeNull();
         await act(async () => root.unmount());
         container.remove();

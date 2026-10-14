@@ -90,8 +90,10 @@ export function consentDecisionNotice(payload: EventPayload): NoticeLine | null 
     if ((kind !== "chat" && kind !== "spawn") || (decision !== "approve" && decision !== "decline")) return null;
     const verb = decision === "approve" ? "approved" : "declined";
     const what = kind === "spawn" ? "spawn request" : "chat request";
+    // Every run of line breaks becomes one space, blank lines included (Mac: split on isNewline,
+    // empty pieces dropped).
     const reason = asString(payload.reason)
-        .split(/\r\n|\r|\n/)
+        .split(/[\n\v\f\r\u0085\u2028\u2029]+/)
         .join(" ")
         .trim();
     const line = `Coordinator ${verb} the ${what}`;
@@ -123,6 +125,7 @@ export function CoordinatorEventNotice({ event }: { event: JournalEvent }): Reac
         <div
             className={`mj_TrackerMissionNotice mj_CoordinatorNotice${event.type === "consent_decision" ? " mj_CoordinatorNotice_twoLines" : ""}`}
             data-notice={event.type}
+            title={notice.text}
         >
             <Glyph className="mj_CoordinatorNotice_glyph" />
             <span className="mj_CoordinatorNotice_text">{notice.text}</span>
