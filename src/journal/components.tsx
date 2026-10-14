@@ -5209,6 +5209,8 @@ function Composer({
 
     const setBodyDraft = useCallback(
         (next: string) => {
+            // Any edit — typing, a palette pick, a restored draft — ends a sent-message walk.
+            sentHistory.endRecall();
             setBody(next);
             const cid = convoIdRef.current;
             if (!cid) return;
@@ -5223,7 +5225,7 @@ function Composer({
                 draftTimerConvoRef.current = undefined;
             }, 250);
         },
-        [draftRevisions, drafts, syncDurability],
+        [draftRevisions, drafts, syncDurability, sentHistory],
     );
 
     useEffect(() => {
@@ -5406,7 +5408,6 @@ function Composer({
                                     onBlur={flushDraft}
                                     onChange={(event) => {
                                         const nextBody = event.target.value;
-                                        sentHistory.endRecall();
                                         setBodyDraft(nextBody);
                                         setHighlighted(null);
                                         if (dismissed !== null && nextBody !== dismissed) setDismissed(null);

@@ -1861,6 +1861,20 @@ describe("composer sent-message recall", () => {
         expect(value()).toBe("second, edited");
     });
 
+    test("completing a recalled command from the palette ends the walk", async () => {
+        await renderWithSends();
+        await sendText("hello");
+        await sendText("/status");
+        await arrow("ArrowUp");
+        expect(value()).toBe("/status");
+        await keydown(textarea(), "Tab");
+        const completed = value();
+        expect(completed.trim()).toBe("/status");
+        const up = await arrow("ArrowUp");
+        expect(up.dispatched).toBe(true);
+        expect(value()).toBe(completed);
+    });
+
     test("sending a recalled message sends it again", async () => {
         const send = await renderWithSends();
         await sendText("deploy again");
