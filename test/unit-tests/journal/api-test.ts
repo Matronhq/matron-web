@@ -123,6 +123,107 @@ describe("JournalApi uploadMedia", () => {
         expect(journalRequest).not.toHaveBeenCalled();
         expect(fetchMock).not.toHaveBeenCalled();
     });
+
+    describe("with upload progress", () => {
+        // A scripted XMLHttpRequest: the test drives progress and the response by hand.
+        class FakeXhr {
+            public static last: FakeXhr | undefined;
+            public method = "";
+            public url = "";
+            public headers: Record<string, string> = {};
+            public body: unknown;
+            public responseType = "";
+            public status = 0;
+            public response: ArrayBuffer | null = null;
+            public responseHeaders = "";
+            public aborted = false;
+            public upload: { onprogress: ((event: ProgressEvent) => void) | null } = { onprogress: null };
+            public onload: (() => void) | null = null;
+            public onerror: (() => void) | null = null;
+            public onabort: (() => void) | null = null;
+            public constructor() {
+                FakeXhr.last = this;
+            }
+            public open(method: string, url: string): void {
+                this.method = method;
+                this.url = url;
+            }
+            public setRequestHeader(name: string, value: string): void {
+                this.headers[name] = value;
+            }
+            public getAllResponseHeaders(): string {
+                return this.responseHeaders;
+            }
+            public send(body: unknown): void {
+                this.body = body;
+            }
+            public abort(): void {
+                this.aborted = true;
+                this.onabort?.();
+            }
+            public progress(loaded: number, total: number): void {
+                this.upload.onprogress?.({ lengthComputable: true, loaded, total } as ProgressEvent);
+            }
+            public respond(status: number, body: unknown): void {
+                this.status = status;
+                this.responseHeaders = "content-type: application/json\r\n";
+                this.response = new NodeTextEncoder().encode(JSON.stringify(body)).buffer as ArrayBuffer;
+                this.onload?.();
+            }
+        }
+        const realXhr = globalThis.XMLHttpRequest;
+
+        beforeEach(() => {
+            FakeXhr.last = undefined;
+            globalThis.XMLHttpRequest = FakeXhr as unknown as typeof XMLHttpRequest;
+        });
+
+        afterEach(() => {
+            globalThis.XMLHttpRequest = realXhr;
+        });
+
+        it("reports the uploaded fraction and resolves with the media response", async () => {
+            const api = new JournalApi("https://journal.example", "token");
+            const bytes = new Uint8Array([1, 2, 3, 4]).buffer;
+            const fractions: number[] = [];
+
+            const upload = api.uploadMedia(bytes, "image/png", undefined, (fraction) => fractions.push(fraction));
+            const xhr = FakeXhr.last!;
+            expect(xhr.method).toBe("POST");
+            expect(xhr.url).toBe("https://journal.example/media");
+            expect(xhr.headers).toEqual(
+                expect.objectContaining({ Authorization: "Bearer token", "Content-Type": "image/png" }),
+            );
+            expect(xhr.body).toBe(bytes);
+            xhr.progress(1, 4);
+            xhr.progress(4, 4);
+            xhr.respond(200, { media_id: "media-1", size: 4, content_type: "image/png" });
+
+            await expect(upload).resolves.toEqual({ media_id: "media-1", size: 4, content_type: "image/png" });
+            expect(fractions).toEqual([0.25, 1]);
+            expect(fetchMock).not.toHaveBeenCalled();
+        });
+
+        it("maps an error status to the same prose as the fetch path", async () => {
+            const api = new JournalApi("https://journal.example", "token");
+
+            const upload = api.uploadMedia(new ArrayBuffer(1), "image/png", undefined, () => undefined);
+            FakeXhr.last!.respond(413, { error: "too_large" });
+
+            await expect(upload).rejects.toMatchObject({ message: "File too large.", status: 413, code: "too_large" });
+        });
+
+        it("aborts the request when the signal aborts", async () => {
+            const api = new JournalApi("https://journal.example", "token");
+            const controller = new AbortController();
+
+            const upload = api.uploadMedia(new ArrayBuffer(1), "image/png", controller.signal, () => undefined);
+            controller.abort();
+
+            await expect(upload).rejects.toBeInstanceOf(JournalApiError);
+            expect(FakeXhr.last!.aborted).toBe(true);
+        });
+    });
 });
 
 describe("JournalApi snapshot", () => {

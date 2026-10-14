@@ -487,28 +487,48 @@ export interface PendingMessage {
         | "electron_binary_unsupported";
     errorMessage?: string;
     canRetry?: boolean;
+    /** Set on an attachment sent together with others from one composer message. */
+    batch?: AttachmentBatchTag;
 }
 
 export type ConnectionState = "offline" | "connecting" | "online";
 
-export interface StagedUploadItem {
+/**
+ * One attachment's place in a multi-attachment composer send. Every attachment of a send with more
+ * than one carries the same `id`, so the bridge can gather their frames back into the one message
+ * the user wrote; `index` is 1-based and `total` is how many frames complete the batch. On the
+ * wire it rides in the media payload as `batch_id` / `batch_index` / `batch_total`.
+ */
+export interface AttachmentBatchTag {
     id: string;
-    file: File;
-    /** Built on first confirm attempt; reused by persist retries so a page has ONE row identity. */
-    message?: PendingMessage;
+    index: number;
+    total: number;
 }
 
-export interface StagedUploads {
-    convoId: string;
-    items: StagedUploadItem[];
-    /** Cumulative count ever staged into this queue (paste-append increments). Header: "File k of N", k = total - items.length + 1. */
-    total: number;
-    /** P23 transient-submission lock: set synchronously at confirm entry; all modal actions inert while true. */
-    confirming: boolean;
-    /** Terminal invalidation notice (items cleared, error page shown). */
-    error?: "archived";
-    /** Non-terminal persist failure: page kept, inline error shown, Send retries. */
-    persistError?: boolean;
+/**
+ * A file in the composer's attachment tray: picked, pasted or dropped, and not yet sent. It leaves
+ * with the composer text when the user sends, so the agent gets the file and the words about it
+ * as one turn.
+ */
+export interface ComposerAttachment {
+    id: string;
+    file: File;
+    /**
+     * `staged` waits for a send; `queued` is part of a send in flight and waiting its turn;
+     * `uploading` is on its way; `failed` didn't go out and stays for the next send to retry.
+     */
+    state: "staged" | "queued" | "uploading" | "failed";
+    /** Uploaded fraction (0…1) while uploading. */
+    progress?: number;
+    /** Why it failed, in prose. */
+    error?: string;
+    /** A file that can never upload (empty, or too big for the browser): it blocks the send until removed. */
+    unsendable?: boolean;
+    /**
+     * The tag this file's frame was about to carry when its send failed. A retry re-emits it under
+     * the same batch, so the bridge can still complete the message its siblings already started.
+     */
+    batch?: AttachmentBatchTag;
 }
 
 /** The loaded part of For you's Done list. `error` is the last load's failure; the rows it could
@@ -591,7 +611,8 @@ export interface ClientState {
     textStreams: Record<string, string>;
     toolStreams: Record<string, ToolStreamState>;
     dragActive: boolean;
-    stagedUploads?: StagedUploads;
+    /** Each conversation's attachment tray, by conversation id; a conversation with none has no key. */
+    composerAttachments: Record<string, ComposerAttachment[]>;
     sendTick: number;
     // A row the open timeline should scroll to and flash once it renders (a search hit, a
     // milestone, "jump to my last message"). Set by client.focusMessage after the history holding

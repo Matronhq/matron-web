@@ -49,7 +49,9 @@ import {
     type BriefingLatest,
     type BriefingRefresh,
     type BriefingState,
+    type AttachmentBatchTag,
     type ClientState,
+    type ComposerAttachment,
     type Conversation,
     type ConversationMissionLink,
     type BoxDefaults,
@@ -346,6 +348,7 @@ function blankState(): ClientState {
         boxStatuses: {},
         agents: [],
         dragActive: false,
+        composerAttachments: {},
         sendTick: 0,
     };
 }
@@ -428,6 +431,16 @@ function capToolStream(value: string): { content: string; truncated: boolean } {
     return { content: new TextDecoder().decode(slice), truncated: true };
 }
 
+/** A tray file's failed upload, in the words its chip shows. */
+function stagedUploadError(error: unknown): string {
+    const aborted =
+        (error instanceof DOMException && error.name === "AbortError") ||
+        (error instanceof JournalApiError && error.status === 0 && /abort/i.test(error.message));
+    if (aborted) return "The upload was interrupted.";
+    if (error instanceof Error && error.message) return error.message;
+    return "Upload failed.";
+}
+
 function abortPromise(signal: AbortSignal): Promise<never> {
     return new Promise((_, reject) => {
         const rejectAbort = (): void => reject(new DOMException("The upload timed out.", "AbortError"));
@@ -484,7 +497,6 @@ export class MatronJournalClient {
     private readonly readHighWater = new Map<string, number>();
     private readonly readTimers = new Map<string, number>();
     private pendingFiles = new Map<string, File>();
-    private stagedSendChain: Promise<void> = Promise.resolve();
     private transientAttachmentErrors = new Map<string, PendingMessage>();
     private readonly dismissedAttachments = new Set<string>();
     private readonly attachmentOperations = new Map<string, Promise<void>>();
@@ -1863,6 +1875,14 @@ export class MatronJournalClient {
             size: message.size,
             local_id: message.localId,
             ...(message.caption ? { caption: message.caption } : {}),
+            // Absent for a lone attachment, so its frame is exactly what an older bridge expects.
+            ...(message.batch
+                ? {
+                      batch_id: message.batch.id,
+                      batch_index: message.batch.index,
+                      batch_total: message.batch.total,
+                  }
+                : {}),
         };
     }
 
@@ -1933,128 +1953,214 @@ export class MatronJournalClient {
         }
     }
 
-    public stageFiles(files: File[]): void {
-        if (files.length === 0) return;
-        const staged = this.state.stagedUploads;
-        if (staged) {
-            if (this.isChildConvo(staged.convoId)) return;
-            if (staged.error) return;
-            this.patch({
-                stagedUploads: {
-                    ...staged,
-                    items: [...staged.items, ...files.map((file) => ({ id: crypto.randomUUID(), file }))],
-                    total: staged.total + files.length,
-                },
-            });
-            return;
-        }
-        const convoId = this.state.selectedConversationId;
-        if (!convoId) return;
-        if (this.isChildConvo(convoId)) return;
-        this.patch({
-            stagedUploads: {
-                convoId,
-                items: files.map((file) => ({ id: crypto.randomUUID(), file })),
-                total: files.length,
-                confirming: false,
-            },
+    /**
+     * Adds files to a conversation's attachment tray (the selected one by default). Picking, pasting
+     * and dropping all land here; nothing uploads until the user sends.
+     */
+    public stageFiles(files: File[], convoId = this.state.selectedConversationId): void {
+        if (files.length === 0 || !convoId || this.isChildConvo(convoId)) return;
+        const added = files.map((file): ComposerAttachment => {
+            const unsendable =
+                file.size === 0
+                    ? "That file is empty."
+                    : file.size > BROWSER_MEMORY_SAFETY_MAX_BYTES
+                      ? "Too large for this browser to upload."
+                      : undefined;
+            return unsendable
+                ? { id: crypto.randomUUID(), file, state: "failed", error: unsendable, unsendable: true }
+                : { id: crypto.randomUUID(), file, state: "staged" };
         });
+        this.setTray(convoId, [...this.trayOf(convoId), ...added]);
     }
 
-    public async confirmStagedFile(itemId: string, captionInput?: string): Promise<void> {
-        const staged = this.state.stagedUploads;
-        if (!staged || staged.confirming || staged.error) return;
-        const head = staged.items[0];
-        if (!head || head.id !== itemId) return;
-        if (this.isChildConvo(staged.convoId)) return;
-        this.patch({ stagedUploads: { ...staged, confirming: true } });
+    /** Takes one file out of the tray. A file already part of a send in flight stays. */
+    public removeStagedFile(convoId: string, id: string): void {
+        const tray = this.trayOf(convoId);
+        const item = tray.find((candidate) => candidate.id === id);
+        if (!item || item.state === "queued" || item.state === "uploading") return;
+        this.setTray(
+            convoId,
+            tray.filter((candidate) => candidate.id !== id),
+        );
+    }
 
+    /**
+     * Sends a conversation's tray with the composer text, as one turn: the files upload one at a
+     * time, each followed by its media frame. The text rides on the first as its caption (once, so
+     * the agent doesn't read it per file), and with more than one file every frame carries the same
+     * batch tag, so the bridge hands them to the agent together.
+     *
+     * Stops at the first failed upload: a later file sent without the earlier one it goes with would
+     * reach the agent out of context. The failed file and the ones after it stay in the tray, keeping
+     * their batch tags, and the next send retries them. `captionDelivered` says whether the text went
+     * out with a file that made it, so the composer knows whether to put it back.
+     */
+    public async sendStagedFiles(
+        convoId: string,
+        caption: string,
+    ): Promise<{ outcome: "sent" | "failed" | "skipped"; captionDelivered: boolean }> {
+        const skipped = { outcome: "skipped" as const, captionDelivered: false };
         const gen = this.sessionGen;
         const api = this.api;
         const db = this.database;
-        if (!api || !db) {
-            const current = this.state.stagedUploads;
-            if (current) this.patch({ stagedUploads: { ...current, confirming: false } });
-            return;
+        if (!api || !db || this.isChildConvo(convoId) || !this.stagedConvoValid(convoId)) return skipped;
+        const tray = this.trayOf(convoId);
+        if (
+            tray.length === 0 ||
+            tray.some((item) => item.unsendable || item.state === "queued" || item.state === "uploading")
+        ) {
+            return skipped;
         }
+        // Fresh tags only across files that haven't failed out of an earlier send, and only when
+        // there is more than one: a lone file goes untagged, and a retried one keeps its own tag.
+        const untagged = tray.filter((item) => !item.batch);
+        const batchId = untagged.length > 1 ? crypto.randomUUID() : undefined;
+        let freshIndex = 0;
+        const plan = tray.map((item) => ({
+            id: item.id,
+            file: item.file,
+            batch: item.batch ?? (batchId ? { id: batchId, index: ++freshIndex, total: untagged.length } : undefined),
+        }));
+        const planned = new Set(plan.map((step) => step.id));
+        this.setTray(
+            convoId,
+            tray.map((item) =>
+                planned.has(item.id) ? { ...item, state: "queued", progress: undefined, error: undefined } : item,
+            ),
+        );
+        if (this.state.selectedConversationId === convoId) this.patch({ sendTick: this.state.sendTick + 1 });
+
         const owner: AttachmentOwner = { gen, api, db };
-        const convoId = staged.convoId;
-
-        if (!this.stagedConvoValid(convoId)) {
-            this.patch({ stagedUploads: { ...staged, items: [], confirming: false, error: "archived" } });
-            return;
-        }
-
-        const caption = captionInput?.trim() ? captionInput.trim() : undefined;
-        const message = head.message ?? this.buildPendingAttachment(head.file, convoId, caption);
-        head.message = message;
-        if (caption) message.caption = caption;
-        else delete message.caption;
-
-        const persistOutcome = await this.persistPendingAttachment(message, head.file, db, gen);
-        if (this.sessionGen !== gen) return;
-        const current = this.state.stagedUploads;
-        if (!current) return;
-        if (persistOutcome.kind === "persist-failed") {
-            this.transientAttachmentErrors.delete(message.localId);
-            this.pendingFiles.delete(message.localId);
-            if (this.state.selectedConversationId === convoId) {
-                await this.refreshSelectedConversation(convoId, db, gen).catch(() => undefined);
-            }
-            const afterPurge = this.state.stagedUploads;
-            if (!afterPurge) return;
-            this.patch({ stagedUploads: { ...afterPurge, confirming: false, persistError: true } });
-            return;
-        }
-        if (this.state.selectedConversationId === convoId) {
-            this.patch({ sendTick: this.state.sendTick + 1 });
-        }
-        void this.refreshSelectedConversation(convoId, db, gen).catch(() => undefined);
-        const rest = current.items.slice(1);
-        this.patch({
-            stagedUploads: rest.length
-                ? { ...current, items: rest, confirming: false, persistError: false }
-                : undefined,
-        });
-
-        if (persistOutcome.kind === "persisted-terminal") return;
-
-        this.stagedSendChain = this.stagedSendChain.then(async () => {
-            try {
-                if (this.sessionGen !== gen || this.database !== db) return;
-                if (!this.stagedConvoValid(convoId)) {
-                    message.attachState = "error";
-                    message.errorKind = "upload_failed";
-                    message.errorMessage = "Conversation was archived in another tab — unarchive to retry.";
-                    if (await this.persistAttachment(message, db, gen)) {
-                        await this.refreshSelectedConversation(convoId, db, gen).catch(() => undefined);
-                    }
-                    return;
+        try {
+            return await this.runStagedSend(convoId, plan, caption.trim(), owner);
+        } finally {
+            // Whatever way the send ended, no file of it may stay stuck as queued or uploading:
+            // anything still in the tray goes back to staged with its batch tag, ready to retry.
+            if (this.sessionGen === gen) {
+                const batches = new Map(plan.map((step) => [step.id, step.batch]));
+                const tray = this.trayOf(convoId);
+                if (
+                    tray.some((item) => batches.has(item.id) && (item.state === "queued" || item.state === "uploading"))
+                ) {
+                    this.setTray(
+                        convoId,
+                        tray.map((item): ComposerAttachment => {
+                            if (!batches.has(item.id) || (item.state !== "queued" && item.state !== "uploading")) {
+                                return item;
+                            }
+                            const batch = batches.get(item.id);
+                            return { id: item.id, file: item.file, state: "staged", ...(batch ? { batch } : {}) };
+                        }),
+                    );
                 }
-                await this.runPendingUpload(message, head.file, owner);
-            } catch {
-                // Rejection isolation: one failed upload must not poison the chain.
             }
-        });
+        }
     }
 
-    public skipStagedFile(itemId: string): void {
-        const staged = this.state.stagedUploads;
-        if (!staged || staged.confirming || staged.error) return;
-        const head = staged.items[0];
-        if (!head || head.id !== itemId) return;
-        const rest = staged.items.slice(1);
-        this.patch({
-            stagedUploads: rest.length ? { ...staged, items: rest, persistError: false } : undefined,
-        });
+    private async runStagedSend(
+        convoId: string,
+        plan: { id: string; file: File; batch?: AttachmentBatchTag }[],
+        text: string,
+        owner: AttachmentOwner,
+    ): Promise<{ outcome: "sent" | "failed" | "skipped"; captionDelivered: boolean }> {
+        const { gen, api, db } = owner;
+        let captionDelivered = false;
+        for (const [index, step] of plan.entries()) {
+            if (this.sessionGen !== gen || this.api !== api || this.database !== db) {
+                return { outcome: "skipped", captionDelivered };
+            }
+            let mediaId: string;
+            try {
+                if (this.isChildConvo(convoId)) throw new Error("Can't send to a read-only subagent transcript.");
+                if (!this.stagedConvoValid(convoId)) throw new Error("This conversation was archived.");
+                this.updateStaged(convoId, step.id, { state: "uploading", progress: 0 });
+                mediaId = await this.uploadStagedFile(convoId, step.id, step.file, api);
+            } catch (error) {
+                if (this.sessionGen !== gen) return { outcome: "skipped", captionDelivered };
+                const unsent = new Map(plan.slice(index).map((later) => [later.id, later.batch]));
+                this.setTray(
+                    convoId,
+                    this.trayOf(convoId).map((item): ComposerAttachment => {
+                        if (!unsent.has(item.id)) return item;
+                        const batch = unsent.get(item.id);
+                        const kept: ComposerAttachment = { id: item.id, file: item.file, state: "staged" };
+                        if (batch) kept.batch = batch;
+                        if (item.id === step.id) {
+                            kept.state = "failed";
+                            kept.error = stagedUploadError(error);
+                        }
+                        return kept;
+                    }),
+                );
+                return { outcome: "failed", captionDelivered };
+            }
+            const message = this.buildPendingAttachment(step.file, convoId, index === 0 ? text : undefined);
+            message.blobRef = mediaId;
+            if (step.batch) message.batch = step.batch;
+            // Out of the tray as it joins the timeline, so the two never show the same file.
+            this.setTray(
+                convoId,
+                this.trayOf(convoId).filter((item) => item.id !== step.id),
+            );
+            // From here the outbox owns it: a failed frame becomes a retryable tile in the timeline,
+            // and the text is with it either way.
+            if (message.caption) captionDelivered = true;
+            try {
+                await this.emitPendingAttachment(message, owner);
+            } catch (error) {
+                console.warn("matron: attachment frame not dispatched", error);
+                return { outcome: "failed", captionDelivered };
+            }
+        }
+        return { outcome: "sent", captionDelivered };
     }
 
-    public cancelStagedFiles(): void {
-        const staged = this.state.stagedUploads;
-        if (!staged) return;
-        // The confirming lock guards all mutations at the client boundary.
-        if (staged.confirming) return;
-        this.patch({ stagedUploads: undefined });
+    private trayOf(convoId: string): ComposerAttachment[] {
+        return this.state.composerAttachments[convoId] ?? [];
+    }
+
+    private setTray(convoId: string, items: ComposerAttachment[]): void {
+        const next = { ...this.state.composerAttachments };
+        if (items.length > 0) next[convoId] = items;
+        else delete next[convoId];
+        this.patch({ composerAttachments: next });
+    }
+
+    private updateStaged(convoId: string, id: string, change: Partial<ComposerAttachment>): void {
+        const tray = this.trayOf(convoId);
+        if (!tray.some((item) => item.id === id)) return;
+        this.setTray(
+            convoId,
+            tray.map((item) => (item.id === id ? { ...item, ...change } : item)),
+        );
+    }
+
+    private async uploadStagedFile(convoId: string, id: string, file: File, api: JournalApi): Promise<string> {
+        const controller = new AbortController();
+        const timer = window.setTimeout(() => controller.abort(), uploadTimeoutMsFor(file.size));
+        // Tracked with the outbox uploads, so signing out or the conversation turning into a
+        // read-only subagent transcript aborts it too.
+        this.inFlightUploads.set(id, controller);
+        this.uploadConvos.set(id, convoId);
+        try {
+            const bytes = await Promise.race([file.arrayBuffer(), abortPromise(controller.signal)]);
+            const response = await api.uploadMedia(
+                bytes,
+                file.type || "application/octet-stream",
+                controller.signal,
+                (fraction) => this.updateStaged(convoId, id, { progress: fraction }),
+            );
+            if (typeof response.media_id !== "string" || response.media_id.trim() === "") {
+                throw new Error("The journal server returned a malformed media response.");
+            }
+            return response.media_id;
+        } finally {
+            window.clearTimeout(timer);
+            if (this.inFlightUploads.get(id) === controller) {
+                this.inFlightUploads.delete(id);
+                this.uploadConvos.delete(id);
+            }
+        }
     }
 
     private stagedConvoValid(convoId: string): boolean {
@@ -4016,7 +4122,6 @@ export class MatronJournalClient {
         this.uploadConvos.clear();
         this.dismissedAttachments.clear();
         this.pendingFiles.clear();
-        this.stagedSendChain = Promise.resolve();
         this.transientAttachmentErrors.clear();
         this.connection?.stop();
         this.database?.close();
