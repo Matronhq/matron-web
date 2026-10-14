@@ -1088,6 +1088,22 @@ client.mediaUrl = async (mediaId: string): Promise<string> => {
     return realMediaUrl(mediaId);
 };
 
+// ?notify=default|granted|denied: a stand-in for the browser's Notification API, so the
+// Settings → Notifications group can be shot in each permission state.
+const notifyParam = new URLSearchParams(window.location.search).get("notify");
+if (notifyParam === "default" || notifyParam === "granted" || notifyParam === "denied") {
+    class FixtureNotification {
+        public static permission: NotificationPermission = notifyParam as NotificationPermission;
+        public static requestPermission = async (): Promise<NotificationPermission> => {
+            FixtureNotification.permission = "granted";
+            return "granted";
+        };
+        public onclick: (() => void) | null = null;
+        public close(): void {}
+    }
+    Object.defineProperty(window, "Notification", { value: FixtureNotification, configurable: true });
+}
+
 const params = new URLSearchParams(window.location.search);
 document.documentElement.setAttribute("data-theme", params.get("theme") === "dark" ? "dark" : "light");
 

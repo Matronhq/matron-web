@@ -4656,3 +4656,63 @@ describe("box defaults", () => {
         expect(client.getSnapshot().boxDefaults).toBeUndefined();
     });
 });
+
+describe("live listeners", () => {
+    const journalEvent = (seq: number): JournalEvent => ({
+        kind: "journal",
+        seq,
+        convo_id: "c1",
+        ts: Date.now(),
+        sender: "agent:1",
+        type: "session_status",
+        payload: { state: "waiting" },
+    });
+
+    it("hears each frame, and each newly applied journal event with the conversation before it", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const database = fakeDatabase();
+        state.state = signedInState(client, "c2");
+        state.database = database;
+        state.connection = { send: jest.fn().mockReturnValue(true) };
+        const frames: unknown[] = [];
+        const events: Array<[number, string | undefined]> = [];
+        const stop = client.addLiveListener({
+            frame: (frame) => frames.push(frame),
+            journalEvent: (event, previous) => events.push([event.seq, previous?.session_state]),
+        });
+
+        await state.handleFrame(journalEvent(11));
+        database.applyJournal = jest.fn().mockResolvedValue(false);
+        await state.handleJournal(journalEvent(11));
+        await state.handleFrame({ kind: "notify", settings: {} } as unknown as ServerFrame);
+
+        expect(events).toEqual([[11, CONVERSATIONS[0].session_state]]);
+        expect(frames).toHaveLength(2);
+        stop();
+        database.applyJournal = jest.fn().mockResolvedValue(true);
+        await state.handleJournal(journalEvent(12));
+        expect(events).toHaveLength(1);
+    });
+
+    it("keeps syncing when a listener throws", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const database = fakeDatabase();
+        state.state = signedInState(client, "c2");
+        state.database = database;
+        state.connection = { send: jest.fn().mockReturnValue(true) };
+        const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+        client.addLiveListener({
+            journalEvent: () => {
+                throw new Error("boom");
+            },
+        });
+
+        await state.handleJournal(journalEvent(13));
+
+        expect(database.conversations).toHaveBeenCalled();
+        expect(warn).toHaveBeenCalledWith("matron:live-listener", expect.any(Error));
+        warn.mockRestore();
+    });
+});

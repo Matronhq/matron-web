@@ -105,6 +105,7 @@ import {
     ArrowUpCircleIcon,
 } from "./icons";
 import { NAV_RAIL_WIDTH, NavRail, type NavKey } from "./NavRail";
+import { notificationsFor, unreadTotal as countUnread } from "./notifications";
 import { SettingsSheet } from "./SettingsSheet";
 import { displayTitle, TaggedTitle } from "./SessionTag";
 import { groupByDay } from "./sidebar-groups";
@@ -1546,11 +1547,7 @@ function ConversationList({
     const navActive: NavKey = state.trackerView?.open
         ? NAV_KEY_FOR_VIEW[state.trackerView.view ?? "inbox"]
         : "conversations";
-    const unreadTotal = state.conversations.reduce((total, conversation) => {
-        if (state.archivedIds.has(conversation.id)) return total;
-        if (conversation.unread_count > 0) return total + conversation.unread_count;
-        return total + (effectiveUnread(conversation, state.unreadOverrideIds) ? 1 : 0);
-    }, 0);
+    const unreadTotal = countUnread(state.conversations, state.archivedIds, state.unreadOverrideIds);
     // The For you badge: open items awaiting the user, the inbox's own "Needs you" filter.
     const needsYouTotal = (state.inboxItems ?? []).filter(needsUser).length;
     const closeSettings = useCallback(() => setAccountOpen(false), []);
@@ -6882,6 +6879,8 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
         (state.sessionStatus?.limits?.filter((limit) => limit.label.trim()).length ?? 0);
     const collapse = useAdaptiveHeader(bodyEl, meterCount);
     const appContent = useRef<HTMLDivElement>(null);
+    // Desktop notifications and the unread count in the title / app badge, while signed in.
+    useEffect(() => notificationsFor(client).start(), [client]);
     const uploadDialogWasOpen = useRef(Boolean(state.stagedUploads));
     const drafts = useMemo(() => makeDraftStore(state.session), [state.session]);
     const sendingConvos = useRef<Set<string>>(new Set());
