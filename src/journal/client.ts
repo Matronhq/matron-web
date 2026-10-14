@@ -412,6 +412,29 @@ export interface LiveListener {
     journalEvent?(event: JournalEvent, previous: Conversation | undefined): void;
 }
 
+/**
+ * The freshly read conversation list, keeping the previous object for every conversation whose
+ * fields are all unchanged (and the previous array when nothing changed at all), so the sidebar's
+ * memoised rows only re-render for the conversations that did change.
+ */
+export function keepUnchangedConversations(previous: Conversation[], next: Conversation[]): Conversation[] {
+    const byId = new Map(previous.map((conversation) => [conversation.id, conversation]));
+    let same = previous.length === next.length;
+    const kept = next.map((conversation, index) => {
+        const old = byId.get(conversation.id);
+        const keep = old !== undefined && sameFields(old, conversation) ? old : conversation;
+        if (keep !== previous[index]) same = false;
+        return keep;
+    });
+    return same ? previous : kept;
+}
+
+function sameFields(left: Conversation, right: Conversation): boolean {
+    const keys = Object.keys(left) as (keyof Conversation)[];
+    if (keys.length !== Object.keys(right).length) return false;
+    return keys.every((key) => Object.is(left[key], right[key]));
+}
+
 export class MatronJournalClient {
     private state = blankState();
     // The `/u/<name>/<n>` link the page was opened at, until the first sign-in opens it.
@@ -3894,7 +3917,7 @@ export class MatronJournalClient {
         const snapshot = await this.api.snapshot();
         await this.database.replaceWithSnapshot(snapshot);
         await this.reconcilePersistedOwnMessages(this.database);
-        const conversations = await this.database.conversations();
+        const conversations = keepUnchangedConversations(this.state.conversations, await this.database.conversations());
         let { archivedIds, pinnedIds, favoriteIds, unreadOverrideIds, collapsedSubagentParentIds } = this.state;
         const session = this.state.session;
         if (session) {
@@ -4275,7 +4298,7 @@ export class MatronJournalClient {
         for (const conversation of conversations) {
             if (conversation.session_state !== "running") this.toolStreams.delete(conversation.id);
         }
-        this.patch({ conversations });
+        this.patch({ conversations: keepUnchangedConversations(this.state.conversations, conversations) });
         // Keep the published snapshot in lockstep with the private map. Deleting the private
         // entry above does NOT touch ClientState.toolStreams, so a pruned card would otherwise
         // still sit in the snapshot and re-render on the conversation's next running turn (before
