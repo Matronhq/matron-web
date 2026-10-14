@@ -257,6 +257,22 @@ describe("NewSessionSheet", () => {
             expect(start).toHaveBeenCalledWith(AGENT_A.device_id, "", false, { agent: "claude" });
         });
 
+        it("keeps the picks for Retry and can go back to change them", async () => {
+            const { start } = await openOn(FULL_OFFER);
+            start.mockResolvedValue({ kind: "error", message: "That box doesn't offer that model — pick another." });
+
+            await choose("mj-new-session-model", "sonnet");
+            await act(async () => textButton(rendered!.container, "Start").click());
+            await act(async () => textButton(rendered!.container, "Retry").click());
+            expect(start).toHaveBeenLastCalledWith(AGENT_A.device_id, "", false, { agent: "claude", model: "sonnet" });
+
+            await act(async () => textButton(rendered!.container, "Change options").click());
+            expect(select("mj-new-session-model")!.value).toBe("sonnet");
+            await choose("mj-new-session-model", "");
+            await act(async () => textButton(rendered!.container, "Start").click());
+            expect(start).toHaveBeenLastCalledWith(AGENT_A.device_id, "", false, { agent: "claude" });
+        });
+
         it("drops a pick the next box does not offer", async () => {
             const client = new MatronJournalClient();
             jest.spyOn(client, "listAgents").mockResolvedValue([AGENT_A, AGENT_B]);

@@ -488,7 +488,9 @@ type SheetState =
       }
     | { step: "starting"; agent: DeviceDTO }
     | { step: "uncertain" }
-    | { step: "error"; agent: DeviceDTO; message: string };
+    // The box's offer rides along so Retry sends the same picks, and Change options can go back
+    // to the form to pick another.
+    | { step: "error"; agent: DeviceDTO; message: string; offer?: NewSessionOffer };
 
 // The sheet's own agent, model and effort picks. null = no pick: the box's default applies.
 interface SheetPicks {
@@ -774,7 +776,9 @@ export function NewSessionSheet({
         if (startingRef.current || dismissedRef.current) return;
         const current = sheetStateRef.current;
         const offer =
-            current.step === "folders" && current.agent.device_id === agent.device_id ? current.offer : undefined;
+            (current.step === "folders" || current.step === "error") && current.agent.device_id === agent.device_id
+                ? current.offer
+                : undefined;
         startingRef.current = true;
         transition({ step: "starting", agent });
         const outcome = await client.startSessionRpc(agent.device_id, path, browser, startPicks(offer, picks));
@@ -790,7 +794,7 @@ export function NewSessionSheet({
             return;
         }
         startingRef.current = false;
-        transition({ step: "error", agent, message: outcome.message });
+        transition({ step: "error", agent, message: outcome.message, offer });
     };
 
     const folderState = sheetState.step === "folders" ? sheetState : undefined;
@@ -1056,6 +1060,21 @@ export function NewSessionSheet({
                     <>
                         <p className="mj_UploadConfirm_error">{sheetState.message}</p>
                         <div className="mj_UploadConfirm_actions">
+                            {sheetState.offer && (
+                                <button
+                                    type="button"
+                                    onClick={() =>
+                                        transition({
+                                            step: "folders",
+                                            agent: sheetState.agent,
+                                            foldersRequestId: foldersRequestIdRef.current,
+                                            offer: sheetState.offer,
+                                        })
+                                    }
+                                >
+                                    Change options
+                                </button>
+                            )}
                             <button
                                 type="button"
                                 className="mj_UploadConfirm_send"
