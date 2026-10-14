@@ -27,7 +27,14 @@ import {
     MatronApp,
 } from "../../../src/journal/components";
 import { makeRecentFoldersStore } from "../../../src/journal/slash-palette";
-import type { ClientState, Conversation, JournalEvent, PendingMessage, Session } from "../../../src/journal/types";
+import type {
+    ClientState,
+    Conversation,
+    JournalEvent,
+    PendingMessage,
+    Session,
+    TrackerItem,
+} from "../../../src/journal/types";
 
 jest.mock("../../../res/matron-logo-simple.svg", () => "matron-logo.svg");
 
@@ -3847,6 +3854,102 @@ describe("conversation row affordances", () => {
         const row = rendered.container.querySelector<HTMLButtonElement>('button[aria-label^="Open room"]');
         expect(row?.getAttribute("aria-label")).toContain("marked unread");
         expect(rendered.container.querySelector(".mj_UnreadBadge")).toBeNull();
+    });
+});
+
+describe("needs-you and New badges in the conversation list and the rail", () => {
+    let rendered: { container: HTMLDivElement; root: Root } | undefined;
+
+    afterEach(async () => {
+        if (rendered) {
+            await act(async () => rendered?.root.unmount());
+            rendered.container.remove();
+            rendered = undefined;
+        }
+        jest.restoreAllMocks();
+    });
+
+    function awaiting(id: string, originConvoId: string, missionId: string | null = null): TrackerItem {
+        return {
+            id,
+            num: 1,
+            kind: "question",
+            state: "open",
+            awaiting: "user",
+            title: "Pick one",
+            origin_convo_id: originConvoId,
+            mission_id: missionId,
+        } as TrackerItem;
+    }
+
+    function patch(client: MatronJournalClient, update: Partial<ClientState>): void {
+        act(() => (client as unknown as { patch(update: Partial<ClientState>): void }).patch(update));
+    }
+
+    function row(container: HTMLElement, title: string): HTMLButtonElement {
+        const match = container.querySelector<HTMLButtonElement>(`button[aria-label^="Open room ${title},"]`);
+        if (!match) throw new Error(`Missing row: ${title}`);
+        return match;
+    }
+
+    const roomA = { ...CONVERSATION, id: "room-a", title: "Room A" };
+    const roomB = { ...CONVERSATION, id: "room-b", title: "Room B" };
+
+    it("counts the items a conversation raised that wait on the user, live as they change", async () => {
+        const client = signedInWithRooms([CONVERSATION, roomA, roomB]);
+        rendered = await renderClient(client);
+        expect(rendered.container.querySelector(".mj_ConversationListBadges .mj_TrackerNeedsYouBadge")).toBeNull();
+
+        patch(client, {
+            inboxItems: [
+                awaiting("i1", "room-a"),
+                awaiting("i2", "room-a"),
+                { ...awaiting("i3", "room-b"), awaiting: "agent" },
+            ],
+        });
+        const badge = row(rendered.container, "Room A").querySelector(".mj_TrackerNeedsYouBadge");
+        expect(badge?.textContent).toBe("2");
+        expect(row(rendered.container, "Room A").getAttribute("aria-label")).toContain("2 items need you");
+        expect(row(rendered.container, "Room B").querySelector(".mj_TrackerNeedsYouBadge")).toBeNull();
+
+        // Answering one drops the count on the row without anything else in the list changing.
+        patch(client, { inboxItems: [awaiting("i2", "room-a")] });
+        expect(row(rendered.container, "Room A").querySelector(".mj_TrackerNeedsYouBadge")?.textContent).toBe("1");
+        expect(row(rendered.container, "Room A").getAttribute("aria-label")).toContain("1 item needs you");
+    });
+
+    it("marks a session that arrived unasked as New until it is opened", async () => {
+        const client = signedInWithRooms([CONVERSATION, roomA, roomB]);
+        rendered = await renderClient(client);
+        patch(client, { newConversationIds: new Set(["room-a"]) });
+        expect(row(rendered.container, "Room A").querySelector(".mj_ConversationListNew")?.textContent).toBe("New");
+        expect(row(rendered.container, "Room A").getAttribute("aria-label")).toContain("new session");
+        expect(row(rendered.container, "Room B").querySelector(".mj_ConversationListNew")).toBeNull();
+
+        patch(client, { newConversationIds: new Set() });
+        expect(row(rendered.container, "Room A").querySelector(".mj_ConversationListNew")).toBeNull();
+    });
+
+    it("never shows New on an agent-chat room", async () => {
+        const room = { ...CONVERSATION, id: "room-c", title: "🔗 box-a and box-b" };
+        const client = signedInWithRooms([CONVERSATION, room]);
+        rendered = await renderClient(client);
+        patch(client, { newConversationIds: new Set(["room-c"]) });
+        expect(rendered.container.querySelector(".mj_ConversationListNew")).toBeNull();
+    });
+
+    it("badges Projects in the rail with what needs the user across the missions", async () => {
+        const client = signedInWithRooms([CONVERSATION]);
+        rendered = await renderClient(client);
+        const projects = (): HTMLButtonElement =>
+            rendered!.container.querySelector<HTMLButtonElement>('[data-nav="projects"]')!;
+        expect(projects().querySelector(".mj_NavRail_badge")).toBeNull();
+
+        patch(client, {
+            inboxItems: [awaiting("i1", "c1", "m1"), awaiting("i2", "c1", "m2"), awaiting("i3", "c1", null)],
+        });
+        expect(projects().querySelector(".mj_NavRail_badge")?.textContent).toBe("2");
+        expect(projects().getAttribute("aria-label")).toBe("Projects, 2 need you");
     });
 });
 

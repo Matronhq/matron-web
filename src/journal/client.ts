@@ -34,6 +34,7 @@ import {
     readCachedPins,
     writeCachedPins,
 } from "./pins";
+import { isAgentRoomTitle, isStartCommand, NEW_CONVERSATION_STALE_MS, startedSessionIntents } from "./needs-you";
 import { mergeSessionStatus } from "./status";
 import { appendFeedPage, kindsWithMore } from "./tracker/projectActivity";
 import { doneSortKey, inDone } from "./tracker/format";
@@ -295,6 +296,7 @@ function blankState(): ClientState {
         favoriteIds: new Set(),
         unreadOverrideIds: new Set(),
         collapsedSubagentParentIds: new Set(),
+        newConversationIds: new Set(),
         controlError: undefined,
         events: [],
         pendingMessages: [],
@@ -545,6 +547,9 @@ export class MatronJournalClient {
     private pendingAck = 0;
     private historyError?: string;
     private startSessionRequest?: Promise<StartOutcome>;
+    // The session starts this device asked for and has not seen born yet: a conversation that
+    // answers one is the user's own, and never gets the "New" marker.
+    private startIntents = startedSessionIntents();
     private rpcCreateWatchdog?: number;
     private rpcCreateWatchdogConvo?: string;
     private rpcCreateWatchdogGen?: number;
@@ -821,16 +826,22 @@ export class MatronJournalClient {
         if (picks.model) params.model = picks.model;
         if (picks.effort) params.effort = picks.effort;
 
+        // The session this start brings is the user's own: it must not arrive marked "New".
+        this.startIntents.noteBox(agentDeviceId, Date.now());
         const reply = await this.agentRpc(agentDeviceId, "start", params);
         if (reply.ok) {
             if (typeof reply.result !== "object" || reply.result === null || Array.isArray(reply.result)) {
                 return { kind: "uncertain" };
             }
             const convoId = (reply.result as Record<string, unknown>).convo_id;
-            return typeof convoId === "string" && convoId.length > 0
-                ? { kind: "created", convoId }
-                : { kind: "uncertain" };
+            if (typeof convoId === "string" && convoId.length > 0) {
+                this.startIntents.noteConversation(convoId, agentDeviceId);
+                return { kind: "created", convoId };
+            }
+            return { kind: "uncertain" };
         }
+        // A refusal brings no session; a session that does arrive on this box later is not this ask's.
+        if (reply.origin !== "timeout") this.startIntents.forgetBox(agentDeviceId);
         if (reply.origin === "relay") {
             return {
                 kind: "error",
@@ -929,6 +940,12 @@ export class MatronJournalClient {
         // idle session reports "not syncing" as an error.
         if (opts?.fromRpcCreate) this.armRpcCreateWatchdog(conversationId);
         if (opts?.clearUnread ?? true) this.clearUnreadOverride(conversationId);
+        // Opening a conversation, by any route, ends its "New" marker.
+        if (this.state.newConversationIds.has(conversationId)) {
+            const newConversationIds = new Set(this.state.newConversationIds);
+            newConversationIds.delete(conversationId);
+            this.patch({ newConversationIds });
+        }
         storeSelectedConversation(this.state.session, conversationId);
         // Selecting a conversation closes the Tracker pane, so it drops the cached item detail the
         // same way closeTrackerView does.
@@ -1275,6 +1292,10 @@ export class MatronJournalClient {
         };
         await db.addToOutbox(message); // the only awaited durable step
         if (!owns()) return false;
+        if (isStartCommand(body)) {
+            const box = this.state.conversations.find((candidate) => candidate.id === conversationId)?.agent_device_id;
+            this.startIntents.noteBox(box ?? null, Date.now());
+        }
         // sendTick is a synchronous "a send happened → scroll to bottom" signal; bump it now (the
         // message is durably queued) rather than gating it behind the async refresh below.
         if (this.state.selectedConversationId === conversationId) {
@@ -4074,12 +4095,31 @@ export class MatronJournalClient {
 
         await this.refreshConversations();
         this.abortUploadsForChildConvos();
+        if (!previous) this.considerNewConversation(event);
         if (event.convo_id === this.state.selectedConversationId) {
             await this.refreshSelectedConversation(event.convo_id);
             if (MESSAGE_EVENT_TYPES.has(event.type) && !event.sender.startsWith("user:")) {
                 this.scheduleRead(event.convo_id, event.seq);
             }
         }
+    }
+
+    // A conversation this tab sees for the first time, live. One this device asked for is the
+    // user's own and opens the way they started it; any other (an agent, the Coordinator or a
+    // routine started it) never takes the selection, and is marked "New" in the list until opened.
+    // Not for one already on screen, a subagent's child, an agent-chat room, or a reconnect's
+    // replay of sessions born while this tab was away.
+    private considerNewConversation(event: JournalEvent): void {
+        const id = event.convo_id;
+        if (id === this.state.selectedConversationId || this.state.newConversationIds.has(id)) return;
+        const now = Date.now();
+        if (typeof event.ts === "number" && event.ts < now - NEW_CONVERSATION_STALE_MS) return;
+        const conversation = this.state.conversations.find((candidate) => candidate.id === id);
+        // A child's id carries ":sub:" before its parent link (learned from a later convo_meta) lands.
+        if (!conversation || isSubChat(conversation) || id.includes(":sub:")) return;
+        if (isAgentRoomTitle(conversation.title)) return;
+        if (this.startIntents.claim(conversation, now)) return;
+        this.patch({ newConversationIds: new Set([...this.state.newConversationIds, id]) });
     }
 
     private async reconcilePersistedOwnMessages(database: JournalDatabase): Promise<void> {

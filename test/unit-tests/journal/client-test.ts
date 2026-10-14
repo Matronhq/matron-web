@@ -4727,3 +4727,99 @@ describe("live listeners", () => {
         warn.mockRestore();
     });
 });
+
+describe("New marker on sessions that arrive unasked", () => {
+    const BORN: Conversation = {
+        id: "c3",
+        title: "Three",
+        session_state: "running",
+        last_seq: 1,
+        unread_count: 1,
+        snippet: "",
+        created_at: 3,
+        read_up_to_seq: 0,
+        agent_device_id: 4,
+    };
+
+    function liveClient(born: Conversation = BORN): { client: MatronJournalClient; state: ClientInternals } {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        state.state = signedInState(client);
+        state.database = fakeDatabase({ conversations: jest.fn().mockResolvedValue([...CONVERSATIONS, born]) });
+        state.api = { messages: jest.fn().mockResolvedValue({ events: [] }) };
+        state.connection = {
+            send: jest.fn().mockReturnValue(true),
+            agentRequest: jest.fn().mockResolvedValue({ ok: true, origin: "agent", result: { convo_id: born.id } }),
+        };
+        return { client, state };
+    }
+
+    function firstFrame(convoId = BORN.id, ts = Date.now()): JournalEvent {
+        return { kind: "journal", seq: 30, convo_id: convoId, ts, sender: "agent:4", type: "text", payload: {} };
+    }
+
+    it("marks a conversation born live without this device asking, and opening it clears the mark", async () => {
+        const { client, state } = liveClient();
+        await state.handleJournal(firstFrame());
+        expect(client.getSnapshot().newConversationIds).toEqual(new Set(["c3"]));
+        // The selection never moves to it.
+        expect(client.getSnapshot().selectedConversationId).toBe("c1");
+
+        await client.selectConversation("c3");
+        expect(client.getSnapshot().newConversationIds.size).toBe(0);
+    });
+
+    it("leaves alone a conversation a reconnect replays from before this tab was live", async () => {
+        const { client, state } = liveClient();
+        await state.handleJournal(firstFrame(BORN.id, Date.now() - 10 * 60_000));
+        expect(client.getSnapshot().newConversationIds.size).toBe(0);
+    });
+
+    it("leaves alone a frame for a conversation already in the list", async () => {
+        const { client, state } = liveClient();
+        await state.handleJournal(firstFrame("c2"));
+        expect(client.getSnapshot().newConversationIds.size).toBe(0);
+    });
+
+    it.each([
+        ["an agent-chat room", { title: "↔️ [ab] box-a ↔ box-b" }],
+        ["a subagent's child", { parent_convo_id: "c1" }],
+    ])("never marks %s", async (_label, overrides) => {
+        const { client, state } = liveClient({ ...BORN, ...overrides });
+        await state.handleJournal(firstFrame());
+        expect(client.getSnapshot().newConversationIds.size).toBe(0);
+    });
+
+    it("never marks the session this device's own New session start brought", async () => {
+        const { client, state } = liveClient();
+        await client.startSessionRpc(4, "~/code", false);
+        await state.handleJournal(firstFrame());
+        expect(client.getSnapshot().newConversationIds.size).toBe(0);
+    });
+
+    it("never marks a session born on a box this device just sent /start to", async () => {
+        const { client, state } = liveClient();
+        state.state = {
+            ...state.state,
+            conversations: CONVERSATIONS.map((conversation) =>
+                conversation.id === "c1" ? { ...conversation, agent_device_id: 4 } : conversation,
+            ),
+        };
+        await client.sendMessage("/start ~/code");
+        await state.handleJournal(firstFrame());
+        expect(client.getSnapshot().newConversationIds.size).toBe(0);
+    });
+
+    it("still marks a session born on another box after a /start", async () => {
+        const { client, state } = liveClient({ ...BORN, agent_device_id: 5 });
+        state.state = {
+            ...state.state,
+            conversations: CONVERSATIONS.map((conversation) =>
+                conversation.id === "c1" ? { ...conversation, agent_device_id: 4 } : conversation,
+            ),
+        };
+        await client.sendMessage("/start ~/code");
+        await state.handleJournal(firstFrame());
+        expect(client.getSnapshot().newConversationIds).toEqual(new Set(["c3"]));
+    });
+});

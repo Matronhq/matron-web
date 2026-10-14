@@ -120,6 +120,7 @@ import {
     ProjectsIcon,
 } from "./icons";
 import { NAV_RAIL_WIDTH, NavRail, type NavKey } from "./NavRail";
+import { isAgentRoomTitle, needsYouByConversation, projectsNeedsYou } from "./needs-you";
 import { notificationsFor, unreadTotal as countUnread } from "./notifications";
 import { SettingsSheet } from "./SettingsSheet";
 import { displayTitle, TaggedTitle } from "./SessionTag";
@@ -137,6 +138,7 @@ import {
     renderItemMarker,
 } from "./tracker/cards";
 import { needsUser } from "./tracker/format";
+import { NeedsYouBadge } from "./tracker/glyphs";
 import {
     isPreviewableMarkdown,
     MarkdownPreviewContext,
@@ -1493,6 +1495,10 @@ function ConversationListView({
         [state.conversations, state.archivedIds, state.collapsedSubagentParentIds],
     );
     const childIndex = useMemo(() => childrenByParent(state.conversations), [state.conversations]);
+    // Keyed on the open-items array, which the client replaces whenever an item changes, so the
+    // memoised list re-renders (inboxItems is not in CONVERSATION_LIST_IGNORED_STATE) and the
+    // counts are rebuilt only then, not on every row render.
+    const needsYouCounts = useMemo(() => needsYouByConversation(state.inboxItems), [state.inboxItems]);
     const childRowsOf = (parentId: string): Conversation[] => childIndex.get(parentId) ?? [];
     const isTopLevelRow = (conversation: Conversation): boolean => rendersAsTopLevelRow(conversation, sidebarIndex);
     const conversations = useMemo(() => {
@@ -1581,6 +1587,8 @@ function ConversationListView({
     const unreadTotal = countUnread(state.conversations, state.archivedIds, state.unreadOverrideIds);
     // The For you badge: open items awaiting the user, the inbox's own "Needs you" filter.
     const needsYouTotal = (state.inboxItems ?? []).filter(needsUser).length;
+    // The Projects badge: what needs the user across the missions (the Mac's Missions total).
+    const projectsNeedsYouTotal = projectsNeedsYou(state.inboxItems, state.missions);
     const closeSettings = useCallback(() => setAccountOpen(false), []);
     const renderNow = Date.now();
     const pinnedRows = journalPins ? [] : visibleRows.filter((conversation) => state.pinnedIds.has(conversation.id));
@@ -1647,6 +1655,11 @@ function ConversationListView({
         const name = pin ? pin.label : conversationTitle(conversation);
         const outcomeStatus = isSubagent ? accessibleOutcome(classifyOutcome(conversation)) : undefined;
         const relativeTimestamp = formatRelativeDay(conversation.last_ts ?? conversation.created_at, renderNow);
+        // Items this conversation raised that wait on the user, and the "New" marker on a session
+        // that arrived unasked and has not been opened (a room's title can land after the mark).
+        const needsYou = needsYouCounts.get(conversation.id) ?? 0;
+        const isNew =
+            !selected && state.newConversationIds.has(conversation.id) && !isAgentRoomTitle(conversation.title);
         // When this parent's subagent rows are collapsed, surface a subtle count of the hidden
         // child rows so the collapse stays discoverable on the row itself. Gate on the CANONICAL
         // index (hasSubagentChildRows) — NOT an independent running-child count — so it agrees with
@@ -1680,7 +1693,9 @@ function ConversationListView({
                     className={`mj_ConversationListItem${selected ? " mj_ConversationListItem_selected" : ""}${isSubagent ? " mj_ConversationListItem_sub" : ""}`}
                     type="button"
                     aria-current={selected ? "page" : undefined}
-                    aria-label={`Open ${isSubagent ? "subagent" : "room"} ${name}${outcomeStatus ? `, ${outcomeStatus}` : ""}, last activity ${relativeTimestamp}${overrideUnread ? ", marked unread" : ""}${
+                    aria-label={`Open ${isSubagent ? "subagent" : "room"} ${name}${outcomeStatus ? `, ${outcomeStatus}` : ""}, last activity ${relativeTimestamp}${isNew ? ", new session" : ""}${
+                        needsYou > 0 ? `, ${needsYou} ${needsYou === 1 ? "item needs" : "items need"} you` : ""
+                    }${overrideUnread ? ", marked unread" : ""}${
                         collapsedSubagentCount > 0
                             ? `, ${collapsedSubagentCount} subagent${collapsedSubagentCount === 1 ? "" : "s"} hidden${collapsedSubagentUnread ? " (unread)" : ""}`
                             : ""
@@ -1815,13 +1830,23 @@ function ConversationListView({
                                 {collapsedSubagentUnread && <span className="mj_UnreadDot" aria-hidden />}
                             </span>
                         )}
-                        {conversation.unread_count > 0 ? (
-                            <span className="mj_UnreadBadge" aria-label={`${conversation.unread_count} unread`}>
-                                {conversation.unread_count}
-                            </span>
-                        ) : overrideUnread ? (
-                            <span className="mj_UnreadDot" aria-hidden />
-                        ) : null}
+                        {/* Mac order: New, then what needs you, then unread. Announced via the row's
+                            aria-label, like the collapsed-children chip above. */}
+                        <span className="mj_ConversationListBadges">
+                            {isNew && (
+                                <span className="mj_ConversationListNew" aria-hidden="true">
+                                    New
+                                </span>
+                            )}
+                            <NeedsYouBadge count={needsYou} />
+                            {conversation.unread_count > 0 ? (
+                                <span className="mj_UnreadBadge" aria-label={`${conversation.unread_count} unread`}>
+                                    {conversation.unread_count}
+                                </span>
+                            ) : overrideUnread ? (
+                                <span className="mj_UnreadDot" aria-hidden />
+                            ) : null}
+                        </span>
                     </span>
                 </button>
                 {/* The row menu opens via right-click / long-press for pointer + touch. This
@@ -1900,7 +1925,7 @@ function ConversationListView({
         >
             <NavRail
                 active={navActive}
-                counts={{ conversations: unreadTotal, decisions: needsYouTotal }}
+                counts={{ projects: projectsNeedsYouTotal, conversations: unreadTotal, decisions: needsYouTotal }}
                 onSelect={(key) => {
                     setAccountOpen(false);
                     closeConversationMenu();

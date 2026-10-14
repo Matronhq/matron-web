@@ -1212,6 +1212,41 @@ if (trackerMode === "inbox" || trackerMode === "item") {
     }
 }
 
+// ?badges=1: the conversation list's needs-you counts and "New" marker, and the Projects badge in
+// the rail. Two questions from c2 and one from c1 wait on the user (two of them on a mission), and
+// c3 arrived without the user starting it and has not been opened.
+if (fixtureParams.get("badges") === "1") {
+    const now = Date.now();
+    const question = (id: string, origin: string, missionId: string | null): Record<string, unknown> => ({
+        id,
+        num: 0,
+        kind: "question",
+        state: "open",
+        resolution: null,
+        awaiting: "user",
+        rank: 0,
+        title: "Pick one",
+        body: "",
+        labels: [],
+        links: [],
+        supersedes: null,
+        origin_convo_id: origin,
+        created_by: "agent",
+        created_at: now,
+        updated_at: now,
+        closed_at: null,
+        mission_id: missionId,
+        mission_num: null,
+        comment_count: 0,
+        last_comment_at: null,
+        attachments: [],
+        has_image: false,
+    });
+    const tracker = state as unknown as Record<string, unknown>;
+    tracker.inboxItems = [question("it_a", "c2", "ms_a"), question("it_b", "c2", null), question("it_c", "c1", "ms_b")];
+    state.newConversationIds = new Set(["c3"]);
+}
+
 // Stub the new-session data path so a driver click on "New session" reaches the folders
 // form (agent → recent folders) where the themed inputs / checkbox / Start live.
 (client as unknown as { listAgents: () => Promise<unknown[]> }).listAgents = async () => [
