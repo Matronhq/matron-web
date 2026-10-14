@@ -952,16 +952,23 @@ export class MatronJournalClient {
             textStreams: { ...(this.textStreams.get(conversationId) ?? {}) },
             toolStreams: { ...(this.toolStreams.get(conversationId) ?? {}) },
         });
+        // A conversation opened for the first time needs its history from the journal. Ask for it
+        // now, alongside the local read below, instead of after it: the request then overlaps the
+        // IndexedDB read and the first render. Whichever refresh lands last wins (refresh epochs).
+        const history = this.history.get(conversationId)?.initialized
+            ? undefined
+            : this.loadOlderHistory({ suppressNotFound: opts?.fromRpcCreate || opts?.suppressNotFound });
         await this.refreshSelectedConversation(conversationId);
-        if (this.state.selectedConversationId !== conversationId) return;
+        if (this.state.selectedConversationId !== conversationId) {
+            await history;
+            return;
+        }
         this.connection?.send({ op: "viewing", convo_id: conversationId });
 
         const conversation = this.state.conversations.find((candidate) => candidate.id === conversationId);
         if (conversation?.unread_count) this.scheduleRead(conversationId, conversation.last_seq, 0);
 
-        if (!this.history.get(conversationId)?.initialized) {
-            await this.loadOlderHistory({ suppressNotFound: opts?.fromRpcCreate || opts?.suppressNotFound });
-        }
+        await history;
     }
 
     public clearSelection(): void {
