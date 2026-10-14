@@ -644,8 +644,19 @@ if (trackerMode === "inbox" || trackerMode === "item") {
                 : workingParam === "queued"
                   ? { state: "queued", since: now - 2_000, until: now + 10 * 60_000 }
                   : null;
+        // ?actions=offered|chosen: the item's own one-tap answers under its body, untapped or with
+        // the user's choice marked (the item then waits on the agent).
+        const actionsParam = fixtureParams.get("actions");
+        const itemActions =
+            actionsParam === "offered" || actionsParam === "chosen"
+                ? {
+                      actions: ["Confirm the order", "Discuss first"],
+                      chosen_action: actionsParam === "chosen" ? "Confirm the order" : null,
+                      awaiting: actionsParam === "chosen" ? "agent" : "user",
+                  }
+                : {};
         tracker.trackerItem = {
-            item: { ...items[0], working },
+            item: { ...items[0], working, ...itemActions },
             comments: [
                 {
                     id: "cm_1",
