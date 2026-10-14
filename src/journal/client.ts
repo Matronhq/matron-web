@@ -3365,7 +3365,7 @@ export class MatronJournalClient {
         try {
             await api.patchMission(missionId, { project: projectId }, crypto.randomUUID());
         } catch (error) {
-            if (this.api === api) this.patch({ trackerError: projectFilingFailure(error) });
+            if (this.api === api) this.patch({ trackerError: projectFilingFailure(error, "move") });
             return false;
         }
         if (this.api !== api) return true;
@@ -3386,12 +3386,12 @@ export class MatronJournalClient {
      */
     public async mergeTrackerProject(sourceId: string, intoId: string): Promise<boolean> {
         const api = this.api;
-        if (!api) return false;
+        if (!api || sourceId === intoId) return false;
         let into: Project;
         try {
             ({ project: into } = await api.mergeProject(sourceId, intoId));
         } catch (error) {
-            if (this.api === api) this.patch({ trackerError: projectFilingFailure(error) });
+            if (this.api === api) this.patch({ trackerError: projectFilingFailure(error, "merge") });
             return false;
         }
         if (this.api !== api) return true;
@@ -4555,13 +4555,18 @@ export function sanitizeBriefingLatest(raw: unknown): BriefingLatest {
  * the journal says why: a closed project on either end, or a merge only the user or the
  * Coordinator may make. Anything else is the ordinary error message.
  */
-export function projectFilingFailure(error: unknown): string {
+export function projectFilingFailure(error: unknown, write: "move" | "merge"): string {
     if (error instanceof JournalApiError) {
         const blockedBy = error.body?.blocked_by;
         if (error.status === 409 && (blockedBy === "project_closed" || blockedBy === "into_closed")) {
             return "That project is closed, so nothing can move into it.";
         }
-        if (error.status === 409 && blockedBy === "closed") return "This project is already closed.";
+        // `closed` names the row the write addresses: the mission on a move, the source on a merge.
+        if (error.status === 409 && blockedBy === "closed") {
+            return write === "move"
+                ? "This mission is closed, so it stays where it is."
+                : "This project is already closed.";
+        }
         if (error.status === 403 && error.body?.detail === "not_coordinator") {
             return "Only you or your Coordinator can merge projects.";
         }

@@ -2317,6 +2317,36 @@ describe("MatronJournalClient project filing", () => {
         expect(client.getSnapshot().trackerError).toBe("That project is closed, so nothing can move into it.");
     });
 
+    it("names the mission, not a project, when the mission itself has closed", async () => {
+        const { client, state } = makeClient();
+        state.api = {
+            patchMission: jest
+                .fn()
+                .mockRejectedValue(
+                    new JournalApiError("conflict", 409, "conflict", undefined, { blocked_by: "closed" }),
+                ),
+            mergeProject: jest
+                .fn()
+                .mockRejectedValue(
+                    new JournalApiError("conflict", 409, "conflict", undefined, { blocked_by: "closed" }),
+                ),
+        };
+
+        await expect(client.moveTrackerMission("ms_1", "pj_2")).resolves.toBe(false);
+        expect(client.getSnapshot().trackerError).toBe("This mission is closed, so it stays where it is.");
+
+        await expect(client.mergeTrackerProject("pj_1", "pj_2")).resolves.toBe(false);
+        expect(client.getSnapshot().trackerError).toBe("This project is already closed.");
+    });
+
+    it("never asks the journal to merge a project into itself", async () => {
+        const { client, state } = makeClient();
+        state.api = { mergeProject: jest.fn() };
+
+        await expect(client.mergeTrackerProject("pj_1", "pj_1")).resolves.toBe(false);
+        expect(state.api.mergeProject).not.toHaveBeenCalled();
+    });
+
     it("merges the open project into another and follows its missions there", async () => {
         const { client, state } = makeClient({
             trackerView: { open: true, view: "missions", selectedProjectId: 1 },
