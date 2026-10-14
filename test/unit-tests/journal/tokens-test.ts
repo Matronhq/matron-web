@@ -151,7 +151,7 @@ describe("token layer", () => {
     it("routes bubbles, cards, composer and modals through the radius roles", () => {
         const shell = SHEETS[0][1];
         const journal = SHEETS[1][1];
-        expect(shell).toMatch(/\.mx_EventTile_line \{[^}]*border-radius: var\(--cpd-radius-bubble\)/);
+        expect(shell).toMatch(/\.mj_EventTile_line \{[^}]*border-radius: var\(--cpd-radius-bubble\)/);
         expect(shell).toMatch(/\.mj_ComposerField \{[^}]*border-radius: var\(--cpd-radius-composer\)/);
         expect(shell).toMatch(/\.mj_LoginField input \{[^}]*border-radius: var\(--cpd-radius-field\)/);
         expect(journal).toMatch(/\.mj_ToolCard \{[^}]*border-radius: var\(--cpd-radius-card\)/);
@@ -529,7 +529,7 @@ describe("sidebar styles", () => {
     });
 
     it("uses the sidebar surface for the rail and list, and a white search field on it", () => {
-        expect(rule(".mx_LeftPanel_outerWrapper")).toMatch(/background: var\(--cpd-color-bg-sidebar\)/);
-        expect(rule(".mx_RoomListSearch_inputWrapper")).toMatch(/background: var\(--cpd-color-bg-canvas-default\)/);
+        expect(rule(".mj_Sidebar_outerWrapper")).toMatch(/background: var\(--cpd-color-bg-sidebar\)/);
+        expect(rule(".mj_ConversationSearch_inputWrapper")).toMatch(/background: var\(--cpd-color-bg-canvas-default\)/);
     });
 });

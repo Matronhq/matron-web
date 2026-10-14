@@ -199,7 +199,7 @@ describe("left panel width with the nav rail", () => {
     it("clamps a stored list width against the window minus the rail", async () => {
         localStorage.setItem("mx_lhs_size", "600");
         await act(async () => root.render(<MatronApp client={signedInClient([convo("c1")])} />));
-        const panel = container.querySelector<HTMLElement>(".mx_LeftPanel_outerWrapper")!;
+        const panel = container.querySelector<HTMLElement>(".mj_Sidebar_outerWrapper")!;
         // (1000 − 72) / 2 = 464: the list may take half of what the rail leaves.
         expect(panel.style.getPropertyValue("--mj-left-panel-width")).toBe("464px");
     });

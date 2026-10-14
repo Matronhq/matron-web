@@ -19,7 +19,7 @@ html {
     /* Match Matron's pre-Journal FontWatcher default (the browser default minus 1px). */
     font-size: calc(var(--cpd-font-size-root) - 1px);
     /* Themed scrollbars: a subtle themed thumb over a transparent track. Inherited by all
-       scrollable descendants; Matron's own .mx_AutoHideScrollbar (message panel etc.)
+       scrollable descendants; Matron's own .mj_AutoHideScrollbar (message panel etc.)
        overrides this to stay auto-hidden, so only the un-styled native scrollbars — the
        dark sidebar list, which otherwise reads grey-on-white — pick this up. */
     scrollbar-width: thin;
@@ -54,7 +54,7 @@ textarea {
 /* WebKit scrollbar boxes for legacy parity, SCOPED to the surfaces that intentionally show
    a themed thumb (Firefox already themes these via the inherited scrollbar-color at :root).
    Deliberately NOT global: a global ::-webkit-scrollbar rule force-shows Matron's
-   .mx_AutoHideScrollbar panels (message panel etc.), the exact round-4 regression. */
+   .mj_AutoHideScrollbar panels (message panel etc.), the exact round-4 regression. */
 .mj_RoomList::-webkit-scrollbar,
 .mj_SubagentStrip::-webkit-scrollbar,
 .mj_EventSource_json::-webkit-scrollbar,
@@ -90,7 +90,7 @@ textarea {
     background-clip: content-box;
 }
 
-.mx_LeftPanel_outerWrapper {
+.mj_Sidebar_outerWrapper {
     --mj-left-panel-width: 350px;
 
     /* The list width the resizer sets, plus the fixed 72px nav rail beside it. */
@@ -98,40 +98,40 @@ textarea {
     width: calc(var(--mj-left-panel-width) + 72px);
 }
 
-.mx_LeftPanel_wrapper--user,
-.mx_LeftPanel,
-.mx_LeftPanel_roomListContainer,
-.mx_RoomListPanel {
+.mj_Sidebar_wrapper--user,
+.mj_Sidebar,
+.mj_Sidebar_listContainer,
+.mj_ConversationListPanel {
     width: 100%;
     min-height: 0;
 }
 
-.mx_RoomListPanel {
+.mj_ConversationListPanel {
     position: relative;
     display: flex;
     flex-direction: column;
     overflow: hidden;
 }
 
-.mx_RoomListPanel [data-testid="room-list"] {
+.mj_ConversationListPanel [data-testid="room-list"] {
     flex: 1;
     min-height: 0;
 }
 
-.mx_RoomListPanel [data-testid="virtuoso-scroller"] {
+.mj_ConversationListPanel [data-testid="virtuoso-scroller"] {
     overscroll-behavior: contain;
 }
 
-.mx_RoomHeader {
+.mj_ChatHeader {
     position: relative;
     flex: 0 0 auto;
 }
 
-.mx_RoomView_body {
+.mj_ChatView_body {
     container: mj-room / inline-size;
 }
 
-.mx_RoomHeader:hover {
+.mj_ChatHeader:hover {
     background-color: var(--cpd-color-bg-canvas-default);
 }
 
@@ -174,7 +174,7 @@ textarea {
     gap: 2px;
 }
 
-.mj_HeaderTitleCluster .mx_RoomHeader_heading {
+.mj_HeaderTitleCluster .mj_ChatHeader_heading {
     display: block;
     max-width: 100%;
     overflow: hidden;
@@ -189,13 +189,13 @@ textarea {
 }
 
 /* §10.11 child-view title row: ↳ glyph · truncating name · SUBAGENT badge (all baseline). */
-.mj_SubChatHeader .mj_HeaderTitleCluster .mx_RoomHeader_heading {
+.mj_SubChatHeader .mj_HeaderTitleCluster .mj_ChatHeader_heading {
     display: flex;
     align-items: baseline;
     gap: 6px;
 }
 
-.mj_SubChatHeader .mj_HeaderTitleCluster .mx_RoomHeader_heading .mx_RoomHeader_truncated {
+.mj_SubChatHeader .mj_HeaderTitleCluster .mj_ChatHeader_heading .mj_ChatHeader_truncated {
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -506,7 +506,7 @@ textarea {
     color: var(--cpd-color-text-action-accent);
 }
 
-.mx_LeftPanel_wrapper--user {
+.mj_Sidebar_wrapper--user {
     flex-direction: column;
 }
 
@@ -1055,7 +1055,7 @@ textarea {
    skipped until they scroll into view. When such a row first renders at its real height, scroll
    anchoring keeps the reader's place, so browsers without it (Safari) render every row. */
 @supports (overflow-anchor: auto) {
-    .mx_RoomView_MessageList > .mx_EventTile:nth-last-child(n + 40) {
+    .mj_ChatView_messageList > .mj_EventTile:nth-last-child(n + 40) {
         content-visibility: auto;
         contain-intrinsic-size: auto 96px;
         /* content-visibility clips painting at the row's edge; leave room for the bubble shadow. */
@@ -1339,11 +1339,11 @@ textarea {
     font: 500 11px/14px var(--cpd-font-family-ui);
 }
 
-.mx_RoomView_messageListWrapper {
+.mj_ChatView_messageListWrapper {
     min-height: 100%;
 }
 
-.mx_RoomView_MessageList {
+.mj_ChatView_messageList {
     min-height: 100%;
 }
 
@@ -1412,12 +1412,12 @@ textarea {
     outline-offset: 2px;
 }
 
-.mx_EventTile[data-layout="bubble"] .mx_EventTile_line > a {
+.mj_EventTile[data-layout="bubble"] .mj_EventTile_line > a {
     color: inherit;
     text-decoration: none;
 }
 
-.mx_EventTile[data-layout="bubble"] .mx_MessageTimestamp {
+.mj_EventTile[data-layout="bubble"] .mj_MessageTimestamp {
     color: var(--cpd-color-text-secondary);
     font-size: var(--cpd-font-size-2xs);
 }
@@ -1425,7 +1425,7 @@ textarea {
 /* Self-bubble is a distinct surface: dark #123530 + secondary #9a948b = 4.43:1
    (just under AA 4.5 for the 10px timestamp). Use primary on the self bubble so
    it clears AA on both bubble themes (final-review r3 B3). */
-.mx_EventTile[data-self="true"] .mx_MessageTimestamp {
+.mj_EventTile[data-self="true"] .mj_MessageTimestamp {
     color: var(--cpd-color-text-primary);
     opacity: 0.75;
 }
@@ -1729,7 +1729,7 @@ textarea {
     font: var(--cpd-font-body-xs-regular);
 }
 
-.mj_RoomView_dragActive {
+.mj_ChatView_dragActive {
     position: relative;
 }
 
@@ -3625,11 +3625,11 @@ button.mj_File {
     animation-delay: 0.3s;
 }
 
-.mx_BasicMessageComposer {
+.mj_ComposerInput {
     width: 100%;
 }
 
-.mx_RoomView_body[data-layout="bubble"] .mx_BasicMessageComposer textarea.mx_BasicMessageComposer_input {
+.mj_ChatView_body[data-layout="bubble"] .mj_ComposerInput textarea.mj_ComposerInput_input {
     display: block;
     width: 100%;
     max-height: 144px;
@@ -3879,14 +3879,14 @@ button.mj_File {
 }
 
 @media (max-width: 700px) {
-    .mx_LeftPanel_outerWrapper {
+    .mj_Sidebar_outerWrapper {
         flex: 1 1 auto;
         width: 100%;
         max-width: none;
     }
 
     .mj_Sidebar_mobileHidden,
-    .mx_ResizeHandle,
+    .mj_ResizeHandle,
     .mj_Chat_mobileHidden {
         display: none;
     }
@@ -3903,13 +3903,13 @@ button.mj_File {
         padding-inline: 42px var(--cpd-space-2x);
     }
 
-    .mx_RoomView_body[data-layout="bubble"] {
-        --RoomView_MessageList-padding: 2px;
+    .mj_ChatView_body[data-layout="bubble"] {
+        --mj-message-list-padding: 2px;
     }
 
-    .mx_EventTile[data-layout="bubble"] {
-        --EventTile_bubble-margin-inline-start: var(--cpd-space-3x);
-        --EventTile_bubble-margin-inline-end: var(--cpd-space-3x);
+    .mj_EventTile[data-layout="bubble"] {
+        --mj-bubble-margin-inline-start: var(--cpd-space-3x);
+        --mj-bubble-margin-inline-end: var(--cpd-space-3x);
     }
 
     .mj_PromptCard,

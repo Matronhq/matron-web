@@ -217,7 +217,7 @@ async function timed(page, action, predicate, arg) {
 }
 
 const ROWS = ".mj_RoomList [role=listitem] button[aria-label^='Open ']";
-const TILES = "ol.mx_RoomView_MessageList > li.mx_EventTile";
+const TILES = "ol.mj_ChatView_messageList > li.mj_EventTile";
 
 // The journal allows five sign-ins a minute per address; keep under it.
 const signIns = [];
@@ -393,7 +393,7 @@ async function longTranscript(browser, env) {
     const mem = await heapAfterGc(cdp);
     // Scroll from the top to the bottom in fixed steps and count frames against wall time.
     const scroll = await page.evaluate(async () => {
-        const el = document.querySelector(".mx_RoomView_messagePanel");
+        const el = document.querySelector(".mj_ChatView_messagePanel");
         el.scrollTop = 0;
         await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
         const startFrames = window.__perf.frames;

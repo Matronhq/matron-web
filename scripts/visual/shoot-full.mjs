@@ -65,7 +65,7 @@ function serve(dir) {
 
 const REGIONS = [
     { name: "header", sel: ".mj_ChatHeader" },
-    { name: "sidebar", sel: ".mx_RoomListPanel" },
+    { name: "sidebar", sel: ".mj_ConversationListPanel" },
     { name: "permission", sel: ".mj_PromptCard_permission" },
     { name: "unknown", sel: ".mj_Unknown" },
     { name: "diff", sel: ".mj_DiffCard" },

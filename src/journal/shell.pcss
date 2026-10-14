@@ -219,55 +219,55 @@ button {
     cursor: pointer;
 }
 
-.mx_MatrixChat_wrapper,
-.mx_MatrixChat,
-.mx_RoomView_wrapper,
-.mx_RoomView,
-.mx_RoomView_body,
-.mx_LeftPanel_wrapper,
-.mx_LeftPanel_wrapper--user,
-.mx_LeftPanel,
-.mx_LeftPanel_roomListContainer {
+.mj_App_wrapper,
+.mj_App,
+.mj_ChatView_wrapper,
+.mj_ChatView,
+.mj_ChatView_body,
+.mj_Sidebar_wrapper,
+.mj_Sidebar_wrapper--user,
+.mj_Sidebar,
+.mj_Sidebar_listContainer {
     min-width: 0;
     min-height: 0;
 }
 
-.mx_MatrixChat_wrapper,
-.mx_MatrixChat {
+.mj_App_wrapper,
+.mj_App {
     width: 100%;
     height: 100%;
 }
 
-.mx_MatrixChat {
+.mj_App {
     display: flex;
     overflow: hidden;
 }
 
-.mx_LeftPanel_outerWrapper,
-.mx_LeftPanel_wrapper,
-.mx_LeftPanel_wrapper--user,
-.mx_LeftPanel,
-.mx_LeftPanel_roomListContainer,
-.mx_RoomListPanel {
+.mj_Sidebar_outerWrapper,
+.mj_Sidebar_wrapper,
+.mj_Sidebar_wrapper--user,
+.mj_Sidebar,
+.mj_Sidebar_listContainer,
+.mj_ConversationListPanel {
     display: flex;
     height: 100%;
 }
 
-.mx_LeftPanel_outerWrapper {
+.mj_Sidebar_outerWrapper {
     position: relative;
     overflow: visible;
     background: var(--cpd-color-bg-sidebar);
 }
 
-.mx_LeftPanel_wrapper,
-.mx_LeftPanel_wrapper--user,
-.mx_LeftPanel,
-.mx_LeftPanel_roomListContainer,
-.mx_RoomListPanel {
+.mj_Sidebar_wrapper,
+.mj_Sidebar_wrapper--user,
+.mj_Sidebar,
+.mj_Sidebar_listContainer,
+.mj_ConversationListPanel {
     flex: 1 1 auto;
 }
 
-.mx_RoomListPanel {
+.mj_ConversationListPanel {
     flex-direction: column;
     background: var(--cpd-color-bg-sidebar);
 }
@@ -419,14 +419,14 @@ button {
     height: var(--cpd-icon-lg);
 }
 
-.mx_RoomListSearch {
+.mj_ConversationSearch {
     display: flex;
     align-items: center;
     /* Mac search field: outer h10, top 4, bottom 8; a white 30pt field with a hairline on the sidebar. */
     padding: 4px 10px 8px;
 }
 
-.mx_RoomListSearch_inputWrapper {
+.mj_ConversationSearch_inputWrapper {
     display: flex;
     width: 100%;
     height: 30px;
@@ -440,13 +440,13 @@ button {
     padding: 0 8px;
 }
 
-.mx_RoomListSearch_inputWrapper svg {
+.mj_ConversationSearch_inputWrapper svg {
     width: 16px;
     height: 16px;
     flex: 0 0 auto;
 }
 
-.mx_RoomListSearch_input {
+.mj_ConversationSearch_input {
     width: 100%;
     min-width: 0;
     border: 0;
@@ -459,11 +459,11 @@ button {
     line-height: 16px;
 }
 
-.mx_RoomListSearch_input::placeholder {
+.mj_ConversationSearch_input::placeholder {
     color: var(--cpd-color-text-secondary);
 }
 
-.mx_RoomListSearch_input::-webkit-search-cancel-button {
+.mj_ConversationSearch_input::-webkit-search-cancel-button {
     display: none;
 }
 
@@ -772,7 +772,7 @@ button {
     font-weight: 600;
 }
 
-.mx_ResizeHandle {
+.mj_ResizeHandle {
     position: relative;
     z-index: 10;
     width: 0;
@@ -780,7 +780,7 @@ button {
     cursor: col-resize;
 }
 
-.mx_ResizeHandle::after {
+.mj_ResizeHandle::after {
     position: absolute;
     z-index: 1;
     top: 0;
@@ -790,29 +790,29 @@ button {
     content: "";
 }
 
-.mx_ResizeHandle:hover::after {
+.mj_ResizeHandle:hover::after {
     background: var(--cpd-color-bg-accent-tint);
 }
 
-.mx_RoomView_wrapper,
-.mx_RoomView,
-.mx_RoomView_body {
+.mj_ChatView_wrapper,
+.mj_ChatView,
+.mj_ChatView_body {
     display: flex;
     flex: 1 1 0;
 }
 
-.mx_RoomView,
-.mx_RoomView_body {
+.mj_ChatView,
+.mj_ChatView_body {
     width: 100%;
 }
 
-.mx_RoomView_body {
+.mj_ChatView_body {
     flex-direction: column;
     overflow: hidden;
     background: var(--cpd-color-bg-room-canvas);
 }
 
-.mx_RoomHeader {
+.mj_ChatHeader {
     width: 100%;
     /* Header band raised to 64px (operator: "a little higher"). At 64 the 36px title
        block (title+subtitle) and the 36px 2×2 bars block (row-gap 10) both centre to
@@ -823,20 +823,20 @@ button {
     background: var(--cpd-color-bg-canvas-default);
 }
 
-.mx_RoomView_timeline {
+.mj_ChatView_timeline {
     display: flex;
     min-height: 0;
     flex: 1 1 0;
     position: relative;
 }
 
-.mx_RoomView_messagePanel {
+.mj_ChatView_messagePanel {
     width: 100%;
     overflow-y: auto;
     overscroll-behavior: contain;
 }
 
-.mx_RoomView_messageListWrapper {
+.mj_ChatView_messageListWrapper {
     display: flex;
     /* v5 (operator override): fluid — fill the chat pane with equal 20px L/R gutters,
        no centred max-width cap. Content grows with the window. */
@@ -847,7 +847,7 @@ button {
     padding: 0 20px;
 }
 
-.mx_RoomView_MessageList {
+.mj_ChatView_messageList {
     display: flex;
     flex-direction: column;
     justify-content: flex-end;
@@ -856,7 +856,7 @@ button {
     list-style: none;
 }
 
-.mx_EventTile[data-layout="bubble"] {
+.mj_EventTile[data-layout="bubble"] {
     --EventTile-bubble-max-width: min(76.75%, 800px);
 
     position: relative;
@@ -865,15 +865,15 @@ button {
     margin: 5.5px 20px 0;
 }
 
-.mx_EventTile[data-layout="bubble"].mx_EventTile_continuation {
+.mj_EventTile[data-layout="bubble"].mj_EventTile_continuation {
     margin-top: 1px;
 }
 
-.mx_EventTile[data-layout="bubble"].mx_EventTile_lastInSection {
+.mj_EventTile[data-layout="bubble"].mj_EventTile_lastInSection {
     margin-bottom: 5.5px;
 }
 
-.mx_DisambiguatedProfile {
+.mj_SenderName {
     display: flex;
     align-items: center;
     gap: var(--cpd-space-1x);
@@ -883,13 +883,13 @@ button {
     font-weight: 600;
 }
 
-.mx_DisambiguatedProfile > a {
+.mj_SenderName > a {
     flex-shrink: 0;
     color: inherit;
     text-decoration: none;
 }
 
-.mx_DisambiguatedProfile_displayName {
+.mj_SenderName_displayName {
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -909,11 +909,11 @@ button {
     mask-size: contain;
 }
 
-.mx_EventTile_avatar {
+.mj_EventTile_avatar {
     display: none;
 }
 
-.mx_EventTile_line {
+.mj_EventTile_line {
     display: flex;
     width: fit-content;
     max-width: var(--EventTile-bubble-max-width);
@@ -930,7 +930,7 @@ button {
     line-height: 1.5;
 }
 
-.mx_EventTile[data-self="false"] .mx_EventTile_line {
+.mj_EventTile[data-self="false"] .mj_EventTile_line {
     /* v5: agent content is a block column capped at the shared content width, so every
        block (prose, tool/diff/code cards) fills the SAME width instead of each sizing to
        its own content. Wide code/diff scrolls inside its card, not by widening the card. */
@@ -950,7 +950,7 @@ button {
    timestamp lives on the profile row), so they fill to the same right edge as the first
    block — no 56px reserve, no first-block spill. */
 
-.mx_EventTile[data-self="true"] .mx_EventTile_line {
+.mj_EventTile[data-self="true"] .mj_EventTile_line {
     /* v5: right edge aligns with the agent content column (no -9px overhang), so own
        bubbles and agent messages share one clean right margin. */
     margin-right: 0;
@@ -959,20 +959,20 @@ button {
     background: var(--cpd-color-bg-self-bubble);
 }
 
-.mx_EventTile_line > a {
+.mj_EventTile_line > a {
     position: absolute;
     right: 8px;
     bottom: 7px;
 }
 
-.mx_MessageTimestamp {
+.mj_MessageTimestamp {
     white-space: nowrap;
     color: var(--cpd-color-text-secondary);
     font-size: var(--cpd-font-size-2xs);
     line-height: 14px !important;
 }
 
-.mx_EventTile_content {
+.mj_EventTile_content {
     min-width: 0;
     overflow: hidden;
     padding: 1px;
@@ -993,11 +993,11 @@ button {
     margin-bottom: 0;
 }
 
-.mx_WhoIsTypingTile {
+.mj_TypingIndicator {
     list-style: none;
 }
 
-.mx_MessageComposer {
+.mj_Composer {
     min-height: 56px;
     flex: 0 0 auto;
     /* v5 composer.footer: TRANSPARENT — the warm room-canvas (--m-paper) reading
@@ -1005,7 +1005,7 @@ button {
     background: transparent;
 }
 
-.mx_MessageComposer_wrapper {
+.mj_Composer_wrapper {
     position: relative;
     /* Mac composer bar: 16 all round, a divider above, on the timeline colour (no panel fill). */
     padding: 16px;
@@ -1013,7 +1013,7 @@ button {
     background: transparent;
 }
 
-.mx_SlashPalette {
+.mj_SlashPalette {
     position: absolute;
     /* v4 layering: slash palette sits above the composer, below modals. */
     z-index: 20;
@@ -1033,7 +1033,7 @@ button {
     color: var(--cpd-color-text-primary);
 }
 
-.mx_SlashPalette_row {
+.mj_SlashPalette_row {
     display: grid;
     grid-template-columns: auto auto minmax(0, 1fr);
     align-items: baseline;
@@ -1043,22 +1043,22 @@ button {
 }
 
 /* v4: mouse hover and keyboard highlight are one state (--m-hover). */
-.mx_SlashPalette_row_highlighted {
+.mj_SlashPalette_row_highlighted {
     background: var(--cpd-color-bg-subtle-primary);
 }
 
-.mx_SlashPalette_trigger {
+.mj_SlashPalette_trigger {
     font: 500 12.5px/18px var(--cpd-font-family-mono);
     white-space: nowrap;
 }
 
-.mx_SlashPalette_argHint {
+.mj_SlashPalette_argHint {
     font: 400 11px/16px var(--cpd-font-family-mono);
     color: var(--cpd-color-text-secondary);
     white-space: nowrap;
 }
 
-.mx_SlashPalette_summary {
+.mj_SlashPalette_summary {
     min-width: 0;
     overflow-wrap: anywhere;
     font: 400 12px/16px var(--cpd-font-family-ui);
@@ -1093,12 +1093,12 @@ button {
     border-color: var(--cpd-color-text-action-accent);
 }
 
-.mx_BasicMessageComposer {
+.mj_ComposerInput {
     display: flex;
     align-items: center;
 }
 
-.mx_BasicMessageComposer_input {
+.mj_ComposerInput_input {
     /* Borderless and transparent inside the shadowed field; 13px like the Mac composer. */
     width: 100%;
     min-height: 30px;
@@ -1116,12 +1116,12 @@ button {
    inputs match :focus-visible on every focus (click included), so a ring there shows
    a "rectangle" the moment you type. The neutral→accent border change is the visible,
    design-matching focus indicator. See reference_focus_visible_fires_on_every_text_input_focus. */
-.mx_BasicMessageComposer_input:focus,
-.mx_BasicMessageComposer_input:focus-visible {
+.mj_ComposerInput_input:focus,
+.mj_ComposerInput_input:focus-visible {
     outline: none;
 }
 
-.mx_BasicMessageComposer_input::placeholder {
+.mj_ComposerInput_input::placeholder {
     color: var(--cpd-color-text-tertiary);
 }
 
@@ -1182,7 +1182,7 @@ button {
     opacity: 0.5;
 }
 
-.mx_HomePage {
+.mj_HomePage {
     display: flex;
     width: 100%;
     align-items: center;
@@ -1190,11 +1190,11 @@ button {
     background: var(--cpd-color-bg-room-canvas);
 }
 
-.mx_HomePage_default_wrapper {
+.mj_HomePage_default_wrapper {
     text-align: center;
 }
 
-.mx_HomePage_default_wrapper img {
+.mj_HomePage_default_wrapper img {
     width: 96px;
 }
 
@@ -1309,11 +1309,11 @@ button {
     cursor: default;
 }
 
-.mx_AutoHideScrollbar {
+.mj_AutoHideScrollbar {
     scrollbar-color: transparent transparent;
 }
 
-.mx_AutoHideScrollbar:hover {
+.mj_AutoHideScrollbar:hover {
     scrollbar-color: rgb(101 109 119 / 40%) transparent;
 }
 

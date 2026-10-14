@@ -1870,7 +1870,7 @@ function ConversationListView({
 
     return (
         <div
-            className={`mx_LeftPanel_outerWrapper ${
+            className={`mj_Sidebar_outerWrapper ${
                 // At the phone breakpoint the main region owns the whole width whenever it has a
                 // surface to show: a selected conversation OR the open tracker pane (mirrors the
                 // mj_Chat_mobileHidden test on the main region, so the two never both render).
@@ -1928,11 +1928,11 @@ function ConversationListView({
                     </button>
                 }
             />
-            <div className="mx_LeftPanel_wrapper mx_LeftPanel_newRoomList">
-                <div className="mx_LeftPanel_wrapper--user">
-                    <div className="mx_LeftPanel mx_LeftPanel_newRoomList">
-                        <div className="mx_LeftPanel_roomListContainer">
-                            <nav className="mx_RoomListPanel" aria-label="Room list">
+            <div className="mj_Sidebar_wrapper mj_Sidebar_list">
+                <div className="mj_Sidebar_wrapper--user">
+                    <div className="mj_Sidebar mj_Sidebar_list">
+                        <div className="mj_Sidebar_listContainer">
+                            <nav className="mj_ConversationListPanel" aria-label="Room list">
                                 <header
                                     className="mj_RoomListHeader"
                                     aria-label="Room options"
@@ -1999,15 +1999,15 @@ function ConversationListView({
                                         </button>
                                     ))}
                                 </div>
-                                <div data-testid="room-list-search" className="mx_RoomListSearch" role="search">
+                                <div data-testid="room-list-search" className="mj_ConversationSearch" role="search">
                                     <label
-                                        className="mx_RoomListSearch_inputWrapper mx_no_textinput"
+                                        className="mj_ConversationSearch_inputWrapper mj_noTextInput"
                                         htmlFor="room-list-search-input"
                                     >
                                         <SearchIcon aria-hidden />
                                         <input
                                             id="room-list-search-input"
-                                            className="mx_RoomListSearch_input"
+                                            className="mj_ConversationSearch_input"
                                             type="search"
                                             value={query}
                                             onChange={(event) => setQuery(event.target.value)}
@@ -2869,11 +2869,7 @@ export function HeaderShell({
     const controls = titleCollapsed && hideControlsWhenCompact ? null : rightControls;
 
     return (
-        <header
-            ref={headerRef}
-            className={`mx_RoomHeader light-panel mj_ChatHeader${mode === "child" ? " mj_SubChatHeader" : ""}`}
-            tabIndex={-1}
-        >
+        <header ref={headerRef} className={`mj_ChatHeader${mode === "child" ? " mj_SubChatHeader" : ""}`} tabIndex={-1}>
             <button type="button" className="mj_BackButton" onClick={onBack} aria-label={backLabel}>
                 <ChevronLeftIcon />
             </button>
@@ -2891,7 +2887,7 @@ export function HeaderShell({
                                 dir="auto"
                                 role="heading"
                                 aria-level={1}
-                                className="mx_RoomHeader_heading"
+                                className="mj_ChatHeader_heading"
                                 title={title}
                             >
                                 {titleGlyph && (
@@ -2899,7 +2895,7 @@ export function HeaderShell({
                                         {titleGlyph}
                                     </span>
                                 )}
-                                <span className="mx_RoomHeader_truncated mx_lineClamp">{titleNode ?? title}</span>
+                                <span className="mj_ChatHeader_truncated mj_lineClamp">{titleNode ?? title}</span>
                                 {titleBadge}
                             </div>
                         }
@@ -2920,14 +2916,14 @@ export function HeaderShell({
                             dir="auto"
                             role="heading"
                             aria-level={1}
-                            className="mx_RoomHeader_heading"
+                            className="mj_ChatHeader_heading"
                         >
                             {titleGlyph && (
                                 <span className="mj_HeaderTitleGlyph" aria-hidden="true">
                                     {titleGlyph}
                                 </span>
                             )}
-                            <span className="mx_RoomHeader_truncated mx_lineClamp">{titleNode ?? title}</span>
+                            <span className="mj_ChatHeader_truncated mj_lineClamp">{titleNode ?? title}</span>
                             {titleBadge}
                         </div>
                         {hasSubtitle && <div className="mj_HeaderMeta">{subtitle}</div>}
@@ -3196,7 +3192,7 @@ function useChipFit(
         if (!trigger || !row || !nameEl) return;
         const measure = (): void => {
             const title = row.firstElementChild as HTMLElement | null;
-            const heading = title?.querySelector<HTMLElement>(".mx_RoomHeader_heading");
+            const heading = title?.querySelector<HTMLElement>(".mj_ChatHeader_heading");
             const meta = title?.querySelector<HTMLElement>(".mj_HeaderMeta, .mj_HeaderTitleDisclosure");
             const titleWant = Math.max(heading?.scrollWidth ?? 0, meta?.scrollWidth ?? 0);
             // The title's stub: `min-width: min(6rem, 100%)` on the title cluster in the CSS.
@@ -3217,7 +3213,7 @@ function useChipFit(
         if (typeof ResizeObserver === "undefined") return;
         const observer = new ResizeObserver(measure);
         observer.observe(row);
-        const heading = row.firstElementChild?.querySelector(".mx_RoomHeader_heading");
+        const heading = row.firstElementChild?.querySelector(".mj_ChatHeader_heading");
         if (heading) observer.observe(heading);
         return () => observer.disconnect();
     }, [triggerRef, name]);
@@ -5162,7 +5158,7 @@ function EventRow({
     return (
         <li
             ref={liRef}
-            className={`mx_EventTile${continuation ? " mx_EventTile_continuation" : ""}${lastInSection ? " mx_EventTile_lastInSection" : ""}`}
+            className={`mj_EventTile${continuation ? " mj_EventTile_continuation" : ""}${lastInSection ? " mj_EventTile_lastInSection" : ""}`}
             tabIndex={-1}
             aria-live="polite"
             aria-atomic="true"
@@ -5173,35 +5169,35 @@ function EventRow({
             onClickCapture={handlers.onClickCapture}
         >
             {!own && !continuation && (
-                <span className="mx_DisambiguatedProfile">
+                <span className="mj_SenderName">
                     <MsgAvatar />
-                    <span className="mx_DisambiguatedProfile_displayName">{displaySender(event.sender)}</span>
+                    <span className="mj_SenderName_displayName">{displaySender(event.sender)}</span>
                     {/* tool_output owns its timestamp inline (after the exit badge); prompt /
                         permission cards own theirs in the card header (§10.2). Suppress the
                         profile-row time for all three so a first-in-section event never shows
                         two identical timestamps. */}
                     {event.type !== "tool_output" && event.type !== "prompt" && event.type !== "permission_request" && (
                         <a href={`#event-${event.seq}`} onClick={(clickEvent) => clickEvent.preventDefault()}>
-                            <time className="mx_MessageTimestamp" dateTime={new Date(event.ts).toISOString()}>
+                            <time className="mj_MessageTimestamp" dateTime={new Date(event.ts).toISOString()}>
                                 {formatTime(event.ts)}
                             </time>
                         </a>
                     )}
                 </span>
             )}
-            <div className="mx_EventTile_line">
+            <div className="mj_EventTile_line">
                 {/* Own bubbles carry an inline timestamp (design: "…text <09:58>"). Agent
                     continuation blocks do NOT — the section shows one timestamp on the profile
                     row (§10.2 one-per-section), so continuation blocks fill to the shared right
                     edge with no reserved timestamp gutter (kills the first-block spill). */}
                 {own && event.type !== "tool_output" && (
                     <a href={`#event-${event.seq}`} onClick={(clickEvent) => clickEvent.preventDefault()}>
-                        <time className="mx_MessageTimestamp" dateTime={new Date(event.ts).toISOString()}>
+                        <time className="mj_MessageTimestamp" dateTime={new Date(event.ts).toISOString()}>
                             {formatTime(event.ts)}
                         </time>
                     </a>
                 )}
-                <div className="mx_MTextBody mx_EventTile_content">
+                <div className="mj_TextBody mj_EventTile_content">
                     <div className="markdown-body">
                         <EventContent
                             client={client}
@@ -5294,13 +5290,13 @@ export function ToolStream({ stream }: { stream: ToolStreamState }): React.React
     };
 
     return (
-        <li className="mx_EventTile mx_EventTile_lastInSection" tabIndex={-1} data-layout="bubble" data-self="false">
-            <span className="mx_DisambiguatedProfile">
+        <li className="mj_EventTile mj_EventTile_lastInSection" tabIndex={-1} data-layout="bubble" data-self="false">
+            <span className="mj_SenderName">
                 <MsgAvatar />
-                <span className="mx_DisambiguatedProfile_displayName">agent</span>
+                <span className="mj_SenderName_displayName">agent</span>
             </span>
-            <div className="mx_EventTile_line">
-                <div className="mx_MTextBody mx_EventTile_content">
+            <div className="mj_EventTile_line">
+                <div className="mj_TextBody mj_EventTile_content">
                     <div className="markdown-body mj_LiveTool">
                         <div className="mj_LiveTool_header">
                             <span>
@@ -5400,7 +5396,7 @@ function PendingAttachment({
 
     return (
         <li
-            className={`mx_EventTile mx_EventTile_lastInSection mj_AttachmentChip mj_AttachmentChip_${message.attachState ?? "sending"}`}
+            className={`mj_EventTile mj_EventTile_lastInSection mj_AttachmentChip mj_AttachmentChip_${message.attachState ?? "sending"}`}
             data-layout="bubble"
             data-self="true"
         >
@@ -5746,10 +5742,10 @@ function Timeline({
     const sessionRunning = client.selectedConversation()?.session_state === "running";
 
     const timelineMain = (
-        <main className="mx_RoomView_timeline" data-testid="timeline">
-            <div className="mx_RoomView_messagePanel mx_AutoHideScrollbar" ref={scrollRef} onScroll={onScroll}>
-                <div className="mx_RoomView_messageListWrapper">
-                    <ol className="mx_RoomView_MessageList" aria-live="polite">
+        <main className="mj_ChatView_timeline" data-testid="timeline">
+            <div className="mj_ChatView_messagePanel mj_AutoHideScrollbar" ref={scrollRef} onScroll={onScroll}>
+                <div className="mj_ChatView_messageListWrapper">
+                    <ol className="mj_ChatView_messageList" aria-live="polite">
                         {state.hasOlderHistory && (
                             <li className="mj_HistoryRow">
                                 <button
@@ -5809,12 +5805,12 @@ function Timeline({
                                         <PendingAttachment client={client} message={message} isReadOnly={isReadOnly} />
                                     ) : (
                                         <li
-                                            className="mx_EventTile mx_EventTile_sending mx_EventTile_lastInSection"
+                                            className="mj_EventTile mj_EventTile_sending mj_EventTile_lastInSection"
                                             data-layout="bubble"
                                             data-self="true"
                                         >
-                                            <div className="mx_EventTile_line">
-                                                <div className="mx_MTextBody mx_EventTile_content">
+                                            <div className="mj_EventTile_line">
+                                                <div className="mj_TextBody mj_EventTile_content">
                                                     <div className="mj_Markdown">
                                                         <MarkdownBody text={message.body} label={message.localId} />
                                                     </div>
@@ -5828,17 +5824,17 @@ function Timeline({
                         })}
                         {Object.values(state.textStreams).map((text, index) => (
                             <li
-                                className="mx_EventTile mx_EventTile_lastInSection"
+                                className="mj_EventTile mj_EventTile_lastInSection"
                                 key={`text-stream-${index}`}
                                 data-layout="bubble"
                                 data-self="false"
                             >
-                                <span className="mx_DisambiguatedProfile">
+                                <span className="mj_SenderName">
                                     <MsgAvatar />
-                                    <span className="mx_DisambiguatedProfile_displayName">agent</span>
+                                    <span className="mj_SenderName_displayName">agent</span>
                                 </span>
-                                <div className="mx_EventTile_line">
-                                    <div className="mx_MTextBody mx_EventTile_content">
+                                <div className="mj_EventTile_line">
+                                    <div className="mj_TextBody mj_EventTile_content">
                                         <div className="mj_Markdown mj_Markdown_streaming">
                                             <MarkdownBody text={text} streaming label={`stream-${index}`} />
                                             <span className="mj_Cursor" />
@@ -5852,7 +5848,7 @@ function Timeline({
                                 <ToolStream key={stream.messageRef} stream={stream} />
                             ))}
                         {state.activity && state.activity.state !== "idle" && sessionRunning && (
-                            <li className="mx_WhoIsTypingTile mj_Activity">
+                            <li className="mj_TypingIndicator mj_Activity">
                                 <span />
                                 <span />
                                 <span />
@@ -5960,7 +5956,7 @@ function Timeline({
     return <MediaViewerContext.Provider value={mediaViewerValue}>{timelineMain}</MediaViewerContext.Provider>;
 }
 
-const SLASH_LISTBOX_ID = "mx_SlashPalette_listbox";
+const SLASH_LISTBOX_ID = "mj_SlashPalette_listbox";
 const slashRowId = (index: number): string => `${SLASH_LISTBOX_ID}_opt_${index}`;
 
 function SlashCommandPalette({
@@ -5985,12 +5981,12 @@ function SlashCommandPalette({
     }, [highlighted]);
 
     return (
-        <div className="mx_SlashPalette" id={SLASH_LISTBOX_ID} role="listbox">
+        <div className="mj_SlashPalette" id={SLASH_LISTBOX_ID} role="listbox">
             {folders.length > 0
                 ? folders.map((folder, index) => (
                       <div
-                          className={`mx_SlashPalette_row${
-                              highlighted === index ? " mx_SlashPalette_row_highlighted" : ""
+                          className={`mj_SlashPalette_row${
+                              highlighted === index ? " mj_SlashPalette_row_highlighted" : ""
                           }`}
                           id={slashRowId(index)}
                           key={`${folder}-${index}`}
@@ -6001,13 +5997,13 @@ function SlashCommandPalette({
                           onMouseDown={(event) => event.preventDefault()}
                           onClick={() => onSelectFolder(folder)}
                       >
-                          <span className="mx_SlashPalette_trigger">{folder}</span>
+                          <span className="mj_SlashPalette_trigger">{folder}</span>
                       </div>
                   ))
                 : commands.map((command, index) => (
                       <div
-                          className={`mx_SlashPalette_row${
-                              highlighted === index ? " mx_SlashPalette_row_highlighted" : ""
+                          className={`mj_SlashPalette_row${
+                              highlighted === index ? " mj_SlashPalette_row_highlighted" : ""
                           }`}
                           id={slashRowId(index)}
                           key={command.trigger}
@@ -6018,9 +6014,9 @@ function SlashCommandPalette({
                           onMouseDown={(event) => event.preventDefault()}
                           onClick={() => onSelectCommand(command)}
                       >
-                          <span className="mx_SlashPalette_trigger">{command.trigger}</span>
-                          {command.argHint && <span className="mx_SlashPalette_argHint">{command.argHint}</span>}
-                          <span className="mx_SlashPalette_summary">{command.summary}</span>
+                          <span className="mj_SlashPalette_trigger">{command.trigger}</span>
+                          {command.argHint && <span className="mj_SlashPalette_argHint">{command.argHint}</span>}
+                          <span className="mj_SlashPalette_summary">{command.summary}</span>
                       </div>
                   ))}
         </div>
@@ -6272,8 +6268,8 @@ function Composer({
         }
     };
     return (
-        <div className="mx_MessageComposer" role="region" aria-label="Message composer" ref={voice.containerRef}>
-            <div className="mx_MessageComposer_wrapper">
+        <div className="mj_Composer" role="region" aria-label="Message composer" ref={voice.containerRef}>
+            <div className="mj_Composer_wrapper">
                 {state.connectionError && state.connectionErrorSeq !== dismissedSeq && (
                     <div className="mj_ConnectionError">
                         <span role="status">{state.connectionError}</span>
@@ -6328,9 +6324,9 @@ function Composer({
                             }}
                         />
                         <div className="mj_ComposerField" onClick={() => textarea.current?.focus()}>
-                            <div className="mx_BasicMessageComposer">
+                            <div className="mj_ComposerInput">
                                 <textarea
-                                    className="mx_BasicMessageComposer_input"
+                                    className="mj_ComposerInput_input"
                                     ref={textarea}
                                     rows={1}
                                     value={body}
@@ -6920,7 +6916,7 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
 
     useEffect(() => {
         if (uploadDialogWasOpen.current && !state.stagedUploads) {
-            appContent.current?.querySelector<HTMLTextAreaElement>(".mx_BasicMessageComposer_input")?.focus();
+            appContent.current?.querySelector<HTMLTextAreaElement>(".mj_ComposerInput_input")?.focus();
         }
         uploadDialogWasOpen.current = Boolean(state.stagedUploads);
     }, [state.stagedUploads]);
@@ -6978,24 +6974,24 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
 
     return (
         <MarkdownPreviewContext.Provider value={markdownPreview.context}>
-            <div className="mx_MatrixChat_wrapper">
-                <div ref={appContent} className="mx_MatrixChat" inert={state.stagedUploads ? true : undefined}>
+            <div className="mj_App_wrapper">
+                <div ref={appContent} className="mj_App" inert={state.stagedUploads ? true : undefined}>
                     <ConversationList client={client} state={state} width={leftPanel.width} />
                     <div
-                        className="mx_ResizeHandle mx_ResizeHandle--horizontal"
+                        className="mj_ResizeHandle mj_ResizeHandle--horizontal"
                         data-id="lp-resizer"
                         onPointerDown={leftPanel.onPointerDown}
                     >
                         <div />
                     </div>
                     <div
-                        className={`mx_RoomView_wrapper ${state.trackerView?.open || state.selectedConversationId ? "" : "mj_Chat_mobileHidden"}`}
+                        className={`mj_ChatView_wrapper ${state.trackerView?.open || state.selectedConversationId ? "" : "mj_Chat_mobileHidden"}`}
                     >
                         {state.trackerView?.open ? (
                             <TrackerPane client={client} state={state} />
                         ) : state.selectedConversationId ? (
                             <div
-                                className={`mx_RoomView${dragActive ? " mj_RoomView_dragActive" : ""}`}
+                                className={`mj_ChatView${dragActive ? " mj_ChatView_dragActive" : ""}`}
                                 onDragOver={(event) => {
                                     if (!isFileDrag(event)) return;
                                     event.preventDefault();
@@ -7024,7 +7020,7 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                                 )}
                                 <div
                                     ref={setBodyEl}
-                                    className="mx_RoomView_body mx_MainSplit_timeline"
+                                    className="mj_ChatView_body mj_MainSplit_timeline"
                                     data-layout="bubble"
                                 >
                                     {childMode ? (
@@ -7060,8 +7056,8 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                                 </div>
                             </div>
                         ) : (
-                            <main className="mx_HomePage mx_HomePage_default">
-                                <div className="mx_HomePage_default_wrapper">
+                            <main className="mj_HomePage mj_HomePage_default">
+                                <div className="mj_HomePage_default_wrapper">
                                     <img src={matronLogo} alt={state.config.brand || "Matron"} />
                                     <h1>Welcome to {state.config.brand || "Matron"}</h1>
                                 </div>
@@ -7087,7 +7083,7 @@ export function MatronApp({ client }: { client: MatronJournalClient }): React.Re
     const state = useSyncExternalStore(client.subscribe, client.getSnapshot);
     if (state.phase === "loading")
         return (
-            <div className="mx_MatrixChat_splash mj_Loading">
+            <div className="mj_App_splash mj_Loading">
                 <img src={matronLogo} alt="Matron" />
             </div>
         );

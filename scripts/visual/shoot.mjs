@@ -60,27 +60,27 @@ function serve(dir) {
 // A shot: reach a state, then screenshot `clip` (a selector) — mouse left where it lands so
 // :hover persists into the capture.
 const SHOTS_SPEC = [
-    { comp: "composer", state: "rest", clip: ".mx_MessageComposer", setup: async () => {} },
+    { comp: "composer", state: "rest", clip: ".mj_Composer", setup: async () => {} },
     {
         comp: "composer",
         state: "typed",
-        clip: ".mx_MessageComposer",
-        setup: async (p) => p.fill(".mx_BasicMessageComposer_input", "restart nginx on prod"),
+        clip: ".mj_Composer",
+        setup: async (p) => p.fill(".mj_ComposerInput_input", "restart nginx on prod"),
     },
     {
         comp: "composer",
         state: "send-hover",
-        clip: ".mx_MessageComposer",
+        clip: ".mj_Composer",
         setup: async (p) => {
-            await p.fill(".mx_BasicMessageComposer_input", "restart nginx on prod");
+            await p.fill(".mj_ComposerInput_input", "restart nginx on prod");
             await p.hover(".mj_ComposerSend");
         },
     },
     {
         comp: "composer",
         state: "slash-open",
-        clip: ".mx_MessageComposer",
-        setup: async (p) => p.fill(".mx_BasicMessageComposer_input", "/"),
+        clip: ".mj_Composer",
+        setup: async (p) => p.fill(".mj_ComposerInput_input", "/"),
     },
     {
         comp: "upload",
@@ -113,7 +113,7 @@ const SHOTS_SPEC = [
     {
         comp: "sidebar",
         state: "with-subagents",
-        clip: ".mx_RoomListPanel",
+        clip: ".mj_ConversationListPanel",
         setup: async (p) => p.waitForSelector(".mj_RoomListItem_sub"),
     },
     {
@@ -125,7 +125,7 @@ const SHOTS_SPEC = [
     {
         comp: "timeline",
         state: "date-divider",
-        clip: ".mx_RoomView_MessageList",
+        clip: ".mj_ChatView_messageList",
         setup: async (p) => p.waitForSelector(".mj_DateDivider"),
     },
     {
@@ -151,7 +151,7 @@ const SHOTS_SPEC = [
     {
         comp: "subagent",
         state: "child-view",
-        clip: ".mx_RoomView_body",
+        clip: ".mj_ChatView_body",
         setup: async (p) => {
             await p.evaluate(() => window.__matron.selectChild());
             await p.waitForSelector(".mj_SubagentBack");

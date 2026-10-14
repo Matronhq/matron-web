@@ -144,7 +144,7 @@ describe("sidebar rows", () => {
                 TWO_BOXES,
             ),
         );
-        const heading = container.querySelector(".mx_RoomHeader_heading")!;
+        const heading = container.querySelector(".mj_ChatHeader_heading")!;
         expect(heading.textContent).toContain("🐣 matron-web · deploy");
         expect(heading.textContent).not.toContain("[dc]");
         expect(heading.querySelector(".mj_SessionTag_short")?.textContent).toBe("dc");
