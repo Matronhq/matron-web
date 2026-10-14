@@ -1858,6 +1858,38 @@ describe("stop turn button", () => {
         expect(stopButton(rendered.container)).toBeNull();
     });
 
+    test("a turn that just ended does not bring Stop back on returning to it", async () => {
+        jest.useFakeTimers();
+        const client = signedInWithRooms([
+            { ...CONVERSATION, id: "c1", title: "c1" },
+            { ...CONVERSATION, id: "c2", title: "c2", session_state: "done" },
+        ]);
+        rendered = await renderClient(client);
+        patchState(client, {
+            conversations: [
+                { ...CONVERSATION, id: "c1", title: "c1", session_state: "done" },
+                { ...CONVERSATION, id: "c2", title: "c2", session_state: "done" },
+            ],
+        });
+        patchState(client, { selectedConversationId: "c2" });
+        patchState(client, { selectedConversationId: "c1" });
+        expect(stopButton(rendered.container)).toBeNull();
+    });
+
+    test("a Stop still sending in one conversation does not block Stop in another", async () => {
+        const client = signedInWithRooms([
+            { ...CONVERSATION, id: "c1", title: "c1" },
+            { ...CONVERSATION, id: "c2", title: "c2" },
+        ]);
+        const send = jest.spyOn(client, "sendMessage").mockReturnValue(new Promise<boolean>(() => {}));
+        rendered = await renderClient(client);
+        await act(async () => stopButton(rendered!.container)!.click());
+        patchState(client, { selectedConversationId: "c2" });
+        await act(async () => stopButton(rendered!.container)!.click());
+        expect(send).toHaveBeenCalledTimes(2);
+        expect(send).toHaveBeenLastCalledWith("!esc", "c2");
+    });
+
     test("is not offered in a read-only subagent transcript", async () => {
         const result = await renderComposerAppWithChild("p1", "k1");
         rendered = result;

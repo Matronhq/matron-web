@@ -4611,6 +4611,8 @@ function PendingAttachment({
  * exactly what typing `!esc` in the composer sends — without touching the draft. The send
  * lands in the timeline as an ordinary own-message, so that echo is the feedback; a second
  * tap while the first is still being queued is dropped rather than sending `!esc` twice.
+ * Mounted keyed by conversation, so the linger after a turn and the in-flight latch both
+ * belong to one conversation and never carry over to another.
  */
 function StopTurnButton({
     client,
@@ -4621,7 +4623,7 @@ function StopTurnButton({
     conversationId: string;
     running: boolean;
 }): React.ReactElement | null {
-    const visible = useMinDisplayDuration(running, conversationId);
+    const visible = useMinDisplayDuration(running);
     const sending = useRef(false);
     if (!visible) return null;
     return (
@@ -4650,21 +4652,19 @@ const MIN_DISPLAY_MS = 500;
 
 /**
  * Holds a brief `active` flag true for MIN_DISPLAY_MS after it last was, so a short turn
- * doesn't flash the control on and off. The hold belongs to `key` (the conversation):
- * switching conversations drops it at once, so the control never lingers over a
- * conversation whose turn isn't running.
+ * doesn't flash the control on and off.
  */
-function useMinDisplayDuration(active: boolean, key: string): boolean {
-    const [heldFor, setHeldFor] = useState<string | undefined>(active ? key : undefined);
+function useMinDisplayDuration(active: boolean): boolean {
+    const [held, setHeld] = useState(active);
     useEffect(() => {
         if (active) {
-            setHeldFor(key);
+            setHeld(true);
             return;
         }
-        const timer = setTimeout(() => setHeldFor(undefined), MIN_DISPLAY_MS);
+        const timer = setTimeout(() => setHeld(false), MIN_DISPLAY_MS);
         return () => clearTimeout(timer);
-    }, [active, key]);
-    return active || heldFor === key;
+    }, [active]);
+    return active || held;
 }
 
 function Timeline({
@@ -5010,6 +5010,7 @@ function Timeline({
             </div>
             {!isReadOnly && state.selectedConversationId && (
                 <StopTurnButton
+                    key={state.selectedConversationId}
                     client={client}
                     conversationId={state.selectedConversationId}
                     running={sessionRunning}
