@@ -236,6 +236,7 @@ import {
     type VoiceRecordingContext,
     VoiceRecordingBar,
 } from "./voice-recorder";
+import { useWindowedList } from "./windowing";
 
 const NAV_VIEW = { projects: "missions", decisions: "inbox", memories: "memories" } as const;
 const NAV_KEY_FOR_VIEW: Record<"missions" | "inbox" | "memories", NavKey> = {
@@ -5599,6 +5600,20 @@ function useMinDisplayDuration(active: boolean): boolean {
     return active || held;
 }
 
+type TimelineRow =
+    | { key: string; kind: "divider"; timestamp: number }
+    | { key: string; kind: "event"; event: JournalEvent; continuation: boolean; lastInSection: boolean }
+    | { key: string; kind: "pending"; message: ClientState["pendingMessages"][number] };
+
+/** Height assumed for a row that hasn't been on screen yet. */
+function estimateTimelineRow(key: string): number {
+    return key.includes(":d-") ? 40 : 96;
+}
+
+function isAnchorableTimelineRow(key: string): boolean {
+    return !key.includes(":d-");
+}
+
 function Timeline({
     client,
     state,
@@ -5686,6 +5701,37 @@ function Timeline({
             ].sort((left, right) => left.timestamp - right.timestamp),
         [visibleEvents, state.pendingMessages],
     );
+    // One entry per element in the list: a day divider before the first row of each calendar day,
+    // then the row. Windowing mounts a slice of these.
+    const rows = useMemo(() => {
+        const conversation = state.selectedConversationId ?? "";
+        const out: TimelineRow[] = [];
+        timeline.forEach((item, index) => {
+            const previous = timeline[index - 1];
+            const newDay = !previous || !sameCalendarDay(item.timestamp, previous.timestamp);
+            if (newDay) {
+                // Keyed by the day, not by its first row, so the key survives older rows of the same
+                // day arriving with "Load earlier messages".
+                const day = new Date(item.timestamp);
+                const dayKey = `${day.getFullYear()}-${day.getMonth() + 1}-${day.getDate()}`;
+                out.push({ key: `${conversation}:d-${dayKey}`, kind: "divider", timestamp: item.timestamp });
+            }
+            if (item.kind === "event") {
+                const next = timeline[index + 1];
+                out.push({
+                    key: `${conversation}:e-${item.event.seq}`,
+                    kind: "event",
+                    event: item.event,
+                    continuation: previous?.kind === "event" && previous.event.sender === item.event.sender && !newDay,
+                    lastInSection: next?.kind !== "event" || next.event.sender !== item.event.sender,
+                });
+            } else {
+                out.push({ key: `${conversation}:m-${item.message.localId}`, kind: "pending", message: item.message });
+            }
+        });
+        return out;
+    }, [timeline, state.selectedConversationId]);
+    const rowKeys = useMemo(() => rows.map((row) => row.key), [rows]);
     const answeredPromptReplies = useMemo(() => {
         const replies = new Map<string, { choice?: string }>();
         for (const event of state.events) {
@@ -5752,6 +5798,7 @@ function Timeline({
     const onScroll = (): void => {
         const node = scrollRef.current;
         if (!node) return;
+        windowed.onScroll();
         cancelPendingScrollFrame();
         const queuedConversationId = state.selectedConversationId;
         pendingScrollFrame.current = requestAnimationFrame(() => {
@@ -5812,6 +5859,15 @@ function Timeline({
         state.loadingHistory,
         isFollowingTail,
     ]);
+
+    // Declared after the scroll effects above, so it measures once they have placed the scroller.
+    const windowed = useWindowedList({
+        scrollRef,
+        keys: rowKeys,
+        estimate: estimateTimelineRow,
+        followTail: isFollowingTail,
+        anchorable: isAnchorableTimelineRow,
+    });
 
     // Read state: report which rows were on screen. A layout effect, so a conversation switch
     // re-binds before any row of the new conversation can be counted under the old one. A
@@ -5936,71 +5992,74 @@ function Timeline({
                             </button>
                         </li>
                     )}
-                    {timeline.map((item, index) => {
-                        const previous = timeline[index - 1];
-                        // A day divider precedes the first row of each new calendar day (§ upload-first
-                        // ref): a centred dated label flanked by hairline rules.
-                        const divider =
-                            !previous || !sameCalendarDay(item.timestamp, previous.timestamp) ? (
-                                <li className="mj_DateDivider" role="separator">
+                    <li
+                        className="mj_TimelineSpacer"
+                        aria-hidden="true"
+                        ref={windowed.beforeRef}
+                        style={{ height: windowed.range.before }}
+                    />
+                    {rows.slice(windowed.range.start, windowed.range.end).map((row) => {
+                        if (row.kind === "divider") {
+                            // A centred dated label flanked by hairline rules (§ upload-first ref).
+                            return (
+                                <li key={row.key} className="mj_DateDivider" role="separator">
                                     <span className="mj_DateDivider_rule" aria-hidden="true" />
-                                    <span className="mj_DateDivider_label">{formatDayDivider(item.timestamp)}</span>
+                                    <span className="mj_DateDivider_label">{formatDayDivider(row.timestamp)}</span>
                                     <span className="mj_DateDivider_rule" aria-hidden="true" />
                                 </li>
-                            ) : null;
-                        if (item.kind === "event") {
-                            const next = timeline[index + 1];
-                            return (
-                                <React.Fragment key={`e-${item.event.seq}`}>
-                                    {divider}
-                                    <MemoEventRow
-                                        client={client}
-                                        event={item.event}
-                                        answeredPromptReplies={answeredPromptReplies}
-                                        spawnOutcomes={spawnOutcomes}
-                                        agentChatResolutions={agentChatResolutions}
-                                        coordinatorDecisions={coordinatorDecisions}
-                                        itemCards={itemCards}
-                                        isReadOnly={isReadOnly}
-                                        resolvedAction={resolvedAction}
-                                        continuation={
-                                            previous?.kind === "event" &&
-                                            previous.event.sender === item.event.sender &&
-                                            !divider
-                                        }
-                                        lastInSection={
-                                            next?.kind !== "event" || next.event.sender !== item.event.sender
-                                        }
-                                        rowHandlers={menu.rowHandlers}
-                                    />
-                                </React.Fragment>
                             );
                         }
-                        const message = item.message;
-                        return (
-                            <React.Fragment key={`m-${message.localId}`}>
-                                {divider}
-                                {message.kind === "image" || message.kind === "file" ? (
-                                    <PendingAttachment client={client} message={message} isReadOnly={isReadOnly} />
-                                ) : (
-                                    <li
-                                        className="mj_EventTile mj_EventTile_sending mj_EventTile_lastInSection"
-                                        data-layout="bubble"
-                                        data-self="true"
-                                    >
-                                        <div className="mj_EventTile_line">
-                                            <div className="mj_TextBody mj_EventTile_content">
-                                                <div className="mj_Markdown">
-                                                    <MarkdownBody text={message.body} label={message.localId} />
-                                                </div>
-                                            </div>
+                        if (row.kind === "event") {
+                            return (
+                                <MemoEventRow
+                                    key={row.key}
+                                    client={client}
+                                    event={row.event}
+                                    answeredPromptReplies={answeredPromptReplies}
+                                    spawnOutcomes={spawnOutcomes}
+                                    agentChatResolutions={agentChatResolutions}
+                                    coordinatorDecisions={coordinatorDecisions}
+                                    itemCards={itemCards}
+                                    isReadOnly={isReadOnly}
+                                    resolvedAction={resolvedAction}
+                                    continuation={row.continuation}
+                                    lastInSection={row.lastInSection}
+                                    rowHandlers={menu.rowHandlers}
+                                />
+                            );
+                        }
+                        const message = row.message;
+                        return message.kind === "image" || message.kind === "file" ? (
+                            <PendingAttachment
+                                key={row.key}
+                                client={client}
+                                message={message}
+                                isReadOnly={isReadOnly}
+                            />
+                        ) : (
+                            <li
+                                key={row.key}
+                                className="mj_EventTile mj_EventTile_sending mj_EventTile_lastInSection"
+                                data-layout="bubble"
+                                data-self="true"
+                            >
+                                <div className="mj_EventTile_line">
+                                    <div className="mj_TextBody mj_EventTile_content">
+                                        <div className="mj_Markdown">
+                                            <MarkdownBody text={message.body} label={message.localId} />
                                         </div>
-                                        <span className="mj_SendingLabel">Sending…</span>
-                                    </li>
-                                )}
-                            </React.Fragment>
+                                    </div>
+                                </div>
+                                <span className="mj_SendingLabel">Sending…</span>
+                            </li>
                         );
                     })}
+                    <li
+                        className="mj_TimelineSpacer"
+                        aria-hidden="true"
+                        ref={windowed.afterRef}
+                        style={{ height: windowed.range.after }}
+                    />
                     {Object.values(state.textStreams).map((text, index) => (
                         <li
                             className="mj_EventTile mj_EventTile_lastInSection"

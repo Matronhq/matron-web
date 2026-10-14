@@ -1042,20 +1042,6 @@ textarea {
     overflow-clip-margin: 4px;
 }
 
-/* The same for transcript rows: a long conversation otherwise re-lays out every loaded row
-   whenever the streaming bubble grows. The newest rows always render, so their real heights
-   are known when the timeline pins itself to the bottom; only rows well above the tail are
-   skipped until they scroll into view. When such a row first renders at its real height, scroll
-   anchoring keeps the reader's place, so browsers without it (Safari) render every row. */
-@supports (overflow-anchor: auto) {
-    .mj_ChatView_messageList > .mj_EventTile:nth-last-child(n + 40) {
-        content-visibility: auto;
-        contain-intrinsic-size: auto 96px;
-        /* content-visibility clips painting at the row's edge; leave room for the bubble shadow. */
-        overflow-clip-margin: 4px;
-    }
-}
-
 /* Row-menu trigger: invisible + non-interactive for pointer users (who open the menu via
    right-click / long-press), so the sidebar stays clean; it appears and becomes operable
    only on keyboard focus, preserving a discoverable route for keyboard/AT users. */

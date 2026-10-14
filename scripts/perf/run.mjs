@@ -378,18 +378,21 @@ async function longTranscript(browser, env) {
     for (let i = 0; i < target; i++) {
         const more = await page.locator("button.mj_LoadHistory").count();
         if (!more) break;
-        const before = await page.locator(TILES).count();
+        // Count loaded events rather than rows in the DOM: a windowed transcript mounts only the
+        // rows near the viewport, so the DOM doesn't grow with each page.
+        const before = await page.evaluate(() => window.__perfClient.state.events.length);
         const t0 = Date.now();
         await page.click("button.mj_LoadHistory");
         await settled(
             page,
-            ({ sel, before }) =>
-                !window.__perfClient.state.loadingHistory && document.querySelectorAll(sel).length > before,
-            { sel: TILES, before },
+            (before) => !window.__perfClient.state.loadingHistory && window.__perfClient.state.events.length > before,
+            before,
         );
+        await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
         pages.push(Date.now() - t0);
     }
     const tiles = await page.locator(TILES).count();
+    const eventsLoaded = await page.evaluate(() => window.__perfClient.state.events.length);
     const mem = await heapAfterGc(cdp);
     // Scroll from the top to the bottom in fixed steps and count frames against wall time.
     const scroll = await page.evaluate(async () => {
@@ -400,9 +403,16 @@ async function longTranscript(browser, env) {
         const startTasks = window.__perf.longTasks.length;
         const t0 = performance.now();
         const step = 400;
+        // Bounded, so a scroller that never reaches the bottom fails the run instead of hanging it.
+        let stuck = 0;
         while (el.scrollTop + el.clientHeight < el.scrollHeight - 2) {
+            const from = el.scrollTop;
             el.scrollTop += step;
             await new Promise((r) => requestAnimationFrame(r));
+            stuck = el.scrollTop > from ? 0 : stuck + 1;
+            if (stuck > 20 || performance.now() - t0 > 60_000) {
+                throw new Error(`scrolling stopped at ${el.scrollTop} of ${el.scrollHeight}`);
+            }
         }
         const ms = performance.now() - t0;
         const frames = window.__perf.frames - startFrames;
@@ -419,6 +429,7 @@ async function longTranscript(browser, env) {
         pagesLoaded: pages.length,
         firstPageMs: pages[0],
         lastPageMs,
+        eventsLoaded,
         tiles,
         heapMB: MB(mem.heap),
         domNodes: mem.nodes,
@@ -435,11 +446,15 @@ function assertAccepted(agent, what) {
 
 async function measureAppend(page, env, convoId) {
     const agent = await env.agentFor(convoId);
-    const before = await page.locator(TILES).count();
     const key = `append:${Date.now()}`;
+    const body = `One more line (${key}).`;
     const t0 = Date.now();
-    agent.send({ op: "publish", convo_id: convoId, type: "text", payload: { body: "One more line." }, idem_key: key });
-    await settled(page, ({ sel, before }) => document.querySelectorAll(sel).length > before, { sel: TILES, before });
+    agent.send({ op: "publish", convo_id: convoId, type: "text", payload: { body }, idem_key: key });
+    // Done when the newest row on screen shows it.
+    await settled(page, ({ sel, body }) => [...document.querySelectorAll(sel)].at(-1)?.textContent.includes(body), {
+        sel: TILES,
+        body,
+    });
     assertAccepted(agent, "the appended message");
     return Date.now() - t0;
 }
@@ -492,7 +507,7 @@ async function streaming(browser, env) {
     await openApp(page, env);
     await quiet(page, 1500);
     const results = {};
-    // Same stream into a short conversation and into one with ~1000 events on screen.
+    // Same stream into a short conversation and into one with ~1000 events loaded.
     for (const [label, id, pagesToLoad] of [
         ["short", env.manifest.ordinaryConversations[3], 0],
         ["long", env.manifest.largest, SCALE === "ci" ? 6 : 12],
@@ -500,12 +515,14 @@ async function streaming(browser, env) {
         await selectById(page, id);
         for (let i = 0; i < pagesToLoad; i++) {
             if (!(await page.locator("button.mj_LoadHistory").count())) break;
-            const before = await page.locator(TILES).count();
+            const before = await page.evaluate(() => window.__perfClient.state.events.length);
             await page.click("button.mj_LoadHistory");
-            await settled(page, ({ sel, before }) => document.querySelectorAll(sel).length > before, {
-                sel: TILES,
+            await settled(
+                page,
+                (before) =>
+                    !window.__perfClient.state.loadingHistory && window.__perfClient.state.events.length > before,
                 before,
-            });
+            );
         }
         await quiet(page, 1000);
         const tiles = await page.locator(TILES).count();

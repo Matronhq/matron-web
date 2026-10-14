@@ -852,9 +852,19 @@ button {
 }
 
 .mj_ChatView_messagePanel {
+    /* The transcript's offsetParent, so row positions are measured within the scrolled content. */
+    position: relative;
     width: 100%;
     overflow-y: auto;
     overscroll-behavior: contain;
+    /* The windowed transcript keeps the reader's place itself when rows above the viewport mount
+       or change height; the browser's own scroll anchoring would correct the same shift twice. */
+    overflow-anchor: none;
+}
+
+.mj_TimelineSpacer {
+    flex: none;
+    pointer-events: none;
 }
 
 .mj_ChatView_messageList {
