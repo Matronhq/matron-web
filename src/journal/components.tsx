@@ -90,7 +90,16 @@ import { displayTitle, TaggedTitle } from "./SessionTag";
 import { groupByDay } from "./sidebar-groups";
 import { createLongPressController, type LongPressController } from "./longPress";
 import { MarkdownBody, markdownToPlainText } from "./markdown";
-import { isRenderableItemMarker, MemoryNotice, MilestoneCard, MissionNotice, renderItemMarker } from "./tracker/cards";
+import {
+    EMPTY_ITEM_CARD_FOLD,
+    foldItemCards,
+    isRenderableItemMarker,
+    type ItemCardFold,
+    MemoryNotice,
+    MilestoneCard,
+    MissionNotice,
+    renderItemMarker,
+} from "./tracker/cards";
 import { needsUser } from "./tracker/format";
 import {
     isPreviewableMarkdown,
@@ -4222,6 +4231,7 @@ export function EventContent({
     event,
     answeredPromptReplies,
     spawnOutcomes = EMPTY_SPAWN_OUTCOMES,
+    itemCards = EMPTY_ITEM_CARD_FOLD,
     isReadOnly = false,
     resolvedAction,
 }: {
@@ -4229,6 +4239,7 @@ export function EventContent({
     event: JournalEvent;
     answeredPromptReplies: ReadonlyMap<string, { choice?: string }>;
     spawnOutcomes?: ReadonlyMap<string, EventPayload>;
+    itemCards?: ItemCardFold;
     isReadOnly?: boolean;
     resolvedAction?: (itemId: string) => "send" | "cancel" | undefined;
 }): React.ReactElement | null {
@@ -4251,9 +4262,12 @@ export function EventContent({
                     />
                 </div>
             );
-        case "item":
-            // Quiet invalidation-only markers (reordered/updated) and unknown actions render null.
-            return renderItemMarker(event, client);
+        case "item": {
+            // Quiet invalidation-only markers (reordered/updated) and unknown actions render null. An
+            // item card shows its item's latest state (foldItemCards), not this marker's frozen one.
+            const restated = itemCards.restated.get(event.seq);
+            return renderItemMarker(restated ? { ...event, payload: restated } : event, client);
+        }
         case "milestone":
             return <MilestoneCard client={client} event={event} />;
         case "mission":
@@ -4386,6 +4400,7 @@ function EventRow({
     event,
     answeredPromptReplies,
     spawnOutcomes,
+    itemCards,
     isReadOnly = false,
     resolvedAction,
     continuation = false,
@@ -4396,6 +4411,7 @@ function EventRow({
     event: JournalEvent;
     answeredPromptReplies: ReadonlyMap<string, { choice?: string }>;
     spawnOutcomes?: ReadonlyMap<string, EventPayload>;
+    itemCards?: ItemCardFold;
     isReadOnly?: boolean;
     resolvedAction: (itemId: string) => "send" | "cancel" | undefined;
     continuation?: boolean;
@@ -4454,6 +4470,7 @@ function EventRow({
                             event={event}
                             answeredPromptReplies={answeredPromptReplies}
                             spawnOutcomes={spawnOutcomes}
+                            itemCards={itemCards}
                             isReadOnly={isReadOnly}
                             resolvedAction={resolvedAction}
                         />
@@ -4663,6 +4680,8 @@ function Timeline({
         }
         return { queuedReleasePromptSeqs, legacyQueuePromptSeqs, permissionRequestSeqs };
     }, [state.events]);
+    // One card per tracker item, at its latest card marker, in its latest state (foldItemCards).
+    const itemCards = useMemo(() => foldItemCards(state.events), [state.events]);
     const visibleEvents = useMemo(
         () =>
             state.events.filter(
@@ -4670,9 +4689,10 @@ function Timeline({
                     !["read_marker", "edit", "session_status", "convo_meta"].includes(event.type) &&
                     !isQueuedReleaseReply(event, queuedReleasePromptSeqs, legacyQueuePromptSeqs) &&
                     !isSuppressedTrackerEvent(event) &&
+                    !(event.type === "item" && itemCards.hidden.has(event.seq)) &&
                     !isPermissionDecisionReply(event, permissionRequestSeqs),
             ),
-        [state.events, queuedReleasePromptSeqs, legacyQueuePromptSeqs, permissionRequestSeqs],
+        [state.events, queuedReleasePromptSeqs, legacyQueuePromptSeqs, permissionRequestSeqs, itemCards],
     );
     const timeline = useMemo(
         () =>
@@ -4867,6 +4887,7 @@ function Timeline({
                                             event={item.event}
                                             answeredPromptReplies={answeredPromptReplies}
                                             spawnOutcomes={spawnOutcomes}
+                                            itemCards={itemCards}
                                             isReadOnly={isReadOnly}
                                             resolvedAction={resolvedAction}
                                             continuation={

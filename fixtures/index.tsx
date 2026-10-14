@@ -267,6 +267,50 @@ const events: JournalEvent[] = [
         type: "spawn_outcome",
         payload: { request_id: "spawn-fixture-1", outcome: "started", room_id: "s1", child_convo_id: "s1" },
     },
+    // Tracker item markers. Each item shows ONE card, at its latest created/closed marker, in its
+    // latest state: #41 was asked, answered and closed, so only the closing "Closed · Answered"
+    // card shows (no stale "Needs you" card above it); #42 was filed for the agent and then handed
+    // to the user in a reply, so its one card now reads "Needs you".
+    {
+        seq: 16,
+        convo_id: "c1",
+        ts: T + 800,
+        sender: "journal",
+        type: "item",
+        payload: { item_id: "it_41", num: 41, kind: "question", title: "Which region should the staging bucket use?", action: "created", by: "agent", awaiting: "user" },
+    },
+    {
+        seq: 17,
+        convo_id: "c1",
+        ts: T + 805,
+        sender: "journal",
+        type: "item",
+        payload: { item_id: "it_42", num: 42, kind: "task", title: "Rotate the staging deploy key", action: "created", by: "agent", awaiting: "agent" },
+    },
+    {
+        seq: 18,
+        convo_id: "c1",
+        ts: T + 810,
+        sender: "journal",
+        type: "item",
+        payload: { item_id: "it_41", num: 41, kind: "question", title: "Which region should the staging bucket use?", action: "commented", by: "user", awaiting: "agent", comment: { id: "cm_1", body: "Same region as production." } },
+    },
+    {
+        seq: 19,
+        convo_id: "c1",
+        ts: T + 820,
+        sender: "journal",
+        type: "item",
+        payload: { item_id: "it_41", num: 41, kind: "question", title: "Which region should the staging bucket use?", action: "closed", by: "agent", resolution: "answered", comment: { id: "cm_2", body: "Created the bucket in the production region." } },
+    },
+    {
+        seq: 20,
+        convo_id: "c1",
+        ts: T + 830,
+        sender: "journal",
+        type: "item",
+        payload: { item_id: "it_42", num: 42, kind: "task", title: "Rotate the staging deploy key", action: "commented", by: "agent", awaiting: "user", comment: { id: "cm_3", body: "Needs an admin to approve the new key." } },
+    },
 ];
 
 const client = new MatronJournalClient();

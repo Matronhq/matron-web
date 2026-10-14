@@ -3317,3 +3317,68 @@ describe("conversation list tabs", () => {
         expect(client.getSnapshot().selectedConversationId).toBe(CONVERSATION.id);
     });
 });
+
+describe("tracker item cards in the timeline", () => {
+    let rendered: { container: HTMLDivElement; root: Root } | undefined;
+
+    const marker = (seq: number, payload: JournalEvent["payload"]): JournalEvent => ({
+        seq,
+        convo_id: "c1",
+        ts: seq,
+        sender: "journal",
+        type: "item",
+        payload: { item_id: "it_a", num: 7, kind: "question", title: "Pick a database", by: "agent", ...payload },
+    });
+
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    afterEach(async () => {
+        if (rendered) {
+            await act(async () => rendered?.root.unmount());
+            rendered.container.remove();
+            rendered = undefined;
+        }
+    });
+
+    const rowTexts = (container: HTMLElement): string[] =>
+        [...container.querySelectorAll("li.mx_EventTile")].map(
+            (row) =>
+                row.querySelector(".mj_TrackerStatusPill")?.textContent ??
+                row.querySelector(".mj_TrackerInlineNote_line")?.textContent ??
+                row.querySelector(".mj_Markdown")?.textContent ??
+                "",
+        );
+
+    it("shows a decided question once, at its closing marker, with no stale Needs you card", async () => {
+        const client = signedInClient({
+            events: [
+                marker(1, { action: "created", awaiting: "user" }),
+                { seq: 2, convo_id: "c1", ts: 2, sender: "agent:claude", type: "text", payload: { body: "Waiting" } },
+                marker(3, { action: "closed", resolution: "answered", by: "user" }),
+            ],
+        });
+        rendered = await renderClient(client);
+
+        expect(rendered.container.querySelectorAll(".mj_TrackerCard")).toHaveLength(1);
+        expect(rendered.container.querySelector(".mj_TrackerCard_needsyou")).toBeNull();
+        expect(rowTexts(rendered.container)).toEqual(["Waiting", "Closed · Answered"]);
+    });
+
+    it("draws a reopened item's card open again, keeping the reopen note", async () => {
+        const client = signedInClient({
+            events: [
+                marker(1, { action: "created", awaiting: "user" }),
+                marker(2, { action: "closed", resolution: "answered", comment: { id: "c", body: "Postgres" } }),
+                marker(3, { action: "reopened", awaiting: "user", by: "user" }),
+            ],
+        });
+        rendered = await renderClient(client);
+
+        expect(rendered.container.querySelectorAll(".mj_TrackerCard")).toHaveLength(1);
+        expect(rendered.container.querySelector(".mj_TrackerCard_needsyou")).not.toBeNull();
+        expect(rendered.container.querySelector(".mj_TrackerCard_comment")).toBeNull();
+        expect(rowTexts(rendered.container)).toEqual(["Needs you", "You reopened #7 · Pick a database"]);
+    });
+});
