@@ -5642,7 +5642,10 @@ function Timeline({
     const listRef = useRef<HTMLOListElement>(null);
     const pendingScrollFrame = useRef<number | undefined>(undefined);
     const selectedConversationId = useRef(state.selectedConversationId);
-    const [isFollowingTail, setFollow] = useState(true);
+    // Opening a conversation goes to its bottom, or back to where the reader left it (see below).
+    const [isFollowingTail, setFollow] = useState(
+        () => !(state.selectedConversationId && placesFor(client).has(state.selectedConversationId)),
+    );
     const [sourceEvent, setSourceEvent] = useState<JournalEvent>();
     const menu = useRowContextMenu<JournalEvent>();
     const sourceOpenerRef = useRef<HTMLElement | null>(null);
@@ -5859,7 +5862,12 @@ function Timeline({
 
     useEffect(() => cancelPendingScrollFrame, [state.selectedConversationId, cancelPendingScrollFrame]);
 
+    // A send goes to the bottom. Only a new send: on mount the timeline opens at the bottom anyway,
+    // or at the remembered place.
+    const seenSendTick = useRef(state.sendTick);
     useEffect(() => {
+        if (seenSendTick.current === state.sendTick) return;
+        seenSendTick.current = state.sendTick;
         cancelPendingScrollFrame();
         historyScrollAnchor.current = undefined;
         historyScrollRestored.current = false;
@@ -5928,8 +5936,9 @@ function Timeline({
             const place = conversationId ? placesFor(client).get(conversationId) : undefined;
             pendingPlace.current = conversationId && place ? { conversationId, place } : undefined;
         }
+        // Wait for the render that has stopped following the tail, or the hook pins to the bottom.
         const pending = pendingPlace.current;
-        if (!pending || state.events[0]?.convo_id !== pending.conversationId) return;
+        if (!pending || isFollowingTail || state.events[0]?.convo_id !== pending.conversationId) return;
         pendingPlace.current = undefined;
         if (restorePlace(pending.place)) {
             lastScrollTop.current = scrollRef.current?.scrollTop ?? 0;
@@ -5937,7 +5946,7 @@ function Timeline({
         }
         placesFor(client).delete(pending.conversationId);
         setFollow(true);
-    }, [client, state.selectedConversationId, state.events, rowKeys, restorePlace]);
+    }, [client, state.selectedConversationId, state.events, rowKeys, restorePlace, isFollowingTail]);
 
     // Read state: report which rows were on screen. A layout effect, so a conversation switch
     // re-binds before any row of the new conversation can be counted under the old one. A
@@ -6223,6 +6232,7 @@ function Timeline({
                     className="mj_JumpToBottom"
                     aria-label="Jump to bottom"
                     onClick={() => {
+                        pendingPlace.current = undefined;
                         setFollow(true);
                         scrollToBottom();
                     }}
