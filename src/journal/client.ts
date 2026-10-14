@@ -489,6 +489,9 @@ export class MatronJournalClient {
     // drag, supersedes an older load still in flight) and its coalesced marker refetch.
     private chatTasksGen = 0;
     private chatTasksRefetchTimer?: number;
+    // Ranks staged by a move the journal has not confirmed yet: a load that lands meanwhile (a
+    // second move's refetch, a marker) still reads the old rank, so these win until it answers.
+    private chatTasksStaged = new Map<string, number>();
     // Same for `mission` / `milestone` markers and the missions list.
     private trackerMissionsRefetchTimer?: number;
     private trackerMemoriesGen = 0;
@@ -2973,7 +2976,10 @@ export class MatronJournalClient {
                     ...this.state.chatTasks,
                     open: this.state.chatTasks?.open ?? false,
                     scope,
-                    items: [...open.items, ...closed.items],
+                    items: [...open.items, ...closed.items].map((item) => {
+                        const rank = this.chatTasksStaged.get(item.id);
+                        return rank === undefined || item.state !== "open" ? item : { ...item, rank };
+                    }),
                     loading: false,
                     error: undefined,
                     unsupported: false,
@@ -3025,9 +3031,11 @@ export class MatronJournalClient {
         }
         if (this.api !== api) return { ok: true };
         const current = this.state.chatTasks;
+        // Only into a list it belongs to: the pane may have moved to another chat meanwhile.
         if (
             created &&
             typeof created.id === "string" &&
+            (current?.scope === "all" || current?.scope === convoId) &&
             current?.items &&
             !current.items.some((i) => i.id === created!.id)
         ) {
@@ -3052,24 +3060,32 @@ export class MatronJournalClient {
         const original = items.find((item) => item.id === itemId)!;
         // A load already in flight read the old order: it must not land over the move.
         this.chatTasksGen += 1;
-        const swap = (list: TrackerItem[], next: TrackerItem): TrackerItem[] =>
-            list.map((item) => (item.id === itemId ? next : item));
-        this.patch({ chatTasks: { ...current, items: swap(items, plan.moved), actionError: undefined } });
+        // Rank only: a load that landed meanwhile may carry newer fields for the same item.
+        const withRank = (list: TrackerItem[], rank: number): TrackerItem[] =>
+            list.map((item) => (item.id === itemId ? { ...item, rank } : item));
+        const staged = plan.moved.rank;
+        this.chatTasksStaged.set(itemId, staged);
+        this.patch({ chatTasks: { ...current, items: withRank(items, staged), actionError: undefined } });
         try {
             await api.rankItem(itemId, plan.change);
         } catch (error) {
+            // A later move of the same task owns the entry from here on.
+            if (this.chatTasksStaged.get(itemId) === staged) this.chatTasksStaged.delete(itemId);
             if (this.api !== api) return;
             const now = this.state.chatTasks;
             this.patch({
                 chatTasks: {
                     ...now,
                     open: now?.open ?? false,
-                    items: now?.items ? swap(now.items, original) : now?.items,
+                    items: now?.items ? withRank(now.items, original.rank) : now?.items,
                     actionError: `Couldn't move the task: ${errorMessage(error)}`,
                 },
             });
+            // The refusal may mean the list is stale (a neighbour closed or moved): read it again.
+            void this.loadChatTasks();
             return;
         }
+        if (this.chatTasksStaged.get(itemId) === staged) this.chatTasksStaged.delete(itemId);
         if (this.api !== api) return;
         void this.loadChatTasks();
     }
@@ -4555,6 +4571,7 @@ export class MatronJournalClient {
         this.trackerInboxRefetchTimer = undefined;
         if (this.chatTasksRefetchTimer !== undefined) window.clearTimeout(this.chatTasksRefetchTimer);
         this.chatTasksRefetchTimer = undefined;
+        this.chatTasksStaged.clear();
         this.inboxWalking = false;
         this.inboxPendingWrites.clear();
         if (this.trackerMissionsRefetchTimer !== undefined) window.clearTimeout(this.trackerMissionsRefetchTimer);

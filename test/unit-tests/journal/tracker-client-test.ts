@@ -2229,6 +2229,7 @@ describe("MatronJournalClient chat Tasks & decisions pane", () => {
     });
 
     const page = (items: TrackerItem[]): { items: TrackerItem[]; next_cursor: null } => ({ items, next_cursor: null });
+    const flushPromises = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
     it("toggles the pane open and closed", () => {
         const { client } = makeClient({ selectedConversationId: "c1" });
@@ -2386,14 +2387,21 @@ describe("MatronJournalClient chat Tasks & decisions pane", () => {
             selectedConversationId: "c1",
             chatTasks: { open: true, scope: "c1", items: tasks() },
         });
-        state.api = { rankItem: jest.fn().mockRejectedValue(new Error("conflict")), items: jest.fn() };
+        state.api = {
+            rankItem: jest.fn().mockRejectedValue(new Error("conflict")),
+            items: jest.fn((f: { state: string }) => Promise.resolve(page(f.state === "open" ? tasks() : []))),
+        };
 
         await client.moveChatTask("a", 1);
 
         expect(state.api.rankItem).toHaveBeenCalledWith("a", { after: "b", before: "c" });
         expect(order(client)).toEqual(["a", "b", "c"]);
         expect(client.getSnapshot().chatTasks?.actionError).toBe("Couldn't move the task: conflict");
-        expect(state.api.items).not.toHaveBeenCalled();
+        // The refusal may mean the list is stale, so it is read again; the note stays.
+        expect(state.api.items).toHaveBeenCalled();
+        await flushPromises();
+        expect(order(client)).toEqual(["a", "b", "c"]);
+        expect(client.getSnapshot().chatTasks?.actionError).toBe("Couldn't move the task: conflict");
 
         client.dismissChatTasksError();
         expect(client.getSnapshot().chatTasks?.actionError).toBeUndefined();
@@ -2418,6 +2426,53 @@ describe("MatronJournalClient chat Tasks & decisions pane", () => {
         stale();
         await load;
         expect(order(client)).toEqual(["c", "a", "b"]);
+    });
+
+    it("a load that lands while a move is unconfirmed keeps the moved task in its new place", async () => {
+        const { client, state } = makeClient({
+            selectedConversationId: "c1",
+            chatTasks: { open: true, scope: "c1", items: tasks() },
+        });
+        let answer!: () => void;
+        state.api = {
+            // The journal still reports the old order: the move has not been applied yet.
+            items: jest.fn((f: { state: string }) => Promise.resolve(page(f.state === "open" ? tasks() : []))),
+            rankItem: jest.fn().mockReturnValue(new Promise((r) => (answer = () => r({ item: tasks()[2] })))),
+        };
+
+        const move = client.moveChatTask("c", 0);
+        await client.loadChatTasks();
+        expect(order(client)).toEqual(["c", "a", "b"]);
+
+        // Confirmed: the journal's ranks rule again.
+        answer();
+        await move;
+        await flushPromises();
+        expect(order(client)).toEqual(["a", "b", "c"]);
+    });
+
+    it("does not add a new item to the list of a chat the pane has moved to", async () => {
+        const created = item({ id: "it_9", num: 9, kind: "task", origin_convo_id: "c1" });
+        const { client, state } = makeClient({
+            selectedConversationId: "c1",
+            chatTasks: { open: true, scope: "c1", items: [] },
+        });
+        let answer!: () => void;
+        state.api = {
+            createItem: jest.fn().mockReturnValue(new Promise((r) => (answer = () => r({ item: created })))),
+            items: jest.fn().mockReturnValue(new Promise(() => undefined)),
+        };
+
+        const create = client.createChatItem({ kind: "task", title: "Write tests", body: "" });
+        // The user moves to another chat, whose list is on screen, before the create answers.
+        state.state = {
+            ...state.state,
+            selectedConversationId: "c2",
+            chatTasks: { open: true, scope: "c2", items: [] },
+        };
+        answer();
+        expect(await create).toEqual({ ok: true });
+        expect(client.getSnapshot().chatTasks?.items).toEqual([]);
     });
 
     describe("item markers", () => {
