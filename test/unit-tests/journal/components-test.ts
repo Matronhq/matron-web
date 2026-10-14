@@ -2384,6 +2384,40 @@ describe("attachment composer", () => {
         expect(mediaUrl).not.toHaveBeenCalled();
     });
 
+    it("names the expired chip and the inline audio player from the `name` key", async () => {
+        const client = signedInClient({
+            events: [
+                {
+                    seq: 1,
+                    convo_id: "c1",
+                    ts: 1,
+                    sender: "agent:1",
+                    type: "file",
+                    payload: { blob_ref: null, name: "notes.txt", size: 12_000, expired: true },
+                },
+                {
+                    seq: 2,
+                    convo_id: "c1",
+                    ts: 2,
+                    sender: "user:2",
+                    type: "file",
+                    payload: { blob_ref: "voice-name", name: "memo.m4a", content_type: "audio/mp4", size: 1000 },
+                },
+            ],
+        });
+        jest.spyOn(client, "mediaUrl").mockResolvedValue("blob:https://journal.example/voice-name");
+        rendered = await renderClient(client);
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        const chip = rendered.container.querySelector('[data-event-id="1"] .mj_File_expired');
+        expect(chip?.textContent).toContain("notes.txt");
+        expect(chip?.getAttribute("aria-label")).toBe("File attachment: notes.txt, expired");
+        expect(rendered.container.querySelector('[data-event-id="2"] .mj_Audio')?.textContent).toContain("memo.m4a");
+    });
+
     it("flips an image or file to expired when the server answers 404", async () => {
         const client = signedInClient({
             events: [

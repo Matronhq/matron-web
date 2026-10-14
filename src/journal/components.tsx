@@ -4582,7 +4582,7 @@ export function EventContent({
                 <div>
                     {expired ? (
                         <ExpiredFile
-                            filename={asString(event.payload.filename) || undefined}
+                            filename={mediaFileName(event.payload) || undefined}
                             contentType={asString(event.payload.content_type) || undefined}
                         />
                     ) : mediaId ? (
