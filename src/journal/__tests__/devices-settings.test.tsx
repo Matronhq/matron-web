@@ -272,6 +272,17 @@ describe("Settings → Devices", () => {
         expect(logout).toHaveBeenCalledWith("This device was revoked. Sign in again to continue.");
     });
 
+    it("never revokes on a form submit (Enter), only on the button itself", async () => {
+        const { client, api } = signedInClient([THIS_BROWSER, PHONE]);
+        await openSettings(client);
+        await act(async () => action(1, "revoke")!.click());
+        await act(async () => {
+            deviceSheet()!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+        });
+        expect(api.revokeDevice).not.toHaveBeenCalled();
+        expect(deviceSheet()).not.toBeNull();
+    });
+
     it("treats a device already revoked elsewhere as revoked", async () => {
         const { client, api } = signedInClient([THIS_BROWSER, PHONE]);
         api.revokeDevice.mockRejectedValueOnce(new JournalApiError("gone", 404, "not_found"));
@@ -352,6 +363,30 @@ describe("Settings → Devices", () => {
             expect(api.pairPreview).toHaveBeenCalledWith("KTNM3VQ8");
         });
 
+        it("says why a code longer than eight characters is not checked", async () => {
+            jest.useFakeTimers();
+            const { client, api } = signedInClient([THIS_BROWSER]);
+            await openSettings(client);
+            await act(async () => document.querySelector<HTMLButtonElement>('[data-action="add-agent"]')!.click());
+            await type(deviceSheet()!.querySelector<HTMLInputElement>("#mj-add-agent-code")!, "KTNM3VQ8X");
+            await advance(PAIR_PREVIEW_DEBOUNCE_MS);
+            expect(api.pairPreview).not.toHaveBeenCalled();
+            expect(deviceSheet()!.textContent).toContain("Pairing codes are 8 characters");
+        });
+
+        it("holds Approve back for a name over 40 characters", async () => {
+            jest.useFakeTimers();
+            const { client, api } = signedInClient([THIS_BROWSER]);
+            api.pairPreview.mockResolvedValue({ requester_ip: "box-c.example.com", expires_in: 540 });
+            await openSettings(client);
+            await act(async () => document.querySelector<HTMLButtonElement>('[data-action="add-agent"]')!.click());
+            await type(deviceSheet()!.querySelector<HTMLInputElement>("#mj-add-agent-code")!, "KTNM3VQ8");
+            await advance(PAIR_PREVIEW_DEBOUNCE_MS);
+            await type(deviceSheet()!.querySelector<HTMLInputElement>("#mj-add-agent-name")!, "b".repeat(41));
+            expect(button("Approve").disabled).toBe(true);
+            expect(deviceSheet()!.textContent).toContain("Names are at most 40 characters.");
+        });
+
         it("says so when the code is unknown or expired", async () => {
             jest.useFakeTimers();
             const { client, api } = signedInClient([THIS_BROWSER]);
@@ -417,8 +452,11 @@ describe("Settings → Devices", () => {
             await advance(LINK_POLL_MS);
             expect(deviceSheet()!.querySelector("[data-link-code]")!.textContent).toBe("BCDF-GHJK");
 
+            const listed = api.devices.mock.calls.length;
             await act(async () => deviceSheet()!.querySelector<HTMLButtonElement>('[aria-label="Close"]')!.click());
             expect(deviceSheet()).toBeNull();
+            // A device approved meanwhile shows without a manual Refresh.
+            expect(api.devices.mock.calls.length).toBe(listed + 1);
             const polls = api.linkStatus.mock.calls.length;
             await advance(LINK_POLL_MS * 3);
             expect(api.linkStatus).toHaveBeenCalledTimes(polls);

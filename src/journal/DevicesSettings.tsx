@@ -342,7 +342,6 @@ function RevokeSheet({
             title={self ? "Sign out this device?" : `Revoke “${deviceLabel(device)}”?`}
             className="mj_DeviceSheet_revoke"
             onClose={onClose}
-            onSubmit={() => void revoke()}
         >
             {self ? (
                 <p className="mj_DeviceSheet_warning" data-self-warning>
@@ -361,7 +360,13 @@ function RevokeSheet({
                 <button type="button" data-autofocus onClick={onClose}>
                     Cancel
                 </button>
-                <button type="submit" className="mj_DeviceSheet_destructive" disabled={revoking}>
+                {/* A click only, never a form submit: Enter must not revoke or sign out. */}
+                <button
+                    type="button"
+                    className="mj_DeviceSheet_destructive"
+                    disabled={revoking}
+                    onClick={() => void revoke()}
+                >
                     {self ? "Sign Out" : "Revoke"}
                 </button>
             </div>
@@ -475,6 +480,9 @@ export function AddAgentSheet({
     };
 
     const expired = phase.kind === "preview" && phase.expiresAt <= now;
+    const nameProblem = name.trim() ? deviceNameProblem(name) : undefined;
+    // Longer than a code: the field still shows it, and says why nothing is checked.
+    const codeTooLong = normalizePairingCode(code).length > PAIRING_CODE_LENGTH;
     const nameWarning = existing.some((device) => device.name === name)
         ? `You already have an agent called ${name}`
         : undefined;
@@ -482,13 +490,19 @@ export function AddAgentSheet({
         tag,
         existing.flatMap((device) => (device.kind === "agent" && device.tag_char ? [device.tag_char] : [])),
     );
-    const warnings = [nameWarning, tagWarning].filter((warning): warning is string => warning !== undefined);
+    const warnings = [nameProblem, nameWarning, tagWarning].filter(
+        (warning): warning is string => warning !== undefined,
+    );
 
     const approve = async (): Promise<void> => {
         if (phase.kind !== "preview" || approving || expired) return;
         const agentName = name.trim();
         if (!agentName) {
             setError("Name the agent first — the name can't be changed later.");
+            return;
+        }
+        if (nameProblem) {
+            setError(nameProblem);
             return;
         }
         setApproving(true);
@@ -575,6 +589,11 @@ export function AddAgentSheet({
                             onChange={(event) => onCodeInput(event.target.value)}
                         />
                     </div>
+                    {codeTooLong && (
+                        <p className="mj_DeviceSheet_caution">
+                            Pairing codes are {PAIRING_CODE_LENGTH} characters — check the code on the box.
+                        </p>
+                    )}
                 </>
             )}
             {error && (
@@ -654,7 +673,7 @@ export function AddAgentSheet({
                     <button
                         type="submit"
                         className="mj_UploadConfirm_send"
-                        disabled={approving || !name.trim() || expired}
+                        disabled={approving || !name.trim() || nameProblem !== undefined || expired}
                     >
                         Approve
                     </button>
@@ -1024,7 +1043,14 @@ export function DevicesSettings({
                 />
             )}
             {dialog?.kind === "link" && (
-                <LinkDeviceSheet client={client} serverUrl={session.serverUrl} onClose={close} />
+                <LinkDeviceSheet
+                    client={client}
+                    serverUrl={session.serverUrl}
+                    onClose={() => {
+                        close();
+                        void refresh();
+                    }}
+                />
             )}
         </section>
     );
