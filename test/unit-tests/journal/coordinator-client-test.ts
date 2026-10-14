@@ -130,6 +130,21 @@ describe("Coordinator conversation", () => {
         expect(client.getSnapshot().coordinatorConvoId).toBe("c_hello");
     });
 
+    it("asks again when a coordinator event overtakes the read", async () => {
+        const { client, internals } = makeClient({ coordinatorConvoId: "c_old" });
+        let first!: (value: unknown) => void;
+        internals
+            .api!.coordinator.mockReturnValueOnce(new Promise((resolve) => (first = resolve)))
+            .mockResolvedValueOnce({ convo_id: "c_new", consent: true });
+        const read = client.coordinatorConversationId();
+        internals.handleCoordinatorMarker(marker("coordinator", { role: "assigned" }));
+        first({ convo_id: "c_old", consent: true });
+        // The event changed nothing in state yet: the old value is not the answer.
+        await expect(read).resolves.toBe("c_new");
+        expect(internals.api!.coordinator).toHaveBeenCalledTimes(2);
+        expect(client.getSnapshot().coordinatorConvoId).toBe("c_new");
+    });
+
     it("opens the Coordinator conversation, or reports that there is none", async () => {
         const { client, internals } = makeClient();
         const select = jest.spyOn(client, "selectConversation").mockResolvedValue(undefined);

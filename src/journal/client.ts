@@ -520,6 +520,9 @@ export class MatronJournalClient {
     // answer lands; and the pending marker-driven refetch (a burst of `coordinator` events costs
     // one GET).
     private coordinatorEpoch = 0;
+    // A `coordinator` marker arrived and no hello, write or read has answered since: the value in
+    // state may be the old one.
+    private coordinatorStale = false;
     private coordinatorRefetchTimer?: number;
     // Routines: a request-generation guard like the tracker loaders', the views showing them (only
     // then do `routine` markers and reconnects refetch), and the pending marker-driven refetch.
@@ -2225,6 +2228,7 @@ export class MatronJournalClient {
             // The same answer names the Coordinator conversation (Settings shows it above the switch).
             const id = coordinatorIdIn(raw);
             if (this.api === api && id !== undefined && this.coordinatorEpoch === coordinatorEpoch) {
+                this.coordinatorStale = false;
                 this.patch({ coordinatorConvoId: id });
             }
             // A write since the GET was sent is newer than its answer.
@@ -2281,19 +2285,28 @@ export class MatronJournalClient {
     public async coordinatorConversationId(): Promise<string | null> {
         const api = this.api;
         if (!api) return null;
-        const epoch = this.coordinatorEpoch;
-        let raw: unknown;
-        try {
-            raw = await api.coordinator();
-        } catch {
-            return this.api === api ? (this.state.coordinatorConvoId ?? null) : null;
+        // A `coordinator` marker only says the value changed: an answer it overtook is asked again
+        // (a few times at most), while a hello or write already put the newer value in state.
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+            const epoch = this.coordinatorEpoch;
+            let raw: unknown;
+            try {
+                raw = await api.coordinator();
+            } catch {
+                return this.api === api ? (this.state.coordinatorConvoId ?? null) : null;
+            }
+            if (this.api !== api) return null;
+            if (this.coordinatorEpoch === epoch) {
+                const id = coordinatorIdIn(raw);
+                if (id !== undefined) {
+                    this.coordinatorStale = false;
+                    this.patch({ coordinatorConvoId: id });
+                }
+                return id ?? null;
+            }
+            if (!this.coordinatorStale) return this.state.coordinatorConvoId ?? null;
         }
-        if (this.api !== api) return null;
-        // A hello, write or marker since the GET was sent is newer than its answer.
-        if (this.coordinatorEpoch !== epoch) return this.state.coordinatorConvoId ?? null;
-        const id = coordinatorIdIn(raw);
-        if (id !== undefined) this.patch({ coordinatorConvoId: id });
-        return id ?? null;
+        return this.state.coordinatorConvoId ?? null;
     }
 
     /**
@@ -2321,6 +2334,7 @@ export class MatronJournalClient {
             const raw = await api.putCoordinator(convoId);
             if (this.api !== api) return undefined;
             this.coordinatorEpoch += 1;
+            this.coordinatorStale = false;
             this.patch({ coordinatorConvoId: coordinatorIdIn(raw) ?? convoId });
             return undefined;
         } catch (error) {
@@ -2341,6 +2355,7 @@ export class MatronJournalClient {
             return;
         }
         this.coordinatorEpoch += 1;
+        this.coordinatorStale = false;
         this.patch({ coordinatorConvoId: id });
     }
 
@@ -2349,6 +2364,7 @@ export class MatronJournalClient {
     private handleCoordinatorMarker(event: JournalEvent): void {
         if (event.type === "coordinator") {
             this.coordinatorEpoch += 1;
+            this.coordinatorStale = true;
             if (this.coordinatorRefetchTimer !== undefined) return;
             this.coordinatorRefetchTimer = window.setTimeout(() => {
                 this.coordinatorRefetchTimer = undefined;
@@ -4696,6 +4712,7 @@ export class MatronJournalClient {
         if (this.coordinatorRefetchTimer !== undefined) window.clearTimeout(this.coordinatorRefetchTimer);
         this.coordinatorRefetchTimer = undefined;
         this.coordinatorEpoch += 1;
+        this.coordinatorStale = false;
         if (this.routinesRefetchTimer !== undefined) window.clearTimeout(this.routinesRefetchTimer);
         this.routinesRefetchTimer = undefined;
         this.routinesGen += 1;
