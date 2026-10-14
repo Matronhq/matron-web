@@ -2510,6 +2510,63 @@ textarea {
     margin-right: 12px;
 }
 
+/* A recent folder: its path, then how long since a session last started there. */
+.mj_NewSessionSheet [role="listitem"].mj_NewSessionSheet_folder {
+    flex-direction: row;
+    align-items: baseline;
+    gap: 12px;
+}
+
+.mj_NewSessionSheet_folderPath {
+    min-width: 0;
+    flex: 1 1 auto;
+    overflow: hidden;
+    font-family: var(--cpd-font-family-mono);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_NewSessionSheet_folderUsed {
+    flex: 0 0 auto;
+    color: var(--cpd-color-text-secondary);
+    font-size: 12px;
+}
+
+/* Agent switch (Claude / Codex): the segmented control at its own width. */
+.mj_NewSessionSheet_agentSwitch {
+    align-self: flex-start;
+}
+
+/* Model and effort pickers side by side, each label above its select. */
+.mj_NewSessionSheet_picks {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+}
+
+.mj_NewSessionSheet_pick {
+    min-width: 0;
+    flex: 1 1 160px;
+}
+
+.mj_NewSessionSheet select {
+    display: block;
+    width: 100%;
+    min-height: 34px;
+    box-sizing: border-box;
+    border: 1px solid var(--cpd-color-border-interactive-secondary);
+    border-radius: var(--cpd-radius-field);
+    background: var(--cpd-color-bg-canvas-default);
+    color: var(--cpd-color-text-primary);
+    padding: 0 8px;
+    font: 400 13.5px/20px var(--cpd-font-family-ui);
+}
+
+.mj_NewSessionSheet select:focus-visible {
+    border-color: var(--cpd-color-border-interactive-primary);
+    outline: none;
+}
+
 /* Box usage under an agent (and above the folder list once one is chosen): the box's last
    capacity report — limits with reset times, live sessions, disk — and an "as of" caption
    saying how old the numbers are. Spans, not divs: it sits inside the agent's <button>. */
@@ -2777,6 +2834,22 @@ li.mj_AttachmentChip_error {
     filter: brightness(1.08);
 }
 
+/* agent_chat consent card — same .mj_PromptCard chrome and detail rows as the spawn card;
+   the accent border + label mark it as a consent ask rather than a question. */
+.mj_PromptCard_chat {
+    border-color: var(--cpd-color-border-accent);
+}
+
+.mj_PromptCard_chat .mj_PromptLabel {
+    color: var(--cpd-color-text-action-accent);
+}
+
+/* An agent request the client can't answer (malformed payload): one inert muted line. */
+.mj_AgentRequestNotice {
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-body-sm-regular);
+}
+
 /* Standalone timeline row for the durable spawn_outcome event once the card has scrolled
    away — a single status line, no card chrome. */
 .mj_SpawnOutcomeRow {
@@ -2891,6 +2964,44 @@ li.mj_AttachmentChip_error {
     outline-offset: 2px;
 }
 
+/* pick_many: options are toggles (a leading check box, ticked = accent), and the separate
+   Send below them is the card's one filled primary. */
+.mj_PromptOptions button.mj_PromptOption_toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding-left: 10px;
+}
+
+.mj_PromptOption_check {
+    display: inline-flex;
+    flex: 0 0 auto;
+    width: 14px;
+    height: 14px;
+    box-sizing: border-box;
+    align-items: center;
+    justify-content: center;
+    border: 1.5px solid var(--cpd-color-border-interactive-primary);
+    border-radius: 4px;
+}
+
+.mj_PromptOption_check svg {
+    width: 11px;
+    height: 11px;
+}
+
+.mj_PromptOptions button.mj_PromptOption_toggle[aria-pressed="true"] {
+    border-color: var(--cpd-color-border-accent);
+    color: var(--cpd-color-text-action-accent);
+}
+
+.mj_PromptOptions button.mj_PromptOption_toggle[aria-pressed="true"] .mj_PromptOption_check {
+    border-color: var(--cpd-color-bg-accent);
+    background: var(--cpd-color-bg-accent);
+    color: var(--cpd-color-text-on-accent);
+}
+
+.mj_PromptOptions_send button:disabled,
 .mj_PromptText button:disabled {
     cursor: default;
     opacity: 0.5;
@@ -3026,6 +3137,52 @@ li.mj_AttachmentChip_error {
     color: var(--cpd-color-terminal-fg);
     padding: 8px;
     font: 400 12px/16px var(--cpd-font-family-mono);
+}
+
+/* Running tool stream (Mac ToolStreamCard): a chevron in the header; the pane shows about three
+   lines collapsed (Mac: 76pt) and a bounded scrolling pane expanded. */
+.mj_LiveTool_header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.mj_LiveTool_header > span:first-child {
+    min-width: 0;
+    flex: 1 1 auto;
+}
+
+.mj_LiveTool_toggle {
+    display: inline-flex;
+    width: 20px;
+    height: 20px;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--cpd-color-text-tertiary);
+    cursor: pointer;
+}
+
+.mj_LiveTool_toggle svg {
+    width: 13px;
+    height: 13px;
+}
+
+.mj_LiveTool_toggle:focus-visible {
+    border-radius: 4px;
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: 1px;
+}
+
+.mj_LiveTool pre.mj_LiveTool_collapsed {
+    max-height: 76px;
+}
+
+.mj_LiveTool pre.mj_LiveTool_expanded {
+    max-height: 600px;
 }
 
 .mj_DiffCard {
@@ -3237,6 +3394,64 @@ button.mj_File {
 
 .mj_FileCaption {
     margin-top: 4px;
+}
+
+/* Reaped attachment (server media reaper): the name stays readable but muted, "Expired" takes
+   the size's place, and nothing is clickable. */
+.mj_File_expired {
+    color: var(--cpd-color-text-secondary);
+    cursor: default;
+}
+
+.mj_File_expired .mj_Expired {
+    margin-left: var(--cpd-space-1x);
+}
+
+.mj_MediaExpired {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--cpd-space-1-5x);
+    border: 1px dashed var(--cpd-color-border-subtle);
+    border-radius: 6px;
+    padding: var(--cpd-space-3x) var(--cpd-space-4x);
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-body-sm-regular);
+}
+
+/* Inline audio player: the file row on top, the browser's own controls below. */
+.mj_Audio {
+    display: inline-flex;
+    flex-direction: column;
+    gap: var(--cpd-space-1x);
+    max-width: min(420px, 100%);
+}
+
+.mj_Audio_head {
+    display: flex;
+    align-items: center;
+    gap: var(--cpd-space-1-5x);
+    min-width: 0;
+}
+
+.mj_Audio_player {
+    width: min(360px, 60vw);
+    height: 36px;
+}
+
+.mj_Audio_retry {
+    border: 1px solid var(--cpd-color-border-interactive-secondary);
+    border-radius: var(--cpd-radius-md);
+    background: var(--cpd-color-bg-canvas-raised);
+    color: var(--cpd-color-text-primary);
+    font: var(--cpd-font-body-sm-regular);
+    padding: 2px var(--cpd-space-2x);
+    margin-left: var(--cpd-space-1x);
+    cursor: pointer;
+}
+
+.mj_Audio_retry:focus-visible {
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: 2px;
 }
 
 /* Reflow fix: when the bridge sent dims, the frame carries an inline aspect-ratio + width so
@@ -4062,6 +4277,11 @@ button.mj_File {
     color: var(--cpd-color-text-secondary);
     font: var(--cpd-font-body-xs-regular);
     font-family: var(--cpd-font-family-mono);
+}
+
+.mj_MediaViewer_audio {
+    width: min(360px, 70vw);
+    margin-top: var(--cpd-space-2x);
 }
 
 .mj_MediaViewer_downloadNote {
