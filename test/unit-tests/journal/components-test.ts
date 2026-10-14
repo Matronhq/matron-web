@@ -3317,3 +3317,73 @@ describe("conversation list tabs", () => {
         expect(client.getSnapshot().selectedConversationId).toBe(CONVERSATION.id);
     });
 });
+
+describe("Coordinator notices in the timeline", () => {
+    let rendered: { container: HTMLDivElement; root: Root } | undefined;
+
+    const journalEvent = (seq: number, type: string, payload: JournalEvent["payload"]): JournalEvent => ({
+        seq,
+        convo_id: "c1",
+        ts: seq,
+        sender: "journal",
+        type,
+        payload,
+    });
+
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    afterEach(async () => {
+        if (rendered) {
+            await act(async () => rendered?.root.unmount());
+            rendered.container.remove();
+            rendered = undefined;
+        }
+    });
+
+    it("draws coordinator, routine and consent_decision events as one-line notices, never raw JSON", async () => {
+        const client = signedInClient({
+            events: [
+                journalEvent(1, "coordinator", { role: "assigned" }),
+                journalEvent(2, "routine", {
+                    routine_id: "r1",
+                    name: "daily-sweep",
+                    action: "fired",
+                    outcome: "applied now",
+                }),
+                journalEvent(3, "consent_decision", {
+                    kind: "spawn",
+                    decision: "approve",
+                    request_id: "req-1",
+                    reason: "Follows the box rules",
+                }),
+            ],
+        });
+        rendered = await renderClient(client);
+
+        expect(
+            [...rendered.container.querySelectorAll(".mj_CoordinatorNotice_text")].map((node) => node.textContent),
+        ).toEqual([
+            "This chat is now the Coordinator",
+            "Routine fired · daily-sweep",
+            "Coordinator approved the spawn request — Follows the box rules",
+        ]);
+        expect(rendered.container.querySelector(".mj_Unknown")).toBeNull();
+    });
+
+    it("drops summary events and unparseable Coordinator events from the timeline", async () => {
+        const client = signedInClient({
+            events: [
+                journalEvent(1, "summary", { text: "A rolling summary" }),
+                journalEvent(2, "coordinator", { role: "promoted" }),
+                journalEvent(3, "routine", { action: "fired" }),
+                journalEvent(4, "consent_decision", { kind: "chat" }),
+            ],
+        });
+        rendered = await renderClient(client);
+
+        expect(rendered.container.querySelector(".mj_Unknown")).toBeNull();
+        expect(rendered.container.querySelectorAll("li.mx_EventTile")).toHaveLength(0);
+    });
+});
