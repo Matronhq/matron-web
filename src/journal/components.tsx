@@ -4478,10 +4478,32 @@ export const TOOL_STREAM_COLLAPSED_CAP_CHARS = 4096;
 // line and trimming through it would drop nearly everything). `cut` says if anything was dropped.
 export function collapsedToolStreamSlice(text: string): { text: string; cut: boolean } {
     if (text.length <= TOOL_STREAM_COLLAPSED_CAP_CHARS) return { text, cut: false };
-    const tail = text.slice(text.length - TOOL_STREAM_COLLAPSED_CAP_CHARS);
+    const tail = text.slice(cleanCutStart(text, text.length - TOOL_STREAM_COLLAPSED_CAP_CHARS));
     const newline = tail.slice(0, 512).indexOf("\n");
-    // A line boundary is a clean start; only a mid-line cut can leave half an escape behind.
-    return { text: newline >= 0 ? tail.slice(newline + 1) : stripLeadingSgrFragment(tail), cut: true };
+    return { text: newline >= 0 ? tail.slice(newline + 1) : tail, cut: true };
+}
+
+// Where a cut at `start` can open cleanly: past the rest of an escape sequence it landed inside
+// (any fragment, not only "[…m"), and past the low half of a surrogate pair it split. Unlike a
+// head-truncated buffer, the text before the cut is at hand, so the fix is exact.
+function cleanCutStart(text: string, start: number): number {
+    const lookback = Math.max(0, start - 64);
+    const escAt = text.slice(lookback, start).lastIndexOf("\x1b");
+    if (escAt >= 0) {
+        const esc = lookback + escAt;
+        let end = esc + 2; // ESC + one byte, for a non-CSI escape
+        if (text[esc + 1] === "[") {
+            while (end < text.length) {
+                const code = text.charCodeAt(end);
+                end++;
+                if (code >= 0x40 && code <= 0x7e) break;
+            }
+        }
+        if (end > start) start = end;
+    }
+    const code = text.charCodeAt(start);
+    if (code >= 0xdc00 && code <= 0xdfff) start++;
+    return start;
 }
 
 export function ToolStream({ stream }: { stream: ToolStreamState }): React.ReactElement {
@@ -4528,7 +4550,11 @@ export function ToolStream({ stream }: { stream: ToolStreamState }): React.React
                                 className="mj_LiveTool_toggle"
                                 aria-expanded={expanded}
                                 aria-label={expanded ? "Collapse output" : "Expand output"}
-                                onClick={() => setExpanded((current) => !current)}
+                                onClick={() => {
+                                    // Like the Mac pane's bottom anchor: the resized pane opens on the newest output.
+                                    pinned.current = true;
+                                    setExpanded((current) => !current);
+                                }}
                             >
                                 <svg viewBox="0 0 16 16" width={16} height={16} aria-hidden="true">
                                     <path

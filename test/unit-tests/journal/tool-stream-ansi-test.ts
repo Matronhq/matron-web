@@ -109,6 +109,25 @@ describe("ToolStream collapse", () => {
         expect(pre.textContent).toBe(long);
     });
 
+    it("follows new output unless scrolled up, and re-pins when toggled", async () => {
+        const { container, root } = await mountStream(makeStream("one"));
+        const pre = container.querySelector("pre")!;
+        Object.defineProperty(pre, "scrollHeight", { configurable: true, value: 500 });
+        Object.defineProperty(pre, "clientHeight", { configurable: true, value: 76 });
+        await act(async () => root.render(React.createElement(ToolStream, { stream: makeStream("one\ntwo") })));
+        expect(pre.scrollTop).toBe(500);
+
+        pre.scrollTop = 100;
+        pre.dispatchEvent(new Event("scroll"));
+        await act(async () => root.render(React.createElement(ToolStream, { stream: makeStream("one\ntwo\nthree") })));
+        expect(pre.scrollTop).toBe(100);
+
+        await act(async () =>
+            container.querySelector<HTMLButtonElement>("button[aria-label='Expand output']")!.click(),
+        );
+        expect(pre.scrollTop).toBe(500);
+    });
+
     it("keeps short output whole when collapsed", async () => {
         const { container } = await mountStream(makeStream("one\ntwo"));
         expect(container.querySelector("pre")?.textContent).toBe("one\ntwo");
@@ -142,5 +161,29 @@ describe("collapsedToolStreamSlice", () => {
         const sliced = collapsedToolStreamSlice(`a\x1b[32m${"z".repeat(TOOL_STREAM_COLLAPSED_CAP_CHARS - 4)}`);
         expect(sliced.cut).toBe(true);
         expect(sliced.text).toBe("z".repeat(TOOL_STREAM_COLLAPSED_CAP_CHARS - 4));
+    });
+
+    it("drops the rest of an escape when the cut lands right after ESC[", () => {
+        // The cut keeps only "32m" of "\x1b[32m".
+        const sliced = collapsedToolStreamSlice(`ab\x1b[32m${"z".repeat(TOOL_STREAM_COLLAPSED_CAP_CHARS - 3)}`);
+        expect(sliced.text).toBe("z".repeat(TOOL_STREAM_COLLAPSED_CAP_CHARS - 3));
+    });
+
+    it("drops the rest of a non-SGR CSI the cut lands inside", () => {
+        // The cut keeps "K" of an erase-line "\x1b[2K".
+        const sliced = collapsedToolStreamSlice(`ab\x1b[2K${"z".repeat(TOOL_STREAM_COLLAPSED_CAP_CHARS - 1)}`);
+        expect(sliced.text).toBe("z".repeat(TOOL_STREAM_COLLAPSED_CAP_CHARS - 1));
+    });
+
+    it("never opens on half a surrogate pair", () => {
+        // "😀" is two UTF-16 units; the cut lands between them.
+        const sliced = collapsedToolStreamSlice(`a😀${"z".repeat(TOOL_STREAM_COLLAPSED_CAP_CHARS - 1)}`);
+        expect(sliced.text).toBe("z".repeat(TOOL_STREAM_COLLAPSED_CAP_CHARS - 1));
+        expect(sliced.text.charCodeAt(0)).toBe("z".charCodeAt(0));
+    });
+
+    it("keeps a complete escape that ends before the cut", () => {
+        const sliced = collapsedToolStreamSlice(`\x1b[32mab${"z".repeat(TOOL_STREAM_COLLAPSED_CAP_CHARS - 1)}`);
+        expect(sliced.text).toBe(`b${"z".repeat(TOOL_STREAM_COLLAPSED_CAP_CHARS - 1)}`);
     });
 });
