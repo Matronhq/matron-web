@@ -211,6 +211,29 @@ describe("client.focusMessage", () => {
         expect(client.getSnapshot().selectedConversationId).toBe("c2");
     });
 
+    it("drops a jump when the tracker is opened mid-way, so returning later flashes nothing", async () => {
+        const { client } = pagingClient(range(1, 2000), { selected: "c1" });
+        await client.selectConversation("c1");
+        const load = client.loadOlderHistory.bind(client);
+        let pages = 0;
+        jest.spyOn(client, "loadOlderHistory").mockImplementation(async (opts) => {
+            if (++pages === 2) client.openTrackerView({ view: "inbox" });
+            await load(opts);
+        });
+        await expect(client.focusMessage("c1", 5)).resolves.toBe(false);
+        expect(pages).toBe(2);
+        client.closeTrackerView();
+        expect(client.getSnapshot().focusTarget).toBeUndefined();
+    });
+
+    it("withdraws a target not yet landed when the tracker opens", async () => {
+        const { client } = pagingClient(range(1, 50), { selected: "c1" });
+        await client.focusMessage("c1", 40);
+        expect(client.getSnapshot().focusTarget).toBeDefined();
+        client.openTrackerView({ view: "inbox" });
+        expect(client.getSnapshot().focusTarget).toBeUndefined();
+    });
+
     it("clears the target only for the token it was handed over with", async () => {
         const { client } = pagingClient(range(1, 50), { selected: "c1" });
         await client.focusMessage("c1", 40);
