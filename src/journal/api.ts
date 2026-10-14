@@ -540,6 +540,22 @@ export class JournalApi {
         return this.json<{ memory: Memory }>(`/memories/${encodeURIComponent(name)}`, { method: "DELETE" });
     }
 
+    // ── Notification settings (journal /notify, /coordinator; Bearer-auth, per user) ──
+
+    /**
+     * GET /notify — what may notify the user: the synced mode, event switches and per-conversation
+     * overrides, plus this device's own level. Unvalidated (notifications.ts parses it); a journal
+     * that predates the route answers 404, which throws a JournalApiError.
+     */
+    public async notifySettings(): Promise<unknown> {
+        return this.json<unknown>("/notify");
+    }
+
+    /** GET /coordinator — `{convo_id}`, the user's Coordinator conversation (null for none). Unvalidated. */
+    public async coordinator(): Promise<unknown> {
+        return this.json<unknown>("/coordinator");
+    }
+
     // ── New-chat defaults (journal /defaults; Bearer-auth, per user) ──
 
     /** GET /defaults — the user's default model and effort for new chats (null = box default). */

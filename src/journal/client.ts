@@ -358,11 +358,18 @@ export function voiceNoteFile(blob: Blob): File {
     return new File([blob], `voice-note.${ext}`, { type });
 }
 
+/** See MatronJournalClient.addLiveListener. */
+export interface LiveListener {
+    frame?(frame: ServerFrame): void;
+    journalEvent?(event: JournalEvent, previous: Conversation | undefined): void;
+}
+
 export class MatronJournalClient {
     private state = blankState();
     // The `/u/<name>/<n>` link the page was opened at, until the first sign-in opens it.
     private pathLink: TrackerLinkPath | null = parseTrackerLinkPath(window.location.pathname);
     private readonly listeners = new Set<() => void>();
+    private readonly liveListeners = new Set<LiveListener>();
     private api?: JournalApi;
     // Monotonic guard so only the latest message-search request writes its results — an earlier
     // slow response (or a cleared box) can never clobber a newer query's hits. See searchMessages.
@@ -514,6 +521,27 @@ export class MatronJournalClient {
     };
 
     public readonly getSnapshot = (): ClientState => this.state;
+
+    /**
+     * Observes what the socket delivers, for side effects that live outside the client (desktop
+     * notifications): every server frame as it arrives, and each journal event once it is newly
+     * applied, with the conversation as it stood before it. Listeners only watch; a throwing one
+     * is logged and never disturbs sync.
+     */
+    public readonly addLiveListener = (listener: LiveListener): (() => void) => {
+        this.liveListeners.add(listener);
+        return () => this.liveListeners.delete(listener);
+    };
+
+    private emitLive(call: (listener: LiveListener) => void): void {
+        for (const listener of this.liveListeners) {
+            try {
+                call(listener);
+            } catch (error) {
+                console.warn("matron:live-listener", error);
+            }
+        }
+    }
 
     public async initialise(): Promise<void> {
         let config = {};
@@ -3611,6 +3639,7 @@ export class MatronJournalClient {
     }
 
     private async handleFrame(frame: ServerFrame): Promise<void> {
+        this.emitLive((listener) => listener.frame?.(frame));
         if (frame.kind === "journal") {
             await this.handleJournal(frame);
             return;
@@ -3680,6 +3709,8 @@ export class MatronJournalClient {
         }
         this.clearHistoryError();
         this.scheduleAck(event.seq);
+        const previous = this.state.conversations.find((conversation) => conversation.id === event.convo_id);
+        this.emitLive((listener) => listener.journalEvent?.(event, previous));
 
         const messageRef = typeof event.payload.message_ref === "string" ? event.payload.message_ref : undefined;
         if (messageRef) {
