@@ -198,8 +198,11 @@ export function MergeProjectSheet({
     onMerge: (intoId: string) => Promise<boolean>;
     onClose: () => void;
 }): React.ReactElement {
-    const [chosen, setChosen] = useState<Project | null>(null);
+    const [chosenId, setChosenId] = useState<string | null>(null);
     const [merging, setMerging] = useState(false);
+    // The confirmation reads the target from the live list: one that closed or was merged away
+    // meanwhile drops out of it, and the sheet goes back to the choice instead of naming it.
+    const chosen = chosenId == null ? null : (targets.find((target) => target.id === chosenId) ?? null);
     const mountedRef = useSheetLifecycle(() => {
         if (!merging) onClose();
     });
@@ -211,7 +214,7 @@ export function MergeProjectSheet({
         if (!mountedRef.current) return;
         setMerging(false);
         if (ok) onClose();
-        else setChosen(null);
+        else setChosenId(null);
     };
 
     return createPortal(
@@ -231,7 +234,7 @@ export function MergeProjectSheet({
                         />
                         <p>Its missions move there and this project closes.</p>
                         <div className="mj_UploadConfirm_actions">
-                            <button type="button" disabled={merging} onClick={() => setChosen(null)}>
+                            <button type="button" autoFocus disabled={merging} onClick={() => setChosenId(null)}>
                                 Cancel
                             </button>
                             <button
@@ -255,7 +258,7 @@ export function MergeProjectSheet({
                                     type="button"
                                     role="listitem"
                                     className="mj_ProjectSheet_target"
-                                    onClick={() => setChosen(target)}
+                                    onClick={() => setChosenId(target.id)}
                                 >
                                     <span className="mj_ProjectSheet_targetTitle">{target.title}</span>
                                 </button>

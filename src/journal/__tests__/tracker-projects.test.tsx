@@ -445,6 +445,66 @@ describe("Project filing", () => {
         expect(document.querySelector('[role="dialog"]')).toBeNull();
     });
 
+    it("goes back to the choice when the chosen target closes before the merge is confirmed", async () => {
+        const onMerge = jest.fn().mockResolvedValue(true);
+        const other = trackerProject({ id: "pj_2", num: 2, title: "Spring launch" });
+        const third = trackerProject({ id: "pj_3", num: 3, title: "Autumn launch" });
+        const container = document.createElement("div");
+        document.body.append(container);
+        const root = createRoot(container);
+        const page = (projects: ReturnType<typeof trackerProject>[]): React.ReactElement => (
+            <ProjectPage
+                detail={trackerProjectDetail()}
+                projects={projects}
+                onBack={jest.fn()}
+                onOpenMission={jest.fn()}
+                onOpenItem={jest.fn()}
+                onMerge={onMerge}
+            />
+        );
+        await act(async () => root.render(page([trackerProject(), other, third])));
+        await press(document.querySelector('[aria-label="Project actions"]'));
+        await press(byText('[role="menuitem"]', "Merge into…"));
+        await press(byText('[role="dialog"] [role="listitem"]', "Spring launch"));
+        expect(document.activeElement?.textContent).toBe("Cancel");
+
+        // A refresh lands with the target closed: the confirmation no longer names it.
+        await act(async () => root.render(page([trackerProject(), { ...other, state: "closed" }, third])));
+        expect(byText('[role="dialog"] button', "Merge")).toBeUndefined();
+        expect(
+            Array.from(document.querySelectorAll('[role="dialog"] [role="listitem"]')).map((node) => node.textContent),
+        ).toEqual(["Autumn launch"]);
+        expect(onMerge).not.toHaveBeenCalled();
+    });
+
+    it("closes the merge sheet when the page swaps to another project", async () => {
+        const onMerge = jest.fn().mockResolvedValue(true);
+        const other = trackerProject({ id: "pj_2", num: 2, title: "Spring launch" });
+        const third = trackerProject({ id: "pj_3", num: 3, title: "Autumn launch" });
+        const container = document.createElement("div");
+        document.body.append(container);
+        const root = createRoot(container);
+        const page = (shown: ReturnType<typeof trackerProject>): React.ReactElement => (
+            <ProjectPage
+                detail={trackerProjectDetail({ project: shown })}
+                projects={[trackerProject(), other, third]}
+                onBack={jest.fn()}
+                onOpenMission={jest.fn()}
+                onOpenItem={jest.fn()}
+                onMerge={onMerge}
+            />
+        );
+        await act(async () => root.render(page(trackerProject())));
+        await press(document.querySelector('[aria-label="Project actions"]'));
+        await press(byText('[role="menuitem"]', "Merge into…"));
+        await press(byText('[role="dialog"] [role="listitem"]', "Autumn launch"));
+
+        // A merge made elsewhere: the reload follows to the survivor in place.
+        await act(async () => root.render(page(other)));
+        expect(document.querySelector('[role="dialog"]')).toBeNull();
+        expect(onMerge).not.toHaveBeenCalled();
+    });
+
     it("offers no merge on a closed project, and a disabled one with nowhere to go", async () => {
         await mount(
             <ProjectPage

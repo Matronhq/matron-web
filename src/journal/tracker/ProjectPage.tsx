@@ -125,7 +125,10 @@ export function ProjectPage({
     const openMissions = missions.filter((mission) => mission.state === "open");
     const closedMissions = missions.filter((mission) => mission.state !== "open");
     const [limit, setLimit] = useState<number | null>(FIRST_PAGE_LIMIT);
-    const [merging, setMerging] = useState(false);
+    // The project the merge sheet was opened for. A reload can swap the page to another project in
+    // place (a merge made elsewhere follows to the survivor); the sheet then closes rather than
+    // offer to merge a project the user did not pick.
+    const [mergingId, setMergingId] = useState<string | null>(null);
     const rowMove = useRowMove(projects, onMoveMission);
     const merges = mergeTargets(project, projects);
     const rows = activityRows(detail, limit);
@@ -165,15 +168,15 @@ export function ProjectPage({
                     ‹ Projects
                 </button>
                 {onMerge && project.state === "open" ? (
-                    <ProjectActionsMenu canMerge={merges.length > 0} onMerge={() => setMerging(true)} />
+                    <ProjectActionsMenu canMerge={merges.length > 0} onMerge={() => setMergingId(project.id)} />
                 ) : null}
             </div>
-            {merging && onMerge ? (
+            {mergingId === project.id && project.state === "open" && onMerge ? (
                 <MergeProjectSheet
                     project={project}
                     targets={merges}
-                    onMerge={(intoId) => onMerge(project.id, intoId)}
-                    onClose={() => setMerging(false)}
+                    onMerge={(intoId) => onMerge(mergingId, intoId)}
+                    onClose={() => setMergingId(null)}
                 />
             ) : null}
             {rowMove.layer}
