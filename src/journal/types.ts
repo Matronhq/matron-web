@@ -80,11 +80,34 @@ export interface DeviceDTO {
     last_seen_at?: number;
     connected: boolean;
     is_self: boolean;
+    /** The journal-held tag character shown before an agent box's chat titles; null = automatic. */
+    tag_char?: string | null;
+    /** Enrolment time (ms); the Devices list sorts newest first within apps and agent boxes. */
+    created_at?: number;
+    /** How many events the device's cursor trails the user's head. */
+    lag?: number;
     status?: BoxStatus;
     /** An agent box's stored defaults for new sessions (see BoxDefaults). Absent on journals
      *  that predate per-box defaults, and on client devices. */
     defaults?: BoxDefaults;
 }
+
+/** POST /pair/preview: who is asking to pair, and how long the code has left (seconds). */
+export interface PairPreview {
+    requester_ip: string;
+    expires_in: number;
+}
+
+/** POST /link/start: the code this device shows, and its lifetime (seconds). */
+export interface LinkStart {
+    link_code: string;
+    expires_in: number;
+}
+
+/** POST /link/status: still waiting for a scan, or claimed by a device asking to sign in. */
+export type LinkStatus =
+    | { status: "waiting"; expires_in: number }
+    | { status: "claimed"; device_name: string; requester_ip: string; expires_in: number };
 
 export interface DevicesResponse {
     devices: DeviceDTO[];

@@ -54,6 +54,9 @@ import {
     type DefaultsState,
     type ConvoPin,
     type DeviceDTO,
+    type LinkStart,
+    type LinkStatus,
+    type PairPreview,
     type JournalBoxStatusFrame,
     isSubChat,
     type MatronLinkKind,
@@ -2458,6 +2461,71 @@ export class MatronJournalClient {
 
     private patchDefaults(update: Partial<DefaultsState>): void {
         this.patch({ defaults: { loading: false, unsupported: false, ...this.state.defaults, ...update } });
+    }
+
+    // ── Device admin (Settings → Devices). Pull-based, as on the Mac: the screen re-fetches the
+    // roster after every change; only the agent roster (session tags) is pushed, by `device_meta`.
+
+    private deviceAdminApi(): JournalApi {
+        if (!this.api) throw new JournalApiError("Not signed in.", 401, "unauthenticated");
+        return this.api;
+    }
+
+    /** GET /devices: every device on the account, this one included. */
+    public async listDevices(): Promise<DeviceDTO[]> {
+        return (await this.deviceAdminApi().devices()).devices;
+    }
+
+    /** Rename a device; the Boxes group re-reads its names. */
+    public async renameDevice(deviceId: number, name: string): Promise<void> {
+        await this.deviceAdminApi().renameDevice(deviceId, name);
+        void this.loadBoxDefaults();
+    }
+
+    /** Set an agent box's tag character, or clear it back to automatic (null). */
+    public async setDeviceTag(deviceId: number, tagChar: string | null): Promise<void> {
+        await this.deviceAdminApi().setDeviceTag(deviceId, tagChar);
+    }
+
+    /**
+     * Revoke a device. A 404 means it was already revoked elsewhere and counts as done. Revoking
+     * this device is a sign-out: the token is already dead, so the client signs out at once.
+     */
+    public async revokeDevice(device: Pick<DeviceDTO, "device_id" | "is_self">): Promise<void> {
+        try {
+            await this.deviceAdminApi().revokeDevice(device.device_id);
+        } catch (error) {
+            if (!(error instanceof JournalApiError && error.status === 404)) throw error;
+        }
+        if (device.is_self) {
+            await this.logout("This device was revoked. Sign in again to continue.");
+            return;
+        }
+        void this.loadBoxDefaults();
+    }
+
+    public pairPreview(pairCode: string): Promise<PairPreview> {
+        return this.deviceAdminApi().pairPreview(pairCode);
+    }
+
+    public pairApprove(pairCode: string, agentName: string, tagChar: string | null): Promise<void> {
+        return this.deviceAdminApi().pairApprove(pairCode, agentName, tagChar);
+    }
+
+    public linkStart(): Promise<LinkStart> {
+        return this.deviceAdminApi().linkStart();
+    }
+
+    public linkStatus(): Promise<LinkStatus> {
+        return this.deviceAdminApi().linkStatus();
+    }
+
+    public linkApprove(linkCode: string): Promise<void> {
+        return this.deviceAdminApi().linkApprove(linkCode);
+    }
+
+    public linkDeny(linkCode: string): Promise<void> {
+        return this.deviceAdminApi().linkDeny(linkCode);
     }
 
     // ── Per-box defaults (Settings → Boxes; GET /devices `defaults`, PUT /devices/:id/defaults) ──

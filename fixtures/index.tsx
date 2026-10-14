@@ -1262,6 +1262,92 @@ if (trackerMode === "inbox" || trackerMode === "item") {
     stub.sendMessage = async () => !stopFails;
 }
 
+// Settings → Devices: a made-up roster (this browser, a phone, two agent boxes). Rename, tag and
+// revoke edit it in place. Add Agent previews any full code as a request from a fixture host and
+// the box "connects" on the first poll; Link a Device shows a fixed code, and with ?link=claimed a
+// device asks to sign in on the first poll.
+{
+    const stub = client as unknown as Record<string, unknown>;
+    const now = Date.now();
+    let roster = [
+        {
+            device_id: 1,
+            kind: "client",
+            name: "Browser",
+            created_at: now - 9 * DAY_MS,
+            lag: 0,
+            last_seen_at: now,
+            connected: true,
+            is_self: true,
+        },
+        {
+            device_id: 3,
+            kind: "client",
+            name: "Phone",
+            created_at: now - 4 * DAY_MS,
+            lag: 12,
+            last_seen_at: now - 2 * 3600_000,
+            connected: false,
+            is_self: false,
+        },
+        {
+            device_id: 2,
+            kind: "agent",
+            name: "box-a",
+            tag_char: "a",
+            created_at: now - 30 * DAY_MS,
+            lag: 0,
+            last_seen_at: now - 60_000,
+            connected: true,
+            is_self: false,
+        },
+        {
+            device_id: 4,
+            kind: "agent",
+            name: "box-b",
+            tag_char: null,
+            created_at: now - 20 * DAY_MS,
+            lag: 0,
+            last_seen_at: now - 3 * DAY_MS,
+            connected: false,
+            is_self: false,
+        },
+    ];
+    const edit = (id: number, change: Record<string, unknown>): void => {
+        roster = roster.map((device) => (device.device_id === id ? { ...device, ...change } : device));
+    };
+    stub.listDevices = async () => roster;
+    stub.renameDevice = async (id: number, name: string) => edit(id, { name });
+    stub.setDeviceTag = async (id: number, tag: string | null) => edit(id, { tag_char: tag });
+    stub.revokeDevice = async (device: { device_id: number }) => {
+        roster = roster.filter((entry) => entry.device_id !== device.device_id);
+    };
+    stub.pairPreview = async () => ({ requester_ip: "box-c.example.com", expires_in: 540 });
+    stub.pairApprove = async (_code: string, name: string, tag: string | null) => {
+        roster = [
+            ...roster,
+            {
+                device_id: 5,
+                kind: "agent",
+                name,
+                tag_char: tag,
+                created_at: Date.now(),
+                lag: 0,
+                last_seen_at: Date.now(),
+                connected: true,
+                is_self: false,
+            },
+        ];
+    };
+    stub.linkStart = async () => ({ link_code: "KTNM-3VQ8", expires_in: 300 });
+    stub.linkStatus = async () =>
+        fixtureParams.get("link") === "claimed"
+            ? { status: "claimed", device_name: "Laptop", requester_ip: "laptop.example.com", expires_in: 280 }
+            : { status: "waiting", expires_in: 290 };
+    stub.linkApprove = async () => undefined;
+    stub.linkDeny = async () => undefined;
+}
+
 // Media stubs: a short generated tone for the voice note, a 404 for the reaped blob.
 function toneWav(seconds = 2, rate = 8000): Blob {
     const samples = seconds * rate;

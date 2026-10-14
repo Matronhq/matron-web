@@ -1546,3 +1546,166 @@ label.mj_SettingsSheet_row {
     color: var(--mj-color-text-secondary);
     font: var(--mj-font-body-sm-regular);
 }
+
+/* Settings → Devices: one row per device (name, "This device" badge, caption) with its actions,
+   and a footer with Refresh, Link a Device… and Add Agent…. */
+.mj_DevicesList {
+    padding: 0;
+    list-style: none;
+}
+
+.mj_DevicesList_row {
+    align-items: center;
+}
+
+.mj_DevicesList_text {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.mj_DevicesList_name {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    overflow: hidden;
+    font-weight: 500;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_DevicesList_self {
+    flex: none;
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--mj-color-bg-accent) 15%, transparent);
+    color: var(--mj-color-text-action-accent);
+    font: 600 10px/14px var(--mj-font-family-ui);
+}
+
+.mj_DevicesList_caption {
+    color: var(--mj-color-text-secondary);
+    font: 400 11px/14px var(--mj-font-family-ui);
+}
+
+.mj_DevicesList_actions,
+.mj_DevicesList_footer {
+    display: flex;
+    flex: none;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 4px;
+}
+
+.mj_DevicesList_actions button,
+.mj_DevicesList_footer button {
+    padding: 2px 8px;
+    border: 1px solid var(--mj-color-border-interactive-secondary);
+    border-radius: var(--mj-radius-md);
+    background: var(--mj-color-bg-canvas-default);
+    color: var(--mj-color-text-primary);
+    cursor: pointer;
+    font: 500 12px/16px var(--mj-font-family-ui);
+}
+
+.mj_DevicesList_actions button:hover,
+.mj_DevicesList_footer button:hover {
+    background: var(--mj-color-bg-subtle-primary);
+}
+
+.mj_DevicesList_actions button:focus-visible,
+.mj_DevicesList_footer button:focus-visible {
+    outline: 2px solid var(--mj-color-text-action-accent);
+    outline-offset: 1px;
+}
+
+.mj_DevicesList_actions .mj_DevicesList_revoke {
+    color: var(--mj-color-text-critical-primary);
+}
+
+/* The device sheets (rename, tag, revoke, Add Agent, Link a Device) open over Settings. */
+.mj_DeviceSheet_scrim {
+    z-index: 60;
+}
+
+.mj_DeviceSheet {
+    width: min(440px, 92vw);
+    outline: none;
+}
+
+.mj_DeviceSheet p {
+    margin: 0;
+    font: 400 13px/18px var(--mj-font-family-ui);
+}
+
+.mj_DeviceSheet_box {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    border: 1px solid var(--mj-color-border-subtle);
+    border-radius: var(--mj-radius-md);
+    padding: 10px 12px;
+}
+
+.mj_DeviceSheet .mj_DeviceSheet_muted {
+    color: var(--mj-color-text-secondary);
+    font-size: 12px;
+}
+
+.mj_DeviceSheet .mj_DeviceSheet_caution {
+    color: var(--mj-color-text-critical-primary);
+    font-size: 12px;
+    white-space: pre-line;
+}
+
+.mj_DeviceSheet .mj_DeviceSheet_warning {
+    border-radius: var(--mj-radius-md);
+    background: color-mix(in srgb, var(--mj-color-text-critical-primary) 10%, transparent);
+    color: var(--mj-color-text-critical-primary);
+    padding: 8px 10px;
+    font-weight: 500;
+}
+
+.mj_DeviceSheet .mj_DeviceSheet_success {
+    color: var(--mj-color-text-success);
+}
+
+.mj_UploadConfirm_actions button.mj_DeviceSheet_destructive {
+    background: var(--mj-color-text-critical-primary);
+    color: var(--mj-color-text-on-accent);
+    font-weight: 600;
+}
+
+.mj_UploadConfirm_actions button.mj_DeviceSheet_destructive:hover:not(:disabled) {
+    filter: brightness(1.08);
+    background: var(--mj-color-text-critical-primary);
+    color: var(--mj-color-text-on-accent);
+}
+
+.mj_AddAgentSheet input.mj_AddAgentSheet_code {
+    font: 500 17px/24px var(--mj-font-family-mono, monospace);
+    letter-spacing: 0.06em;
+}
+
+.mj_LinkDeviceSheet_body {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    text-align: center;
+}
+
+.mj_QrCode {
+    border-radius: var(--mj-radius-md);
+}
+
+.mj_LinkDeviceSheet_body .mj_LinkDeviceSheet_code {
+    font: 600 20px/26px var(--mj-font-family-mono, monospace);
+    letter-spacing: 0.08em;
+    user-select: all;
+}
+
+.mj_LinkDeviceSheet_decide {
+    justify-content: center;
+}
