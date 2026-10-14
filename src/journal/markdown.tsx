@@ -496,7 +496,9 @@ function componentsFor(source: string, onTrackerLink?: TrackerLinkHandler): Comp
         },
         a({ node: _node, href, children, ...props }) {
             const tracker = href !== undefined ? parseMatronHref(href) : null;
-            if (tracker) {
+            // An https link is a working web link where there is no in-app handler; only the
+            // custom scheme has to render inert.
+            if (tracker && (onTrackerLink || tracker.kind !== "link")) {
                 // With a handler, a matron:// link becomes a real in-app link (tap opens the
                 // tracker surface). Without one it renders inert — never navigate the browser to
                 // the custom scheme.

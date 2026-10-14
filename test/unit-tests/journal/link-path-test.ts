@@ -132,7 +132,7 @@ describe("parseOwnTrackerUrl", () => {
         expect(parseOwnTrackerUrl("http://journal.example/u/alice/412", origin)).toBeNull();
         expect(parseOwnTrackerUrl("/u/alice/412", origin)).toBeNull();
         expect(parseOwnTrackerUrl(`${origin}/app/`, origin)).toBeNull();
-        expect(parseOwnTrackerUrl("matron://item/412", origin)).toBeNull();
+        expect(parseOwnTrackerUrl("matron://item/7", origin)).toBeNull();
     });
 });
 

@@ -482,6 +482,20 @@ describe("https /u/<name>/<n> links to this deployment", () => {
         expect(modified.defaultPrevented).toBe(false);
     });
 
+    test("without an in-app handler it is an ordinary external link", async () => {
+        const url = `${window.location.origin}/u/alice/412`;
+        const container = document.createElement("div");
+        document.body.append(container);
+        const root = createRoot(container);
+        rendered.push({ container, root });
+        await act(async () => {
+            root.render(React.createElement(MarkdownBody, { text: `[#412](${url})`, label: "test-message" }));
+        });
+        const link = container.querySelector("a");
+        expect(link?.getAttribute("href")).toBe(url);
+        expect(link?.getAttribute("target")).toBe("_blank");
+    });
+
     test("the same path on another host stays an external link", async () => {
         const onTrackerLink = jest.fn();
         const container = await render("[#412](https://elsewhere.example/u/alice/412)", onTrackerLink);
