@@ -1771,6 +1771,163 @@ describe("composer sends", () => {
     });
 });
 
+describe("composer sent-message recall", () => {
+    let rendered: { container: HTMLDivElement; root: Root; client: MatronJournalClient } | undefined;
+
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    afterEach(async () => {
+        if (rendered) {
+            await act(async () => rendered?.root.unmount());
+            rendered.container.remove();
+            rendered = undefined;
+        }
+        jest.restoreAllMocks();
+    });
+
+    const textarea = (): HTMLTextAreaElement =>
+        rendered!.container.querySelector<HTMLTextAreaElement>(".mx_BasicMessageComposer_input")!;
+    const value = (): string => composerValue(rendered!.container);
+    const arrow = (key: "ArrowUp" | "ArrowDown") => keydown(textarea(), key);
+
+    async function renderWithSends(convoIds = ["c1", "c2"]): Promise<jest.SpyInstance> {
+        rendered = await renderComposerApp(convoIds);
+        return jest.spyOn(rendered.client, "sendMessage").mockResolvedValue(true);
+    }
+
+    async function sendText(text: string): Promise<void> {
+        await typeInComposer(rendered!.container, text);
+        await pressEnter(rendered!.container);
+    }
+
+    async function select(convoId: string): Promise<void> {
+        await act(async () => {
+            await rendered!.client.selectConversation(convoId);
+        });
+    }
+
+    test("Up and Down walk this conversation's sent messages from an empty field", async () => {
+        await renderWithSends();
+        await sendText("first");
+        await sendText("second");
+        expect(value()).toBe("");
+
+        const up = await arrow("ArrowUp");
+        expect(up.dispatched).toBe(false);
+        expect(value()).toBe("second");
+        await arrow("ArrowUp");
+        expect(value()).toBe("first");
+        // At the oldest entry Up stays put.
+        await arrow("ArrowUp");
+        expect(value()).toBe("first");
+        await arrow("ArrowDown");
+        expect(value()).toBe("second");
+        // Past the newest, the (empty) draft the walk started from comes back.
+        await arrow("ArrowDown");
+        expect(value()).toBe("");
+        // The walk is over: Down does nothing more.
+        const down = await arrow("ArrowDown");
+        expect(down.dispatched).toBe(true);
+    });
+
+    test("Up leaves a non-empty draft alone so the caret can move through it", async () => {
+        await renderWithSends();
+        await sendText("sent");
+        await typeInComposer(rendered!.container, "line one\nline two");
+        const up = await arrow("ArrowUp");
+        expect(up.dispatched).toBe(true);
+        expect(value()).toBe("line one\nline two");
+    });
+
+    test("Up with nothing sent yet leaves the field empty", async () => {
+        await renderWithSends();
+        await arrow("ArrowUp");
+        expect(value()).toBe("");
+    });
+
+    test("editing a recalled message ends the walk and keeps the edit", async () => {
+        await renderWithSends();
+        await sendText("first");
+        await sendText("second");
+        await arrow("ArrowUp");
+        await typeInComposer(rendered!.container, "second, edited");
+        const up = await arrow("ArrowUp");
+        expect(up.dispatched).toBe(true);
+        expect(value()).toBe("second, edited");
+        const down = await arrow("ArrowDown");
+        expect(down.dispatched).toBe(true);
+        expect(value()).toBe("second, edited");
+    });
+
+    test("sending a recalled message sends it again", async () => {
+        const send = await renderWithSends();
+        await sendText("deploy again");
+        await arrow("ArrowUp");
+        await pressEnter(rendered!.container);
+        expect(send).toHaveBeenLastCalledWith("deploy again", "c1");
+        expect(send).toHaveBeenCalledTimes(2);
+        expect(value()).toBe("");
+    });
+
+    test("each conversation recalls only its own sends", async () => {
+        await renderWithSends();
+        await sendText("for one");
+        await select("c2");
+        await arrow("ArrowUp");
+        expect(value()).toBe("");
+        await sendText("for two");
+        await select("c1");
+        await arrow("ArrowUp");
+        expect(value()).toBe("for one");
+        await arrow("ArrowUp");
+        expect(value()).toBe("for one");
+    });
+
+    test("leaving mid-walk does not save the recalled message as the draft", async () => {
+        await renderWithSends();
+        await sendText("sent line");
+        await arrow("ArrowUp");
+        expect(value()).toBe("sent line");
+        await select("c2");
+        await select("c1");
+        expect(value()).toBe("");
+    });
+
+    test("a message that failed to queue is not recorded", async () => {
+        const send = await renderWithSends();
+        send.mockResolvedValueOnce(false);
+        await sendText("not queued");
+        // The failed text stays in the field; clear it and try to recall.
+        await typeInComposer(rendered!.container, "");
+        await arrow("ArrowUp");
+        expect(value()).toBe("");
+    });
+
+    test("the palette keeps its arrow keys, and a recalled command doesn't trap the walk", async () => {
+        await renderWithSends();
+        await sendText("/status");
+        await sendText("hello");
+
+        // Typing a command opens the palette; Up/Down move its highlight, not history.
+        await typeInComposer(rendered!.container, "/");
+        await arrow("ArrowDown");
+        expect(textarea().getAttribute("aria-activedescendant")).toBeTruthy();
+        expect(value()).toBe("/");
+        await typeInComposer(rendered!.container, "");
+
+        // Walking onto "/status" opens the palette, but the walk still owns the arrows.
+        await arrow("ArrowUp");
+        await arrow("ArrowUp");
+        expect(value()).toBe("/status");
+        expect(textarea().getAttribute("aria-expanded")).toBe("true");
+        await arrow("ArrowDown");
+        expect(value()).toBe("hello");
+        expect(textarea().getAttribute("aria-activedescendant")).toBeNull();
+    });
+});
+
 describe("attachment composer", () => {
     let rendered: { container: HTMLDivElement; root: Root } | undefined;
 
