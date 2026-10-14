@@ -180,6 +180,43 @@ describe("Coordinator rail entry, chooser and Routines sheet", () => {
         expect(chooser()).not.toBeNull();
     });
 
+    it("keeps the chooser away while a new coordinator chat becomes the Coordinator", async () => {
+        let answer!: (value: unknown) => void;
+        const putCoordinator = jest.fn().mockReturnValue(new Promise((resolve) => (answer = resolve)));
+        const client = signedInClient(
+            { coordinator: jest.fn().mockResolvedValue({ convo_id: null, consent: true }), putCoordinator },
+            { coordinatorConvoId: null },
+        );
+        jest.spyOn(client, "listAgents").mockResolvedValue([
+            { device_id: 10, kind: "agent", name: "box-a", connected: true, is_self: false },
+        ]);
+        jest.spyOn(client, "newSessionOffer").mockResolvedValue({
+            folders: [],
+            agentOptions: [],
+            defaultAgent: null,
+            modelOptions: [],
+            defaultModel: null,
+            effortOptions: [],
+            defaultEffort: null,
+        });
+        jest.spyOn(client, "startSessionRpc").mockResolvedValue({ kind: "created", convoId: "c_new" });
+        jest.spyOn(client, "selectConversation").mockResolvedValue(undefined);
+        await render(client);
+        await act(async () => railCoordinator().click());
+        await act(async () => button(chooser()!, "New coordinator chat…").click());
+        const sheet = document
+            .querySelector<HTMLElement>("#mj-new-session-title")!
+            .closest<HTMLElement>(".mj_NewSessionSheet")!;
+        expect(sheet.contains(document.activeElement)).toBe(true);
+        await act(async () => button(sheet, "Start").click());
+        expect(putCoordinator).toHaveBeenCalledWith("c_new");
+        expect(document.querySelector("#mj-new-session-title")).toBeNull();
+        expect(chooser()).toBeNull();
+        await act(async () => answer({ convo_id: "c_new", consent: true }));
+        expect(chooser()).toBeNull();
+        expect(client.getSnapshot().coordinatorConvoId).toBe("c_new");
+    });
+
     it("shows the Coordinator in Settings with Change… and Clear, and returns to Settings from the chooser", async () => {
         const putCoordinator = jest.fn().mockResolvedValue({ convo_id: null, consent: true });
         const client = signedInClient({

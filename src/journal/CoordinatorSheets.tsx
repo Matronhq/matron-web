@@ -57,7 +57,8 @@ const FOCUSABLE = "button:not([disabled]), input:not([disabled]), select:not([di
 
 /**
  * A modal's focus, as in the Settings sheet: focus moves into the sheet on open (unless a field
- * already took it), Tab cycles inside it, and the opener gets focus back on close. `view` names
+ * already took it), Tab cycles inside it, and the opener gets focus back on close (or the modal
+ * that replaced it, when there is one). `view` names
  * what the sheet shows; when it changes and focus fell out (the clicked control went away), the
  * sheet itself takes focus again.
  */
@@ -83,7 +84,11 @@ function useModalFocus(sheetRef: React.RefObject<HTMLElement | null>, view: stri
         document.addEventListener("keydown", onKey);
         return () => {
             document.removeEventListener("keydown", onKey);
-            if (opener?.isConnected) opener.focus();
+            // Handed over to another modal (the chooser's new chat): focus goes into that one,
+            // not to the opener under it.
+            const next = document.querySelector<HTMLElement>('[role="dialog"][aria-modal="true"]');
+            if (next) next.querySelector<HTMLElement>(FOCUSABLE)?.focus();
+            else if (opener?.isConnected) opener.focus();
         };
     }, [sheetRef]);
     useEffect(() => {

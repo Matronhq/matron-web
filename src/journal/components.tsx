@@ -1312,11 +1312,14 @@ function ConversationListView({
     const [newSessionOpen, setNewSessionOpen] = useState(false);
     // The Coordinator's sheets (chooser, its new chat, Routines), one at a time. Opened from
     // Settings, they take its place and give it back when they close, as the Mac's sit over it.
+    // "assigning": the new chat exists and PUT /coordinator is in flight; nothing shows.
     const [coordinatorSheet, setCoordinatorSheet] = useState<{
-        kind: "chooser" | "new-chat" | "routines";
+        kind: "chooser" | "new-chat" | "assigning" | "routines";
         fromSettings: boolean;
         error?: string;
     } | null>(null);
+    const coordinatorSheetRef = useRef(coordinatorSheet);
+    coordinatorSheetRef.current = coordinatorSheet;
     const [pinDialog, setPinDialog] = useState<PinDialogTarget>();
     const [conversationMenu, setConversationMenu] = useState<{ conversationId: string; left: number; top: number }>();
     const conversationMenuRef = useRef(conversationMenu);
@@ -2220,14 +2223,19 @@ function ConversationListView({
                     client={client}
                     title="New coordinator chat"
                     initialModel={COORDINATOR_NEW_CHAT_MODEL}
-                    // Closing the new chat goes back to the chooser; a created chat ends the flow
-                    // once it is the Coordinator (onCreated runs right after this close).
+                    // Closing the new chat goes back to the chooser. A created chat closes it too,
+                    // and onCreated runs in the same batch: it replaces the chooser with
+                    // "assigning", so the chooser never shows while the new chat becomes the
+                    // Coordinator. The answer lands only if nothing else opened meanwhile.
                     onClose={() => setCoordinatorSheet({ ...coordinatorSheet, kind: "chooser", error: undefined })}
                     onCreated={(convoId) => {
                         const fromSettings = coordinatorSheet.fromSettings;
+                        const assigning = { kind: "assigning" as const, fromSettings };
+                        setCoordinatorSheet(assigning);
                         void client.setCoordinator(convoId).then((error) => {
-                            // The chat started but did not become the Coordinator: say so in the chooser.
+                            if (coordinatorSheetRef.current !== assigning) return;
                             if (error) {
+                                // The chat started but did not become the Coordinator: say so in the chooser.
                                 setCoordinatorSheet({ kind: "chooser", fromSettings, error });
                                 return;
                             }
