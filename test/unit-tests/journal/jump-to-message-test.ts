@@ -375,4 +375,29 @@ describe("timeline landing", () => {
         });
         expect(jump).toHaveBeenCalledTimes(1);
     });
+
+    it("leaves Ctrl+Shift+U alone while a modal dialog is up or an IME is composing", async () => {
+        const client = selectedClient([own(3), event(4), event(5)]);
+        const jump = jest.spyOn(client, "jumpToLastOwnMessage").mockResolvedValue(true);
+        await render(client);
+        await act(async () => {
+            document.dispatchEvent(
+                new KeyboardEvent("keydown", { key: "U", ctrlKey: true, shiftKey: true, isComposing: true }),
+            );
+        });
+        const dialog = document.createElement("div");
+        dialog.setAttribute("role", "dialog");
+        dialog.setAttribute("aria-modal", "true");
+        document.body.appendChild(dialog);
+        try {
+            const press = new KeyboardEvent("keydown", { key: "U", ctrlKey: true, shiftKey: true, cancelable: true });
+            await act(async () => {
+                document.dispatchEvent(press);
+            });
+            expect(press.defaultPrevented).toBe(false);
+        } finally {
+            dialog.remove();
+        }
+        expect(jump).not.toHaveBeenCalled();
+    });
 });

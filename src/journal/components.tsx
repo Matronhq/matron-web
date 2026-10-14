@@ -42,6 +42,7 @@ import {
     isMacPlatform,
     jumpToLastOwnShortcutLabel,
     landingSeq,
+    modalDialogOpen,
 } from "./jump-to-message";
 import { GoToNumberDialog, goToNumberShortcutLabel, NumberSearchResult, useGoToNumberShortcut } from "./goto-number";
 import { PinDialog, type PinDialogTarget } from "./PinDialogs";
@@ -4957,7 +4958,8 @@ function Timeline({
     // (the pill itself only shows once the reader has scrolled away from the tail).
     useEffect(() => {
         const onKeyDown = (event: KeyboardEvent): void => {
-            if (event.defaultPrevented || !isJumpToLastOwnShortcut(event, isMacPlatform())) return;
+            if (event.defaultPrevented || event.isComposing || !isJumpToLastOwnShortcut(event, isMacPlatform())) return;
+            if (modalDialogOpen()) return;
             event.preventDefault();
             void client.jumpToLastOwnMessage();
         };

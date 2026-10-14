@@ -79,6 +79,12 @@ export function isJumpToLastOwnShortcut(
     return mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
 }
 
+/**
+ * True while a modal dialog (the media viewer, a source view, settings, an upload sheet) is up: an
+ * app-wide shortcut then leaves the key alone instead of acting on the timeline behind it.
+ */
+export const modalDialogOpen = (): boolean => document.querySelector("[aria-modal='true']") !== null;
+
 export const isMacPlatform = (): boolean => /Mac|iPhone|iPad/.test(navigator.platform);
 
 /** The shortcut's name for a button tooltip. */
