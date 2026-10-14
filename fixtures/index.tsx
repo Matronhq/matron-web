@@ -23,6 +23,7 @@ import "@fontsource/inter/latin-400.css";
 import "@fontsource/inter/latin-500.css";
 import "@fontsource/inter/latin-600.css";
 
+import { JournalApiError } from "../src/journal/api";
 import { archiveStore, favoriteStore, MatronJournalClient, pinnedStore, unreadStore } from "../src/journal/client";
 import { MatronApp } from "../src/journal/components";
 import type { ClientState, Conversation, JournalEvent, Session } from "../src/journal/types";
@@ -451,6 +452,41 @@ const events: JournalEvent[] = [
         sender: "agent:claude",
         type: "permission_request",
         payload: { kind: "agent_chat", request: "invite", topic: "Compare the test logs" },
+    },
+    {
+        // A voice note: plays in the inline audio player (blob stubbed below).
+        seq: 32,
+        convo_id: "c1",
+        ts: T + 1040,
+        sender: "user:operator",
+        type: "file",
+        payload: { blob_ref: "fixture-voice", filename: "voice-note.m4a", content_type: "audio/mp4", size: 48_128 },
+    },
+    {
+        // Reaped by the server's media reaper: payload tombstone.
+        seq: 33,
+        convo_id: "c1",
+        ts: T + 1060,
+        sender: "agent:claude",
+        type: "image",
+        payload: { blob_ref: "fixture-reaped-image", content_type: "image/png", expired: true },
+    },
+    {
+        seq: 34,
+        convo_id: "c1",
+        ts: T + 1080,
+        sender: "agent:claude",
+        type: "file",
+        payload: { blob_ref: null, filename: "deploy-2026-07-01.log", size: 18_432, expired: true },
+    },
+    {
+        // Synced before the reap (no tombstone): the 404 on fetch flips it to expired.
+        seq: 35,
+        convo_id: "c1",
+        ts: T + 1100,
+        sender: "agent:claude",
+        type: "image",
+        payload: { blob_ref: "fixture-gone", content_type: "image/png" },
     },
 ];
 
@@ -1005,6 +1041,34 @@ if (trackerMode === "inbox" || trackerMode === "item") {
     ],
     defaultEffort: "high",
 });
+
+// Media stubs: a short generated tone for the voice note, a 404 for the reaped blob.
+function toneWav(seconds = 2, rate = 8000): Blob {
+    const samples = seconds * rate;
+    const view = new DataView(new ArrayBuffer(44 + samples * 2));
+    const text = (offset: number, value: string): void =>
+        [...value].forEach((ch, i) => view.setUint8(offset + i, ch.charCodeAt(0)));
+    text(0, "RIFF");
+    view.setUint32(4, 36 + samples * 2, true);
+    text(8, "WAVEfmt ");
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, rate, true);
+    view.setUint32(28, rate * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    text(36, "data");
+    view.setUint32(40, samples * 2, true);
+    for (let i = 0; i < samples; i++) view.setInt16(44 + i * 2, Math.sin((i / rate) * 2 * Math.PI * 440) * 8000, true);
+    return new Blob([view.buffer], { type: "audio/wav" });
+}
+const realMediaUrl = client.mediaUrl.bind(client);
+client.mediaUrl = async (mediaId: string): Promise<string> => {
+    if (mediaId === "fixture-voice") return URL.createObjectURL(toneWav());
+    if (mediaId === "fixture-gone") throw new JournalApiError("Not found", 404);
+    return realMediaUrl(mediaId);
+};
 
 const params = new URLSearchParams(window.location.search);
 document.documentElement.setAttribute("data-theme", params.get("theme") === "dark" ? "dark" : "light");

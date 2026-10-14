@@ -105,6 +105,14 @@ export class JournalApiError extends Error {
     }
 }
 
+/**
+ * Whether a media fetch failed because the blob is gone for good: the server's media reaper
+ * deletes old blobs, and a 404 for a blob id is permanent (ids are never reused).
+ */
+export function isMediaExpiredError(error: unknown): boolean {
+    return error instanceof JournalApiError && error.status === 404;
+}
+
 function electronBridge(): JournalElectron | undefined {
     return (window as Window & { electron?: JournalElectron }).electron;
 }

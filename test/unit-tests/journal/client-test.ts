@@ -12,7 +12,7 @@ import {
     pinnedStore,
     unreadStore,
 } from "../../../src/journal/client";
-import { JournalApi, JournalApiError } from "../../../src/journal/api";
+import { isMediaExpiredError, JournalApi, JournalApiError } from "../../../src/journal/api";
 import { JournalConnection } from "../../../src/journal/connection";
 import { JournalDatabase } from "../../../src/journal/database";
 import { TextDecoder as NodeTextDecoder, TextEncoder as NodeTextEncoder } from "node:util";
@@ -3581,6 +3581,30 @@ describe("MatronJournalClient mediaUrl", () => {
         await expect(client.mediaUrl("m1")).rejects.toThrow("boom");
         await expect(client.mediaUrl("m1")).resolves.toBe("blob:ok");
         expect(media).toHaveBeenCalledTimes(2);
+    });
+
+    it("remembers a 404 as expired and never asks for that blob again", async () => {
+        const { client, media } = mediaClient();
+        media.mockRejectedValueOnce(new JournalApiError("not found", 404));
+
+        expect(client.isMediaExpired("m1")).toBe(false);
+        const first = await client.mediaUrl("m1").catch((error: unknown) => error);
+        expect(isMediaExpiredError(first)).toBe(true);
+        expect(client.isMediaExpired("m1")).toBe(true);
+
+        // Blob ids are immutable: a reaped blob never comes back, so no second request.
+        const second = await client.mediaUrl("m1").catch((error: unknown) => error);
+        expect(isMediaExpiredError(second)).toBe(true);
+        expect(media).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not treat a transient failure as expired", async () => {
+        const { client, media } = mediaClient();
+        media.mockRejectedValueOnce(new JournalApiError("busy", 503));
+
+        const error = await client.mediaUrl("m1").catch((caught: unknown) => caught);
+        expect(isMediaExpiredError(error)).toBe(false);
+        expect(client.isMediaExpired("m1")).toBe(false);
     });
 });
 

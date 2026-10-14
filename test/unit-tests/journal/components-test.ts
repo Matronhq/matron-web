@@ -9,6 +9,7 @@ import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { TextEncoder as NodeTextEncoder } from "node:util";
 
+import { JournalApiError } from "../../../src/journal/api";
 import {
     archiveStore,
     BROWSER_MEMORY_SAFETY_MAX_BYTES,
@@ -2182,6 +2183,330 @@ describe("attachment composer", () => {
         ]);
         expect(tiles[0].classList.contains("mj_File_preview")).toBe(false);
         expect(tiles[1].classList.contains("mj_File_preview")).toBe(true);
+    });
+
+    it("plays an audio attachment in an inline player instead of offering a download", async () => {
+        const client = signedInClient({
+            events: [
+                {
+                    seq: 1,
+                    convo_id: "c1",
+                    ts: 1,
+                    sender: "user:2",
+                    type: "file",
+                    payload: {
+                        blob_ref: "voice-1",
+                        filename: "voice-note.m4a",
+                        content_type: "audio/mp4",
+                        size: 48_000,
+                    },
+                },
+            ],
+        });
+        const mediaUrl = jest.spyOn(client, "mediaUrl").mockResolvedValue("blob:https://journal.example/voice-1");
+        const play = jest.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+        rendered = await renderClient(client);
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        const audio = rendered.container.querySelector<HTMLAudioElement>("[data-event-id] audio");
+        expect(audio).not.toBeNull();
+        expect(audio?.controls).toBe(true);
+        expect(audio?.getAttribute("src")).toBe("blob:https://journal.example/voice-1");
+        expect(mediaUrl).toHaveBeenCalledWith("voice-1");
+        expect(rendered.container.querySelector(".mj_Audio")?.textContent).toContain("voice-note.m4a");
+        expect(rendered.container.querySelector("[data-event-id] a.mj_File")).toBeNull();
+        // Loaded by scrolling into view, not by a click: it must not start playing on its own.
+        expect(play).not.toHaveBeenCalled();
+        play.mockRestore();
+    });
+
+    it("loads a small audio attachment only once its row scrolls into view", async () => {
+        const observers: { callback: IntersectionObserverCallback; disconnected: boolean }[] = [];
+        class FakeObserver {
+            public disconnected = false;
+            public constructor(public callback: IntersectionObserverCallback) {
+                observers.push(this);
+            }
+            public observe(): void {}
+            public disconnect(): void {
+                this.disconnected = true;
+            }
+        }
+        (window as unknown as { IntersectionObserver: unknown }).IntersectionObserver = FakeObserver;
+        try {
+            const client = signedInClient({
+                events: [
+                    {
+                        seq: 1,
+                        convo_id: "c1",
+                        ts: 1,
+                        sender: "user:2",
+                        type: "file",
+                        payload: { blob_ref: "voice-2", filename: "later.m4a", content_type: "audio/mp4", size: 1000 },
+                    },
+                ],
+            });
+            const mediaUrl = jest.spyOn(client, "mediaUrl").mockResolvedValue("blob:https://journal.example/voice-2");
+            const play = jest.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+            rendered = await renderClient(client);
+
+            // Off screen: nothing fetched yet, the row is a plain Play button.
+            expect(mediaUrl).not.toHaveBeenCalled();
+            expect(rendered.container.querySelector("[data-event-id] audio")).toBeNull();
+            const observer = observers.at(-1)!;
+            await act(async () => {
+                observer.callback(
+                    [{ isIntersecting: true } as IntersectionObserverEntry],
+                    observer as unknown as IntersectionObserver,
+                );
+                await Promise.resolve();
+                await Promise.resolve();
+            });
+            expect(mediaUrl).toHaveBeenCalledWith("voice-2");
+            expect(observer.disconnected).toBe(true);
+            expect(rendered.container.querySelector("[data-event-id] audio")).not.toBeNull();
+            expect(play).not.toHaveBeenCalled();
+            play.mockRestore();
+        } finally {
+            delete (window as unknown as { IntersectionObserver?: unknown }).IntersectionObserver;
+        }
+    });
+
+    it("keeps the audio row with a Retry when the fetch fails for a transient reason", async () => {
+        const client = signedInClient({
+            events: [
+                {
+                    seq: 1,
+                    convo_id: "c1",
+                    ts: 1,
+                    sender: "user:2",
+                    type: "file",
+                    payload: { blob_ref: "voice-3", filename: "flaky.m4a", content_type: "audio/mp4", size: 1000 },
+                },
+            ],
+        });
+        const mediaUrl = jest
+            .spyOn(client, "mediaUrl")
+            .mockRejectedValueOnce(new JournalApiError("Service unavailable", 503))
+            .mockResolvedValue("blob:https://journal.example/voice-3");
+        rendered = await renderClient(client);
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        expect(rendered.container.querySelector(".mj_Audio")?.textContent).toContain("flaky.m4a");
+        expect(rendered.container.querySelector("[data-event-id] audio")).toBeNull();
+        await act(async () => button(rendered!.container, "Retry loading flaky.m4a").click());
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        expect(mediaUrl).toHaveBeenCalledTimes(2);
+        expect(rendered.container.querySelector("[data-event-id] audio")?.getAttribute("src")).toBe(
+            "blob:https://journal.example/voice-3",
+        );
+    });
+
+    it("waits for a click before fetching a large audio attachment", async () => {
+        const client = signedInClient({
+            events: [
+                {
+                    seq: 1,
+                    convo_id: "c1",
+                    ts: 1,
+                    sender: "agent:1",
+                    type: "file",
+                    payload: {
+                        blob_ref: "talk-1",
+                        filename: "talk.mp3",
+                        content_type: "audio/mpeg",
+                        size: 200 * 1024 * 1024,
+                    },
+                },
+            ],
+        });
+        const mediaUrl = jest.spyOn(client, "mediaUrl").mockResolvedValue("blob:https://journal.example/talk-1");
+        const play = jest.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+        rendered = await renderClient(client);
+
+        expect(mediaUrl).not.toHaveBeenCalled();
+        expect(rendered.container.querySelector("[data-event-id] audio")).toBeNull();
+        await act(async () => button(rendered!.container, "Play talk.mp3").click());
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        expect(mediaUrl).toHaveBeenCalledWith("talk-1");
+        expect(rendered.container.querySelector("[data-event-id] audio")?.getAttribute("src")).toBe(
+            "blob:https://journal.example/talk-1",
+        );
+        // The click asked to play, so playback starts once the blob is in.
+        expect(play).toHaveBeenCalledTimes(1);
+        play.mockRestore();
+    });
+
+    it("shows a reaped image or file as expired without fetching it", async () => {
+        const client = signedInClient({
+            events: [
+                {
+                    seq: 1,
+                    convo_id: "c1",
+                    ts: 1,
+                    sender: "agent:1",
+                    type: "image",
+                    payload: { blob_ref: "img-gone", content_type: "image/png", expired: true },
+                },
+                {
+                    seq: 2,
+                    convo_id: "c1",
+                    ts: 2,
+                    sender: "agent:1",
+                    type: "file",
+                    payload: { blob_ref: null, filename: "report.pdf", size: 12_000, expired: true },
+                },
+            ],
+        });
+        const mediaUrl = jest.spyOn(client, "mediaUrl");
+        rendered = await renderClient(client);
+
+        const image = rendered.container.querySelector('[data-event-id="1"] .mj_MediaExpired');
+        expect(image?.textContent).toContain("Image expired");
+        const chip = rendered.container.querySelector('[data-event-id="2"] .mj_File_expired');
+        expect(chip?.textContent).toContain("report.pdf");
+        expect(chip?.textContent).toContain("Expired");
+        expect(chip?.tagName).not.toBe("BUTTON");
+        expect(chip?.getAttribute("aria-label")).toBe("File attachment: report.pdf, expired");
+        // The size gives way to the expired label, as on the native apps.
+        expect(rendered.container.querySelector('[data-event-id="2"] .mj_FileSize')).toBeNull();
+        expect(mediaUrl).not.toHaveBeenCalled();
+    });
+
+    it("names the expired chip and the inline audio player from the `name` key", async () => {
+        const client = signedInClient({
+            events: [
+                {
+                    seq: 1,
+                    convo_id: "c1",
+                    ts: 1,
+                    sender: "agent:1",
+                    type: "file",
+                    payload: { blob_ref: null, name: "notes.txt", size: 12_000, expired: true },
+                },
+                {
+                    seq: 2,
+                    convo_id: "c1",
+                    ts: 2,
+                    sender: "user:2",
+                    type: "file",
+                    payload: { blob_ref: "voice-name", name: "memo.m4a", content_type: "audio/mp4", size: 1000 },
+                },
+            ],
+        });
+        jest.spyOn(client, "mediaUrl").mockResolvedValue("blob:https://journal.example/voice-name");
+        rendered = await renderClient(client);
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        const chip = rendered.container.querySelector('[data-event-id="1"] .mj_File_expired');
+        expect(chip?.textContent).toContain("notes.txt");
+        expect(chip?.getAttribute("aria-label")).toBe("File attachment: notes.txt, expired");
+        expect(rendered.container.querySelector('[data-event-id="2"] .mj_Audio')?.textContent).toContain("memo.m4a");
+    });
+
+    it("flips an image or file to expired when the server answers 404", async () => {
+        const client = signedInClient({
+            events: [
+                {
+                    seq: 1,
+                    convo_id: "c1",
+                    ts: 1,
+                    sender: "agent:1",
+                    type: "image",
+                    payload: { blob_ref: "img-404", content_type: "image/png" },
+                },
+                {
+                    seq: 2,
+                    convo_id: "c1",
+                    ts: 2,
+                    sender: "agent:1",
+                    type: "file",
+                    payload: { blob_ref: "bin-404", filename: "dump.bin", size: 10 },
+                },
+            ],
+        });
+        jest.spyOn(client, "mediaUrl").mockRejectedValue(new JournalApiError("not found", 404));
+        rendered = await renderClient(client);
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        expect(rendered.container.querySelector('[data-event-id="1"] .mj_MediaExpired')?.textContent).toContain(
+            "Image expired",
+        );
+        expect(rendered.container.querySelector('[data-event-id="1"] .mj_Error')).toBeNull();
+
+        const download = rendered.container.querySelector<HTMLButtonElement>('[data-event-id="2"] button.mj_File');
+        await act(async () => download?.click());
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        const chip = rendered.container.querySelector('[data-event-id="2"] .mj_File_expired');
+        expect(chip?.textContent).toContain("dump.bin");
+        expect(rendered.container.querySelector('[data-event-id="2"] .mj_Error')).toBeNull();
+    });
+
+    it("shows an expired item in the media viewer as expired, not as a load error", async () => {
+        const client = signedInClient({
+            events: [
+                {
+                    seq: 1,
+                    convo_id: "c1",
+                    ts: 1,
+                    sender: "agent:1",
+                    type: "image",
+                    payload: { blob_ref: "img-ok", content_type: "image/png" },
+                },
+                {
+                    seq: 2,
+                    convo_id: "c1",
+                    ts: 2,
+                    sender: "agent:1",
+                    type: "file",
+                    payload: { blob_ref: "pdf-404", filename: "spec.pdf", content_type: "application/pdf" },
+                },
+            ],
+        });
+        jest.spyOn(client, "mediaUrl").mockImplementation(async (id: string) => {
+            if (id === "img-ok") return "blob:https://journal.example/img-ok";
+            throw new JournalApiError("not found", 404);
+        });
+        rendered = await renderClient(client);
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        const image = rendered.container.querySelector<HTMLImageElement>(".mj_ImageFrame img");
+        await act(async () => image?.click());
+        await act(async () => {
+            document.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight" }));
+        });
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        expect(rendered.container.querySelector(".mj_MediaViewer_count")?.textContent).toBe("2 / 2");
+        const expired = rendered.container.querySelector(".mj_MediaViewer_expired");
+        expect(expired?.textContent).toContain("File expired");
+        expect(expired?.textContent).toContain("spec.pdf");
+        expect(rendered.container.querySelector(".mj_MediaViewer_retry")).toBeNull();
     });
 
     it("opens the media viewer when an inline image is clicked, and closes on Escape", async () => {
