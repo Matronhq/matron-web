@@ -1908,6 +1908,134 @@ describe("composer sends", () => {
     });
 });
 
+describe("stop turn button", () => {
+    let rendered: { container: HTMLDivElement; root: Root } | undefined;
+
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    afterEach(async () => {
+        jest.useRealTimers();
+        if (rendered) {
+            await act(async () => rendered?.root.unmount());
+            rendered.container.remove();
+            rendered = undefined;
+        }
+        jest.restoreAllMocks();
+    });
+
+    const stopButton = (container: HTMLElement): HTMLButtonElement | null =>
+        container.querySelector<HTMLButtonElement>('button[aria-label="Stop the current turn"]');
+
+    function patchState(client: MatronJournalClient, update: Partial<ClientState>): void {
+        act(() => (client as unknown as { patch(update: Partial<ClientState>): void }).patch(update));
+    }
+
+    test("shows while the turn runs and sends !esc without touching the draft", async () => {
+        const client = signedInClient();
+        const send = jest.spyOn(client, "sendMessage").mockResolvedValue(true);
+        const result = await renderComposerApp(["c1"], client);
+        rendered = result;
+        await typeInComposer(result.container, "half-written");
+
+        expect(stopButton(result.container)).not.toBeNull();
+        await act(async () => stopButton(result.container)!.click());
+
+        expect(send).toHaveBeenCalledTimes(1);
+        expect(send).toHaveBeenCalledWith("!esc", "c1");
+        expect(composerValue(result.container)).toBe("half-written");
+    });
+
+    test("is absent when no turn is running", async () => {
+        const client = signedInWithRooms([{ ...CONVERSATION, session_state: "done" }]);
+        rendered = await renderClient(client);
+        expect(stopButton(rendered.container)).toBeNull();
+    });
+
+    test("a second tap while the first is still sending is ignored", async () => {
+        let resolve!: (value: boolean) => void;
+        const client = signedInClient();
+        const send = jest
+            .spyOn(client, "sendMessage")
+            .mockReturnValue(new Promise((promiseResolve) => (resolve = promiseResolve)));
+        const result = await renderComposerApp(["c1"], client);
+        rendered = result;
+        await act(async () => stopButton(result.container)!.click());
+        await act(async () => stopButton(result.container)!.click());
+        expect(send).toHaveBeenCalledTimes(1);
+        await act(async () => resolve(true));
+        await act(async () => stopButton(result.container)!.click());
+        expect(send).toHaveBeenCalledTimes(2);
+    });
+
+    test("lingers briefly after the turn ends, then hides", async () => {
+        jest.useFakeTimers();
+        const client = signedInClient();
+        const result = await renderComposerApp(["c1"], client);
+        rendered = result;
+        expect(stopButton(result.container)).not.toBeNull();
+
+        patchState(client, { conversations: [{ ...CONVERSATION, session_state: "done" }] });
+        expect(stopButton(result.container)).not.toBeNull();
+        act(() => jest.advanceTimersByTime(499));
+        expect(stopButton(result.container)).not.toBeNull();
+        act(() => jest.advanceTimersByTime(1));
+        expect(stopButton(result.container)).toBeNull();
+    });
+
+    test("hides at once on switching to a conversation with no running turn", async () => {
+        const running = { ...CONVERSATION, id: "c1", title: "c1" };
+        const idle = { ...CONVERSATION, id: "c2", title: "c2", session_state: "done" };
+        const client = signedInWithRooms([running, idle]);
+        rendered = await renderClient(client);
+        expect(stopButton(rendered.container)).not.toBeNull();
+
+        patchState(client, { selectedConversationId: "c2" });
+        expect(stopButton(rendered.container)).toBeNull();
+    });
+
+    test("a turn that just ended does not bring Stop back on returning to it", async () => {
+        jest.useFakeTimers();
+        const client = signedInWithRooms([
+            { ...CONVERSATION, id: "c1", title: "c1" },
+            { ...CONVERSATION, id: "c2", title: "c2", session_state: "done" },
+        ]);
+        rendered = await renderClient(client);
+        patchState(client, {
+            conversations: [
+                { ...CONVERSATION, id: "c1", title: "c1", session_state: "done" },
+                { ...CONVERSATION, id: "c2", title: "c2", session_state: "done" },
+            ],
+        });
+        patchState(client, { selectedConversationId: "c2" });
+        patchState(client, { selectedConversationId: "c1" });
+        expect(stopButton(rendered.container)).toBeNull();
+    });
+
+    test("a Stop still sending in one conversation does not block Stop in another", async () => {
+        const client = signedInWithRooms([
+            { ...CONVERSATION, id: "c1", title: "c1" },
+            { ...CONVERSATION, id: "c2", title: "c2" },
+        ]);
+        const send = jest.spyOn(client, "sendMessage").mockReturnValue(new Promise<boolean>(() => {}));
+        rendered = await renderClient(client);
+        await act(async () => stopButton(rendered!.container)!.click());
+        patchState(client, { selectedConversationId: "c2" });
+        await act(async () => stopButton(rendered!.container)!.click());
+        expect(send).toHaveBeenCalledTimes(2);
+        expect(send).toHaveBeenLastCalledWith("!esc", "c2");
+    });
+
+    test("is not offered in a read-only subagent transcript", async () => {
+        const result = await renderComposerAppWithChild("p1", "k1");
+        rendered = result;
+        patchState(result.client, { selectedConversationId: "k1" });
+        expect(result.container.querySelector(".mj_ReadOnlyHint")).not.toBeNull();
+        expect(stopButton(result.container)).toBeNull();
+    });
+});
+
 describe("attachment composer", () => {
     let rendered: { container: HTMLDivElement; root: Root } | undefined;
 
@@ -2158,6 +2286,39 @@ describe("attachment composer", () => {
 
         expect(rendered.container.querySelector(".mj_File")?.textContent).toContain("report.pdf");
         expect(rendered.container.querySelector(".mj_AttachmentChip")).toBeNull();
+    });
+
+    it("shows the file name from the `name` key that bridge and app senders emit", async () => {
+        const client = signedInClient({
+            events: [
+                {
+                    seq: 1,
+                    convo_id: "c1",
+                    ts: 1,
+                    sender: "agent:1",
+                    type: "file",
+                    payload: { blob_ref: "bin-n", name: "build.log", content_type: "application/octet-stream" },
+                },
+                {
+                    seq: 2,
+                    convo_id: "c1",
+                    ts: 2,
+                    sender: "agent:1",
+                    type: "file",
+                    // No content type: the viewer kind must come from the `name` extension.
+                    payload: { blob_ref: "pdf-n", name: "runbook.pdf" },
+                },
+            ],
+        });
+        rendered = await renderClient(client);
+
+        const tiles = [...rendered.container.querySelectorAll("[data-event-id] .mj_File")];
+        expect(tiles.map((tile) => tile.textContent)).toEqual([
+            expect.stringContaining("build.log"),
+            expect.stringContaining("runbook.pdf"),
+        ]);
+        expect(tiles[0].classList.contains("mj_File_preview")).toBe(false);
+        expect(tiles[1].classList.contains("mj_File_preview")).toBe(true);
     });
 
     it("opens the media viewer when an inline image is clicked, and closes on Escape", async () => {
@@ -3452,5 +3613,140 @@ describe("conversation list tabs", () => {
         rendered = await renderClient(client);
         await act(async () => tabButton(rendered!.container, "favorites").click());
         expect(client.getSnapshot().selectedConversationId).toBe(CONVERSATION.id);
+    });
+});
+
+describe("Coordinator notices in the timeline", () => {
+    let rendered: { container: HTMLDivElement; root: Root } | undefined;
+
+    const journalEvent = (seq: number, type: string, payload: JournalEvent["payload"]): JournalEvent => ({
+        seq,
+        convo_id: "c1",
+        ts: seq,
+        sender: "journal",
+        type,
+        payload,
+    });
+
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    afterEach(async () => {
+        if (rendered) {
+            await act(async () => rendered?.root.unmount());
+            rendered.container.remove();
+            rendered = undefined;
+        }
+    });
+
+    it("draws coordinator, routine and consent_decision events as one-line notices, never raw JSON", async () => {
+        const client = signedInClient({
+            events: [
+                journalEvent(1, "coordinator", { role: "assigned" }),
+                journalEvent(2, "routine", {
+                    routine_id: "r1",
+                    name: "daily-sweep",
+                    action: "fired",
+                    outcome: "applied now",
+                }),
+                journalEvent(3, "consent_decision", {
+                    kind: "spawn",
+                    decision: "approve",
+                    request_id: "req-1",
+                    reason: "Follows the box rules",
+                }),
+            ],
+        });
+        rendered = await renderClient(client);
+
+        expect(
+            [...rendered.container.querySelectorAll(".mj_CoordinatorNotice_text")].map((node) => node.textContent),
+        ).toEqual([
+            "This chat is now the Coordinator",
+            "Routine fired · daily-sweep",
+            "Coordinator approved the spawn request — Follows the box rules",
+        ]);
+        expect(rendered.container.querySelector(".mj_Unknown")).toBeNull();
+    });
+
+    it("drops summary events and unparseable Coordinator events from the timeline", async () => {
+        const client = signedInClient({
+            events: [
+                journalEvent(1, "summary", { text: "A rolling summary" }),
+                journalEvent(2, "coordinator", { role: "promoted" }),
+                journalEvent(3, "routine", { action: "fired" }),
+                journalEvent(4, "consent_decision", { kind: "chat" }),
+            ],
+        });
+        rendered = await renderClient(client);
+
+        expect(rendered.container.querySelector(".mj_Unknown")).toBeNull();
+        expect(rendered.container.querySelectorAll("li.mx_EventTile")).toHaveLength(0);
+    });
+});
+
+describe("tracker item cards in the timeline", () => {
+    let rendered: { container: HTMLDivElement; root: Root } | undefined;
+
+    const marker = (seq: number, payload: JournalEvent["payload"]): JournalEvent => ({
+        seq,
+        convo_id: "c1",
+        ts: seq,
+        sender: "journal",
+        type: "item",
+        payload: { item_id: "it_a", num: 7, kind: "question", title: "Pick a database", by: "agent", ...payload },
+    });
+
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    afterEach(async () => {
+        if (rendered) {
+            await act(async () => rendered?.root.unmount());
+            rendered.container.remove();
+            rendered = undefined;
+        }
+    });
+
+    const rowTexts = (container: HTMLElement): string[] =>
+        [...container.querySelectorAll("li.mx_EventTile")].map(
+            (row) =>
+                row.querySelector(".mj_TrackerStatusPill")?.textContent ??
+                row.querySelector(".mj_TrackerInlineNote_line")?.textContent ??
+                row.querySelector(".mj_Markdown")?.textContent ??
+                "",
+        );
+
+    it("shows a decided question once, at its closing marker, with no stale Needs you card", async () => {
+        const client = signedInClient({
+            events: [
+                marker(1, { action: "created", awaiting: "user" }),
+                { seq: 2, convo_id: "c1", ts: 2, sender: "agent:claude", type: "text", payload: { body: "Waiting" } },
+                marker(3, { action: "closed", resolution: "answered", by: "user" }),
+            ],
+        });
+        rendered = await renderClient(client);
+
+        expect(rendered.container.querySelectorAll(".mj_TrackerCard")).toHaveLength(1);
+        expect(rendered.container.querySelector(".mj_TrackerCard_needsyou")).toBeNull();
+        expect(rowTexts(rendered.container)).toEqual(["Waiting", "Closed · Answered"]);
+    });
+
+    it("draws a reopened item's card open again, keeping the reopen note", async () => {
+        const client = signedInClient({
+            events: [
+                marker(1, { action: "created", awaiting: "user" }),
+                marker(2, { action: "closed", resolution: "answered", comment: { id: "c", body: "Postgres" } }),
+                marker(3, { action: "reopened", awaiting: "user", by: "user" }),
+            ],
+        });
+        rendered = await renderClient(client);
+
+        expect(rendered.container.querySelectorAll(".mj_TrackerCard")).toHaveLength(1);
+        expect(rendered.container.querySelector(".mj_TrackerCard_needsyou")).not.toBeNull();
+        expect(rendered.container.querySelector(".mj_TrackerCard_comment")).toBeNull();
+        expect(rowTexts(rendered.container)).toEqual(["Needs you", "You reopened #7 · Pick a database"]);
     });
 });
