@@ -4908,3 +4908,40 @@ describe("New marker on sessions that arrive unasked", () => {
         expect(client.getSnapshot().newConversationIds).toEqual(new Set(["c3"]));
     });
 });
+
+describe("MatronJournalClient read state", () => {
+    it("sends seen reports over the journal socket and drops them on logout", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const send = jest.fn().mockReturnValue(true);
+        state.state = signedInState(client);
+        state.connection = { send, stop: jest.fn() };
+        const reset = jest.spyOn(client.seen, "reset");
+
+        const hasFocus = jest.spyOn(document, "hasFocus").mockReturnValue(false);
+
+        // An unfocused page shows nothing; focusing it reports what is open.
+        client.seen.setItemOnScreen("it_1", 42);
+        expect(send).not.toHaveBeenCalled();
+        hasFocus.mockReturnValue(true);
+        window.dispatchEvent(new Event("focus"));
+        expect(send).toHaveBeenCalledWith({ op: "item_seen", item_id: "it_1", through_comment_at: 42 });
+
+        await client.logout();
+        expect(reset).toHaveBeenCalled();
+        hasFocus.mockRestore();
+    });
+
+    it("shows no error banner when the journal refuses a read-state report", async () => {
+        const client = new MatronJournalClient();
+        const handle = (frame: unknown): Promise<void> =>
+            (client as unknown as { handleFrame(frame: unknown): Promise<void> }).handleFrame(frame);
+
+        await handle({ kind: "control", op: "error", code: "forbidden", ref: "seen" });
+        await handle({ kind: "control", op: "error", code: "forbidden", ref: "item_seen" });
+        expect(client.getSnapshot().connectionError).toBeUndefined();
+
+        await handle({ kind: "control", op: "error", code: "forbidden", ref: "read_marker" });
+        expect(client.getSnapshot().connectionError).toBe("Journal operation failed: forbidden");
+    });
+});

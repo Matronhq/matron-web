@@ -20,6 +20,7 @@ import { JournalConnection } from "./connection";
 import { effectiveUnread, makeIdSetStore, type IdSetStore } from "./conversation-flags";
 import { parseCoordinatorConsent, resetSessionStops, spawnConsentRowsIn } from "./coordinator-consent";
 import { JournalDatabase } from "./database";
+import { newestOwnMessageSeq } from "./jump-to-message";
 import { parseOwnTrackerUrl, parseTrackerLinkPath, type TrackerLinkPath } from "./link-path";
 import {
     DEFAULT_PIN_LIMIT,
@@ -35,6 +36,7 @@ import {
     writeCachedPins,
 } from "./pins";
 import { isAgentRoomTitle, isStartCommand, NEW_CONVERSATION_STALE_MS, startedSessionIntents } from "./needs-you";
+import { SeenTracker } from "./seen-tracker";
 import { mergeSessionStatus } from "./status";
 import { appendFeedPage, kindsWithMore } from "./tracker/projectActivity";
 import { doneSortKey, inDone } from "./tracker/format";
@@ -97,6 +99,16 @@ const SESSION_KEY = "matron_journal_session_v1";
 const LAST_SERVER_KEY = "matron_journal_last_server";
 const SELECTED_CONVERSATION_KEY_PREFIX = "matron_journal_selected_conversation_v1";
 const HISTORY_PAGE_SIZE = 80;
+// A jump to a message pages history back at most this many pages (80 rows each) before landing on
+// the oldest row loaded: a hit thousands of messages deep must not fetch the whole conversation
+// while the transcript sits still.
+const FOCUS_MAX_PAGES = 20;
+// While another history page is in flight a jump waits for it, polling this often, this many times.
+const FOCUS_WAIT_MS = 50;
+const FOCUS_MAX_WAITS = 300;
+// Find in chat steps through a conversation's whole match list, so it asks for more than the
+// sidebar's search; the journal caps a single-conversation search at this.
+const CHAT_SEARCH_LIMIT = 500;
 // Message-content search hits per query (server caps at 50; 20 keeps the Messages section tight).
 const MESSAGE_SEARCH_LIMIT = 20;
 // Max query length the server accepts (over this it returns 400); guard client-side so an
@@ -166,6 +178,27 @@ function sanitizeSearchHits(response: { hits?: unknown } | null | undefined): Se
     }
     return hits;
 }
+/**
+ * The matching seqs of a find-in-chat response, newest first and without repeats. Only `seq` (and
+ * `convo_id`, to drop anything outside the conversation) is read, so both the journal's
+ * newest-first hits and an older journal's ranked ones parse.
+ */
+export function conversationMatchSeqs(
+    response: { hits?: unknown } | null | undefined,
+    conversationId: string,
+): number[] {
+    const raw = response?.hits;
+    if (!Array.isArray(raw)) return [];
+    const seqs = new Set<number>();
+    for (const item of raw) {
+        if (!item || typeof item !== "object") continue;
+        const hit = item as Record<string, unknown>;
+        if (hit.convo_id !== undefined && hit.convo_id !== conversationId) continue;
+        if (typeof hit.seq === "number" && Number.isSafeInteger(hit.seq) && hit.seq >= 0) seqs.add(hit.seq);
+    }
+    return [...seqs].sort((a, b) => b - a);
+}
+
 const RPC_CREATE_WATCHDOG_MS = 10_000;
 const BACKFILL_SNAPSHOT_TIMEOUT_MS = 10_000;
 const TOOL_STREAM_DISPLAY_BYTES = 65_536;
@@ -225,6 +258,8 @@ type PersistPendingAttachmentOutcome =
 
 /** What one ask of a possibly sleeping box found: it answered, it is still booting, or the ask
  *  never reached the journal. */
+/** Which feature started a jump to a message (see focusMessage). */
+export type FocusOwner = "link" | "search" | "lastOwnMessage";
 export type AgentProbe = "up" | "booting" | "failed";
 
 export type StartOutcome =
@@ -427,6 +462,9 @@ export class MatronJournalClient {
     private searchAbort?: AbortController;
     private database?: JournalDatabase;
     private connection?: JournalConnection;
+    // Read state: which timeline rows and tracker items were actually on screen, reported as
+    // `seen` / `item_seen` over the socket. Separate from read_marker and the unread badge.
+    public readonly seen = new SeenTracker({ send: (op) => this.connection?.send(op) ?? false });
     private readonly history = new Map<string, ConversationHistoryState>();
     // The latest-history-page fetch a spawn consent item made per conversation, keyed
     // `${sessionGen}:${convoId}`: in flight (later reads wait on it) or done (a card that is not in
@@ -546,6 +584,14 @@ export class MatronJournalClient {
     private ackTimer?: number;
     private pendingAck = 0;
     private historyError?: string;
+    // Bumped by every jump to a message; a paging jump whose token is stale has been superseded.
+    private focusToken = 0;
+    // Which feature started the jump now running: closing find-in-chat cancels only its own jump,
+    // never a "jump to my last message" that happens to be in flight while the bar is up.
+    private focusOwner?: FocusOwner;
+    // Find in chat: only the newest request applies, and closing the bar supersedes one in flight.
+    private chatSearchSeq = 0;
+    private chatSearchAbort?: AbortController;
     private startSessionRequest?: Promise<StartOutcome>;
     // The session starts this device asked for and has not seen born yet: a conversation that
     // answers one is the user's own, and never gets the "New" marker.
@@ -680,6 +726,7 @@ export class MatronJournalClient {
         this.dismissedAttachments.clear();
         this.pendingFiles.clear();
         this.transientAttachmentErrors.clear();
+        this.seen.reset();
         this.connection?.stop();
         this.connection = undefined;
         if (this.storageListener) {
@@ -967,6 +1014,13 @@ export class MatronJournalClient {
             this.trackerMissionGen += 1;
             this.trackerProjectGen += 1;
         }
+        if (this.state.chatSearch && this.state.chatSearch.conversationId !== conversationId) {
+            // The bar closes below; a search still in flight there must not answer a bar opened on
+            // that conversation again later.
+            this.chatSearchSeq += 1;
+            this.chatSearchAbort?.abort();
+            this.chatSearchAbort = undefined;
+        }
         this.patch({
             selectedConversationId: conversationId,
             // Selecting a conversation closes the Tracker pane so the chosen room becomes visible
@@ -975,6 +1029,11 @@ export class MatronJournalClient {
             ...(this.state.trackerView ? { trackerItem: null, trackerMission: null, trackerProject: null } : {}),
             events: [],
             pendingMessages: [],
+            focusTarget: undefined,
+            // Find in chat searches one conversation; opening another closes its bar.
+            ...(this.state.chatSearch && this.state.chatSearch.conversationId !== conversationId
+                ? { chatSearch: undefined }
+                : {}),
             loadingHistory: false,
             hasOlderHistory: this.history.get(conversationId)?.hasMore ?? true,
             activity: this.activities.get(conversationId),
@@ -995,6 +1054,9 @@ export class MatronJournalClient {
     }
 
     public clearSelection(): void {
+        // Find in chat belongs to the conversation being left: a search still in flight must not
+        // reopen it, nor answer a bar opened there later.
+        this.endChatSearch();
         this.connection?.send({ op: "viewing", convo_id: null });
         if (this.state.session) storeSelectedConversation(this.state.session, undefined);
         this.patch({ selectedConversationId: undefined, events: [], pendingMessages: [] });
@@ -1286,6 +1348,221 @@ export class MatronJournalClient {
                 });
             }
         }
+    }
+
+    // ── Jump to a message ───────────────────────────────────────────────────
+
+    /**
+     * Opens `conversationId` on the row with `seq` (a search hit, a milestone's anchor) instead of
+     * at its tail: pages history back until that seq is loaded, then hands the timeline a
+     * `focusTarget` to scroll to and flash. A seq that is not rendered (a milestone's own marker, a
+     * deleted row) lands on the nearest row before it; one older than the history reached in
+     * FOCUS_MAX_PAGES pages lands on the oldest row loaded. A newer jump, or opening another
+     * conversation, supersedes one still paging. Resolves true when a target was handed over.
+     */
+    public async focusMessage(conversationId: string, seq: number, owner: FocusOwner = "link"): Promise<boolean> {
+        if (!conversationId || !Number.isSafeInteger(seq) || seq < 0) return false;
+        const token = ++this.focusToken;
+        this.focusOwner = owner;
+        if (this.state.selectedConversationId !== conversationId) {
+            await this.selectConversation(conversationId, { suppressNotFound: true });
+        } else {
+            this.closeTrackerView();
+        }
+        const loaded = (): boolean => {
+            if (this.state.events.some((event) => event.seq === seq)) return true;
+            const history = this.history.get(conversationId);
+            return Boolean(history?.initialized && history.oldestSeq !== undefined && history.oldestSeq <= seq);
+        };
+        if (!(await this.pageHistoryUntil(conversationId, token, loaded))) return false;
+        this.patch({ focusTarget: { conversationId, seq, token } });
+        return true;
+    }
+
+    /**
+     * Scrolls the open conversation to the newest message the user sent themself — what scrolling
+     * can't find once an agent has run for hours. Pages back until one is loaded (bounded like
+     * focusMessage). Resolves false when there is none to land on; the transcript stays put.
+     */
+    public async jumpToLastOwnMessage(): Promise<boolean> {
+        const conversationId = this.state.selectedConversationId;
+        if (!conversationId || this.state.trackerView) return false;
+        const token = ++this.focusToken;
+        this.focusOwner = "lastOwnMessage";
+        const found = (): boolean => newestOwnMessageSeq(this.state.events) !== undefined;
+        if (!(await this.pageHistoryUntil(conversationId, token, found))) return false;
+        const seq = newestOwnMessageSeq(this.state.events);
+        if (seq === undefined) return false;
+        this.patch({ focusTarget: { conversationId, seq, token } });
+        return true;
+    }
+
+    /** The timeline landed on (or gave up on) the target handed over with `token`. */
+    public clearFocusTarget(token: number): void {
+        if (this.state.focusTarget?.token === token) this.patch({ focusTarget: undefined });
+    }
+
+    // ── Find in chat ────────────────────────────────────────────────────────
+
+    /**
+     * Ctrl/⌘F: opens the search bar over the open conversation with nothing searched yet, or —
+     * with the bar already up — keeps its search and asks for the field to take focus again.
+     */
+    public openChatSearch(): void {
+        const conversationId = this.state.selectedConversationId;
+        if (!conversationId || this.state.trackerView) return;
+        const current = this.state.chatSearch;
+        this.patch({
+            chatSearch:
+                current?.conversationId === conversationId
+                    ? { ...current, focusTick: current.focusTick + 1 }
+                    : {
+                          conversationId,
+                          query: "",
+                          matchSeqs: [],
+                          index: 0,
+                          loading: false,
+                          failed: false,
+                          focusTick: 1,
+                      },
+        });
+    }
+
+    /**
+     * Searches one conversation (the open one unless `conversationId` says otherwise, which it then
+     * opens) and jumps to the newest match, paging history back as far as it lies. The journal
+     * searches the whole conversation, not just the loaded rows. `startingAt` is the message a
+     * sidebar search result showed: the jump lands there instead, and it counts among the matches
+     * even when the narrower in-chat matching would not have found it. Only leading whitespace is
+     * trimmed: a trailing space tells the journal the last word is finished.
+     */
+    public async beginChatSearch(
+        rawQuery: string,
+        opts: { conversationId?: string; startingAt?: number } = {},
+    ): Promise<void> {
+        const query = rawQuery.replace(/^\s+/, "");
+        const conversationId = opts.conversationId ?? this.state.selectedConversationId;
+        if (!query.trim() || query.length > MESSAGE_SEARCH_MAX_QUERY_LEN || !conversationId || !this.api) return;
+        if (this.state.selectedConversationId !== conversationId) {
+            await this.selectConversation(conversationId, { suppressNotFound: true });
+            if (this.state.selectedConversationId !== conversationId) return;
+        } else {
+            this.closeTrackerView();
+        }
+        this.chatSearchAbort?.abort();
+        // The previous query's jump, if still paging, must not land while this one searches.
+        this.cancelChatSearchFocus();
+        const seq = ++this.chatSearchSeq;
+        const controller = new AbortController();
+        this.chatSearchAbort = controller;
+        const focusTick =
+            this.state.chatSearch?.conversationId === conversationId ? this.state.chatSearch.focusTick : 0;
+        const startingAt = opts.startingAt;
+        this.patch({
+            chatSearch: { conversationId, query, matchSeqs: [], index: 0, loading: true, failed: false, focusTick },
+        });
+        const call = this.api.searchConversation(conversationId, query, CHAT_SEARCH_LIMIT, controller.signal);
+        void call.catch(() => undefined);
+        let timer: ReturnType<typeof setTimeout>;
+        const timeout = new Promise<never>((_resolve, reject) => {
+            timer = setTimeout(() => {
+                reject(new Error("timeout"));
+                controller.abort();
+            }, MESSAGE_SEARCH_TIMEOUT_MS);
+        });
+        const stale = (): boolean =>
+            seq !== this.chatSearchSeq ||
+            this.state.chatSearch?.conversationId !== conversationId ||
+            this.state.selectedConversationId !== conversationId;
+        let matchSeqs: number[];
+        let failed = false;
+        try {
+            matchSeqs = conversationMatchSeqs(await Promise.race([call, timeout]), conversationId);
+        } catch {
+            matchSeqs = [];
+            failed = true;
+        } finally {
+            clearTimeout(timer!);
+            if (this.chatSearchAbort === controller) this.chatSearchAbort = undefined;
+        }
+        if (stale()) return;
+        if (startingAt !== undefined && Number.isSafeInteger(startingAt) && !matchSeqs.includes(startingAt)) {
+            matchSeqs = [...matchSeqs, startingAt].sort((a, b) => b - a);
+        }
+        const index = startingAt === undefined ? 0 : Math.max(0, matchSeqs.indexOf(startingAt));
+        this.patch({ chatSearch: { conversationId, query, matchSeqs, index, loading: false, failed, focusTick } });
+        if (matchSeqs.length === 0) {
+            // "No matches": an earlier query's deep jump still paging must not land afterwards.
+            this.cancelChatSearchFocus();
+            return;
+        }
+        // The tracker opened over the conversation meanwhile: landing would close it again.
+        if (this.state.trackerView) return;
+        await this.focusMessage(conversationId, matchSeqs[index], "search");
+    }
+
+    /** Steps to the adjacent match: `older` walks up into history. Stops at either end. */
+    public async stepChatSearch(older: boolean): Promise<void> {
+        const search = this.state.chatSearch;
+        if (!search || search.loading) return;
+        const next = search.index + (older ? 1 : -1);
+        if (next < 0 || next >= search.matchSeqs.length) return;
+        this.patch({ chatSearch: { ...search, index: next } });
+        await this.focusMessage(search.conversationId, search.matchSeqs[next], "search");
+    }
+
+    /**
+     * Closes the bar. The transcript stays where it is, so a search jump still paging is cancelled
+     * too — left running, it would scroll the transcript after the user closed search.
+     */
+    public endChatSearch(): void {
+        this.chatSearchSeq += 1;
+        this.chatSearchAbort?.abort();
+        this.chatSearchAbort = undefined;
+        if (this.state.chatSearch) this.patch({ chatSearch: undefined });
+        this.cancelChatSearchFocus();
+    }
+
+    /** A sidebar search result: open its conversation on the message, with the find bar up. */
+    public openSearchHit(hit: SearchHit): void {
+        const query = this.state.messageSearch?.query;
+        if (query) void this.beginChatSearch(query, { conversationId: hit.convo_id, startingAt: hit.seq });
+        else void this.focusMessage(hit.convo_id, hit.seq);
+    }
+
+    private cancelChatSearchFocus(): void {
+        if (this.focusOwner !== "search") return;
+        const token = this.focusToken;
+        this.focusToken += 1;
+        this.focusOwner = undefined;
+        // A target already handed over but not yet landed goes too.
+        if (this.state.focusTarget?.token === token) this.patch({ focusTarget: undefined });
+    }
+
+    /**
+     * Loads older pages of the open conversation until `done()` holds or history runs out, at most
+     * FOCUS_MAX_PAGES pages. A page already in flight (the "Load earlier" button) is waited out
+     * rather than raced; a failed page stops the walk. Resolves false when the jump was superseded
+     * (a newer jump, or another conversation opened) — the caller then lands nothing.
+     */
+    private async pageHistoryUntil(conversationId: string, token: number, done: () => boolean): Promise<boolean> {
+        const current = (): boolean =>
+            this.focusToken === token && this.state.selectedConversationId === conversationId;
+        let pages = 0;
+        let waits = 0;
+        while (current() && !done()) {
+            if (this.history.get(conversationId)?.hasMore === false) break;
+            if (this.state.loadingHistory) {
+                if (++waits > FOCUS_MAX_WAITS) break;
+                await new Promise((resolve) => setTimeout(resolve, FOCUS_WAIT_MS));
+                continue;
+            }
+            if (pages >= FOCUS_MAX_PAGES) break;
+            pages += 1;
+            await this.loadOlderHistory({ suppressNotFound: true });
+            if (this.historyError) break;
+        }
+        return current();
     }
 
     public async sendMessage(bodyInput: string, targetConvoId?: string): Promise<boolean> {
@@ -1986,7 +2263,11 @@ export class MatronJournalClient {
             selectedProjectId: opts.projectId === null ? undefined : (opts.projectId ?? prev?.selectedProjectId),
             ...(briefingOpen ? { briefingOpen } : {}),
         };
-        this.patch({ trackerView: next });
+        // The tracker covers the transcript: a jump still paging history is dropped, and a target
+        // not yet landed is withdrawn, or returning to the conversation would flash a jump the
+        // user has since left.
+        this.focusToken += 1;
+        this.patch({ trackerView: next, ...(this.state.focusTarget ? { focusTarget: undefined } : {}) });
     }
 
     // Memories view entry points: a name opens that memory's editor, "" opens the new-memory form,
@@ -2159,12 +2440,13 @@ export class MatronJournalClient {
     }
 
     /**
-     * "Open in chat": the Coordinator conversation the briefing was posted to. The client has no
-     * jump-to-seq (search hits open their conversation the same way), so this opens the
-     * conversation; the briefing is its latest message unless the Coordinator has said more since.
+     * "Open in chat": the Coordinator conversation the briefing was posted to, landed on the
+     * briefing's own message. Without a seq (an older journal) it opens at the tail, where the
+     * briefing is unless the Coordinator has said more since.
      */
-    public openBriefingInChat(convoId: string): void {
-        void this.selectConversation(convoId, { suppressNotFound: true });
+    public openBriefingInChat(convoId: string, seq?: number): void {
+        if (seq !== undefined && Number.isSafeInteger(seq)) void this.focusMessage(convoId, seq);
+        else void this.selectConversation(convoId, { suppressNotFound: true });
     }
 
     // GET /briefings/latest. A 404 means the journal predates briefings: the card stays hidden
@@ -2213,6 +2495,23 @@ export class MatronJournalClient {
                 this.patch({ userSettings: previous, userSettingsError: errorMessage(error) });
             }
             return false;
+        }
+    }
+
+    /**
+     * GET /coordinator: the user's Coordinator conversation, asked fresh each time. The one lookup
+     * for anything that opens the Coordinator (⌘1 today); reuse it rather than reading the answer
+     * again. Null for none, a signed-out client or a failed read.
+     */
+    public async coordinatorConversationId(): Promise<string | null> {
+        const api = this.api;
+        if (!api) return null;
+        try {
+            const raw = await api.coordinator();
+            const id = raw && typeof raw === "object" ? (raw as { convo_id?: unknown }).convo_id : undefined;
+            return this.api === api && typeof id === "string" && id ? id : null;
+        } catch {
+            return null;
         }
     }
 
@@ -4065,6 +4364,10 @@ export class MatronJournalClient {
             return;
         }
         if (frame.kind === "control" && frame.op === "error") {
+            // Read-state reports are fire-and-forget with no reply (a conversation or item the
+            // journal refuses, e.g. one removed meanwhile). Advisory, as on the other apps: never
+            // an error banner for something the user didn't do.
+            if (frame.ref === "seen" || frame.ref === "item_seen") return;
             this.patch({ connectionError: frame.detail || `Journal operation failed: ${frame.code ?? "unknown"}` });
         }
     }

@@ -252,6 +252,22 @@ export interface MessageSearchState {
     failed: boolean;
 }
 
+/**
+ * Find in chat: one search within the open conversation. `matchSeqs` holds the matching messages'
+ * seqs newest first and `index` the one in view (0 = newest). An empty `query` is a bar opened with
+ * nothing searched yet.
+ */
+export interface ChatSearchState {
+    conversationId: string;
+    query: string;
+    matchSeqs: number[];
+    index: number;
+    loading: boolean;
+    failed: boolean;
+    /** Bumped each time the bar should take keyboard focus (Ctrl/⌘F while it is already open). */
+    focusTick: number;
+}
+
 export interface JournalControlFrame {
     kind: "control";
     op: string;
@@ -504,6 +520,12 @@ export interface InboxDone {
     error?: string;
 }
 
+export interface FocusTarget {
+    conversationId: string;
+    seq: number;
+    token: number;
+}
+
 export interface ClientState {
     phase: "loading" | "signed-out" | "signed-in";
     config: MatronConfig;
@@ -552,9 +574,15 @@ export interface ClientState {
     dragActive: boolean;
     stagedUploads?: StagedUploads;
     sendTick: number;
+    // A row the open timeline should scroll to and flash once it renders (a search hit, a
+    // milestone, "jump to my last message"). Set by client.focusMessage after the history holding
+    // `seq` has loaded; the timeline clears it by `token` once it has landed.
+    focusTarget?: FocusTarget;
     // Message-content search hits (Apple-parity "Messages" section). Undefined until the first
     // search of a session; cleared back to undefined when the search box empties.
     messageSearch?: MessageSearchState;
+    // Find in chat: the search bar over the open conversation, while it is up.
+    chatSearch?: ChatSearchState;
     // Tracker pane (Missions / Milestones / Decisions-Inbox). `trackerView` is the main-region
     // discriminant (checked ahead of selectedConversationId — one surface at a time). The rest are
     // store-resident so sidebar badges stay live off WS invalidation:

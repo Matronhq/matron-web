@@ -334,6 +334,15 @@ export function ChevronUpIcon(props: IconProps): React.ReactElement {
     );
 }
 
+// "Jump to my last message": an arrow rising to a bar.
+export function ArrowUpToLineIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            <path d="M5 4h14M12 20V9M7 13l5-5 5 5" />
+        </Icon>
+    );
+}
+
 export function CloseIcon(props: IconProps): React.ReactElement {
     return (
         <Icon {...props}>
