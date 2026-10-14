@@ -269,6 +269,20 @@ const events: JournalEvent[] = [
     },
 ];
 
+// ?toolstream adds a running tool_stream tile with more output than its collapsed pane shows.
+const toolStreams: ClientState["toolStreams"] = {};
+if (new URLSearchParams(window.location.search).has("toolstream")) {
+    toolStreams["stream-1"] = {
+        messageRef: "stream-1",
+        command: "pnpm lint",
+        content: Array.from({ length: 40 }, (_, i) => `\x1b[90m[${i + 1}/40]\x1b[0m checked src/file-${i + 1}.ts`).join(
+            "\n",
+        ),
+        offset: 0,
+        headTruncated: false,
+    };
+}
+
 const client = new MatronJournalClient();
 const state: ClientState = {
     ...client.getSnapshot(),
@@ -282,6 +296,7 @@ const state: ClientState = {
     ],
     selectedConversationId: "c1",
     events,
+    toolStreams,
     pendingMessages: [],
     connection: "online",
     sessionStatus: {

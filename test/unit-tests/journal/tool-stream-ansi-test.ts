@@ -10,7 +10,7 @@ import { resolve } from "node:path";
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
-import { ToolStream } from "../../../src/journal/components";
+import { collapsedToolStreamSlice, TOOL_STREAM_COLLAPSED_CAP_CHARS, ToolStream } from "../../../src/journal/components";
 import type { ToolStreamState } from "../../../src/journal/types";
 
 jest.mock("../../../res/matron-logo-simple.svg", () => "matron-logo.svg");
@@ -88,5 +88,51 @@ describe("ToolStream ANSI rendering", () => {
         expect(sharedRule).not.toBeNull();
         expect(terminalRule).not.toBeNull();
         expect(terminalRule!.index).toBeGreaterThan(sharedRule!.index!);
+    });
+});
+
+describe("ToolStream collapse", () => {
+    it("starts collapsed to the tail and expands to the full output", async () => {
+        const long = `${"early line\n".repeat(600)}last line`;
+        const { container } = await mountStream(makeStream(long));
+        const pre = container.querySelector("pre")!;
+        const toggle = container.querySelector<HTMLButtonElement>("button[aria-label='Expand output']")!;
+        expect(pre.classList.contains("mj_LiveTool_collapsed")).toBe(true);
+        expect(toggle.getAttribute("aria-expanded")).toBe("false");
+        expect(pre.textContent!.startsWith("… earlier output omitted …\nearly line\n")).toBe(true);
+        expect(pre.textContent!.length).toBeLessThan(long.length);
+        expect(pre.textContent!.endsWith("last line")).toBe(true);
+
+        await act(async () => toggle.click());
+        expect(pre.classList.contains("mj_LiveTool_expanded")).toBe(true);
+        expect(toggle.getAttribute("aria-label")).toBe("Collapse output");
+        expect(pre.textContent).toBe(long);
+    });
+
+    it("keeps short output whole when collapsed", async () => {
+        const { container } = await mountStream(makeStream("one\ntwo"));
+        expect(container.querySelector("pre")?.textContent).toBe("one\ntwo");
+    });
+});
+
+describe("collapsedToolStreamSlice", () => {
+    it("cuts long output at a line boundary within the cap", () => {
+        const sliced = collapsedToolStreamSlice(`${"line 1234\n".repeat(1000)}tail line`);
+        expect(sliced.cut).toBe(true);
+        expect(sliced.text.length).toBeLessThanOrEqual(TOOL_STREAM_COLLAPSED_CAP_CHARS);
+        expect(sliced.text.startsWith("line 1234\n")).toBe(true);
+        expect(sliced.text.endsWith("tail line")).toBe(true);
+    });
+
+    it("keeps one giant line whole rather than trimming through its only newline", () => {
+        const sliced = collapsedToolStreamSlice(`${"x".repeat(TOOL_STREAM_COLLAPSED_CAP_CHARS)}\ntail`);
+        expect(sliced.text.length).toBe(TOOL_STREAM_COLLAPSED_CAP_CHARS);
+    });
+
+    it("drops a leading SGR fragment left by the cut", () => {
+        // The cut lands just after ESC, leaving "[32m" at the start of the tail.
+        const sliced = collapsedToolStreamSlice(`a\x1b[32m${"z".repeat(TOOL_STREAM_COLLAPSED_CAP_CHARS - 4)}`);
+        expect(sliced.cut).toBe(true);
+        expect(sliced.text).toBe("z".repeat(TOOL_STREAM_COLLAPSED_CAP_CHARS - 4));
     });
 });
