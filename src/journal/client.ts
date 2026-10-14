@@ -45,6 +45,7 @@ import {
     type BriefingState,
     type ClientState,
     type Conversation,
+    type ConversationMissionLink,
     type BoxDefaults,
     type BoxDefaultsPatch,
     type BoxDefaultsState,
@@ -461,6 +462,16 @@ export class MatronJournalClient {
     private inboxPendingWrites = new Map<string, TrackerItem>();
     private trackerMissionsGen = 0;
     private trackerProjectsGen = 0;
+    private conversationMissionsGen = 0;
+    // The last missions fetched per conversation, so returning to one shows its chip at once
+    // (and the header does not jump) while the fresh fetch runs. Cleared with the session.
+    private readonly conversationMissionsCache = new Map<string, ConversationMissionLink[]>();
+    // The generation of the newest load per conversation: only that load may write its cache entry,
+    // so a slower, older request cannot put back what a newer one replaced.
+    private readonly conversationMissionsCacheGen = new Map<string, number>();
+    // Pending marker-driven refetch of the chip's missions: a burst of `mission` markers (a
+    // reconnect replay; `left` then `current_changed`) costs one GET.
+    private conversationMissionsRefetchTimer?: number;
     private trackerProjectGen = 0;
     // Pending marker-driven inbox refetch. A burst of `item` markers (a reconnect replay, a batch of
     // agent writes) coalesces into ONE inbox walk instead of one per marker.
@@ -2752,6 +2763,63 @@ export class MatronJournalClient {
     }
 
     /**
+     * Fetch the missions a conversation is or was on, for the chat header's mission chip. The
+     * result is kept for that conversation only; the header never shows it against another. A
+     * journal without the route (404) reads as "no missions", which hides the chip. Any other
+     * failure keeps what was shown.
+     */
+    public async loadConversationMissions(convoId: string): Promise<void> {
+        const api = this.api;
+        if (!api) return;
+        const gen = ++this.conversationMissionsGen;
+        this.conversationMissionsCacheGen.set(convoId, gen);
+        const cached = this.conversationMissionsCache.get(convoId);
+        if (cached && this.state.conversationMissions?.convoId !== convoId) {
+            this.patch({ conversationMissions: { convoId, links: cached } });
+        }
+        try {
+            const links = await api.conversationMissions(convoId);
+            if (this.api !== api) return;
+            if (this.conversationMissionsCacheGen.get(convoId) === gen)
+                this.conversationMissionsCache.set(convoId, links);
+            if (this.conversationMissionsGen !== gen) return;
+            this.patch({ conversationMissions: { convoId, links } });
+        } catch (error) {
+            if (this.api !== api) return;
+            const missing = error instanceof JournalApiError && error.status === 404;
+            if (missing && this.conversationMissionsCacheGen.get(convoId) === gen)
+                this.conversationMissionsCache.set(convoId, []);
+            if (this.conversationMissionsGen !== gen) return;
+            if (missing) this.patch({ conversationMissions: { convoId, links: [] } });
+        }
+    }
+
+    // Coalesce marker-driven refetches of the chip's missions (see conversationMissionsRefetchTimer).
+    // The timer reads the selection when it fires, so a switch in the meantime fetches nothing extra.
+    private scheduleConversationMissionsRefetch(): void {
+        if (this.conversationMissionsRefetchTimer !== undefined) return;
+        this.conversationMissionsRefetchTimer = window.setTimeout(() => {
+            this.conversationMissionsRefetchTimer = undefined;
+            const convoId = this.state.selectedConversationId;
+            if (convoId) void this.loadConversationMissions(convoId);
+        }, 250);
+    }
+
+    /** Whether a mission marker changes what the chip of the conversation on screen shows: it landed
+     *  there (joined, left, made current), or it is about a mission the chip lists — a rename or a
+     *  close is written to the mission's origin conversation only. */
+    private missionMarkerConcernsChip(event: JournalEvent): boolean {
+        const selected = this.state.selectedConversationId;
+        if (!selected) return false;
+        if (event.convo_id === selected) return true;
+        const shown = this.state.conversationMissions;
+        if (shown?.convoId !== selected) return false;
+        const missionId = typeof event.payload.mission_id === "string" ? event.payload.mission_id : null;
+        const num = asNumber(event.payload.num, 0);
+        return shown.links.some((link) => link.id === missionId || (num > 0 && link.num === num));
+    }
+
+    /**
      * One page of a mission's closed items, most recently updated first. `GET /items` has no
      * mission filter, so this walks the user's closed items newest first (at most
      * MISSION_CLOSED_SCAN_PAGES requests of 500) and keeps the mission's own, stopping once `want`
@@ -3127,6 +3195,16 @@ export class MatronJournalClient {
         // The inbox feeds the For you badge on the rail, so it follows item markers even while the
         // pane is closed; everything else is refetched only for an open pane.
         if (event.type === "item" && (this.inboxTracked() || this.state.inboxDone)) this.scheduleInboxRefetch();
+        // The header chip of the conversation on screen follows the mission markers that concern it
+        // (see missionMarkerConcernsChip) whether or not the pane is open — also while its first load
+        // is in flight (the newer load supersedes it) or after a failed one.
+        if (event.type === "mission" && this.missionMarkerConcernsChip(event)) {
+            // A load already in flight predates the marker: it may neither publish nor cache.
+            this.conversationMissionsGen += 1;
+            if (this.state.selectedConversationId)
+                this.conversationMissionsCacheGen.delete(this.state.selectedConversationId);
+            this.scheduleConversationMissionsRefetch();
+        }
         if (!this.state.trackerView?.open) return;
         // The open item's `working` block follows the conversation that owns it: a turn starting
         // or ending there changes what the thread's indicator should say, and no item marker
@@ -4149,6 +4227,11 @@ export class MatronJournalClient {
         if (this.trackerMissionsRefetchTimer !== undefined) window.clearTimeout(this.trackerMissionsRefetchTimer);
         this.trackerMissionsRefetchTimer = undefined;
         this.trackerMissionRefetchPending = false;
+        if (this.conversationMissionsRefetchTimer !== undefined)
+            window.clearTimeout(this.conversationMissionsRefetchTimer);
+        this.conversationMissionsRefetchTimer = undefined;
+        this.conversationMissionsCache.clear();
+        this.conversationMissionsCacheGen.clear();
         if (this.trackerItemWorkingRefetchTimer !== undefined) window.clearTimeout(this.trackerItemWorkingRefetchTimer);
         this.trackerItemWorkingRefetchTimer = undefined;
         if (this.briefingExpiryTimer !== undefined) window.clearTimeout(this.briefingExpiryTimer);

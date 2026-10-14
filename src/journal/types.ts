@@ -574,6 +574,9 @@ export interface ClientState {
     trackerProjectFeedLoading?: boolean;
     trackerItem?: { item: TrackerItem; comments: TrackerComment[] } | null;
     trackerMission?: MissionDetail | null;
+    /** The selected conversation's missions, for the chat header's mission chip. Absent until
+     *  fetched; a fetch for another conversation is never shown against this one. */
+    conversationMissions?: ConversationMissions;
     /** True while ANY tracker fetch is in flight (v1: one detail/list open at a time). */
     trackerLoading?: boolean;
     /** Last tracker fetch/mutation error; cleared on the next successful load. */
@@ -1061,6 +1064,24 @@ export interface ProjectDetail {
     milestones?: ProjectFeedPage<Milestone & { mission_num: number | null }>;
     /** Set when the asked-for project was merged: this detail is the project it went into. */
     merged_from?: { id: string; num: number };
+}
+
+/** One mission a conversation has touched (`GET /conversations/:id/missions`): the mission row
+ *  with the link's own fields beside it. */
+export interface ConversationMissionLink extends Mission {
+    /** Where the conversation's milestones go by default. At most one link is current. */
+    current: boolean;
+    /** False once the conversation left the mission. */
+    active: boolean;
+    how?: string | null;
+    joined_at?: number | null;
+    ended_at?: number | null;
+}
+
+/** The selected conversation's missions, as last fetched for it. */
+export interface ConversationMissions {
+    convoId: string;
+    links: ConversationMissionLink[];
 }
 
 export interface MissionDetail {

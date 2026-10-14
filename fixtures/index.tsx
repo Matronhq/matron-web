@@ -570,6 +570,54 @@ const signedOutState: ClientState = {
 // The client keeps its state private; mirror the test harness's internal override.
 (client as unknown as { state: ClientState }).state = fixtureParams.get("screen") === "login" ? signedOutState : state;
 
+// ?missions=1 puts the selected conversation on missions, so the header shows its mission chip
+// (current one, +2 for an also-on and an earlier one).
+{
+    const stub = client as unknown as Record<string, unknown>;
+    stub.loadConversationMissions = async () => undefined;
+    if (fixtureParams.get("missions") === "1") {
+        const now = Date.now();
+        const link = (
+            num: number,
+            title: string,
+            over: { current?: boolean; active?: boolean; state?: string; joinedDaysAgo: number; endedDaysAgo?: number },
+        ) => ({
+            id: `ms_${num}`,
+            num,
+            state: over.state ?? "open",
+            title,
+            body: "",
+            close_summary: null,
+            closed_by: null,
+            closed_over_open_items: 0,
+            origin_convo_id: "c1",
+            created_by: "agent",
+            created_at: now - 30 * 86_400_000,
+            updated_at: now,
+            last_milestone_at: now,
+            closed_at: over.endedDaysAgo != null && over.state === "closed" ? now - over.endedDaysAgo * 86_400_000 : null,
+            open_items: 1,
+            needs_you: 0,
+            conversations: 1,
+            milestones: 3,
+            last_milestone: null,
+            current: over.current ?? false,
+            active: over.active ?? true,
+            how: "joined",
+            joined_at: now - over.joinedDaysAgo * 86_400_000,
+            ended_at: over.active === false && over.endedDaysAgo != null ? now - over.endedDaysAgo * 86_400_000 : null,
+        });
+        (state as unknown as Record<string, unknown>).conversationMissions = {
+            convoId: "c1",
+            links: [
+                link(1594, "Deploy matron-web to chat.example.com", { current: true, joinedDaysAgo: 2 }),
+                link(1706, "Unify matron-web and the Mac app design", { joinedDaysAgo: 6 }),
+                link(1311, "Log retention clean-up", { active: false, joinedDaysAgo: 20, endedDaysAgo: 12 }),
+            ],
+        };
+    }
+}
+
 // ?tracker=inbox | ?tracker=item opens the tracker pane on canned data (unify step 5); the
 // network loads are stubbed so the fixture stays offline.
 const trackerMode = fixtureParams.get("tracker");

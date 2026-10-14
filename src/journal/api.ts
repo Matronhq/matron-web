@@ -17,6 +17,7 @@ import {
     type LoginResponse,
     type MatronConfig,
     type MessagesResponse,
+    type ConversationMissionLink,
     type Mission,
     type MissionDetail,
     type NumberLookup,
@@ -482,6 +483,32 @@ export class JournalApi {
     /** GET /missions/:id — full detail (mission + milestones newest-first + open items + convos). */
     public mission(id: string | number): Promise<MissionDetail> {
         return this.json<MissionDetail>(`/missions/${encodeTrackerId(id)}`);
+    }
+
+    /** GET /conversations/:id/missions — every mission the conversation is or was on, current
+     *  first. A row spreads the mission flat beside the link fields; a nested `mission` object is
+     *  accepted too, so either journal shape reads the same. */
+    public async conversationMissions(convoId: string): Promise<ConversationMissionLink[]> {
+        const body = await this.json<{ missions?: unknown }>(`/conversations/${encodeURIComponent(convoId)}/missions`);
+        const rows = Array.isArray(body.missions) ? body.missions : [];
+        return rows.flatMap((row): ConversationMissionLink[] => {
+            if (!row || typeof row !== "object") return [];
+            const record = row as Record<string, unknown>;
+            const nested = record.mission && typeof record.mission === "object" ? record.mission : {};
+            const mission = { ...record, ...nested } as Record<string, unknown>;
+            if (typeof mission.id !== "string" || typeof mission.num !== "number") return [];
+            const endedAt = typeof record.ended_at === "number" ? record.ended_at : null;
+            return [
+                {
+                    ...(mission as unknown as Mission),
+                    current: record.current === true,
+                    active: typeof record.active === "boolean" ? record.active : endedAt == null,
+                    how: typeof record.how === "string" ? record.how : null,
+                    joined_at: typeof record.joined_at === "number" ? record.joined_at : null,
+                    ended_at: endedAt,
+                },
+            ];
+        });
     }
 
     /** GET /items — the filtered/sorted item list (`next_cursor` paginates; server clamps limit ≤500). */
