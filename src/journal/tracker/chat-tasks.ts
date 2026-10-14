@@ -22,6 +22,9 @@ export interface ChatTaskSections {
 
 /** How many closed items the Done section lists, newest first. */
 export const CHAT_TASKS_DONE_LIMIT = 50;
+/** How many closed items are read for Done: the journal's page is in last-change order, so a wider
+ *  one leaves Done its latest-closed rows even when older items were touched since. */
+export const CHAT_TASKS_DONE_FETCH = 200;
 
 /** The task order: rank, then number. */
 export function byRank(a: TrackerItem, b: TrackerItem): number {

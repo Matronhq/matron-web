@@ -2269,7 +2269,7 @@ describe("MatronJournalClient chat Tasks & decisions pane", () => {
             convo: "c1",
             state: "closed",
             sort: "updated",
-            limit: 50,
+            limit: 200,
         });
         expect(client.getSnapshot().chatTasks).toEqual(
             expect.objectContaining({ open: true, scope: "c1", items: [open, closed], loading: false }),
@@ -2449,6 +2449,16 @@ describe("MatronJournalClient chat Tasks & decisions pane", () => {
         await move;
         await flushPromises();
         expect(order(client)).toEqual(["a", "b", "c"]);
+    });
+
+    it("drops a refused move's note when the list moves to another chat", async () => {
+        const { client, state } = makeClient({
+            selectedConversationId: "c2",
+            chatTasks: { open: true, scope: "c1", items: tasks(), actionError: "Couldn't move the task: conflict" },
+        });
+        state.api = { items: jest.fn().mockReturnValue(new Promise(() => undefined)) };
+        void client.loadChatTasks();
+        expect(client.getSnapshot().chatTasks?.actionError).toBeUndefined();
     });
 
     it("does not add a new item to the list of a chat the pane has moved to", async () => {

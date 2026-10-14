@@ -36,7 +36,7 @@ import {
 } from "./pins";
 import { mergeSessionStatus } from "./status";
 import { appendFeedPage, kindsWithMore } from "./tracker/projectActivity";
-import { CHAT_TASKS_DONE_LIMIT, chatTaskSections, planTaskMove } from "./tracker/chat-tasks";
+import { CHAT_TASKS_DONE_FETCH, chatTaskSections, planTaskMove } from "./tracker/chat-tasks";
 import { doneSortKey, inDone } from "./tracker/format";
 import {
     asNumber,
@@ -2961,6 +2961,8 @@ export class MatronJournalClient {
                 scope,
                 items: prior?.scope === scope ? prior.items : undefined,
                 error: prior?.scope === scope ? prior.error : undefined,
+                // A refused move belongs to the list it was made in.
+                actionError: prior?.scope === scope ? prior.actionError : undefined,
                 loading: true,
             },
         });
@@ -2968,7 +2970,9 @@ export class MatronJournalClient {
         try {
             const [open, closed] = await Promise.all([
                 api.items({ convo, state: "open", sort: "rank", limit: 500 }),
-                api.items({ convo, state: "closed", sort: "updated", limit: CHAT_TASKS_DONE_LIMIT }),
+                // The journal sorts closed items by their last change, not by when they closed, so a
+                // wider page is read for Done to pick the latest closed from.
+                api.items({ convo, state: "closed", sort: "updated", limit: CHAT_TASKS_DONE_FETCH }),
             ]);
             if (this.api !== api || this.chatTasksGen !== gen) return;
             this.patch({
