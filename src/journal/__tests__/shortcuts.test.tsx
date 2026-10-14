@@ -116,19 +116,15 @@ describe("matchShortcut", () => {
 describe("app shortcuts", () => {
     let root: Root;
     let container: HTMLDivElement;
-    const scrolled: Element[] = [];
 
     beforeAll(() => {
         (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
         Object.defineProperty(globalThis, "TextEncoder", { value: NodeTextEncoder, configurable: true });
-        Element.prototype.scrollIntoView = function (this: Element) {
-            scrolled.push(this);
-        };
+        Element.prototype.scrollIntoView = () => {};
     });
 
     beforeEach(() => {
         localStorage.clear();
-        scrolled.length = 0;
         container = document.createElement("div");
         document.body.append(container);
         root = createRoot(container);
@@ -313,25 +309,33 @@ describe("app shortcuts", () => {
         expect(document.activeElement?.id).not.toBe("conversation-search-input");
     });
 
-    it("⇧⌘U jumps to my last message", async () => {
-        await render(
-            signedInClient([
-                text(1, "user:alice", "first"),
-                text(2, "user:alice", "second"),
-                text(3, "agent:claude", "reply"),
-            ]),
+    it("⇧⌘U jumps to my last message through the client, once", async () => {
+        const client = signedInClient([
+            text(1, "user:alice", "first"),
+            text(2, "user:alice", "second"),
+            text(3, "agent:claude", "reply"),
+        ]);
+        const jump = jest.spyOn(client, "jumpToLastOwnMessage");
+        await render(client);
+        const event = await press("U", { shiftKey: true });
+        expect(event.defaultPrevented).toBe(true);
+        // One binding only: the timeline's pill shares this shortcut rather than binding its own.
+        expect(jump).toHaveBeenCalledTimes(1);
+        await act(async () => {
+            await jump.mock.results[0].value;
+        });
+        expect(container.querySelector('.mj_EventTile[data-event-id="2"]')?.classList).toContain(
+            "mj_EventTile_focused",
         );
-        await press("U", { shiftKey: true });
-        const row = container.querySelector('.mj_EventTile[data-event-id="2"]');
-        expect(scrolled).toEqual([row]);
-        expect(document.activeElement).toBe(row);
     });
 
     it("leaves Ctrl+Shift+U to a text field off a Mac", async () => {
-        await render(signedInClient([text(1, "user:alice", "first")]));
+        const client = signedInClient([text(1, "user:alice", "first")]);
+        const jump = jest.spyOn(client, "jumpToLastOwnMessage");
+        await render(client);
         const event = await press("U", { shiftKey: true }, composer());
         expect(event.defaultPrevented).toBe(false);
-        expect(scrolled).toEqual([]);
+        expect(jump).not.toHaveBeenCalled();
     });
 
     it("fires from a text field like the Mac's menu shortcuts", async () => {

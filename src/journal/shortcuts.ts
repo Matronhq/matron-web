@@ -13,7 +13,8 @@ Please see LICENSE files in the repository root for full details.
  *   ⌘N      a new session (File ▸ New Chat)
  *   ⌘1…⌘5   Coordinator, Projects, For you, Conversations, Memories (View menu, top to bottom)
  *   ⇧⌘F     the sidebar's search field (Edit ▸ Search All Chats), on Conversations only
- *   ⇧⌘U     jump to my last message in the open conversation
+ *   ⇧⌘U     jump to my last message in the open conversation (client.jumpToLastOwnMessage,
+ *           which loads older history until it finds one)
  *
  * ⌘J (go to number) lives in goto-number.tsx and ⌘F (find in chat) with the chat search. Like the
  * Mac's menu key equivalents these fire from a text field too, except ⇧⌘U off a Mac: Ctrl+Shift+U
@@ -27,6 +28,7 @@ Please see LICENSE files in the repository root for full details.
 import { useEffect, useRef } from "react";
 
 import type { MatronJournalClient } from "./client";
+import { isJumpToLastOwnShortcut, isMacPlatform, modalDialogOpen } from "./jump-to-message";
 
 export type Section = "coordinator" | "projects" | "decisions" | "conversations" | "memories";
 
@@ -48,17 +50,17 @@ export type ShortcutCommand =
 
 type ShortcutKey = Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey">;
 
-export const isMacPlatform = (): boolean => /Mac|iPhone|iPad/.test(navigator.platform);
+export { isMacPlatform };
 
 /** The shortcut a keystroke names, or null. `mac` picks ⌘ over Ctrl as the modifier. */
 export function matchShortcut(event: ShortcutKey, mac: boolean): ShortcutCommand | null {
+    if (isJumpToLastOwnShortcut(event, mac)) return { kind: "jumpToLastOwnMessage" };
     if (event.altKey) return null;
     const primary = mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
     if (!primary) return null;
     const key = event.key.toLowerCase();
     if (event.shiftKey) {
         if (key === "f") return { kind: "searchAllChats" };
-        if (key === "u") return { kind: "jumpToLastOwnMessage" };
         return null;
     }
     if (key === "k") return { kind: "commandPalette" };
@@ -127,22 +129,6 @@ export function showSection(client: MatronJournalClient, section: Section): Prom
     return Promise.resolve();
 }
 
-/**
- * Scrolls the open transcript to the newest message I sent and focuses it. Rows still sending
- * carry no event id and are skipped, like the Mac's local echoes. Returns false when no such row
- * is on the page.
- */
-export function jumpToLastOwnMessage(root: ParentNode = document): boolean {
-    const rows = root.querySelectorAll<HTMLElement>(
-        '.mj_ChatView .mj_EventTile[data-self="true"][data-event-id]:not(.mj_EventTile_sending)',
-    );
-    const row = rows[rows.length - 1];
-    if (!row) return false;
-    row.scrollIntoView({ block: "center" });
-    row.focus({ preventScroll: true });
-    return true;
-}
-
 export interface AppShortcutHandlers {
     /** False while a modal holds the app (the upload sheet): no shortcut fires. */
     enabled: boolean;
@@ -164,7 +150,7 @@ export function useAppShortcuts(client: MatronJournalClient, handlers: AppShortc
             if (!command) return;
             if (command.kind === "jumpToLastOwnMessage" && !mac && isTextField(event.target)) return;
             // Another sheet or dialog is up: it owns the keyboard. The palette closes itself on ⌘K.
-            if (document.querySelector('[aria-modal="true"]')) return;
+            if (modalDialogOpen()) return;
             // A held key repeats: one press, one action (⌘K would otherwise flicker open and shut),
             // but the repeats are still ours, not the browser's (tab switching, its search bar).
             if (event.repeat) {
@@ -185,8 +171,9 @@ export function useAppShortcuts(client: MatronJournalClient, handlers: AppShortc
                     dispatchShortcutCommand(command.kind);
                     return;
                 case "jumpToLastOwnMessage":
+                    // The client pages older history back until it finds one (jump-to-message.ts).
                     event.preventDefault();
-                    jumpToLastOwnMessage();
+                    void client.jumpToLastOwnMessage();
                     return;
                 case "section":
                     event.preventDefault();

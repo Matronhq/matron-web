@@ -70,11 +70,8 @@ import { dateTimeFormat } from "./date-format";
 import {
     FOCUS_HIGHLIGHT_MS,
     focusScrollTop,
-    isJumpToLastOwnShortcut,
-    isMacPlatform,
     jumpToLastOwnShortcutLabel,
     landingSeq,
-    modalDialogOpen,
 } from "./jump-to-message";
 import { GoToNumberDialog, goToNumberShortcutLabel, NumberSearchResult, useGoToNumberShortcut } from "./goto-number";
 import { PinDialog, type PinDialogTarget } from "./PinDialogs";
@@ -5837,18 +5834,8 @@ function Timeline({
         [],
     );
 
-    // ⇧⌘U / Ctrl+Shift+U: the floating pill's shortcut, live whenever a conversation is open
-    // (the pill itself only shows once the reader has scrolled away from the tail).
-    useEffect(() => {
-        const onKeyDown = (event: KeyboardEvent): void => {
-            if (event.defaultPrevented || event.isComposing || !isJumpToLastOwnShortcut(event, isMacPlatform())) return;
-            if (modalDialogOpen()) return;
-            event.preventDefault();
-            void client.jumpToLastOwnMessage();
-        };
-        document.addEventListener("keydown", onKeyDown);
-        return () => document.removeEventListener("keydown", onKeyDown);
-    }, [client]);
+    // ⇧⌘U / Ctrl+Shift+U, the floating pill's shortcut, is bound with the app's other shortcuts
+    // (shortcuts.ts useAppShortcuts), live whenever a conversation is open.
 
     // The activity indicator ('Thinking' / 'Running …') and the fire-and-forget tool-call cards
     // both ride ephemeral frames whose turn-end 'idle'/'end' frame is never replayed
