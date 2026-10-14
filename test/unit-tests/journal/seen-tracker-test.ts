@@ -77,6 +77,14 @@ describe("SeenLedger", () => {
         expect(ledger.nextDeadline).toBe(1_500);
     });
 
+    it("keeps a row that dwelt in full even when it scrolls away before the timer runs", () => {
+        const ledger = new SeenLedger(1_000, true);
+        ledger.setVisible(surface, "c1", [1], 0);
+        ledger.setVisible(surface, "c1", [2], 1_500);
+        expect(ledger.drain()).toEqual([{ op: "seen", convo_id: "c1", ranges: [[1, 1]] }]);
+        expect(ledger.nextDeadline).toBe(2_500);
+    });
+
     it("reports a row once while it stays on screen", () => {
         const ledger = new SeenLedger(1_000, true);
         ledger.setVisible(surface, "c1", [1], 0);
@@ -205,6 +213,19 @@ describe("SeenTracker", () => {
         });
         jest.advanceTimersByTime(60_000);
         expect(send).toHaveBeenCalledTimes(1);
+    });
+
+    it("still sends a row whose dwell timer ran late", () => {
+        const surface = newSeenSurface();
+        const now = jest.spyOn(Date, "now");
+        now.mockReturnValue(0);
+        tracker.setVisible(surface, "c1", [1]);
+        // The page was busy: 1.5 s pass before anything runs, and the next event is a scroll.
+        now.mockReturnValue(1_500);
+        tracker.setVisible(surface, "c1", [2]);
+        now.mockRestore();
+        tracker.flush();
+        expect(send).toHaveBeenCalledWith({ op: "seen", convo_id: "c1", ranges: [[1, 1]] });
     });
 
     it("ignores rows scrolled past in under a second", () => {

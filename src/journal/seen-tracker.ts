@@ -90,8 +90,10 @@ export class SeenLedger {
     }
 
     /** `surface` now shows `seqs` of `convoId`. Seqs still visible keep their dwell start; new ones
-     *  start now; the rest stop counting. */
+     *  start now; the rest stop counting. Rows that already dwelt long enough are promoted first, so
+     *  one scrolled away before its (possibly late) dwell timer fired still counts. */
     public setVisible(surface: SeenSurface, convoId: string, seqs: Iterable<number>, now: number): void {
+        this.promote(now);
         const previous = this.surfaces.get(surface);
         const kept = previous?.convoId === convoId ? previous.since : undefined;
         const reported = this.reported.get(convoId);
