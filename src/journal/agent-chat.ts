@@ -5,7 +5,7 @@ SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
 Please see LICENSE files in the repository root for full details.
 */
 
-import { asString, type EventPayload, type JournalEvent } from "./types";
+import { asString, type EventPayload, type JournalEvent, type Session } from "./types";
 
 /*
  * The agent-chat consent card: one agent asking the user's permission to talk to another.
@@ -245,14 +245,20 @@ export function readAgentChatResolutions(events: readonly JournalEvent[]): Map<s
 
 // A tap's answer, remembered across reloads: the HTTP answer leaves no event of its own, and
 // the consent item's closing marker arrives a beat later (or, after a 409, says nothing this
-// device can match). Bounded so it can't grow without limit.
-const ANSWERS_KEY = "matron.agentChatAnswers";
+// device can match). Stored per server and user, like the other per-session preferences, so a
+// different account never inherits another's answers. Bounded so it can't grow without limit.
+const ANSWERS_KEY_PREFIX = "matron.agentChatAnswers";
 const MAX_REMEMBERED_ANSWERS = 500;
 export type RememberedAgentChatAnswer = AgentChatDecision | "expired";
 
-function readAnswers(): Record<string, RememberedAgentChatAnswer> {
+/** The storage scope for a signed-in session's remembered answers; `undefined` when signed out. */
+export function agentChatAnswersScope(session: Session | undefined | null): string | undefined {
+    return session ? `${ANSWERS_KEY_PREFIX}:${encodeURIComponent(session.serverUrl)}:${session.userId}` : undefined;
+}
+
+function readAnswers(scope: string): Record<string, RememberedAgentChatAnswer> {
     try {
-        const raw = window.localStorage.getItem(ANSWERS_KEY);
+        const raw = window.localStorage.getItem(scope);
         const parsed: unknown = raw ? JSON.parse(raw) : {};
         return parsed && typeof parsed === "object" ? (parsed as Record<string, RememberedAgentChatAnswer>) : {};
     } catch {
@@ -260,19 +266,28 @@ function readAnswers(): Record<string, RememberedAgentChatAnswer> {
     }
 }
 
-export function rememberedAgentChatAnswer(cardKey: string): RememberedAgentChatAnswer | undefined {
-    const value = readAnswers()[cardKey];
+export function rememberedAgentChatAnswer(
+    scope: string | undefined,
+    cardKey: string,
+): RememberedAgentChatAnswer | undefined {
+    if (!scope) return undefined;
+    const value = readAnswers(scope)[cardKey];
     return value === "approve" || value === "deny" || value === "expired" ? value : undefined;
 }
 
-export function rememberAgentChatAnswer(cardKey: string, answer: RememberedAgentChatAnswer): void {
-    const answers = readAnswers();
+export function rememberAgentChatAnswer(
+    scope: string | undefined,
+    cardKey: string,
+    answer: RememberedAgentChatAnswer,
+): void {
+    if (!scope) return;
+    const answers = readAnswers(scope);
     delete answers[cardKey];
     answers[cardKey] = answer;
     const keys = Object.keys(answers);
     for (const stale of keys.slice(0, Math.max(0, keys.length - MAX_REMEMBERED_ANSWERS))) delete answers[stale];
     try {
-        window.localStorage.setItem(ANSWERS_KEY, JSON.stringify(answers));
+        window.localStorage.setItem(scope, JSON.stringify(answers));
     } catch {
         // Storage full or blocked: the card still settles for this page's lifetime.
     }

@@ -22,6 +22,7 @@ import React, {
 import matronLogo from "../../res/matron-logo-simple.svg";
 import { INITIAL_SGR_STATE, parseAnsi, stripLeadingSgrFragment } from "./ansi";
 import {
+    agentChatAnswersScope,
     agentChatCardKey,
     agentChatFromLabel,
     agentChatHeadline,
@@ -3713,8 +3714,7 @@ function AgentSpawnCard({
 
 type AgentChatLocalPhase = { kind: "idle" } | { kind: "sending" } | { kind: "failed"; message: string };
 
-const noopAgentChatAnswer = (_decision: AgentChatDecision, _signal?: AbortSignal): Promise<unknown> =>
-    Promise.resolve();
+const noopAgentChatAnswer = (_decision: AgentChatDecision): Promise<unknown> => Promise.resolve();
 
 // A transport failure surfaces as a JournalApiError with status 0.
 function agentChatErrorMessage(error: unknown): string {
@@ -3735,38 +3735,41 @@ function rememberedResolution(answer: RememberedAgentChatAnswer | undefined): Ag
 // marker — a decision made on another device, or the ask lapsing) > the answer remembered here
 // > the in-flight/failed tap > answerable. A 409 means the ask stopped waiting between drawing
 // and the tap; that is nothing the user can act on, so it settles the card rather than erroring.
+// An answer in flight is never aborted when the card unmounts (leaving the conversation): the
+// decision may already be on the server, and it is still remembered when the call settles.
 function AgentChatRequestCard({
     event,
     request,
     resolution,
+    answersScope,
     isReadOnly = false,
     onAnswer = noopAgentChatAnswer,
 }: {
     event: JournalEvent;
     request: AgentChatRequest;
     resolution?: AgentChatResolution;
+    /** Where this session's answers are remembered (agentChatAnswersScope). */
+    answersScope?: string;
     isReadOnly?: boolean;
-    onAnswer?: (decision: AgentChatDecision, signal?: AbortSignal) => Promise<unknown>;
+    onAnswer?: (decision: AgentChatDecision) => Promise<unknown>;
 }): React.ReactElement {
     const cardKey = agentChatCardKey(event);
-    const [remembered, setRemembered] = useState(() => rememberedAgentChatAnswer(cardKey));
+    const [remembered, setRemembered] = useState(() => rememberedAgentChatAnswer(answersScope, cardKey));
     const [phase, setPhase] = useState<AgentChatLocalPhase>({ kind: "idle" });
     const sendingRef = useRef(false);
     const mountedRef = useRef(false);
-    const abortRef = useRef<AbortController | null>(null);
 
     useEffect(() => {
         mountedRef.current = true;
         return (): void => {
             mountedRef.current = false;
-            abortRef.current?.abort();
         };
     }, []);
 
     const settled = resolution ?? rememberedResolution(remembered);
 
     const settle = (answer: RememberedAgentChatAnswer): void => {
-        rememberAgentChatAnswer(cardKey, answer);
+        rememberAgentChatAnswer(answersScope, cardKey, answer);
         if (!mountedRef.current) return;
         setRemembered(answer);
         setPhase({ kind: "idle" });
@@ -3775,10 +3778,8 @@ function AgentChatRequestCard({
     const handleAnswer = (decision: AgentChatDecision): void => {
         if (settled || sendingRef.current) return;
         sendingRef.current = true;
-        const controller = new AbortController();
-        abortRef.current = controller;
         setPhase({ kind: "sending" });
-        void onAnswer(decision, controller.signal)
+        void onAnswer(decision)
             .then(
                 () => settle(decision),
                 (error: unknown) => {
@@ -4502,9 +4503,10 @@ export function EventContent({
                         event={event}
                         request={request}
                         resolution={agentChatResolutions.get(agentChatCardKey(event))}
+                        answersScope={agentChatAnswersScope(client.getSnapshot().session)}
                         isReadOnly={isReadOnly}
-                        onAnswer={(decision, signal) =>
-                            client.answerAgentChat(request.roomId, request.targetDeviceId, decision, signal)
+                        onAnswer={(decision) =>
+                            client.answerAgentChat(request.roomId, request.targetDeviceId, decision)
                         }
                     />
                 );

@@ -338,7 +338,7 @@ describe("agent_chat card", () => {
 
         await act(async () => button(card, label)?.click());
 
-        expect(answerAgentChat).toHaveBeenCalledWith("room-1", 12, decision, expect.any(AbortSignal));
+        expect(answerAgentChat).toHaveBeenCalledWith("room-1", 12, decision);
         expect(sendPromptReply).not.toHaveBeenCalled();
         expect(card.querySelector(".mj_PromptResolved_pending")?.textContent).toBe("Sending…");
         expect([...card.querySelectorAll<HTMLButtonElement>(".mj_PromptOptions button")].every((b) => b.disabled)).toBe(
@@ -363,6 +363,44 @@ describe("agent_chat card", () => {
 
         expect(rendered.container.querySelector(".mj_PromptOptions")).toBeNull();
         expect(rendered.container.querySelector(".mj_Answered")?.textContent).toBe("Approved");
+    });
+
+    it("keeps an answer that settles after the card unmounted, and never aborts it", async () => {
+        const client = signedInClient();
+        let settle!: () => void;
+        const answerAgentChat = jest
+            .spyOn(client, "answerAgentChat")
+            .mockReturnValue(new Promise<boolean>((resolve) => (settle = () => resolve(true))));
+        rendered = await renderEvent(client, chatCardEvent());
+        await act(async () => button(rendered!.container, "Decline")?.click());
+        expect(answerAgentChat.mock.calls[0]).toHaveLength(3); // no abort signal handed over
+        await act(async () => rendered?.root.unmount());
+        rendered.container.remove();
+
+        await act(async () => settle());
+        rendered = await renderEvent(client, chatCardEvent());
+
+        expect(rendered.container.querySelector(".mj_PromptOptions")).toBeNull();
+        expect(rendered.container.querySelector(".mj_Answered")?.textContent).toBe("Declined");
+    });
+
+    it("does not show one account's remembered answer to another", async () => {
+        const client = signedInClient();
+        jest.spyOn(client, "answerAgentChat").mockResolvedValue(true);
+        rendered = await renderEvent(client, chatCardEvent());
+        await act(async () => button(rendered!.container, "Approve")?.click());
+        await act(async () => rendered?.root.unmount());
+        rendered.container.remove();
+
+        const other = signedInClient();
+        const state = (other as unknown as { state: ClientState }).state;
+        (other as unknown as { state: ClientState }).state = { ...state, session: { ...SESSION, userId: 99 } };
+        rendered = await renderEvent(other, chatCardEvent());
+
+        expect([...rendered.container.querySelectorAll(".mj_PromptOptions button")].map((b) => b.textContent)).toEqual([
+            "Decline",
+            "Approve",
+        ]);
     });
 
     it("settles as no longer waiting on a 409", async () => {
