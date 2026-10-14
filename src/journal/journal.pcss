@@ -1356,6 +1356,41 @@ textarea {
     outline-offset: 2px;
 }
 
+/* Floating Stop control: the Jump-to-bottom pill's shape and tint, on the opposite
+   end of the same trailing edge. */
+.mj_StopTurn {
+    position: absolute;
+    z-index: 2;
+    top: var(--cpd-space-2x);
+    right: var(--cpd-space-4x);
+    display: inline-flex;
+    width: 36px;
+    height: 36px;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: var(--cpd-color-bg-canvas-default);
+    box-shadow: var(--cpd-shadow-float);
+    color: var(--cpd-color-text-primary);
+    cursor: pointer;
+}
+
+.mj_StopTurn svg {
+    width: 18px;
+    height: 18px;
+}
+
+.mj_StopTurn:hover {
+    background: var(--cpd-color-bg-subtle-primary);
+}
+
+.mj_StopTurn:focus-visible {
+    outline: 2px solid var(--cpd-color-icon-accent-primary);
+    outline-offset: 2px;
+}
+
 .mx_EventTile[data-layout="bubble"] .mx_EventTile_line > a {
     color: inherit;
     text-decoration: none;
