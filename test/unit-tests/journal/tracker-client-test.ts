@@ -317,7 +317,7 @@ describe("MatronJournalClient tracker loaders", () => {
 
         await client.loadInbox();
 
-        expect(state.api.items).toHaveBeenCalledWith({ state: "open" });
+        expect(state.api.items).toHaveBeenCalledWith({ state: "open", limit: 500 });
         expect(client.getSnapshot().inboxItems).toEqual([item()]);
     });
 
@@ -417,6 +417,51 @@ describe("MatronJournalClient tracker loaders", () => {
         expect(done.nextCursor).toBe("c9");
     });
 
+    it("an item the user just answered goes to the top of Done at once, still open", async () => {
+        const { client, state } = makeClient();
+        const done = (num: number, at: number): ReturnType<typeof item> =>
+            item({ id: `it_${num}`, num, state: "closed", awaiting: null, closed_at: at, updated_at: at });
+        // Answered just now: still open, waiting on its agent.
+        const answered = item({ id: "it_7", num: 7, awaiting: "agent", last_user_input_at: 100, updated_at: 100 });
+        let refetch: (page: { items: ReturnType<typeof item>[]; next_cursor: null }) => void = () => {};
+        state.api = {
+            items: jest
+                .fn()
+                .mockResolvedValueOnce({ items: [done(5, 50), done(4, 40)], next_cursor: null })
+                .mockImplementation(() => new Promise((resolve) => (refetch = resolve))),
+            postItemComment: jest.fn().mockResolvedValue({ item: answered }),
+        };
+        await client.loadInboxDone();
+
+        const tap = client.commentItem(7, { body: "Go", action: "Go" });
+        await Promise.resolve();
+        await Promise.resolve();
+        // Before the refetch lands.
+        expect(client.getSnapshot().inboxDone?.items.map((row) => row.num)).toEqual([7, 5, 4]);
+
+        refetch({ items: [answered, done(5, 50), done(4, 40)], next_cursor: null });
+        await tap;
+        expect(client.getSnapshot().inboxDone?.items.map((row) => row.num)).toEqual([7, 5, 4]);
+    });
+
+    it("an answered open item stays in Done when the open list loads; one waiting on the user leaves", async () => {
+        const { client, state } = makeClient();
+        const answered = item({ id: "it_7", num: 7, awaiting: "agent", last_user_input_at: 100 });
+        const asking = item({ id: "it_6", num: 6, awaiting: "user", last_user_input_at: 90 });
+        state.api = {
+            items: jest.fn(async (filter: { state?: string }) =>
+                filter.state === "open"
+                    ? { items: [answered, { ...asking }], next_cursor: null }
+                    : { items: [answered, { ...asking, awaiting: "agent" as const }], next_cursor: null },
+            ),
+        };
+        await client.loadInboxDone();
+        expect(client.getSnapshot().inboxDone?.items.map((row) => row.num)).toEqual([7, 6]);
+
+        await client.loadInbox();
+        expect(client.getSnapshot().inboxDone?.items.map((row) => row.num)).toEqual([7]);
+    });
+
     it("a failed Done load keeps the rows it had and reports the error", async () => {
         const { client, state } = makeClient();
         state.api = {
@@ -452,8 +497,8 @@ describe("MatronJournalClient tracker loaders", () => {
         await client.loadInbox();
 
         expect(items).toHaveBeenCalledTimes(2);
-        expect(items).toHaveBeenNthCalledWith(1, { state: "open" });
-        expect(items).toHaveBeenNthCalledWith(2, { state: "open", cursor: "cursor-2" });
+        expect(items).toHaveBeenNthCalledWith(1, { state: "open", limit: 500 });
+        expect(items).toHaveBeenNthCalledWith(2, { state: "open", limit: 500, cursor: "cursor-2" });
         expect((client.getSnapshot().inboxItems ?? []).map((row) => row.id)).toEqual(["it_1", "it_2", "it_3"]);
         expect(client.getSnapshot().trackerError).toBeUndefined();
     });
@@ -723,7 +768,7 @@ describe("MatronJournalClient tracker mutations", () => {
             expect.any(String),
         );
         expect(state.api.item).toHaveBeenCalledWith(1);
-        expect(state.api.items).toHaveBeenCalledWith({ state: "open" });
+        expect(state.api.items).toHaveBeenCalledWith({ state: "open", limit: 500 });
     });
 
     it("commentItem posts with a fresh idempotency key and refetches the item", async () => {
@@ -1820,7 +1865,7 @@ describe("MatronJournalClient notices and user settings", () => {
         await flush();
 
         expect(client.getSnapshot().userSettings).toEqual({ notices: false });
-        expect(internal.api.items).toHaveBeenCalledWith({ state: "open" });
+        expect(internal.api.items).toHaveBeenCalledWith({ state: "open", limit: 500 });
         expect(client.getSnapshot().inboxItems).toHaveLength(1);
     });
 });
@@ -1883,5 +1928,291 @@ describe("commentFailureMessage", () => {
         expect(commentFailureMessage(limited)).toBe("Too many sign-in attempts. Try again in a minute. (30s)");
         expect(commentFailureMessage(server)).toBe("The journal server returned HTTP 503.");
         expect(commentFailureMessage(new Error("offline"))).toBe("offline");
+    });
+});
+
+describe("MatronJournalClient spawnConsentRows", () => {
+    const card = (requestId: string, seq = 10): JournalEvent => ({
+        seq,
+        convo_id: "c1",
+        ts: 1,
+        sender: "agent:box-a",
+        type: "permission_request",
+        payload: { kind: "agent_spawn", request_id: requestId, task: "Run the suite" },
+    });
+    const outcome = (requestId: string, value: string, seq: number): JournalEvent => ({
+        seq,
+        convo_id: "c1",
+        ts: 1,
+        sender: "journal",
+        type: "spawn_outcome",
+        payload: { request_id: requestId, outcome: value },
+    });
+
+    function withStore(
+        stored: JournalEvent[],
+        messages: jest.Mock = jest.fn(),
+    ): {
+        client: MatronJournalClient;
+        events: jest.Mock;
+        putHistory: jest.Mock;
+        messages: jest.Mock;
+    } {
+        const { client } = makeClient();
+        const rows = [...stored];
+        const events = jest.fn(async () => [...rows]);
+        const putHistory = jest.fn(async (incoming: JournalEvent[]) => {
+            rows.push(...incoming);
+        });
+        (client as unknown as { database: unknown }).database = { events, putHistory };
+        (client as unknown as { api: unknown }).api = { messages };
+        return { client, events, putHistory, messages };
+    }
+
+    it("finds the card and the latest outcome for the request in the asking conversation", async () => {
+        const { client, events, messages } = withStore([
+            card("sp_other", 9),
+            card("sp_1", 10),
+            outcome("sp_1", "failed", 11),
+            outcome("sp_1", "started", 12),
+        ]);
+
+        const rows = await client.spawnConsentRows("c1", "sp_1");
+
+        expect(events).toHaveBeenCalledWith("c1");
+        expect(rows.request?.seq).toBe(10);
+        expect(rows.outcome).toEqual({ request_id: "sp_1", outcome: "started" });
+        expect(messages).not.toHaveBeenCalled();
+    });
+
+    it("carries the Coordinator's decision on the card, from the conversation's own consent_decision", async () => {
+        const decision: JournalEvent = {
+            seq: 11,
+            convo_id: "c1",
+            ts: 1,
+            sender: "journal",
+            type: "consent_decision",
+            payload: { kind: "spawn", request_id: "sp_1", decision: "approve", by: "coordinator", reason: "Fine" },
+        };
+        const { client } = withStore([card("sp_1", 10), decision, outcome("sp_1", "started", 12)]);
+
+        const rows = await client.spawnConsentRows("c1", "sp_1");
+
+        expect(rows.request?.seq).toBe(10);
+        expect(rows.coordinatorDecision).toEqual({ kind: "spawn", approved: true, reason: "Fine", askId: "sp_1" });
+    });
+
+    it("ignores a generic permission request that happens to carry the id", async () => {
+        const { client } = withStore([{ ...card("sp_1"), payload: { kind: "tool", request_id: "sp_1" } }]);
+
+        expect((await client.spawnConsentRows("c1", "sp_1")).request).toBeNull();
+    });
+
+    it("fetches the conversation's latest page once when the card is not stored", async () => {
+        const messages = jest.fn().mockResolvedValue({ events: [card("sp_1", 30)] });
+        const { client, putHistory } = withStore([], messages);
+
+        const rows = await client.spawnConsentRows("c1", "sp_1");
+
+        expect(messages).toHaveBeenCalledWith("c1");
+        expect(putHistory).toHaveBeenCalledWith([card("sp_1", 30)]);
+        expect(rows.request?.seq).toBe(30);
+    });
+
+    it("leaves the conversation's own paging and selection state alone", async () => {
+        const messages = jest.fn().mockResolvedValue({ events: [card("sp_1", 30)] });
+        const { client } = withStore([], messages);
+        const before = client.getSnapshot();
+
+        await client.spawnConsentRows("c1", "sp_1");
+
+        // Opening c1 later must still load its own latest page and track its own paging.
+        expect((client as unknown as { history: Map<string, unknown> }).history.has("c1")).toBe(false);
+        expect(client.getSnapshot()).toBe(before);
+    });
+
+    it("does not fetch the same conversation again after a miss", async () => {
+        const messages = jest.fn().mockResolvedValue({ events: [] });
+        const { client } = withStore([], messages);
+
+        await client.spawnConsentRows("c1", "sp_1");
+        const again = await client.spawnConsentRows("c1", "sp_1");
+
+        expect(messages).toHaveBeenCalledTimes(1);
+        expect(again).toEqual({ request: null, outcome: null });
+    });
+
+    it("keeps what the store had when the fetch fails", async () => {
+        const messages = jest.fn().mockRejectedValue(new JournalApiError("Not found", 404));
+        const { client } = withStore([outcome("sp_1", "expired", 5)], messages);
+
+        const rows = await client.spawnConsentRows("c1", "sp_1");
+
+        expect(rows).toEqual({ request: null, outcome: { request_id: "sp_1", outcome: "expired" } });
+    });
+
+    it("fetches again on the next read after a failed fetch", async () => {
+        const messages = jest
+            .fn()
+            .mockRejectedValueOnce(new Error("offline"))
+            .mockResolvedValueOnce({ events: [card("sp_1", 30)] });
+        const { client } = withStore([], messages);
+
+        expect((await client.spawnConsentRows("c1", "sp_1")).request).toBeNull();
+        expect((await client.spawnConsentRows("c1", "sp_1")).request?.seq).toBe(30);
+        expect(messages).toHaveBeenCalledTimes(2);
+    });
+
+    it("lets a read that starts during the fetch wait for it", async () => {
+        let release!: (value: { events: JournalEvent[] }) => void;
+        const messages = jest.fn(() => new Promise<{ events: JournalEvent[] }>((resolve) => (release = resolve)));
+        const { client } = withStore([], messages);
+
+        const first = client.spawnConsentRows("c1", "sp_1");
+        const second = client.spawnConsentRows("c1", "sp_1");
+        await flush();
+        await flush();
+        release({ events: [card("sp_1", 30)] });
+
+        expect((await first).request?.seq).toBe(30);
+        expect((await second).request?.seq).toBe(30);
+        expect(messages).toHaveBeenCalledTimes(1);
+    });
+
+    it("reads as not here when signed out", async () => {
+        const { client } = makeClient();
+
+        expect(await client.spawnConsentRows("c1", "sp_1")).toEqual({ request: null, outcome: null });
+    });
+});
+
+describe("MatronJournalClient answerSpawnConsent", () => {
+    it("answers the request and refetches the item while it is still the one open", async () => {
+        const { client, state } = makeClient({ trackerView: { open: true, view: "inbox", selectedItemId: 31 } });
+        const answerAgentSpawn = jest.fn().mockResolvedValue(undefined);
+        const itemFetch = jest.fn().mockResolvedValue({ item: item({ num: 31 }), comments: [] });
+        (state as unknown as { api: unknown }).api = { answerAgentSpawn, item: itemFetch };
+
+        await client.answerSpawnConsent(31, "sp_1", "approve");
+
+        expect(answerAgentSpawn).toHaveBeenCalledWith("sp_1", "approve", undefined);
+        expect(itemFetch).toHaveBeenCalledWith(31);
+    });
+
+    it("leaves a newer selection alone", async () => {
+        const { client, state } = makeClient({ trackerView: { open: true, view: "inbox", selectedItemId: 7 } });
+        const itemFetch = jest.fn();
+        (state as unknown as { api: unknown }).api = {
+            answerAgentSpawn: jest.fn().mockResolvedValue(undefined),
+            item: itemFetch,
+        };
+
+        await client.answerSpawnConsent(31, "sp_1", "deny");
+
+        expect(itemFetch).not.toHaveBeenCalled();
+    });
+
+    it("refetches the stale item on a 409 and rethrows it unchanged", async () => {
+        const { client, state } = makeClient({ trackerView: { open: true, view: "inbox", selectedItemId: 31 } });
+        const error = new JournalApiError("Already resolved", 409);
+        const itemFetch = jest.fn().mockResolvedValue({ item: item({ num: 31 }), comments: [] });
+        (state as unknown as { api: unknown }).api = {
+            answerAgentSpawn: jest.fn().mockRejectedValue(error),
+            item: itemFetch,
+        };
+
+        await expect(client.answerSpawnConsent(31, "sp_1", "deny")).rejects.toBe(error);
+        expect(itemFetch).toHaveBeenCalledWith(31);
+    });
+
+    it("does not refetch after another failure", async () => {
+        const { client, state } = makeClient({ trackerView: { open: true, view: "inbox", selectedItemId: 31 } });
+        const itemFetch = jest.fn();
+        (state as unknown as { api: unknown }).api = {
+            answerAgentSpawn: jest.fn().mockRejectedValue(new Error("offline")),
+            item: itemFetch,
+        };
+
+        await expect(client.answerSpawnConsent(31, "sp_1", "approve")).rejects.toThrow("offline");
+        expect(itemFetch).not.toHaveBeenCalled();
+    });
+});
+
+describe("MatronJournalClient.fetchMissionClosedItems", () => {
+    const MS_1 = { id: "ms_1", created_at: 1000 };
+
+    it("walks closed items newest first and keeps only the mission's own", async () => {
+        const { client, state } = makeClient();
+        const items = jest
+            .fn()
+            .mockResolvedValueOnce({
+                items: [item({ id: "a", state: "closed", mission_id: "ms_1" }), item({ id: "b", state: "closed" })],
+                next_cursor: "k1",
+            })
+            .mockResolvedValueOnce({
+                items: [item({ id: "c", state: "closed", mission_id: "ms_1" })],
+                next_cursor: null,
+            });
+        state.api = { items };
+
+        const page = await client.fetchMissionClosedItems(MS_1);
+
+        expect(page.items.map((row) => row.id)).toEqual(["a", "c"]);
+        expect(page.cursor).toBeNull();
+        expect(items).toHaveBeenNthCalledWith(1, {
+            state: "closed",
+            sort: "updated",
+            limit: 500,
+            since: 1000,
+            cursor: undefined,
+        });
+        expect(items).toHaveBeenNthCalledWith(2, {
+            state: "closed",
+            sort: "updated",
+            limit: 500,
+            since: 1000,
+            cursor: "k1",
+        });
+    });
+
+    it("stops once it has enough and hands back where it stopped", async () => {
+        const { client, state } = makeClient();
+        const items = jest.fn().mockResolvedValue({
+            items: [item({ id: "a", state: "closed", mission_id: "ms_1" })],
+            next_cursor: "k2",
+        });
+        state.api = { items };
+
+        const page = await client.fetchMissionClosedItems(MS_1, "k1", 1);
+
+        expect(items).toHaveBeenCalledTimes(1);
+        expect(items).toHaveBeenCalledWith({ state: "closed", sort: "updated", limit: 500, since: 1000, cursor: "k1" });
+        expect(page).toEqual({ items: [expect.objectContaining({ id: "a" })], cursor: "k2" });
+    });
+
+    it("walks a bounded number of pages per call", async () => {
+        const { client, state } = makeClient();
+        const items = jest.fn().mockResolvedValue({ items: [item({ state: "closed" })], next_cursor: "more" });
+        state.api = { items };
+
+        const page = await client.fetchMissionClosedItems(MS_1);
+
+        expect(items).toHaveBeenCalledTimes(4);
+        expect(page).toEqual({ items: [], cursor: "more" });
+    });
+
+    it("leaves since out when the mission carries no creation time", async () => {
+        const { client, state } = makeClient();
+        const items = jest.fn().mockResolvedValue({ items: [], next_cursor: null });
+        state.api = { items };
+
+        await client.fetchMissionClosedItems({ id: "ms_1", created_at: undefined as unknown as number });
+
+        expect(items).toHaveBeenCalledWith({ state: "closed", sort: "updated", limit: 500, cursor: undefined });
+    });
+
+    it("resolves empty when signed out", async () => {
+        const { client } = makeClient();
+        await expect(client.fetchMissionClosedItems(MS_1)).resolves.toEqual({ items: [], cursor: null });
     });
 });

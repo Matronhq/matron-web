@@ -78,7 +78,7 @@ export function FindInChatBar({
 
     const close = (): void => {
         client.endChatSearch();
-        document.querySelector<HTMLTextAreaElement>(".mx_BasicMessageComposer_input")?.focus();
+        document.querySelector<HTMLTextAreaElement>(".mj_ComposerInput_input")?.focus();
     };
     const submitted = text.replace(/^\s+/, "") === search.query && !search.failed;
     const canOlder = !search.loading && search.index + 1 < search.matchSeqs.length;

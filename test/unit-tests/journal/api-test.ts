@@ -394,6 +394,44 @@ describe("JournalApi answerAgentSpawn", () => {
     });
 });
 
+describe("JournalApi answerAgentChat", () => {
+    beforeAll(() => {
+        globalThis.TextDecoder = NodeTextDecoder as typeof TextDecoder;
+    });
+
+    beforeEach(() => {
+        fetchMock.mockReset();
+        globalThis.fetch = fetchMock as unknown as typeof fetch;
+        delete (window as Window & { electron?: unknown }).electron;
+    });
+
+    it("POSTs exactly room_id, target_device_id and decision to /agent-chat/answer", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ ok: true, delivered: true }));
+        const api = new JournalApi("https://journal.example", "token");
+
+        await expect(api.answerAgentChat("room-1", 12, "deny")).resolves.toBe(true);
+
+        expect(String(fetchMock.mock.calls[0][0])).toBe("https://journal.example/agent-chat/answer");
+        expect(fetchMock.mock.calls[0][1]).toEqual(expect.objectContaining({ method: "POST" }));
+        const body = JSON.parse(fetchMock.mock.calls[0][1].body as string) as Record<string, unknown>;
+        expect(body).toEqual({ room_id: "room-1", target_device_id: 12, decision: "deny" });
+    });
+
+    it("reports an approval still owed to the target as not delivered", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ ok: true }));
+        const api = new JournalApi("https://journal.example", "token");
+
+        await expect(api.answerAgentChat("room-1", 12, "approve")).resolves.toBe(false);
+    });
+
+    it("rejects with a typed 409 when the ask is no longer awaiting an answer", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ error: "conflict" }, 409));
+        const api = new JournalApi("https://journal.example", "token");
+
+        await expect(api.answerAgentChat("room-1", 12, "approve")).rejects.toMatchObject({ status: 409 });
+    });
+});
+
 describe("JournalApi search", () => {
     beforeAll(() => {
         globalThis.TextDecoder = NodeTextDecoder as typeof TextDecoder;
@@ -761,6 +799,16 @@ describe("JournalApi box defaults", () => {
             }),
         );
         expect(JSON.parse(fetchMock.mock.calls[0][1].body as string)).toEqual({ default_agent: "codex" });
+    });
+
+    it("PUTs only {consent} to /coordinator, never the conversation", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ convo_id: "c9", consent: false }));
+        const api = new JournalApi("https://journal.example", "token");
+
+        await expect(api.putCoordinatorConsent(false)).resolves.toEqual({ convo_id: "c9", consent: false });
+        expect(String(fetchMock.mock.calls[0][0])).toBe("https://journal.example/coordinator");
+        expect(fetchMock.mock.calls[0][1]).toEqual(expect.objectContaining({ method: "PUT" }));
+        expect(JSON.parse(fetchMock.mock.calls[0][1].body as string)).toEqual({ consent: false });
     });
 
     it.each([
