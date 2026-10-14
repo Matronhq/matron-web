@@ -1656,10 +1656,15 @@ function ConversationListView({
         const outcomeStatus = isSubagent ? accessibleOutcome(classifyOutcome(conversation)) : undefined;
         const relativeTimestamp = formatRelativeDay(conversation.last_ts ?? conversation.created_at, renderNow);
         // Items this conversation raised that wait on the user, and the "New" marker on a session
-        // that arrived unasked and has not been opened (a room's title can land after the mark).
+        // that arrived unasked and has not been opened (a room's title, or a child's parent link,
+        // can land after the mark).
         const needsYou = needsYouCounts.get(conversation.id) ?? 0;
         const isNew =
-            !selected && state.newConversationIds.has(conversation.id) && !isAgentRoomTitle(conversation.title);
+            !selected &&
+            !isSubagent &&
+            !isSubChat(conversation) &&
+            state.newConversationIds.has(conversation.id) &&
+            !isAgentRoomTitle(conversation.title);
         // When this parent's subagent rows are collapsed, surface a subtle count of the hidden
         // child rows so the collapse stays discoverable on the row itself. Gate on the CANONICAL
         // index (hasSubagentChildRows) — NOT an independent running-child count — so it agrees with

@@ -4784,9 +4784,12 @@ describe("New marker on sessions that arrive unasked", () => {
     it.each([
         ["an agent-chat room", { title: "↔️ [ab] box-a ↔ box-b" }],
         ["a subagent's child", { parent_convo_id: "c1" }],
+        ["a Claude child whose parent link has not landed", { id: "c1:sub:agent-1" }],
+        ["a Codex child whose parent link has not landed", { id: "c1:codex:agent-1" }],
     ])("never marks %s", async (_label, overrides) => {
-        const { client, state } = liveClient({ ...BORN, ...overrides });
-        await state.handleJournal(firstFrame());
+        const born = { ...BORN, ...overrides };
+        const { client, state } = liveClient(born);
+        await state.handleJournal(firstFrame(born.id));
         expect(client.getSnapshot().newConversationIds.size).toBe(0);
     });
 

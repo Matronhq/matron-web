@@ -3938,6 +3938,14 @@ describe("needs-you and New badges in the conversation list and the rail", () =>
         expect(rendered.container.querySelector(".mj_ConversationListNew")).toBeNull();
     });
 
+    it("drops New from a session whose parent link landed after it was marked", async () => {
+        const child = { ...CONVERSATION, id: "c1:codex:agent-1", title: "Worker", parent_convo_id: "c1" };
+        const client = signedInWithRooms([CONVERSATION, child]);
+        rendered = await renderClient(client);
+        patch(client, { newConversationIds: new Set([child.id]) });
+        expect(rendered.container.querySelector(".mj_ConversationListNew")).toBeNull();
+    });
+
     it("badges Projects in the rail with what needs the user across the missions", async () => {
         const client = signedInWithRooms([CONVERSATION]);
         rendered = await renderClient(client);

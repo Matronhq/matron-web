@@ -4115,8 +4115,9 @@ export class MatronJournalClient {
         const now = Date.now();
         if (typeof event.ts === "number" && event.ts < now - NEW_CONVERSATION_STALE_MS) return;
         const conversation = this.state.conversations.find((candidate) => candidate.id === id);
-        // A child's id carries ":sub:" before its parent link (learned from a later convo_meta) lands.
-        if (!conversation || isSubChat(conversation) || id.includes(":sub:")) return;
+        // A child's id carries ":sub:" (Claude) or ":codex:" (Codex) before its parent link, learned
+        // from a later convo_meta, lands.
+        if (!conversation || isSubChat(conversation) || /:(?:sub|codex):[^:]+$/.test(id)) return;
         if (isAgentRoomTitle(conversation.title)) return;
         if (this.startIntents.claim(conversation, now)) return;
         this.patch({ newConversationIds: new Set([...this.state.newConversationIds, id]) });
