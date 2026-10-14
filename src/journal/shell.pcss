@@ -1546,3 +1546,53 @@ label.mj_SettingsSheet_row {
     color: var(--mj-color-text-secondary);
     font: var(--mj-font-body-sm-regular);
 }
+
+/* ⌘K slash-command palette: a sheet near the top of the window, the composer palette's rows under
+   a filter field. */
+.mj_CommandPalette_scrim {
+    align-items: flex-start;
+    padding-top: 12vh;
+}
+
+.mj_CommandPalette {
+    display: flex;
+    width: min(560px, 92vw);
+    max-height: min(420px, 70dvh);
+    flex-direction: column;
+    box-sizing: border-box;
+    overflow: hidden;
+    border: 1px solid var(--mj-color-border-subtle);
+    border-radius: var(--mj-radius-popover);
+    background: var(--mj-color-bg-canvas-default);
+    box-shadow: var(--mj-shadow-lg);
+    color: var(--mj-color-text-primary);
+}
+
+.mj_CommandPalette_input {
+    box-sizing: border-box;
+    width: 100%;
+    border: 0;
+    border-bottom: 1px solid var(--mj-color-border-subtle);
+    background: transparent;
+    color: var(--mj-color-text-primary);
+    padding: 12px 14px;
+    font: 400 14px/20px var(--mj-font-family-ui);
+    outline: none;
+}
+
+.mj_CommandPalette_input::placeholder {
+    color: var(--mj-color-text-tertiary);
+}
+
+.mj_CommandPalette_list {
+    min-height: 0;
+    overflow-y: auto;
+    padding: 4px 0;
+}
+
+.mj_CommandPalette_empty {
+    margin: 0;
+    padding: 10px 14px;
+    color: var(--mj-color-text-secondary);
+    font: var(--mj-font-body-sm-regular);
+}

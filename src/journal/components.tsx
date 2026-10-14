@@ -67,18 +67,12 @@ import {
 } from "./coordinator-consent";
 import { CoordinatorEventNotice, isUnrenderableNoticeEvent } from "./coordinator-notices";
 import { dateTimeFormat } from "./date-format";
-import {
-    FOCUS_HIGHLIGHT_MS,
-    focusScrollTop,
-    isJumpToLastOwnShortcut,
-    isMacPlatform,
-    jumpToLastOwnShortcutLabel,
-    landingSeq,
-    modalDialogOpen,
-} from "./jump-to-message";
+import { FOCUS_HIGHLIGHT_MS, focusScrollTop, jumpToLastOwnShortcutLabel, landingSeq } from "./jump-to-message";
 import { FindInChatBar, useFindInChatShortcut } from "./find-in-chat";
 import { GoToNumberDialog, goToNumberShortcutLabel, NumberSearchResult, useGoToNumberShortcut } from "./goto-number";
 import { PinDialog, type PinDialogTarget } from "./PinDialogs";
+import { CommandPalette } from "./CommandPalette";
+import { shortcutLabel, useAppShortcuts, useShortcutCommand } from "./shortcuts";
 import { pinGlyph, successorHintText } from "./pins";
 import {
     AnthropicMark,
@@ -1407,6 +1401,20 @@ function ConversationListView({
         if (restoreFocus) conversationMenuOpenerRef.current?.focus();
     }, []);
 
+    // ⌘N and ⇧⌘F (shortcuts.ts). Like the Mac, search-all-chats acts only on Conversations,
+    // where its field is.
+    useShortcutCommand("newSession", () => {
+        setAccountOpen(false);
+        closeConversationMenu();
+        setNewSessionOpen(true);
+    });
+    useShortcutCommand("searchAllChats", () => {
+        if (state.trackerView?.open) return;
+        const field = document.getElementById("conversation-search-input") as HTMLInputElement | null;
+        field?.focus();
+        field?.select();
+    });
+
     // After a menu ACTION (mark-read/archive/unarchive) the focused menuitem unmounts, and
     // archive/unarchive also remove the originating row — so restoring to the opener only works
     // when it survives. Defer past the state-change re-render, then focus the opener if it's still
@@ -1993,7 +2001,7 @@ function ConversationListView({
                             className="mj_IconButton"
                             type="button"
                             aria-label="New session"
-                            title="New session — runs /start"
+                            title={`New session (${shortcutLabel("n")}) — runs /start`}
                             onClick={() => {
                                 setAccountOpen(false);
                                 closeConversationMenu();
@@ -5836,18 +5844,8 @@ function Timeline({
         [],
     );
 
-    // ⇧⌘U / Ctrl+Shift+U: the floating pill's shortcut, live whenever a conversation is open
-    // (the pill itself only shows once the reader has scrolled away from the tail).
-    useEffect(() => {
-        const onKeyDown = (event: KeyboardEvent): void => {
-            if (event.defaultPrevented || event.isComposing || !isJumpToLastOwnShortcut(event, isMacPlatform())) return;
-            if (modalDialogOpen()) return;
-            event.preventDefault();
-            void client.jumpToLastOwnMessage();
-        };
-        document.addEventListener("keydown", onKeyDown);
-        return () => document.removeEventListener("keydown", onKeyDown);
-    }, [client]);
+    // ⇧⌘U / Ctrl+Shift+U, the floating pill's shortcut, is bound with the app's other shortcuts
+    // (shortcuts.ts useAppShortcuts), live whenever a conversation is open.
 
     // The activity indicator ('Thinking' / 'Running …') and the fire-and-forget tool-call cards
     // both ride ephemeral frames whose turn-end 'idle'/'end' frame is never replayed
@@ -7102,6 +7100,37 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
         Boolean(state.selectedConversationId) && !state.trackerView?.open && !state.stagedUploads,
     );
 
+    const reloadDraft = useCallback(
+        (conversationId: string) =>
+            setDraftReloadTicks((ticks) => ({ ...ticks, [conversationId]: (ticks[conversationId] ?? 0) + 1 })),
+        [],
+    );
+    // ⌘K: the slash palette, for a conversation with a composer on screen (Mac: the chat view's).
+    const [paletteOpen, setPaletteOpen] = useState(false);
+    const composerConvo =
+        state.selectedConversationId && !state.trackerView?.open && !childMode ? state.selectedConversationId : null;
+    useEffect(() => setPaletteOpen(false), [composerConvo]);
+    useAppShortcuts(client, {
+        enabled: !state.stagedUploads,
+        onCommandPalette: composerConvo ? () => setPaletteOpen((open) => !open) : undefined,
+    });
+    // A pick replaces the draft with the command, ready for arguments, as the composer's own palette does.
+    const pickCommand = (command: BotCommand): void => {
+        setPaletteOpen(false);
+        if (!composerConvo) return;
+        const text = applyCommand(command.trigger);
+        sentHistory.endRecall();
+        draftRevisions.current.set(composerConvo, (draftRevisions.current.get(composerConvo) ?? 0) + 1);
+        drafts.setDraft(composerConvo, text);
+        drafts.persist(composerConvo);
+        reloadDraft(composerConvo);
+        requestAnimationFrame(() => {
+            const input = appContent.current?.querySelector<HTMLTextAreaElement>(".mj_ComposerInput_input");
+            input?.focus();
+            input?.setSelectionRange(text.length, text.length);
+        });
+    };
+
     return (
         <MarkdownPreviewContext.Provider value={markdownPreview.context}>
             <div className="mj_App_wrapper">
@@ -7171,12 +7200,7 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                                             state={state}
                                             drafts={drafts}
                                             draftReloadTick={draftReloadTicks[state.selectedConversationId] ?? 0}
-                                            reloadDraft={(conversationId) =>
-                                                setDraftReloadTicks((ticks) => ({
-                                                    ...ticks,
-                                                    [conversationId]: (ticks[conversationId] ?? 0) + 1,
-                                                }))
-                                            }
+                                            reloadDraft={reloadDraft}
                                             sendingConvos={sendingConvos}
                                             draftRevisions={draftRevisions}
                                             sentHistory={sentHistory}
@@ -7203,6 +7227,9 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                 </div>
                 {state.stagedUploads && <UploadConfirmDialog client={client} staged={state.stagedUploads} />}
                 {state.goToNumberOpen && !state.stagedUploads && <GoToNumberDialog client={client} />}
+                {paletteOpen && composerConvo && !state.stagedUploads && (
+                    <CommandPalette onPick={pickCommand} onClose={() => setPaletteOpen(false)} />
+                )}
             </div>
         </MarkdownPreviewContext.Provider>
     );

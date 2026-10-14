@@ -2464,6 +2464,23 @@ export class MatronJournalClient {
         }
     }
 
+    /**
+     * GET /coordinator: the user's Coordinator conversation, asked fresh each time. The one lookup
+     * for anything that opens the Coordinator (⌘1 today); reuse it rather than reading the answer
+     * again. Null for none, a signed-out client or a failed read.
+     */
+    public async coordinatorConversationId(): Promise<string | null> {
+        const api = this.api;
+        if (!api) return null;
+        try {
+            const raw = await api.coordinator();
+            const id = raw && typeof raw === "object" ? (raw as { convo_id?: unknown }).convo_id : undefined;
+            return this.api === api && typeof id === "string" && id ? id : null;
+        } catch {
+            return null;
+        }
+    }
+
     // ── Coordinator consent approval (Settings → Coordinator; GET/PUT /coordinator `consent`) ──
 
     /** GET /coordinator: the switch's value. A journal without `consent` leaves it hidden. */
