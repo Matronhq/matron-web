@@ -14,6 +14,7 @@ import {
     milestoneKindLabel,
     missionLabel,
     needsUser,
+    offeredItemActions,
     oneLine,
     closedStatusLabel,
     resolutionLabel,
@@ -34,6 +35,27 @@ describe("needsUser", () => {
     });
     it("is false for a closed item even if it still records awaiting-user", () => {
         expect(needsUser({ state: "closed", awaiting: "user" })).toBe(false);
+    });
+});
+
+describe("offeredItemActions", () => {
+    it("offers every action while the item is open, whoever it awaits", () => {
+        expect(offeredItemActions({ kind: "question", state: "open", actions: ["Option A", "Option B"] })).toEqual([
+            "Option A",
+            "Option B",
+        ]);
+        expect(offeredItemActions({ kind: "task", state: "open", actions: ["Go"] })).toEqual(["Go"]);
+    });
+    it("offers none once the item is closed", () => {
+        expect(offeredItemActions({ kind: "question", state: "closed", actions: ["Go"] })).toEqual([]);
+        expect(offeredItemActions({ kind: "notice", state: "closed", actions: ["Seen"] })).toEqual([]);
+    });
+    it("offers none when the item has none", () => {
+        expect(offeredItemActions({ kind: "question", state: "open", actions: [] })).toEqual([]);
+        expect(offeredItemActions({ kind: "question", state: "open" })).toEqual([]);
+    });
+    it("still offers Seen on an open notice from a journal that predates item actions", () => {
+        expect(offeredItemActions({ kind: "notice", state: "open" })).toEqual(["Seen"]);
     });
 });
 
