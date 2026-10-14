@@ -438,6 +438,10 @@ export interface SessionStatus {
         sampled_at_ms: number;
     };
     email?: string;
+    // The session's effort level. Tri-state on the wire: a string while the bridge tracks one,
+    // an explicit null once it tracks none, and absent from frames that say nothing about it
+    // (see mergeSessionStatus). Held state is a string or absent.
+    effort?: string | null;
 }
 
 export interface ToolStreamState {

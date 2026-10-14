@@ -65,6 +65,7 @@ import {
     readCoordinatorDecisions,
     stopSpawnedSession,
 } from "./coordinator-consent";
+import { CompactNudge } from "./compact-nudge";
 import { CoordinatorEventNotice, isUnrenderableNoticeEvent } from "./coordinator-notices";
 import { dateTimeFormat } from "./date-format";
 import { GoToNumberDialog, goToNumberShortcutLabel, NumberSearchResult, useGoToNumberShortcut } from "./goto-number";
@@ -172,6 +173,7 @@ import {
     compactTokens,
     formatSampleAge,
     isSampleStale,
+    modelLine,
     normalizePercent,
     resetDisplay,
     sampleAgeMs,
@@ -2493,16 +2495,17 @@ export function useDismissablePopover(
 }
 
 // Redesign-v4 pane-width bands (ResizeObserver on the chat pane, not viewport):
-// >=640 full 2×2 usage grid (keep all four bars as long as they genuinely fit — the
-// 2×2 is ~350px and clears a minimal title down to ~640); <640 collapse to a ctx+5h
+// >=720 full 2×2 usage grid (keep all four bars as long as they genuinely fit — the
+// 2×2 is ~430px with reset times and clears a minimal title down to ~720); <720 collapse to a ctx+5h
 // two-row stack + popover with all four. >=560 full subtitle + Compact; <560 subtitle →
 // status dot + short model, title popover, Compact hidden.
-const USAGE_COLLAPSE_PX = 640;
-// with host cpu/ram the grid grows to a 3rd column (~500px) — it needs a wider pane
+// Both widths include the reset time trailing each limit's bar ("3h20", "Sun 10pm").
+const USAGE_COLLAPSE_PX = 720;
+// with host cpu/ram the grid grows to a 3rd column (~600px with reset times) — it needs a wider pane
 // to render without crushing the title, so collapse earlier (to the ctx+5h popover, which
 // still lists all six bars). Only the collapse WIDTH moves for the wide grid; the collapse
 // BEHAVIOUR (ctx+5h stack + popover) is unchanged, preserving the tuned narrow experience.
-const USAGE_COLLAPSE_WIDE_PX = 760;
+const USAGE_COLLAPSE_WIDE_PX = 960;
 const USAGE_WIDE_METER_COUNT = 4; // >4 meters ⇒ 3rd column ⇒ use the wide threshold
 const TITLE_COLLAPSE_PX = 560;
 
@@ -2692,6 +2695,13 @@ export function UsageCluster({
                             <span className={`mj_UsagePercent mj_UsagePercent_${level}`}>
                                 {norm === null ? "—" : `${Math.round(norm)}%`}
                             </span>
+                            {/* Reset time trailing the bar, as the Mac header shows it. Visible
+                                only: the progressbar's value text already announces it. */}
+                            {reset && (
+                                <span className="mj_UsageReset" aria-hidden="true">
+                                    {reset}
+                                </span>
+                            )}
                         </div>
                     );
                 })}
@@ -3365,7 +3375,7 @@ function ChatHeader({
     const limits = status?.limits?.filter((limit) => limit.label.trim());
     const meters = buildUsageMeters(status, limits);
     const shortModel = status?.model ? shortModelName(status.model) : undefined;
-    const hasSubtitle = Boolean(status?.model || runState);
+    const hasSubtitle = Boolean(status?.model || status?.workdir || status?.email || runState);
     // The mission chip's data: fetched whenever another conversation comes on screen (mission
     // markers keep it fresh after that), and only ever shown for the conversation it was fetched for.
     const convoId = conversation?.id;
@@ -3383,8 +3393,10 @@ function ChatHeader({
             titleNode={conversation ? <TaggedTitle conversation={conversation} agents={state.agents} /> : undefined}
             subtitle={
                 <>
-                    {status?.model && <span className="mj_HeaderModel">{status.model}</span>}
+                    {status?.model && <span className="mj_HeaderModel">{modelLine(status.model, status.effort)}</span>}
                     {status?.workdir && <span className="mj_HeaderWorkdir">{status.workdir}</span>}
+                    {/* The account the session runs under, after its workdir, as on the Mac. */}
+                    {status?.email && <span className="mj_HeaderEmail">{status.email}</span>}
                     {runState && <span className={`mj_HeaderState mj_HeaderState_${runState}`}>{runState}</span>}
                 </>
             }
@@ -7024,6 +7036,13 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                                         <SubChatHeader client={client} state={state} collapse={collapse} />
                                     ) : (
                                         <ChatHeader client={client} state={state} collapse={collapse} />
+                                    )}
+                                    {!childMode && (
+                                        <CompactNudge
+                                            key={state.selectedConversationId}
+                                            context={state.sessionStatus?.context}
+                                            send={(command) => client.sendMessage(command)}
+                                        />
                                     )}
                                     <SubagentStrip
                                         client={client}
