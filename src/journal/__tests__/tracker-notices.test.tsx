@@ -144,9 +144,9 @@ describe("Notice items", () => {
             await openDone(container);
 
             expect(items).toHaveBeenCalledWith({
-                state: "closed",
+                state: "done",
                 kind: ["question", "decision", "notice"],
-                sort: "updated",
+                sort: "acted",
                 limit: 50,
             });
             const rows = [...container.querySelectorAll(".mj_TrackerItemRow")];
@@ -172,7 +172,7 @@ describe("Notice items", () => {
 
             await act(async () => container.querySelector<HTMLButtonElement>(".mj_TrackerShowMore")!.click());
 
-            expect(items).toHaveBeenLastCalledWith(expect.objectContaining({ state: "closed", cursor: "c1" }));
+            expect(items).toHaveBeenLastCalledWith(expect.objectContaining({ state: "done", cursor: "c1" }));
             expect(container.querySelectorAll(".mj_TrackerItemRow")).toHaveLength(2);
             expect(container.querySelector(".mj_TrackerShowMore")).toBeNull();
         });

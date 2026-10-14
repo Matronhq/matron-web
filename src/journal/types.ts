@@ -857,6 +857,9 @@ export interface TrackerItem {
     created_at: number;
     updated_at: number;
     closed_at: number | null;
+    /** When the user last acted on the item (a reply, a tap, a close or reopen; else when they
+     *  filed it). Null when only agents have touched it; absent on a journal that predates it. */
+    last_user_input_at?: number | null;
     mission_id: string | null;
     mission_num: number | null;
     comment_count: number;

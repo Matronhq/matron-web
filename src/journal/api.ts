@@ -72,12 +72,14 @@ type TrackerMissionListState = "open" | "closed";
 
 /** `GET /items` query params (all optional; server clamps `limit` to ≤500). */
 interface ItemsFilter {
-    state?: TrackerItemState;
+    /** `done` is For you's Done view: closed, or answered and no longer waiting on the user. */
+    state?: TrackerItemState | "done";
     /** One kind, or several: any of them (a journal that predates the list form answers 400). */
     kind?: TrackerItemKind | readonly TrackerItemKind[];
     awaiting?: TrackerAwaiting;
     label?: string;
-    sort?: "rank" | "updated";
+    /** `acted`: the user's last action on the item first, falling back to its close time. */
+    sort?: "rank" | "updated" | "acted";
     since?: number;
     limit?: number;
     cursor?: string;

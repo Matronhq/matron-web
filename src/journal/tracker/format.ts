@@ -24,6 +24,22 @@ export function needsUser(item: Pick<TrackerItem, "state" | "awaiting">): boolea
     return item.state === "open" && item.awaiting === "user";
 }
 
+/**
+ * Whether the item belongs on For you's Done tab, as the journal's `state=done` view decides it: a
+ * question, decision or notice that is closed, or open but answered (the user acted on it and it no
+ * longer waits on them). Tasks are the agents' work list.
+ */
+export function inDone(item: Pick<TrackerItem, "kind" | "state" | "awaiting" | "last_user_input_at">): boolean {
+    if (item.kind === "task") return false;
+    return item.state === "closed" || (item.awaiting !== "user" && item.last_user_input_at != null);
+}
+
+/** The Done tab's order (the journal's `sort=acted`): the user's own last action on the item, else
+ *  when it was closed, else its last update. Newest first. */
+export function doneSortKey(item: Pick<TrackerItem, "last_user_input_at" | "closed_at" | "updated_at">): number {
+    return item.last_user_input_at ?? item.closed_at ?? item.updated_at;
+}
+
 /** A notice the user has not marked seen yet: it offers the one-tap Seen button. */
 export function awaitsSeen(item: Pick<TrackerItem, "kind" | "state">): boolean {
     return item.kind === "notice" && item.state === "open";

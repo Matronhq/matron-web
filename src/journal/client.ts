@@ -35,6 +35,7 @@ import {
 } from "./pins";
 import { mergeSessionStatus } from "./status";
 import { appendFeedPage, kindsWithMore } from "./tracker/projectActivity";
+import { doneSortKey, inDone } from "./tracker/format";
 import {
     asNumber,
     buildSidebarIndex,
@@ -2960,15 +2961,28 @@ export class MatronJournalClient {
     }
 
     /**
-     * The Done rows minus any of `open`. A refresh only re-reads the first page, so a row loaded
-     * from a later page that has since been reopened would otherwise stay listed as done.
+     * The Done rows with any of `open` that waits on the user again dropped. A refresh only
+     * re-reads the first page, so a row loaded from a later page that has since been reopened would
+     * otherwise stay listed as done. An open row the user has answered stays: it is done for them.
      */
     private doneWithoutOpen(open: TrackerItem[]): Partial<ClientState> {
         const done = this.state.inboxDone;
         if (!done || open.length === 0) return {};
-        const ids = new Set(open.map((item) => item.id));
+        const ids = new Set(open.filter((item) => !inDone(item)).map((item) => item.id));
         const items = done.items.filter((row) => !ids.has(row.id));
         return items.length === done.items.length ? {} : { inboxDone: { ...done, items } };
+    }
+
+    /**
+     * The Done rows with `item` as just written: an item the user has just answered, seen or closed
+     * goes to the top at once, before the refetch lands; one that waits on them again leaves.
+     */
+    private doneWithWritten(item: TrackerItem): Partial<ClientState> {
+        const done = this.state.inboxDone;
+        if (!done) return {};
+        const others = done.items.filter((row) => row.id !== item.id);
+        if (!inDone(item)) return others.length === done.items.length ? {} : { inboxDone: { ...done, items: others } };
+        return { inboxDone: { ...done, items: inDoneOrder([item, ...others]) } };
     }
 
     private applyWrittenItem(item: TrackerItem): void {
@@ -2988,7 +3002,7 @@ export class MatronJournalClient {
                               : inbox.filter((row) => row.id !== item.id),
                   }
                 : {}),
-            ...(item.state === "open" ? this.doneWithoutOpen([item]) : {}),
+            ...this.doneWithWritten(item),
             ...(detail && detail.item.id === item.id ? { trackerItem: { ...detail, item } } : {}),
         });
     }
@@ -3009,7 +3023,7 @@ export class MatronJournalClient {
             const { items, next_cursor } = await api.items(INBOX_DONE_FILTER);
             if (this.api !== api || this.trackerInboxDoneGen !== gen) return;
             const fresh = new Set(items.map((item) => item.id));
-            const open = new Set((this.state.inboxItems ?? []).map((item) => item.id));
+            const open = new Set((this.state.inboxItems ?? []).filter((item) => !inDone(item)).map((item) => item.id));
             const oldest = items[items.length - 1];
             // Below the fresh page only: anything newer that it does not list is no longer closed.
             // The latest rows in state, not the ones from before the request: a row reopened
@@ -3057,7 +3071,9 @@ export class MatronJournalClient {
             // The rows in state now, not the ones from before the request: a row reopened while
             // it was in flight has been dropped from them and must stay dropped.
             const rows = this.state.inboxDone?.items ?? done.items;
-            const skip = new Set([...rows, ...(this.state.inboxItems ?? [])].map((item) => item.id));
+            const skip = new Set(
+                [...rows, ...(this.state.inboxItems ?? []).filter((item) => !inDone(item))].map((item) => item.id),
+            );
             this.patch({
                 inboxDone: {
                     items: [...rows, ...items.filter((item) => !skip.has(item.id))],
@@ -4370,16 +4386,23 @@ export function commentFailureMessage(error: unknown): string {
 
 /** The Done tab's page: what the user answered, decided or read, most recently touched first. */
 const INBOX_DONE_FILTER = {
-    state: "closed",
+    state: "done",
     kind: ["question", "decision", "notice"],
-    sort: "updated",
+    sort: "acted",
     limit: 50,
 } as const;
 
-/** True when `row` comes after `mark` in the journal's `sort=updated` order (newest first, then
- *  the higher number). */
+/** True when `row` comes after `mark` in the journal's `sort=acted` order (the user's last action
+ *  first, then the higher number). */
 function sortsAfter(row: TrackerItem, mark: TrackerItem): boolean {
-    return row.updated_at < mark.updated_at || (row.updated_at === mark.updated_at && row.num < mark.num);
+    const r = doneSortKey(row);
+    const m = doneSortKey(mark);
+    return r < m || (r === m && row.num < mark.num);
+}
+
+/** Done rows in the journal's `sort=acted` order. */
+function inDoneOrder(rows: TrackerItem[]): TrackerItem[] {
+    return [...rows].sort((a, b) => (sortsAfter(a, b) ? 1 : sortsAfter(b, a) ? -1 : 0));
 }
 
 /** The label of a notice's one-tap answer; the journal closes the notice when it is tapped. */
