@@ -93,6 +93,40 @@ export interface RecentFolder {
     last_used: number | null;
 }
 
+/** One choice a box offers on its `recent_folders` reply (`agent_options`, `model_options`,
+ *  `effort_options`): `value` is what the `start` RPC takes, `label` what the picker shows
+ *  (never empty — the parser falls back to `value`). */
+export interface StartOption {
+    value: string;
+    label: string;
+}
+
+/** Everything a box's `recent_folders` reply offers the New session sheet. Every block beside
+ *  `folders` is optional on the wire: an older bridge omits it, which parses to an empty offer
+ *  (the picker hides) rather than failing the folders it rides with. */
+export interface NewSessionOffer {
+    folders: RecentFolder[];
+    /** Coding agents a `start` there may name. Empty = the bridge predates the switch. */
+    agentOptions: StartOption[];
+    /** What a start with no `agent` runs as. */
+    defaultAgent: string | null;
+    /** Claude models, without the bridge's own `default` alias (the picker's Default row). */
+    modelOptions: StartOption[];
+    /** What a start with no `model` runs on, when the box says. Display only. */
+    defaultModel: string | null;
+    /** Claude effort levels a `start` may name. */
+    effortOptions: StartOption[];
+    /** What a start with no `effort` runs at, when the box says. Display only. */
+    defaultEffort: string | null;
+}
+
+/** The New session sheet's picks for `start`. An absent key leaves the choice to the box. */
+export interface StartSessionPicks {
+    agent?: string;
+    model?: string;
+    effort?: string;
+}
+
 export interface Conversation {
     id: string;
     title: string;
@@ -540,6 +574,9 @@ export interface ClientState {
     trackerProjectFeedLoading?: boolean;
     trackerItem?: { item: TrackerItem; comments: TrackerComment[] } | null;
     trackerMission?: MissionDetail | null;
+    /** The selected conversation's missions, for the chat header's mission chip. Absent until
+     *  fetched; a fetch for another conversation is never shown against this one. */
+    conversationMissions?: ConversationMissions;
     /** True while ANY tracker fetch is in flight (v1: one detail/list open at a time). */
     trackerLoading?: boolean;
     /** Last tracker fetch/mutation error; cleared on the next successful load. */
@@ -911,6 +948,11 @@ export interface Mission {
     project_num?: number | null;
     /** The mission's activity rollup, where the journal sends it. */
     activity?: string;
+    /** The mission's status line (one short paragraph, inline markdown), who set it and when.
+     *  Null when unset; absent from journals that predate mission status. */
+    status?: string | null;
+    status_by?: TrackerActor | null;
+    status_updated_at?: number | null;
 }
 
 export interface Milestone {
@@ -1013,7 +1055,7 @@ export interface ProjectFileRow {
  *  older one sends none of them. */
 export interface ProjectDetail {
     project: Project;
-    missions: Array<Mission & { status?: string | null; activity?: string }>;
+    missions: Mission[];
     needs_you: Array<MissionItemRef & { mission_id: string; mission_num: number }>;
     recent_milestones: Array<Milestone & { mission_num: number }>;
     sessions_by_box: Record<string, number>;
@@ -1022,6 +1064,24 @@ export interface ProjectDetail {
     milestones?: ProjectFeedPage<Milestone & { mission_num: number | null }>;
     /** Set when the asked-for project was merged: this detail is the project it went into. */
     merged_from?: { id: string; num: number };
+}
+
+/** One mission a conversation has touched (`GET /conversations/:id/missions`): the mission row
+ *  with the link's own fields beside it. */
+export interface ConversationMissionLink extends Mission {
+    /** Where the conversation's milestones go by default. At most one link is current. */
+    current: boolean;
+    /** False once the conversation left the mission. */
+    active: boolean;
+    how?: string | null;
+    joined_at?: number | null;
+    ended_at?: number | null;
+}
+
+/** The selected conversation's missions, as last fetched for it. */
+export interface ConversationMissions {
+    convoId: string;
+    links: ConversationMissionLink[];
 }
 
 export interface MissionDetail {
@@ -1237,6 +1297,15 @@ export function asString(value: unknown, fallback = ""): string {
     return typeof value === "string" ? value : fallback;
 }
 
+/**
+ * The display name of a `file` / `image` event. `name` is the key the media-send contract defines
+ * and what the bridge and the native apps emit; `filename` is the older spelling, still read so
+ * events written before the switch keep their names.
+ */
+export function mediaFileName(payload: EventPayload): string {
+    return asString(payload.name) || asString(payload.filename);
+}
+
 export function asNumber(value: unknown, fallback = 0): number {
     return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
@@ -1343,8 +1412,8 @@ export function spawnOutcomeSnippet(payload: EventPayload): string {
 
 export function eventSnippet(type: string, payload: EventPayload): string {
     if (type === "text") return asString(payload.body).slice(0, 120);
-    if (type === "file") return `📎 ${asString(payload.caption) || asString(payload.filename, "File")}`.slice(0, 120);
-    if (type === "image") return `🖼 ${asString(payload.caption) || asString(payload.filename, "Image")}`.slice(0, 120);
+    if (type === "file") return `📎 ${asString(payload.caption) || mediaFileName(payload) || "File"}`.slice(0, 120);
+    if (type === "image") return `🖼 ${asString(payload.caption) || mediaFileName(payload) || "Image"}`.slice(0, 120);
     if (type === "prompt") return `? ${asString(payload.question).slice(0, 110)}`;
     if (type === "permission_request") {
         // agent_spawn payloads carry no `description` (that's a generic-permission field) — the
@@ -1353,6 +1422,7 @@ export function eventSnippet(type: string, payload: EventPayload): string {
         // into the snapshot snippet, and the two must be byte-exact or the sidebar row
         // flip-flops across a resume (same ruling just applied to the Android client).
         if (asString(payload.kind) === "agent_spawn") return "🤝 Agent spawn request";
+        if (asString(payload.kind) === "agent_chat") return "🤝 Agent chat request";
         return `Permission: ${asString(payload.description).slice(0, 100)}`;
     }
     if (type === "spawn_outcome") {

@@ -538,6 +538,37 @@ Please see LICENSE files in the repository root for full details.
     background: var(--cpd-state-hover);
 }
 
+/* — Breadcrumb (mission page): Projects › project › #N — */
+.mj_TrackerCrumbs {
+    display: flex;
+    align-items: baseline;
+    gap: var(--cpd-space-1x);
+    min-width: 0;
+    font: var(--cpd-font-body-sm-regular);
+}
+.mj_TrackerCrumb {
+    border: 0;
+    background: transparent;
+    padding: var(--cpd-space-1x);
+    border-radius: var(--cpd-radius-sm);
+    color: var(--cpd-color-text-action-accent);
+    font: inherit;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: pointer;
+}
+button.mj_TrackerCrumb:hover {
+    background: var(--cpd-state-hover);
+}
+.mj_TrackerCrumb_current {
+    font-variant-numeric: tabular-nums;
+    cursor: default;
+}
+.mj_TrackerCrumbs_sep {
+    color: var(--cpd-color-text-tertiary);
+}
+
 .mj_TrackerTextButton {
     border: 0;
     background: transparent;
@@ -745,6 +776,46 @@ Please see LICENSE files in the repository root for full details.
     color: var(--mj-needsyou);
     font: var(--cpd-font-meta);
     font-weight: 600;
+}
+.mj_TrackerMiniItem_closed .mj_TrackerMiniItem_title {
+    color: var(--cpd-color-text-secondary);
+}
+.mj_TrackerMiniItem_status {
+    flex: none;
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-meta);
+}
+.mj_TrackerShowMore {
+    align-self: flex-start;
+    margin-top: var(--cpd-space-1x);
+}
+
+/* — Mission status card: the status as the page's headline, with its byline — */
+.mj_TrackerMissionStatus {
+    margin-bottom: var(--cpd-space-4x);
+}
+.mj_TrackerMissionStatus_head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+}
+.mj_TrackerMissionStatus_label {
+    color: var(--cpd-color-text-secondary);
+    font: 600 12px/16px var(--cpd-font-family-ui);
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+}
+.mj_TrackerMissionStatus_by {
+    color: var(--cpd-color-text-secondary);
+    font: 400 12px/16px var(--cpd-font-family-ui);
+}
+.mj_TrackerMissionStatus_text {
+    font: 400 17px/24px var(--cpd-font-family-ui);
+    color: var(--cpd-color-text-primary);
+}
+.mj_TrackerMissionStatus_text p {
+    margin: 0;
 }
 
 /* — Conversation row — */
@@ -1099,6 +1170,11 @@ Please see LICENSE files in the repository root for full details.
 .mj_TrackerAction:disabled {
     cursor: default;
     opacity: 0.6;
+}
+/* The item's own answers sit between the body card and the thread, the thread's distance from each. */
+.mj_TrackerItemActions {
+    margin-top: 0;
+    margin-bottom: 18px;
 }
 /* The user's answer: filled, and it stays fully legible on a closed item. */
 .mj_TrackerAction_chosen,
@@ -2395,4 +2471,26 @@ button.mj_TrackerCard {
     background: var(--cpd-color-bg-accent-tint, var(--cpd-color-bg-subtle-secondary));
     color: var(--cpd-color-text-action-accent);
     font: var(--cpd-font-body-xs-semibold, 600 12px/16px var(--cpd-font-family-ui));
+}
+
+/* Coordinator / routine / consent-decision notices: the MissionNotice line, but not a button. */
+.mj_CoordinatorNotice {
+    cursor: default;
+    max-width: 100%;
+}
+.mj_CoordinatorNotice_text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.mj_CoordinatorNotice_twoLines .mj_CoordinatorNotice_text {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    white-space: normal;
+}
+.mj_CoordinatorNotice_glyph {
+    flex: none;
+    font-size: 14px;
 }
