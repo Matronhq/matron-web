@@ -3893,6 +3893,15 @@ function InlineAudioPlayer({
     // Same authenticated blob as every other attachment, re-typed so an octet-stream blob still
     // plays.
     const { url, error, expired } = useRenderableObjectUrl(client, { mediaId, kind: "audio", filename, contentType });
+    const audioRef = useRef<HTMLAudioElement>(null);
+    // A click on Play starts playback once the blob arrives. The fetch outlives the click's
+    // user-activation window, so a browser with a strict autoplay policy may refuse: the player
+    // is on screen with its own controls by then, so a refusal just leaves it paused.
+    useEffect(() => {
+        if (!autoPlay || !url) return;
+        const played = audioRef.current?.play();
+        played?.catch(() => undefined);
+    }, [autoPlay, url]);
     if (expired) return <ExpiredFile filename={filename} contentType={contentType} />;
     if (error) return <div className="mj_Error">{error}</div>;
     const name = filename || "audio";
@@ -3906,11 +3915,11 @@ function InlineAudioPlayer({
             {url ? (
                 // eslint-disable-next-line jsx-a11y/media-has-caption
                 <audio
+                    ref={audioRef}
                     className="mj_Audio_player"
                     src={url}
                     controls
                     preload="metadata"
-                    autoPlay={autoPlay}
                     aria-label={`Play ${name}`}
                 />
             ) : (

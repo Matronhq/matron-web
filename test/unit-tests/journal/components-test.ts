@@ -2043,6 +2043,7 @@ describe("attachment composer", () => {
             ],
         });
         const mediaUrl = jest.spyOn(client, "mediaUrl").mockResolvedValue("blob:https://journal.example/voice-1");
+        const play = jest.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
         rendered = await renderClient(client);
         await act(async () => {
             await Promise.resolve();
@@ -2056,6 +2057,9 @@ describe("attachment composer", () => {
         expect(mediaUrl).toHaveBeenCalledWith("voice-1");
         expect(rendered.container.querySelector(".mj_Audio")?.textContent).toContain("voice-note.m4a");
         expect(rendered.container.querySelector("[data-event-id] a.mj_File")).toBeNull();
+        // Loaded by scrolling into view, not by a click: it must not start playing on its own.
+        expect(play).not.toHaveBeenCalled();
+        play.mockRestore();
     });
 
     it("waits for a click before fetching a large audio attachment", async () => {
@@ -2077,6 +2081,7 @@ describe("attachment composer", () => {
             ],
         });
         const mediaUrl = jest.spyOn(client, "mediaUrl").mockResolvedValue("blob:https://journal.example/talk-1");
+        const play = jest.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
         rendered = await renderClient(client);
 
         expect(mediaUrl).not.toHaveBeenCalled();
@@ -2090,6 +2095,9 @@ describe("attachment composer", () => {
         expect(rendered.container.querySelector("[data-event-id] audio")?.getAttribute("src")).toBe(
             "blob:https://journal.example/talk-1",
         );
+        // The click asked to play, so playback starts once the blob is in.
+        expect(play).toHaveBeenCalledTimes(1);
+        play.mockRestore();
     });
 
     it("shows a reaped image or file as expired without fetching it", async () => {
