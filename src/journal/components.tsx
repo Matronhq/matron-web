@@ -148,7 +148,7 @@ import {
 } from "./markdown-preview";
 import { TrackerPane } from "./tracker/TrackerPane";
 import { MediaBrowserSheet } from "./media-browser";
-import { SubChatPane, useChatArea } from "./subchat-pane";
+import { SubChatPane, type SubChatRow, useChatArea } from "./subchat-pane";
 import { chatSidePane, subtaskDescription } from "./subtask";
 import { SubtaskLine } from "./subtask-link";
 import {
@@ -6965,20 +6965,73 @@ export function SubagentStrip({
     );
 }
 
-// The subagent pane's rows: what the chat's own transcript would show for a read-only subagent.
+// The subagent pane's rows: what the chat's own transcript shows for a read-only subagent, with
+// the same folding (answered prompts, released queue items, decided permissions, restated item
+// cards, spawn and chat-request outcomes).
 const SUBCHAT_HIDDEN_TYPES = new Set(["read_marker", "edit", "session_status", "convo_meta", "summary"]);
-function subChatVisibleEvents(events: JournalEvent[]): JournalEvent[] {
-    return events.filter(
-        (event) =>
-            !SUBCHAT_HIDDEN_TYPES.has(event.type) &&
-            !isUnrenderableNoticeEvent(event) &&
-            !isSuppressedTrackerEvent(event),
-    );
-}
-
-const NO_PROMPT_REPLIES: ReadonlyMap<string, { choice?: string }> = new Map();
-function renderSubChatEvent(event: JournalEvent, client: MatronJournalClient): React.ReactNode {
-    return <EventContent client={client} event={event} answeredPromptReplies={NO_PROMPT_REPLIES} isReadOnly />;
+function subChatTranscript(events: JournalEvent[], client: MatronJournalClient): SubChatRow[] {
+    const queuedReleasePromptSeqs = new Set<number>();
+    const legacyQueuePromptSeqs = new Set<number>();
+    const permissionRequestSeqs = new Set<number>();
+    const answeredPromptReplies = new Map<string, { choice?: string }>();
+    const spawnOutcomes = new Map<string, EventPayload>();
+    const releasedActions = new Map<string, "send" | "cancel">();
+    for (const event of events) {
+        if (event.type === "permission_request") permissionRequestSeqs.add(event.seq);
+        else if (event.type === "prompt") {
+            if (asString(event.payload.kind) === "queued_release") queuedReleasePromptSeqs.add(event.seq);
+            else if (isLegacyQueuePrompt(event)) legacyQueuePromptSeqs.add(event.seq);
+        } else if (event.type === "prompt_reply") {
+            const targetSeq = asNumber(event.payload.target_seq, Number.NaN);
+            if (Number.isSafeInteger(targetSeq) && targetSeq >= 0) {
+                const choice = asString(event.payload.choice, asString(event.payload.label)) || undefined;
+                answeredPromptReplies.set(`${event.convo_id}:${targetSeq}`, { choice });
+            }
+            const action = asString(event.payload.action);
+            if (
+                asString(event.payload.kind) === "queued_release" &&
+                Array.isArray(event.payload.released) &&
+                (action === "send" || action === "cancel")
+            ) {
+                for (const releasedId of event.payload.released) {
+                    const itemId = asString(releasedId);
+                    if (itemId) releasedActions.set(itemId, action);
+                }
+            }
+        } else if (event.type === "spawn_outcome" && typeof event.payload.request_id === "string") {
+            spawnOutcomes.set(event.payload.request_id, event.payload);
+        }
+    }
+    const itemCards = foldItemCards(events);
+    const agentChatResolutions = readAgentChatResolutions(events);
+    const coordinatorDecisions = readCoordinatorDecisions(events);
+    const resolvedAction = (itemId: string): "send" | "cancel" | undefined => releasedActions.get(itemId);
+    return events
+        .filter(
+            (event) =>
+                !SUBCHAT_HIDDEN_TYPES.has(event.type) &&
+                !isUnrenderableNoticeEvent(event) &&
+                !isQueuedReleaseReply(event, queuedReleasePromptSeqs, legacyQueuePromptSeqs) &&
+                !isSuppressedTrackerEvent(event) &&
+                !(event.type === "item" && itemCards.hidden.has(event.seq)) &&
+                !isPermissionDecisionReply(event, permissionRequestSeqs),
+        )
+        .map((event) => ({
+            event,
+            content: (
+                <EventContent
+                    client={client}
+                    event={event}
+                    answeredPromptReplies={answeredPromptReplies}
+                    spawnOutcomes={spawnOutcomes}
+                    agentChatResolutions={agentChatResolutions}
+                    coordinatorDecisions={coordinatorDecisions}
+                    itemCards={itemCards}
+                    isReadOnly
+                    resolvedAction={resolvedAction}
+                />
+            ),
+        }));
 }
 
 function SignedInApp({ client, state }: { client: MatronJournalClient; state: ClientState }): React.ReactElement {
@@ -7163,8 +7216,7 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                             parentId={sidePane.parentId}
                             childId={sidePane.childId}
                             area={chatArea}
-                            visibleEvents={subChatVisibleEvents}
-                            renderEvent={renderSubChatEvent}
+                            transcript={subChatTranscript}
                         />
                     ) : null}
                     {markdownPreview.target ? (

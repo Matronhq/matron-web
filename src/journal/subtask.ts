@@ -19,6 +19,7 @@ Please see LICENSE files in the repository root for full details.
  * the slot, as on the Mac; opening it closes the others.
  */
 
+import { splitTitle } from "./boxes";
 import { childrenOf, type ClientState, type Conversation, conversationTitle } from "./types";
 
 const SUBTASK_PREFIX = "🔀 Subtask: ";
@@ -32,11 +33,21 @@ export function subtaskDescription(body: string): string | undefined {
     return description || undefined;
 }
 
+/** A child's title as the bridge wrote it, and without its "[ab] " session short and marker,
+ *  which the description never carries. */
+function titleForms(child: Conversation): string[] {
+    const raw = conversationTitle(child);
+    const bare = splitTitle(raw).title;
+    return bare && bare !== raw ? [raw, bare] : [raw];
+}
+
 /** The child a subtask line most plausibly refers to, from `children` in creation order. */
 export function resolveSubtaskTarget(description: string, children: readonly Conversation[]): Conversation | undefined {
-    const exact = children.filter((child) => conversationTitle(child) === description);
+    const exact = children.filter((child) => titleForms(child).includes(description));
     const matches =
-        exact.length > 0 ? exact : children.filter((child) => conversationTitle(child).startsWith(description));
+        exact.length > 0
+            ? exact
+            : children.filter((child) => titleForms(child).some((title) => title.startsWith(description)));
     for (let index = matches.length - 1; index >= 0; index -= 1) {
         if (matches[index].session_state === "running") return matches[index];
     }

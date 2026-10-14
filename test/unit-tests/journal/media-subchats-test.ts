@@ -253,6 +253,58 @@ describe("the subagent pane", () => {
         expect(container.querySelector("aside.mj_SubChatPane")).toBeNull();
     });
 
+    it("folds the transcript as the chat does: a decided permission shows once, as answered", async () => {
+        const client = signedInClient([PARENT, LINT], "parent");
+        jest.spyOn(client, "conversationEvents").mockResolvedValue([
+            {
+                seq: 1,
+                convo_id: LINT.id,
+                ts: 1_782_000_000_000,
+                sender: "agent:claude",
+                type: "permission_request",
+                payload: { description: "Run the linter?", question: "Run the linter?", options: ["Allow", "Deny"] },
+            },
+            {
+                seq: 2,
+                convo_id: LINT.id,
+                ts: 1_782_000_060_000,
+                sender: "user:alice",
+                type: "prompt_reply",
+                payload: { target_seq: 1, choice: "Allow" },
+            },
+        ]);
+        layOut(1400, 300);
+        const container = await renderClient(client);
+        await act(async () => client.openSubChat(LINT.id));
+        const rows = container.querySelectorAll(".mj_SubChatPane_row");
+        expect(rows).toHaveLength(1);
+        expect(rows[0].textContent).toContain("Allow");
+    });
+
+    it("closes when covering the chat and a Markdown file opens its preview beside the chat", async () => {
+        const client = signedInClient([PARENT, LINT], "parent");
+        jest.spyOn(client, "conversationEvents").mockResolvedValue([
+            {
+                seq: 1,
+                convo_id: LINT.id,
+                ts: 1_782_000_000_000,
+                sender: "agent:claude",
+                type: "file",
+                payload: { blob_ref: "notes-md", name: "notes.md", size: 120, content_type: "text/markdown" },
+            },
+        ]);
+        layOut(1000, 300);
+        const container = await renderClient(client);
+        await act(async () => client.openSubChat(LINT.id));
+        await act(async () =>
+            container
+                .querySelector<HTMLButtonElement>('.mj_SubChatPane button[aria-label="Preview notes.md"]')
+                ?.click(),
+        );
+        expect(client.getSnapshot().subChatPane).toBeUndefined();
+        expect(container.querySelector(".mj_MdPreview")).not.toBeNull();
+    });
+
     it("switches between siblings from its header", async () => {
         const client = signedInClient([PARENT, LINT, DOCS], "parent");
         jest.spyOn(client, "conversationEvents").mockResolvedValue([]);

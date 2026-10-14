@@ -70,6 +70,13 @@ describe("resolveSubtaskTarget", () => {
         expect(resolveSubtaskTarget("lint", done)?.id).toBe("new");
     });
 
+    it("matches a child whose title carries a session short and marker", () => {
+        const children = [convo("a", "🐣 [7a] test triage"), convo("b", "[WIP] notes")];
+        expect(resolveSubtaskTarget("test triage", children)?.id).toBe("a");
+        expect(resolveSubtaskTarget("test tri", children)?.id).toBe("a");
+        expect(resolveSubtaskTarget("[WIP] notes", children)?.id).toBe("b");
+    });
+
     it("matches an untitled child by its id, as the sidebar names it", () => {
         expect(resolveSubtaskTarget("room:sub:1", [convo("room:sub:1", "")])?.id).toBe("room:sub:1");
     });

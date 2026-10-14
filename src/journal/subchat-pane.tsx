@@ -19,9 +19,16 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import type { MatronJournalClient } from "./client";
 import { ChevronLeftIcon, CloseIcon } from "./icons";
 import { buildMediaCorpus, MediaViewer, MediaViewerContext, type MediaViewerContextValue } from "./media-viewer";
+import { MarkdownPreviewContext, type MarkdownPreviewContextValue, useMarkdownPreview } from "./markdown-preview";
 import { displayTitle } from "./SessionTag";
 import { clampSidePaneWidth, SIDE_BY_SIDE_MIN_WIDTH, SIDE_PANE_MIN_WIDTH } from "./subtask";
 import { childrenOf, type Conversation, type JournalEvent } from "./types";
+
+/** One transcript row and its rendered content. */
+export interface SubChatRow {
+    event: JournalEvent;
+    content: React.ReactNode;
+}
 
 /** Where the chat area is on screen: from the chat's left edge to the app's right edge. */
 export interface ChatArea {
@@ -96,18 +103,15 @@ export function SubChatPane({
     parentId,
     childId,
     area,
-    visibleEvents,
-    renderEvent,
+    transcript,
 }: {
     client: MatronJournalClient;
     conversations: Conversation[];
     parentId: string;
     childId: string;
     area: ChatArea | undefined;
-    /** The transcript's own row filter, so the pane hides what the chat hides. */
-    visibleEvents: (events: JournalEvent[]) => JournalEvent[];
-    /** One row's content, read-only. */
-    renderEvent: (event: JournalEvent, client: MatronJournalClient) => React.ReactNode;
+    /** The rows to show, read-only: the chat's own filtering and folding of the transcript. */
+    transcript: (events: JournalEvent[], client: MatronJournalClient) => SubChatRow[];
 }): React.ReactElement {
     const covering = paneCoversChat(area);
     const child = conversations.find((conversation) => conversation.id === childId);
@@ -132,7 +136,7 @@ export function SubChatPane({
             cancelled = true;
         };
     }, [client, childId, lastSeq]);
-    const rows = useMemo(() => (events ? visibleEvents(events) : []), [events, visibleEvents]);
+    const rows = useMemo(() => (events ? transcript(events, client) : []), [events, transcript, client]);
 
     // Follows the tail while the reader is at the bottom, like the chat does.
     const scrollRef = useRef<HTMLDivElement>(null);
@@ -155,6 +159,22 @@ export function SubChatPane({
     }, []);
     const viewerValue = useMemo<MediaViewerContextValue>(() => ({ openViewer }), [openViewer]);
     useEffect(() => setViewerMediaId(undefined), [childId]);
+
+    // Covering the chat, the pane would hide the Markdown preview that opens beside the chat, so a
+    // Markdown file closes the pane first (as the media browser closes itself).
+    const markdownPreview = useMarkdownPreview();
+    const markdownValue = useMemo<MarkdownPreviewContextValue | undefined>(
+        () =>
+            markdownPreview && covering
+                ? {
+                      openMarkdownPreview: (target) => {
+                          client.closeSubChat();
+                          markdownPreview.openMarkdownPreview(target);
+                      },
+                  }
+                : markdownPreview,
+        [markdownPreview, covering, client],
+    );
 
     const openSibling = useCallback((id: string) => client.openSubChat(id), [client]);
 
@@ -279,19 +299,21 @@ export function SubChatPane({
                         </p>
                     ) : (
                         <MediaViewerContext.Provider value={viewerValue}>
-                            <ol className="mj_SubChatPane_list" aria-label="Subagent transcript">
-                                {rows.map((event) => (
-                                    <li
-                                        key={event.seq}
-                                        className="mj_SubChatPane_row"
-                                        data-self={event.sender.startsWith("user:")}
-                                    >
-                                        <div className="mj_TextBody">
-                                            <div className="markdown-body">{renderEvent(event, client)}</div>
-                                        </div>
-                                    </li>
-                                ))}
-                            </ol>
+                            <MarkdownPreviewContext.Provider value={markdownValue}>
+                                <ol className="mj_SubChatPane_list" aria-label="Subagent transcript">
+                                    {rows.map(({ event, content }) => (
+                                        <li
+                                            key={event.seq}
+                                            className="mj_SubChatPane_row"
+                                            data-self={event.sender.startsWith("user:")}
+                                        >
+                                            <div className="mj_TextBody">
+                                                <div className="markdown-body">{content}</div>
+                                            </div>
+                                        </li>
+                                    ))}
+                                </ol>
+                            </MarkdownPreviewContext.Provider>
                         </MediaViewerContext.Provider>
                     )}
                 </div>
