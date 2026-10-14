@@ -4548,4 +4548,17 @@ describe("MatronJournalClient read state", () => {
         expect(reset).toHaveBeenCalled();
         hasFocus.mockRestore();
     });
+
+    it("shows no error banner when the journal refuses a read-state report", async () => {
+        const client = new MatronJournalClient();
+        const handle = (frame: unknown): Promise<void> =>
+            (client as unknown as { handleFrame(frame: unknown): Promise<void> }).handleFrame(frame);
+
+        await handle({ kind: "control", op: "error", code: "forbidden", ref: "seen" });
+        await handle({ kind: "control", op: "error", code: "forbidden", ref: "item_seen" });
+        expect(client.getSnapshot().connectionError).toBeUndefined();
+
+        await handle({ kind: "control", op: "error", code: "forbidden", ref: "read_marker" });
+        expect(client.getSnapshot().connectionError).toBe("Journal operation failed: forbidden");
+    });
 });

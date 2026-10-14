@@ -3656,6 +3656,10 @@ export class MatronJournalClient {
             return;
         }
         if (frame.kind === "control" && frame.op === "error") {
+            // Read-state reports are fire-and-forget with no reply (a conversation or item the
+            // journal refuses, e.g. one removed meanwhile). Advisory, as on the other apps: never
+            // an error banner for something the user didn't do.
+            if (frame.ref === "seen" || frame.ref === "item_seen") return;
             this.patch({ connectionError: frame.detail || `Journal operation failed: ${frame.code ?? "unknown"}` });
         }
     }
