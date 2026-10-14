@@ -82,7 +82,7 @@ describe("ToolStream ANSI rendering", () => {
         );
         // unify step 4: the terminal surface is the Mac's fixed dark block, via tokens.
         const terminalRule = stylesheet.match(
-            /\.mj_LiveTool pre,\s*\.mj_ToolCard pre,\s*\.mj_Unknown pre\s*\{[^}]*background:\s*var\(--cpd-color-terminal-bg\);[^}]*color:\s*var\(--cpd-color-terminal-fg\);[^}]*\}/,
+            /\.mj_LiveTool pre,\s*\.mj_ToolCard pre,\s*\.mj_Unknown pre\s*\{[^}]*background:\s*var\(--mj-color-terminal-bg\);[^}]*color:\s*var\(--mj-color-terminal-fg\);[^}]*\}/,
         );
 
         expect(sharedRule).not.toBeNull();

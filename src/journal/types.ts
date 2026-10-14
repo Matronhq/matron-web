@@ -240,7 +240,7 @@ export interface NumberLookup {
 export type NumberLookupOutcome = { status: "found"; hit: NumberLookup } | { status: "none" } | { status: "failed" };
 
 /**
- * Message-content search state (Apple-parity "Messages" section). The room-list search box
+ * Message-content search state (Apple-parity "Messages" section). The conversation list search box
  * filters chat titles in-memory (the "Chats" behaviour); this holds the server-side content
  * hits for the same query. `query` is the query the current `hits` belong to, so the view can
  * ignore results that raced in after the box was cleared or retyped.

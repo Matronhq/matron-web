@@ -236,7 +236,9 @@ const NAV_KEY_FOR_VIEW: Record<"missions" | "inbox" | "memories", NavKey> = {
     inbox: "decisions",
     memories: "memories",
 };
-const LEFT_PANEL_SIZE_KEY = "mx_lhs_size";
+const LEFT_PANEL_SIZE_KEY = "matron_sidebar_width";
+// The key earlier versions stored the width under; moved to the current key on first read.
+const LEGACY_LEFT_PANEL_SIZE_KEY = "mx_lhs_size";
 const LEFT_PANEL_DEFAULT_WIDTH = 350;
 const LEFT_PANEL_MIN_WIDTH = 224;
 
@@ -247,6 +249,13 @@ function clampLeftPanelWidth(width: number, containerWidth: number): number {
 function initialLeftPanelWidth(): number {
     let storedWidth = Number.NaN;
     try {
+        const legacy = window.localStorage.getItem(LEGACY_LEFT_PANEL_SIZE_KEY);
+        if (legacy !== null) {
+            if (window.localStorage.getItem(LEFT_PANEL_SIZE_KEY) === null) {
+                window.localStorage.setItem(LEFT_PANEL_SIZE_KEY, legacy);
+            }
+            window.localStorage.removeItem(LEGACY_LEFT_PANEL_SIZE_KEY);
+        }
         storedWidth = Number.parseInt(window.localStorage.getItem(LEFT_PANEL_SIZE_KEY) ?? "", 10);
     } catch {
         // Storage can be unavailable; the default width remains usable.
@@ -1237,18 +1246,18 @@ export function MessageSearchResults({
                 Messages
             </div>
             {failed ? (
-                <p className="mj_RoomListEmpty" role="status">
+                <p className="mj_ConversationListEmpty" role="status">
                     Search is unavailable right now.
                 </p>
             ) : hits.length === 0 ? (
                 // Hits are bound to their query, so an empty set while loading means the current
                 // query has no results yet — show a searching state, never a prior query's rows.
                 loading ? (
-                    <p className="mj_RoomListEmpty" role="status">
+                    <p className="mj_ConversationListEmpty" role="status">
                         Searching…
                     </p>
                 ) : (
-                    <p className="mj_RoomListEmpty" role="status">
+                    <p className="mj_ConversationListEmpty" role="status">
                         No messages match your search.
                     </p>
                 )
@@ -1290,10 +1299,10 @@ function ConversationListView({
     const [accountOpen, setAccountOpen] = useState(false);
     const [newSessionOpen, setNewSessionOpen] = useState(false);
     const [pinDialog, setPinDialog] = useState<PinDialogTarget>();
-    const [roomMenu, setRoomMenu] = useState<{ conversationId: string; left: number; top: number }>();
-    const roomMenuRef = useRef(roomMenu);
-    const roomMenuElementRef = useRef<HTMLDivElement>(null);
-    const roomMenuOpenerRef = useRef<HTMLElement | null>(null);
+    const [conversationMenu, setConversationMenu] = useState<{ conversationId: string; left: number; top: number }>();
+    const conversationMenuRef = useRef(conversationMenu);
+    const conversationMenuElementRef = useRef<HTMLDivElement>(null);
+    const conversationMenuOpenerRef = useRef<HTMLElement | null>(null);
     // Pending rAF id for the post-menu-action focus restore; cancelled before re-scheduling
     // and on unmount so a stale callback can never steal focus (see restoreFocusAfterMenuAction).
     const restoreFocusFrameRef = useRef<number | undefined>(undefined);
@@ -1301,9 +1310,9 @@ function ConversationListView({
     const longPressTargetRef = useRef<{ conversationId: string; row: HTMLButtonElement } | undefined>(undefined);
     const longPressFiredRef = useRef(false);
     const longPressScrollCleanupRef = useRef<() => void>(() => undefined);
-    const openRoomMenuRef = useRef<(conversationId: string, left: number, top: number, opener: HTMLElement) => void>(
-        () => undefined,
-    );
+    const openConversationMenuRef = useRef<
+        (conversationId: string, left: number, top: number, opener: HTMLElement) => void
+    >(() => undefined);
     const longPressControllerRef = useRef<LongPressController | undefined>(undefined);
     const childOutcomesRef = useRef(
         new Map(
@@ -1358,12 +1367,12 @@ function ConversationListView({
         return () => clearTimeout(timer);
     }, [query, client]);
 
-    roomMenuRef.current = roomMenu;
-    openRoomMenuRef.current = (conversationId, left, top, opener): void => {
+    conversationMenuRef.current = conversationMenu;
+    openConversationMenuRef.current = (conversationId, left, top, opener): void => {
         setAccountOpen(false);
         setNewSessionOpen(false);
-        roomMenuOpenerRef.current = opener;
-        setRoomMenu({ conversationId, left, top });
+        conversationMenuOpenerRef.current = opener;
+        setConversationMenu({ conversationId, left, top });
     };
     if (!longPressControllerRef.current) {
         longPressControllerRef.current = createLongPressController({
@@ -1374,15 +1383,15 @@ function ConversationListView({
                 if (!target) return;
                 const rect = target.row.getBoundingClientRect();
                 longPressFiredRef.current = true;
-                openRoomMenuRef.current(target.conversationId, rect.right, rect.top, target.row);
+                openConversationMenuRef.current(target.conversationId, rect.right, rect.top, target.row);
             },
         });
     }
 
-    const closeRoomMenu = useCallback((restoreFocus = false): void => {
-        if (!roomMenuRef.current) return;
-        setRoomMenu(undefined);
-        if (restoreFocus) roomMenuOpenerRef.current?.focus();
+    const closeConversationMenu = useCallback((restoreFocus = false): void => {
+        if (!conversationMenuRef.current) return;
+        setConversationMenu(undefined);
+        if (restoreFocus) conversationMenuOpenerRef.current?.focus();
     }, []);
 
     // After a menu ACTION (mark-read/archive/unarchive) the focused menuitem unmounts, and
@@ -1391,7 +1400,7 @@ function ConversationListView({
     // connected (mark-read), else the always-present search input, so keyboard focus never falls
     // through to document.body.
     const restoreFocusAfterMenuAction = useCallback((): void => {
-        const opener = roomMenuOpenerRef.current;
+        const opener = conversationMenuOpenerRef.current;
         // Cancel any still-pending restore before scheduling a new one. Without this the
         // leaked callback fires on a LATER tick (or in a later test), finds its opener
         // disconnected, and yanks focus to the search input — a real focus-steal, and the
@@ -1400,7 +1409,7 @@ function ConversationListView({
         restoreFocusFrameRef.current = requestAnimationFrame(() => {
             restoreFocusFrameRef.current = undefined;
             if (opener && opener.isConnected) opener.focus();
-            else document.getElementById("room-list-search-input")?.focus();
+            else document.getElementById("conversation-search-input")?.focus();
         });
     }, []);
 
@@ -1438,16 +1447,17 @@ function ConversationListView({
     );
 
     useEffect(() => {
-        if (!roomMenu) return;
+        if (!conversationMenu) return;
         const onPointerDown = (event: PointerEvent): void => {
-            if (!roomMenuRef.current || roomMenuElementRef.current?.contains(event.target as Node)) return;
-            closeRoomMenu();
+            if (!conversationMenuRef.current || conversationMenuElementRef.current?.contains(event.target as Node))
+                return;
+            closeConversationMenu();
         };
         const onKeyDown = (event: KeyboardEvent): void => {
-            if (roomMenuRef.current && event.key === "Escape") closeRoomMenu(true);
+            if (conversationMenuRef.current && event.key === "Escape") closeConversationMenu(true);
         };
         const onScroll = (): void => {
-            if (roomMenuRef.current) closeRoomMenu();
+            if (conversationMenuRef.current) closeConversationMenu();
         };
         document.addEventListener("pointerdown", onPointerDown);
         document.addEventListener("keydown", onKeyDown);
@@ -1457,22 +1467,22 @@ function ConversationListView({
             document.removeEventListener("keydown", onKeyDown);
             document.removeEventListener("scroll", onScroll, true);
         };
-    }, [Boolean(roomMenu), closeRoomMenu]);
+    }, [Boolean(conversationMenu), closeConversationMenu]);
 
     useLayoutEffect(() => {
-        if (!roomMenu || !roomMenuElementRef.current) return;
-        const rect = roomMenuElementRef.current.getBoundingClientRect();
-        const left = Math.max(8, Math.min(roomMenu.left, window.innerWidth - rect.width - 8));
-        const top = Math.max(8, Math.min(roomMenu.top, window.innerHeight - rect.height - 8));
-        if (left !== roomMenu.left || top !== roomMenu.top) {
-            setRoomMenu({ ...roomMenu, left, top });
+        if (!conversationMenu || !conversationMenuElementRef.current) return;
+        const rect = conversationMenuElementRef.current.getBoundingClientRect();
+        const left = Math.max(8, Math.min(conversationMenu.left, window.innerWidth - rect.width - 8));
+        const top = Math.max(8, Math.min(conversationMenu.top, window.innerHeight - rect.height - 8));
+        if (left !== conversationMenu.left || top !== conversationMenu.top) {
+            setConversationMenu({ ...conversationMenu, left, top });
         }
-    }, [roomMenu]);
+    }, [conversationMenu]);
 
     useLayoutEffect(() => {
-        if (!roomMenu) return;
-        roomMenuElementRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
-    }, [roomMenu]);
+        if (!conversationMenu) return;
+        conversationMenuElementRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+    }, [conversationMenu]);
     // ONE canonical index feeds BOTH sidebar paths here (top-level fallback + nested
     // splice) AND the client-side selection/unread/mark-all consumers, so "rendered" and
     // "selectable/counted" can never diverge. rendersAsTopLevelRow: a non-child always
@@ -1550,17 +1560,17 @@ function ConversationListView({
             !state.archivedIds.has(conversation.id) &&
             isTopLevelRow(conversation),
     );
-    const menuConversation = roomMenu
-        ? state.conversations.find((conversation) => conversation.id === roomMenu.conversationId)
+    const menuConversation = conversationMenu
+        ? state.conversations.find((conversation) => conversation.id === conversationMenu.conversationId)
         : undefined;
 
     useEffect(() => {
-        if (roomMenu && !menuConversation) closeRoomMenu();
-    }, [roomMenu, menuConversation, closeRoomMenu]);
+        if (conversationMenu && !menuConversation) closeConversationMenu();
+    }, [conversationMenu, menuConversation, closeConversationMenu]);
 
     const openAtElement = (conversationId: string, anchor: HTMLElement, opener: HTMLElement = anchor): void => {
         const rect = anchor.getBoundingClientRect();
-        openRoomMenuRef.current(conversationId, rect.right, rect.bottom, opener);
+        openConversationMenuRef.current(conversationId, rect.right, rect.bottom, opener);
     };
 
     // Nav rail: which section is current, and the unread total it badges (archived rows excluded;
@@ -1609,7 +1619,9 @@ function ConversationListView({
             : [];
     // Move up / Move down step through the pins the Pinned section shows (hidden archived pins
     // keep their place but are hopped over, so every step moves the row on screen).
-    const menuPinIndex = roomMenu ? shownPins.findIndex((pin) => pin.convo_id === roomMenu.conversationId) : -1;
+    const menuPinIndex = conversationMenu
+        ? shownPins.findIndex((pin) => pin.convo_id === conversationMenu.conversationId)
+        : -1;
     const shownPinIds = shownPins.map((pin) => pin.convo_id);
     const nestedChildRows = (conversation: Conversation): React.ReactElement[] =>
         tab === "archived"
@@ -1663,9 +1675,9 @@ function ConversationListView({
             effectiveUnread(child, state.unreadOverrideIds),
         );
         return (
-            <div className="mj_RoomListItem_wrapper" role="listitem" key={conversation.id}>
+            <div className="mj_ConversationListItem_wrapper" role="listitem" key={conversation.id}>
                 <button
-                    className={`mj_RoomListItem${selected ? " mj_RoomListItem_selected" : ""}${isSubagent ? " mj_RoomListItem_sub" : ""}`}
+                    className={`mj_ConversationListItem${selected ? " mj_ConversationListItem_selected" : ""}${isSubagent ? " mj_ConversationListItem_sub" : ""}`}
                     type="button"
                     aria-current={selected ? "page" : undefined}
                     aria-label={`Open ${isSubagent ? "subagent" : "room"} ${name}${outcomeStatus ? `, ${outcomeStatus}` : ""}, last activity ${relativeTimestamp}${overrideUnread ? ", marked unread" : ""}${
@@ -1690,7 +1702,12 @@ function ConversationListView({
                             openAtElement(conversation.id, trigger ?? event.currentTarget, event.currentTarget);
                             return;
                         }
-                        openRoomMenuRef.current(conversation.id, event.clientX, event.clientY, event.currentTarget);
+                        openConversationMenuRef.current(
+                            conversation.id,
+                            event.clientX,
+                            event.clientY,
+                            event.currentTarget,
+                        );
                     }}
                     onPointerDown={(event) => {
                         if (event.pointerType !== "touch") return;
@@ -1720,73 +1737,76 @@ function ConversationListView({
                         live/terminal outcome. Parent rows keep the shipped pin-or-status behaviour
                         (star renders separately before the meta). */}
                     {isSubagent ? (
-                        <span className="mj_RoomListWorkerGlyphs" aria-hidden="true">
-                            <WorkerMark conversation={conversation} className="mj_WorkerMark mj_RoomListWorkerMark" />
+                        <span className="mj_ConversationListWorkerGlyphs" aria-hidden="true">
+                            <WorkerMark
+                                conversation={conversation}
+                                className="mj_WorkerMark mj_ConversationListWorkerMark"
+                            />
                             <OutcomeGlyph
                                 conversation={conversation}
-                                className="mj_RoomListOutcomeGlyph"
-                                spinnerClassName="mj_RoomListSubSpinner"
+                                className="mj_ConversationListOutcomeGlyph"
+                                spinnerClassName="mj_ConversationListSubSpinner"
                             />
                         </span>
                     ) : pin ? (
-                        <span className="mj_RoomListPinGlyph mj_PinGlyph" aria-hidden="true">
+                        <span className="mj_ConversationListPinGlyph mj_PinGlyph" aria-hidden="true">
                             {pinGlyph(pin)}
                         </span>
                     ) : isPinned(conversation.id) ? (
-                        <span className="mj_RoomListPinGlyph">
+                        <span className="mj_ConversationListPinGlyph">
                             <PinIcon aria-hidden />
                         </span>
                     ) : (
                         <span
-                            className={`mj_RoomListStatus mj_RoomListStatus_${
+                            className={`mj_ConversationListStatus mj_ConversationListStatus_${
                                 conversation.session_state === "running" ? "running" : "idle"
                             }`}
                             aria-hidden="true"
                         />
                     )}
-                    <span className={`mj_RoomListText${unread ? " mj_RoomListText_unread" : ""}`}>
-                        <span className="mj_RoomListName" title={name} data-testid="room-name">
+                    <span className={`mj_ConversationListText${unread ? " mj_ConversationListText_unread" : ""}`}>
+                        <span className="mj_ConversationListName" title={name} data-testid="conversation-name">
                             {isSubagent && (
-                                <span className="mj_RoomListSubArrow" aria-hidden="true">
+                                <span className="mj_ConversationListSubArrow" aria-hidden="true">
                                     ↳{" "}
                                 </span>
                             )}
                             {pin ? pin.label : <TaggedTitle conversation={conversation} agents={state.agents} />}
                         </span>
                         <span
-                            className="mj_RoomListMeta"
+                            className="mj_ConversationListMeta"
                             title={pin ? displayTitle(conversation) : conversation.snippet}
                         >
                             {pin ? (
                                 <>
-                                    <span className="mj_RoomListSnippet">
+                                    <span className="mj_ConversationListSnippet">
                                         <TaggedTitle conversation={conversation} agents={state.agents} />
                                     </span>
-                                    <span className="mj_RoomListDot"> · </span>
+                                    <span className="mj_ConversationListDot"> · </span>
                                 </>
                             ) : (
                                 conversation.snippet && (
                                     <>
-                                        <span className="mj_RoomListSnippet">{conversation.snippet}</span>
-                                        <span className="mj_RoomListDot"> · </span>
+                                        <span className="mj_ConversationListSnippet">{conversation.snippet}</span>
+                                        <span className="mj_ConversationListDot"> · </span>
                                     </>
                                 )
                             )}
-                            <span className="mj_RoomListTime">{relativeTimestamp}</span>
+                            <span className="mj_ConversationListTime">{relativeTimestamp}</span>
                         </span>
                     </span>
                     {state.favoriteIds.has(conversation.id) && (
-                        <span className="mj_RoomListStarGlyph">
+                        <span className="mj_ConversationListStarGlyph">
                             <StarFilledIcon aria-hidden />
                         </span>
                     )}
-                    <span className="mj_RoomListTrailing">
+                    <span className="mj_ConversationListTrailing">
                         {collapsedSubagentCount > 0 && (
                             // Decorative: the hidden-child count + unread state are announced via the
                             // containing row button's aria-label (a nested label here would be silent to AT).
                             <span
-                                className={`mj_RoomListCollapsedSubs${
-                                    collapsedSubagentUnread ? " mj_RoomListCollapsedSubs_unread" : ""
+                                className={`mj_ConversationListCollapsedSubs${
+                                    collapsedSubagentUnread ? " mj_ConversationListCollapsedSubs_unread" : ""
                                 }`}
                                 aria-hidden="true"
                             >
@@ -1808,10 +1828,10 @@ function ConversationListView({
                     trigger is invisible to mouse users (no hover reveal) but appears on
                     keyboard focus, so keyboard/AT users keep a discoverable, operable route. */}
                 <button
-                    className="mj_RoomItemMenu_trigger"
+                    className="mj_ConversationMenu_trigger"
                     type="button"
                     aria-haspopup="menu"
-                    aria-expanded={roomMenu?.conversationId === conversation.id}
+                    aria-expanded={conversationMenu?.conversationId === conversation.id}
                     aria-label="Conversation options"
                     ref={(element) => {
                         if (element) menuTriggerRefs.current.set(conversation.id, element);
@@ -1830,14 +1850,14 @@ function ConversationListView({
 
     // A pin whose conversation is gone (or not in this client's list): greyed, Move pin… / Unpin only.
     const renderMissingPin = (pin: ConvoPin): React.ReactElement => (
-        <div className="mj_RoomListItem_wrapper mj_PinRow_missing" role="listitem" key={pin.convo_id}>
-            <div className="mj_RoomListItem" aria-label={`Pinned ${pin.label}, conversation unavailable`}>
-                <span className="mj_RoomListPinGlyph mj_PinGlyph" aria-hidden="true">
+        <div className="mj_ConversationListItem_wrapper mj_PinRow_missing" role="listitem" key={pin.convo_id}>
+            <div className="mj_ConversationListItem" aria-label={`Pinned ${pin.label}, conversation unavailable`}>
+                <span className="mj_ConversationListPinGlyph mj_PinGlyph" aria-hidden="true">
                     {pinGlyph(pin)}
                 </span>
-                <span className="mj_RoomListText">
-                    <span className="mj_RoomListName">{pin.label}</span>
-                    <span className="mj_RoomListMeta">Conversation unavailable</span>
+                <span className="mj_ConversationListText">
+                    <span className="mj_ConversationListName">{pin.label}</span>
+                    <span className="mj_ConversationListMeta">Conversation unavailable</span>
                 </span>
             </div>
             <div className="mj_PinRow_actions">
@@ -1870,7 +1890,7 @@ function ConversationListView({
 
     return (
         <div
-            className={`mx_LeftPanel_outerWrapper ${
+            className={`mj_Sidebar_outerWrapper ${
                 // At the phone breakpoint the main region owns the whole width whenever it has a
                 // surface to show: a selected conversation OR the open tracker pane (mirrors the
                 // mj_Chat_mobileHidden test on the main region, so the two never both render).
@@ -1883,7 +1903,7 @@ function ConversationListView({
                 counts={{ conversations: unreadTotal, decisions: needsYouTotal }}
                 onSelect={(key) => {
                     setAccountOpen(false);
-                    closeRoomMenu();
+                    closeConversationMenu();
                     if (key === "conversations") client.closeTrackerView();
                     // A rail tap always lands on the section's home, not a page left open inside it.
                     else
@@ -1928,18 +1948,18 @@ function ConversationListView({
                     </button>
                 }
             />
-            <div className="mx_LeftPanel_wrapper mx_LeftPanel_newRoomList">
-                <div className="mx_LeftPanel_wrapper--user">
-                    <div className="mx_LeftPanel mx_LeftPanel_newRoomList">
-                        <div className="mx_LeftPanel_roomListContainer">
-                            <nav className="mx_RoomListPanel" aria-label="Room list">
+            <div className="mj_Sidebar_wrapper mj_Sidebar_list">
+                <div className="mj_Sidebar_wrapper--user">
+                    <div className="mj_Sidebar mj_Sidebar_list">
+                        <div className="mj_Sidebar_listContainer">
+                            <nav className="mj_ConversationListPanel" aria-label="Room list">
                                 <header
-                                    className="mj_RoomListHeader"
+                                    className="mj_ConversationListHeader"
                                     aria-label="Room options"
-                                    data-testid="room-list-header"
+                                    data-testid="conversation-list-header"
                                 >
-                                    <h2 className="mj_RoomListTitle">Conversations</h2>
-                                    <div className="mj_RoomListHeaderActions">
+                                    <h2 className="mj_ConversationListTitle">Conversations</h2>
+                                    <div className="mj_ConversationListHeaderActions">
                                         {tab !== "archived" && hasActiveUnread && (
                                             <button
                                                 className="mj_IconButton mj_MarkAllReadButton"
@@ -1967,7 +1987,7 @@ function ConversationListView({
                                             title="New session — runs /start"
                                             onClick={() => {
                                                 setAccountOpen(false);
-                                                closeRoomMenu();
+                                                closeConversationMenu();
                                                 setNewSessionOpen(true);
                                             }}
                                         >
@@ -1975,7 +1995,7 @@ function ConversationListView({
                                         </button>
                                     </div>
                                 </header>
-                                <div className="mj_RoomListTabs" role="group" aria-label="Filter conversations">
+                                <div className="mj_ConversationListTabs" role="group" aria-label="Filter conversations">
                                     {(
                                         [
                                             ["active", "Active"],
@@ -1987,7 +2007,7 @@ function ConversationListView({
                                             key={key}
                                             type="button"
                                             data-tab={key}
-                                            className={`mj_RoomListTab${tab === key ? " mj_RoomListTab_active" : ""}`}
+                                            className={`mj_ConversationListTab${tab === key ? " mj_ConversationListTab_active" : ""}`}
                                             aria-pressed={tab === key}
                                             aria-label={key === "favorites" ? "Favorites" : undefined}
                                             onClick={(event) => {
@@ -1999,15 +2019,15 @@ function ConversationListView({
                                         </button>
                                     ))}
                                 </div>
-                                <div data-testid="room-list-search" className="mx_RoomListSearch" role="search">
+                                <div data-testid="conversation-search" className="mj_ConversationSearch" role="search">
                                     <label
-                                        className="mx_RoomListSearch_inputWrapper mx_no_textinput"
-                                        htmlFor="room-list-search-input"
+                                        className="mj_ConversationSearch_inputWrapper mj_noTextInput"
+                                        htmlFor="conversation-search-input"
                                     >
                                         <SearchIcon aria-hidden />
                                         <input
-                                            id="room-list-search-input"
-                                            className="mx_RoomListSearch_input"
+                                            id="conversation-search-input"
+                                            className="mj_ConversationSearch_input"
                                             type="search"
                                             value={query}
                                             onChange={(event) => setQuery(event.target.value)}
@@ -2040,7 +2060,7 @@ function ConversationListView({
                                         {outcomeAnnouncement}
                                     </span>
                                 )}
-                                <div className="mj_RoomList" data-testid="room-list">
+                                <div className="mj_ConversationList" data-testid="conversation-list">
                                     <NumberSearchResult client={client} query={query} />
                                     {/* Active/Favorites render each parent row, then splice
                                         its NON-ARCHIVED subagent children in beneath (indented) —
@@ -2062,8 +2082,8 @@ function ConversationListView({
                                         section first. Each parent row is followed by its nested
                                         running children, as before. */}
                                     {pinSection.length > 0 && (
-                                        <section className="mj_RoomListGroup" aria-label="Pinned">
-                                            <div className="mj_RoomListGroup_label" aria-hidden="true">
+                                        <section className="mj_ConversationListGroup" aria-label="Pinned">
+                                            <div className="mj_ConversationListGroup_label" aria-hidden="true">
                                                 Pinned
                                             </div>
                                             <div role="list">
@@ -2083,11 +2103,11 @@ function ConversationListView({
                                     )}
                                     {rowGroups.map((group) => (
                                         <section
-                                            className="mj_RoomListGroup"
+                                            className="mj_ConversationListGroup"
                                             key={group.label}
                                             aria-label={group.label}
                                         >
-                                            <div className="mj_RoomListGroup_label" aria-hidden="true">
+                                            <div className="mj_ConversationListGroup_label" aria-hidden="true">
                                                 {group.label}
                                             </div>
                                             <div role="list">
@@ -2099,27 +2119,31 @@ function ConversationListView({
                                         </section>
                                     ))}
                                     {tab === "active" && !hasAnyActive && archivedTotal === 0 && !pinSection.length && (
-                                        <p className="mj_RoomListEmpty">Your agent conversations will appear here.</p>
+                                        <p className="mj_ConversationListEmpty">
+                                            Your agent conversations will appear here.
+                                        </p>
                                     )}
                                     {tab === "active" && !hasAnyActive && archivedTotal > 0 && !pinSection.length && (
-                                        <p className="mj_RoomListEmpty">No active conversations.</p>
+                                        <p className="mj_ConversationListEmpty">No active conversations.</p>
                                     )}
                                     {tab === "active" && hasAnyActive && !visibleRows.length && !pinSection.length && (
-                                        <p className="mj_RoomListEmpty">No conversations match your search.</p>
+                                        <p className="mj_ConversationListEmpty">No conversations match your search.</p>
                                     )}
                                     {tab === "favorites" && !hasAnyFavorite && (
-                                        <p className="mj_RoomListEmpty">No favorite conversations yet.</p>
+                                        <p className="mj_ConversationListEmpty">No favorite conversations yet.</p>
                                     )}
                                     {tab === "favorites" && hasAnyFavorite && !visibleRows.length && (
-                                        <p className="mj_RoomListEmpty">No favorites match your search.</p>
+                                        <p className="mj_ConversationListEmpty">No favorites match your search.</p>
                                     )}
                                     {tab === "archived" && archivedTotal === 0 && (
-                                        <p className="mj_RoomListEmpty">No archived conversations.</p>
+                                        <p className="mj_ConversationListEmpty">No archived conversations.</p>
                                     )}
                                     {tab === "archived" && archivedTotal > 0 && !visibleRows.length && (
-                                        <p className="mj_RoomListEmpty">No archived conversations match your search.</p>
+                                        <p className="mj_ConversationListEmpty">
+                                            No archived conversations match your search.
+                                        </p>
                                     )}
-                                    {/* Inside the room-list scroll container so the Messages section
+                                    {/* Inside the conversation list scroll container so the Messages section
                                         scrolls with the chat list — a long hit list stays reachable. */}
                                     <MessageSearchResults
                                         query={query}
@@ -2157,12 +2181,12 @@ function ConversationListView({
                         onClose={() => setPinDialog(undefined)}
                     />
                 )}
-                {roomMenu && menuConversation && (
+                {conversationMenu && menuConversation && (
                     <div
-                        className="mj_HeaderMenu mj_RoomItemMenu"
+                        className="mj_HeaderMenu mj_ConversationMenu"
                         role="menu"
-                        ref={roomMenuElementRef}
-                        style={{ position: "fixed", left: roomMenu.left, top: roomMenu.top }}
+                        ref={conversationMenuElementRef}
+                        style={{ position: "fixed", left: conversationMenu.left, top: conversationMenu.top }}
                         onKeyDown={(event) => {
                             const items = Array.from(
                                 event.currentTarget.querySelectorAll<HTMLElement>('[role="menuitem"]'),
@@ -2186,18 +2210,18 @@ function ConversationListView({
                             } else if (event.key === "Escape") {
                                 event.preventDefault();
                                 event.stopPropagation();
-                                closeRoomMenu(true);
+                                closeConversationMenu(true);
                             }
                         }}
                     >
                         {journalPins ? (
-                            !(roomMenu && journalPinnedIds.has(roomMenu.conversationId)) ? (
+                            !(conversationMenu && journalPinnedIds.has(conversationMenu.conversationId)) ? (
                                 <button
-                                    className="mj_RoomItemMenu_item"
+                                    className="mj_ConversationMenu_item"
                                     type="button"
                                     role="menuitem"
                                     onClick={() => {
-                                        closeRoomMenu();
+                                        closeConversationMenu();
                                         setPinDialog({ kind: "edit", convoId: menuConversation.id });
                                     }}
                                 >
@@ -2207,11 +2231,11 @@ function ConversationListView({
                             ) : (
                                 <>
                                     <button
-                                        className="mj_RoomItemMenu_item"
+                                        className="mj_ConversationMenu_item"
                                         type="button"
                                         role="menuitem"
                                         onClick={() => {
-                                            closeRoomMenu();
+                                            closeConversationMenu();
                                             setPinDialog({ kind: "edit", convoId: menuConversation.id });
                                         }}
                                     >
@@ -2220,11 +2244,11 @@ function ConversationListView({
                                     </button>
                                     {menuPinIndex > 0 && (
                                         <button
-                                            className="mj_RoomItemMenu_item"
+                                            className="mj_ConversationMenu_item"
                                             type="button"
                                             role="menuitem"
                                             onClick={() => {
-                                                closeRoomMenu();
+                                                closeConversationMenu();
                                                 void client.shiftPin(menuConversation.id, "up", shownPinIds);
                                                 restoreFocusAfterMenuAction();
                                             }}
@@ -2235,11 +2259,11 @@ function ConversationListView({
                                     )}
                                     {menuPinIndex >= 0 && menuPinIndex < shownPins.length - 1 && (
                                         <button
-                                            className="mj_RoomItemMenu_item"
+                                            className="mj_ConversationMenu_item"
                                             type="button"
                                             role="menuitem"
                                             onClick={() => {
-                                                closeRoomMenu();
+                                                closeConversationMenu();
                                                 void client.shiftPin(menuConversation.id, "down", shownPinIds);
                                                 restoreFocusAfterMenuAction();
                                             }}
@@ -2249,11 +2273,11 @@ function ConversationListView({
                                         </button>
                                     )}
                                     <button
-                                        className="mj_RoomItemMenu_item"
+                                        className="mj_ConversationMenu_item"
                                         type="button"
                                         role="menuitem"
                                         onClick={() => {
-                                            closeRoomMenu();
+                                            closeConversationMenu();
                                             setPinDialog({ kind: "move", convoId: menuConversation.id });
                                         }}
                                     >
@@ -2261,11 +2285,11 @@ function ConversationListView({
                                         Move pin…
                                     </button>
                                     <button
-                                        className="mj_RoomItemMenu_item"
+                                        className="mj_ConversationMenu_item"
                                         type="button"
                                         role="menuitem"
                                         onClick={() => {
-                                            closeRoomMenu();
+                                            closeConversationMenu();
                                             void client.removePin(menuConversation.id);
                                             restoreFocusAfterMenuAction();
                                         }}
@@ -2277,11 +2301,11 @@ function ConversationListView({
                             )
                         ) : state.pinnedIds.has(menuConversation.id) ? (
                             <button
-                                className="mj_RoomItemMenu_item"
+                                className="mj_ConversationMenu_item"
                                 type="button"
                                 role="menuitem"
                                 onClick={() => {
-                                    closeRoomMenu();
+                                    closeConversationMenu();
                                     client.unpinConversation(menuConversation.id);
                                     restoreFocusAfterMenuAction();
                                 }}
@@ -2291,11 +2315,11 @@ function ConversationListView({
                             </button>
                         ) : (
                             <button
-                                className="mj_RoomItemMenu_item"
+                                className="mj_ConversationMenu_item"
                                 type="button"
                                 role="menuitem"
                                 onClick={() => {
-                                    closeRoomMenu();
+                                    closeConversationMenu();
                                     client.pinConversation(menuConversation.id);
                                     restoreFocusAfterMenuAction();
                                 }}
@@ -2306,11 +2330,11 @@ function ConversationListView({
                         )}
                         {state.favoriteIds.has(menuConversation.id) ? (
                             <button
-                                className="mj_RoomItemMenu_item"
+                                className="mj_ConversationMenu_item"
                                 type="button"
                                 role="menuitem"
                                 onClick={() => {
-                                    closeRoomMenu();
+                                    closeConversationMenu();
                                     client.unfavoriteConversation(menuConversation.id);
                                     restoreFocusAfterMenuAction();
                                 }}
@@ -2320,11 +2344,11 @@ function ConversationListView({
                             </button>
                         ) : (
                             <button
-                                className="mj_RoomItemMenu_item"
+                                className="mj_ConversationMenu_item"
                                 type="button"
                                 role="menuitem"
                                 onClick={() => {
-                                    closeRoomMenu();
+                                    closeConversationMenu();
                                     client.favoriteConversation(menuConversation.id);
                                     restoreFocusAfterMenuAction();
                                 }}
@@ -2336,11 +2360,11 @@ function ConversationListView({
                         {!state.archivedIds.has(menuConversation.id) &&
                             !effectiveUnread(menuConversation, state.unreadOverrideIds) && (
                                 <button
-                                    className="mj_RoomItemMenu_item"
+                                    className="mj_ConversationMenu_item"
                                     type="button"
                                     role="menuitem"
                                     onClick={() => {
-                                        closeRoomMenu();
+                                        closeConversationMenu();
                                         client.markConversationUnread(menuConversation.id);
                                         restoreFocusAfterMenuAction();
                                     }}
@@ -2352,11 +2376,11 @@ function ConversationListView({
                         {!state.archivedIds.has(menuConversation.id) &&
                             effectiveUnread(menuConversation, state.unreadOverrideIds) && (
                                 <button
-                                    className="mj_RoomItemMenu_item"
+                                    className="mj_ConversationMenu_item"
                                     type="button"
                                     role="menuitem"
                                     onClick={() => {
-                                        closeRoomMenu();
+                                        closeConversationMenu();
                                         client.markConversationRead(menuConversation.id);
                                         restoreFocusAfterMenuAction();
                                     }}
@@ -2370,11 +2394,11 @@ function ConversationListView({
                             stays true while collapsed, so "Show subagents" remains reachable). */}
                         {hasSubagentChildRows(menuConversation, sidebarIndex) && (
                             <button
-                                className="mj_RoomItemMenu_item"
+                                className="mj_ConversationMenu_item"
                                 type="button"
                                 role="menuitem"
                                 onClick={() => {
-                                    closeRoomMenu();
+                                    closeConversationMenu();
                                     client.toggleSubagentCollapse(menuConversation.id);
                                     restoreFocusAfterMenuAction();
                                 }}
@@ -2387,11 +2411,11 @@ function ConversationListView({
                         )}
                         {state.archivedIds.has(menuConversation.id) ? (
                             <button
-                                className="mj_RoomItemMenu_item"
+                                className="mj_ConversationMenu_item"
                                 type="button"
                                 role="menuitem"
                                 onClick={() => {
-                                    closeRoomMenu();
+                                    closeConversationMenu();
                                     client.unarchiveConversation(menuConversation.id);
                                     restoreFocusAfterMenuAction();
                                 }}
@@ -2401,11 +2425,11 @@ function ConversationListView({
                             </button>
                         ) : (
                             <button
-                                className="mj_RoomItemMenu_item"
+                                className="mj_ConversationMenu_item"
                                 type="button"
                                 role="menuitem"
                                 onClick={() => {
-                                    closeRoomMenu();
+                                    closeConversationMenu();
                                     client.archiveConversation(menuConversation.id);
                                     restoreFocusAfterMenuAction();
                                 }}
@@ -2869,11 +2893,7 @@ export function HeaderShell({
     const controls = titleCollapsed && hideControlsWhenCompact ? null : rightControls;
 
     return (
-        <header
-            ref={headerRef}
-            className={`mx_RoomHeader light-panel mj_ChatHeader${mode === "child" ? " mj_SubChatHeader" : ""}`}
-            tabIndex={-1}
-        >
+        <header ref={headerRef} className={`mj_ChatHeader${mode === "child" ? " mj_SubChatHeader" : ""}`} tabIndex={-1}>
             <button type="button" className="mj_BackButton" onClick={onBack} aria-label={backLabel}>
                 <ChevronLeftIcon />
             </button>
@@ -2891,7 +2911,7 @@ export function HeaderShell({
                                 dir="auto"
                                 role="heading"
                                 aria-level={1}
-                                className="mx_RoomHeader_heading"
+                                className="mj_ChatHeader_heading"
                                 title={title}
                             >
                                 {titleGlyph && (
@@ -2899,7 +2919,7 @@ export function HeaderShell({
                                         {titleGlyph}
                                     </span>
                                 )}
-                                <span className="mx_RoomHeader_truncated mx_lineClamp">{titleNode ?? title}</span>
+                                <span className="mj_ChatHeader_truncated mj_lineClamp">{titleNode ?? title}</span>
                                 {titleBadge}
                             </div>
                         }
@@ -2920,14 +2940,14 @@ export function HeaderShell({
                             dir="auto"
                             role="heading"
                             aria-level={1}
-                            className="mx_RoomHeader_heading"
+                            className="mj_ChatHeader_heading"
                         >
                             {titleGlyph && (
                                 <span className="mj_HeaderTitleGlyph" aria-hidden="true">
                                     {titleGlyph}
                                 </span>
                             )}
-                            <span className="mx_RoomHeader_truncated mx_lineClamp">{titleNode ?? title}</span>
+                            <span className="mj_ChatHeader_truncated mj_lineClamp">{titleNode ?? title}</span>
                             {titleBadge}
                         </div>
                         {hasSubtitle && <div className="mj_HeaderMeta">{subtitle}</div>}
@@ -3042,7 +3062,7 @@ function HeaderOverflowMenu({
             </button>
             {open && (
                 <div
-                    className="mj_HeaderMenu mj_RoomItemMenu"
+                    className="mj_HeaderMenu mj_ConversationMenu"
                     role="menu"
                     ref={panelRef}
                     onKeyDown={(event) => {
@@ -3072,7 +3092,7 @@ function HeaderOverflowMenu({
                         journalPinned ? (
                             <>
                                 <button
-                                    className="mj_RoomItemMenu_item"
+                                    className="mj_ConversationMenu_item"
                                     type="button"
                                     role="menuitem"
                                     onClick={() => openPinDialog({ kind: "edit", convoId: id })}
@@ -3081,7 +3101,7 @@ function HeaderOverflowMenu({
                                     Edit pin…
                                 </button>
                                 <button
-                                    className="mj_RoomItemMenu_item"
+                                    className="mj_ConversationMenu_item"
                                     type="button"
                                     role="menuitem"
                                     onClick={() => openPinDialog({ kind: "move", convoId: id })}
@@ -3090,7 +3110,7 @@ function HeaderOverflowMenu({
                                     Move pin…
                                 </button>
                                 <button
-                                    className="mj_RoomItemMenu_item"
+                                    className="mj_ConversationMenu_item"
                                     type="button"
                                     role="menuitem"
                                     onClick={() => act(() => void client.removePin(id))}
@@ -3101,7 +3121,7 @@ function HeaderOverflowMenu({
                             </>
                         ) : (
                             <button
-                                className="mj_RoomItemMenu_item"
+                                className="mj_ConversationMenu_item"
                                 type="button"
                                 role="menuitem"
                                 onClick={() => openPinDialog({ kind: "edit", convoId: id })}
@@ -3112,7 +3132,7 @@ function HeaderOverflowMenu({
                         )
                     ) : (
                         <button
-                            className="mj_RoomItemMenu_item"
+                            className="mj_ConversationMenu_item"
                             type="button"
                             role="menuitem"
                             onClick={() =>
@@ -3124,7 +3144,7 @@ function HeaderOverflowMenu({
                         </button>
                     )}
                     <button
-                        className="mj_RoomItemMenu_item"
+                        className="mj_ConversationMenu_item"
                         type="button"
                         role="menuitem"
                         onClick={() =>
@@ -3138,7 +3158,7 @@ function HeaderOverflowMenu({
                     </button>
                     {!isArchived && (
                         <button
-                            className="mj_RoomItemMenu_item"
+                            className="mj_ConversationMenu_item"
                             type="button"
                             role="menuitem"
                             onClick={() =>
@@ -3152,7 +3172,7 @@ function HeaderOverflowMenu({
                         </button>
                     )}
                     <button
-                        className="mj_RoomItemMenu_item"
+                        className="mj_ConversationMenu_item"
                         type="button"
                         role="menuitem"
                         onClick={() =>
@@ -3196,7 +3216,7 @@ function useChipFit(
         if (!trigger || !row || !nameEl) return;
         const measure = (): void => {
             const title = row.firstElementChild as HTMLElement | null;
-            const heading = title?.querySelector<HTMLElement>(".mx_RoomHeader_heading");
+            const heading = title?.querySelector<HTMLElement>(".mj_ChatHeader_heading");
             const meta = title?.querySelector<HTMLElement>(".mj_HeaderMeta, .mj_HeaderTitleDisclosure");
             const titleWant = Math.max(heading?.scrollWidth ?? 0, meta?.scrollWidth ?? 0);
             // The title's stub: `min-width: min(6rem, 100%)` on the title cluster in the CSS.
@@ -3217,7 +3237,7 @@ function useChipFit(
         if (typeof ResizeObserver === "undefined") return;
         const observer = new ResizeObserver(measure);
         observer.observe(row);
-        const heading = row.firstElementChild?.querySelector(".mx_RoomHeader_heading");
+        const heading = row.firstElementChild?.querySelector(".mj_ChatHeader_heading");
         if (heading) observer.observe(heading);
         return () => observer.disconnect();
     }, [triggerRef, name]);
@@ -3868,9 +3888,9 @@ function PromptCard({
                         aria-hidden="true"
                         style={
                             durablyDenied
-                                ? { color: "var(--cpd-color-text-critical-primary)" }
+                                ? { color: "var(--mj-color-text-critical-primary)" }
                                 : durablyAllowed
-                                  ? { color: "var(--cpd-color-usage-low)" }
+                                  ? { color: "var(--mj-color-usage-low)" }
                                   : undefined
                         }
                     >
@@ -3880,9 +3900,9 @@ function PromptCard({
                         className="mj_Answered"
                         style={
                             durablyDenied
-                                ? { color: "var(--cpd-color-text-critical-primary)" }
+                                ? { color: "var(--mj-color-text-critical-primary)" }
                                 : durablyAllowed
-                                  ? { color: "var(--cpd-color-usage-low)" }
+                                  ? { color: "var(--mj-color-usage-low)" }
                                   : undefined
                         }
                     >
@@ -4123,7 +4143,7 @@ function AgentChatRequestCard({
             {!settled && phase.kind === "failed" && (
                 <div className="mj_PromptResolved mj_PromptResolved_failed" role="alert">
                     <span className="mj_PromptGlyph" aria-hidden="true" />
-                    <span className="mj_Answered" style={{ color: "var(--cpd-color-text-critical-primary)" }}>
+                    <span className="mj_Answered" style={{ color: "var(--mj-color-text-critical-primary)" }}>
                         {phase.message}
                     </span>
                 </div>
@@ -4136,7 +4156,7 @@ function AgentChatRequestCard({
                         className="mj_PromptGlyph mj_PromptGlyph_ok"
                         aria-hidden="true"
                         style={{
-                            color: settled.approved ? "var(--cpd-color-usage-low)" : "var(--cpd-color-text-secondary)",
+                            color: settled.approved ? "var(--mj-color-usage-low)" : "var(--mj-color-text-secondary)",
                         }}
                     >
                         {settled.approved ? <PromptCheckGlyph /> : <PromptDeniedGlyph />}
@@ -5162,7 +5182,7 @@ function EventRow({
     return (
         <li
             ref={liRef}
-            className={`mx_EventTile${continuation ? " mx_EventTile_continuation" : ""}${lastInSection ? " mx_EventTile_lastInSection" : ""}`}
+            className={`mj_EventTile${continuation ? " mj_EventTile_continuation" : ""}${lastInSection ? " mj_EventTile_lastInSection" : ""}`}
             tabIndex={-1}
             aria-live="polite"
             aria-atomic="true"
@@ -5173,35 +5193,35 @@ function EventRow({
             onClickCapture={handlers.onClickCapture}
         >
             {!own && !continuation && (
-                <span className="mx_DisambiguatedProfile">
+                <span className="mj_SenderName">
                     <MsgAvatar />
-                    <span className="mx_DisambiguatedProfile_displayName">{displaySender(event.sender)}</span>
+                    <span className="mj_SenderName_displayName">{displaySender(event.sender)}</span>
                     {/* tool_output owns its timestamp inline (after the exit badge); prompt /
                         permission cards own theirs in the card header (§10.2). Suppress the
                         profile-row time for all three so a first-in-section event never shows
                         two identical timestamps. */}
                     {event.type !== "tool_output" && event.type !== "prompt" && event.type !== "permission_request" && (
                         <a href={`#event-${event.seq}`} onClick={(clickEvent) => clickEvent.preventDefault()}>
-                            <time className="mx_MessageTimestamp" dateTime={new Date(event.ts).toISOString()}>
+                            <time className="mj_MessageTimestamp" dateTime={new Date(event.ts).toISOString()}>
                                 {formatTime(event.ts)}
                             </time>
                         </a>
                     )}
                 </span>
             )}
-            <div className="mx_EventTile_line">
+            <div className="mj_EventTile_line">
                 {/* Own bubbles carry an inline timestamp (design: "…text <09:58>"). Agent
                     continuation blocks do NOT — the section shows one timestamp on the profile
                     row (§10.2 one-per-section), so continuation blocks fill to the shared right
                     edge with no reserved timestamp gutter (kills the first-block spill). */}
                 {own && event.type !== "tool_output" && (
                     <a href={`#event-${event.seq}`} onClick={(clickEvent) => clickEvent.preventDefault()}>
-                        <time className="mx_MessageTimestamp" dateTime={new Date(event.ts).toISOString()}>
+                        <time className="mj_MessageTimestamp" dateTime={new Date(event.ts).toISOString()}>
                             {formatTime(event.ts)}
                         </time>
                     </a>
                 )}
-                <div className="mx_MTextBody mx_EventTile_content">
+                <div className="mj_TextBody mj_EventTile_content">
                     <div className="markdown-body">
                         <EventContent
                             client={client}
@@ -5294,13 +5314,13 @@ export function ToolStream({ stream }: { stream: ToolStreamState }): React.React
     };
 
     return (
-        <li className="mx_EventTile mx_EventTile_lastInSection" tabIndex={-1} data-layout="bubble" data-self="false">
-            <span className="mx_DisambiguatedProfile">
+        <li className="mj_EventTile mj_EventTile_lastInSection" tabIndex={-1} data-layout="bubble" data-self="false">
+            <span className="mj_SenderName">
                 <MsgAvatar />
-                <span className="mx_DisambiguatedProfile_displayName">agent</span>
+                <span className="mj_SenderName_displayName">agent</span>
             </span>
-            <div className="mx_EventTile_line">
-                <div className="mx_MTextBody mx_EventTile_content">
+            <div className="mj_EventTile_line">
+                <div className="mj_TextBody mj_EventTile_content">
                     <div className="markdown-body mj_LiveTool">
                         <div className="mj_LiveTool_header">
                             <span>
@@ -5400,7 +5420,7 @@ function PendingAttachment({
 
     return (
         <li
-            className={`mx_EventTile mx_EventTile_lastInSection mj_AttachmentChip mj_AttachmentChip_${message.attachState ?? "sending"}`}
+            className={`mj_EventTile mj_EventTile_lastInSection mj_AttachmentChip mj_AttachmentChip_${message.attachState ?? "sending"}`}
             data-layout="bubble"
             data-self="true"
         >
@@ -5746,10 +5766,10 @@ function Timeline({
     const sessionRunning = client.selectedConversation()?.session_state === "running";
 
     const timelineMain = (
-        <main className="mx_RoomView_timeline" data-testid="timeline">
-            <div className="mx_RoomView_messagePanel mx_AutoHideScrollbar" ref={scrollRef} onScroll={onScroll}>
-                <div className="mx_RoomView_messageListWrapper">
-                    <ol className="mx_RoomView_MessageList" aria-live="polite">
+        <main className="mj_ChatView_timeline" data-testid="timeline">
+            <div className="mj_ChatView_messagePanel mj_AutoHideScrollbar" ref={scrollRef} onScroll={onScroll}>
+                <div className="mj_ChatView_messageListWrapper">
+                    <ol className="mj_ChatView_messageList" aria-live="polite">
                         {state.hasOlderHistory && (
                             <li className="mj_HistoryRow">
                                 <button
@@ -5809,12 +5829,12 @@ function Timeline({
                                         <PendingAttachment client={client} message={message} isReadOnly={isReadOnly} />
                                     ) : (
                                         <li
-                                            className="mx_EventTile mx_EventTile_sending mx_EventTile_lastInSection"
+                                            className="mj_EventTile mj_EventTile_sending mj_EventTile_lastInSection"
                                             data-layout="bubble"
                                             data-self="true"
                                         >
-                                            <div className="mx_EventTile_line">
-                                                <div className="mx_MTextBody mx_EventTile_content">
+                                            <div className="mj_EventTile_line">
+                                                <div className="mj_TextBody mj_EventTile_content">
                                                     <div className="mj_Markdown">
                                                         <MarkdownBody text={message.body} label={message.localId} />
                                                     </div>
@@ -5828,17 +5848,17 @@ function Timeline({
                         })}
                         {Object.values(state.textStreams).map((text, index) => (
                             <li
-                                className="mx_EventTile mx_EventTile_lastInSection"
+                                className="mj_EventTile mj_EventTile_lastInSection"
                                 key={`text-stream-${index}`}
                                 data-layout="bubble"
                                 data-self="false"
                             >
-                                <span className="mx_DisambiguatedProfile">
+                                <span className="mj_SenderName">
                                     <MsgAvatar />
-                                    <span className="mx_DisambiguatedProfile_displayName">agent</span>
+                                    <span className="mj_SenderName_displayName">agent</span>
                                 </span>
-                                <div className="mx_EventTile_line">
-                                    <div className="mx_MTextBody mx_EventTile_content">
+                                <div className="mj_EventTile_line">
+                                    <div className="mj_TextBody mj_EventTile_content">
                                         <div className="mj_Markdown mj_Markdown_streaming">
                                             <MarkdownBody text={text} streaming label={`stream-${index}`} />
                                             <span className="mj_Cursor" />
@@ -5852,7 +5872,7 @@ function Timeline({
                                 <ToolStream key={stream.messageRef} stream={stream} />
                             ))}
                         {state.activity && state.activity.state !== "idle" && sessionRunning && (
-                            <li className="mx_WhoIsTypingTile mj_Activity">
+                            <li className="mj_TypingIndicator mj_Activity">
                                 <span />
                                 <span />
                                 <span />
@@ -5897,7 +5917,7 @@ function Timeline({
                             {/* Copy = readable plain text (markdown stripped); the raw markdown
                                 SOURCE is offered separately below (§10.7 icon per row). */}
                             <button
-                                className="mj_RoomItemMenu_item"
+                                className="mj_ConversationMenu_item"
                                 type="button"
                                 role="menuitem"
                                 onClick={() => {
@@ -5909,7 +5929,7 @@ function Timeline({
                                 <span>Copy</span>
                             </button>
                             <button
-                                className="mj_RoomItemMenu_item"
+                                className="mj_ConversationMenu_item"
                                 type="button"
                                 role="menuitem"
                                 onClick={() => {
@@ -5924,7 +5944,7 @@ function Timeline({
                         </>
                     )}
                     <button
-                        className="mj_RoomItemMenu_item"
+                        className="mj_ConversationMenu_item"
                         type="button"
                         role="menuitem"
                         onClick={() => {
@@ -5960,7 +5980,7 @@ function Timeline({
     return <MediaViewerContext.Provider value={mediaViewerValue}>{timelineMain}</MediaViewerContext.Provider>;
 }
 
-const SLASH_LISTBOX_ID = "mx_SlashPalette_listbox";
+const SLASH_LISTBOX_ID = "mj_SlashPalette_listbox";
 const slashRowId = (index: number): string => `${SLASH_LISTBOX_ID}_opt_${index}`;
 
 function SlashCommandPalette({
@@ -5985,12 +6005,12 @@ function SlashCommandPalette({
     }, [highlighted]);
 
     return (
-        <div className="mx_SlashPalette" id={SLASH_LISTBOX_ID} role="listbox">
+        <div className="mj_SlashPalette" id={SLASH_LISTBOX_ID} role="listbox">
             {folders.length > 0
                 ? folders.map((folder, index) => (
                       <div
-                          className={`mx_SlashPalette_row${
-                              highlighted === index ? " mx_SlashPalette_row_highlighted" : ""
+                          className={`mj_SlashPalette_row${
+                              highlighted === index ? " mj_SlashPalette_row_highlighted" : ""
                           }`}
                           id={slashRowId(index)}
                           key={`${folder}-${index}`}
@@ -6001,13 +6021,13 @@ function SlashCommandPalette({
                           onMouseDown={(event) => event.preventDefault()}
                           onClick={() => onSelectFolder(folder)}
                       >
-                          <span className="mx_SlashPalette_trigger">{folder}</span>
+                          <span className="mj_SlashPalette_trigger">{folder}</span>
                       </div>
                   ))
                 : commands.map((command, index) => (
                       <div
-                          className={`mx_SlashPalette_row${
-                              highlighted === index ? " mx_SlashPalette_row_highlighted" : ""
+                          className={`mj_SlashPalette_row${
+                              highlighted === index ? " mj_SlashPalette_row_highlighted" : ""
                           }`}
                           id={slashRowId(index)}
                           key={command.trigger}
@@ -6018,9 +6038,9 @@ function SlashCommandPalette({
                           onMouseDown={(event) => event.preventDefault()}
                           onClick={() => onSelectCommand(command)}
                       >
-                          <span className="mx_SlashPalette_trigger">{command.trigger}</span>
-                          {command.argHint && <span className="mx_SlashPalette_argHint">{command.argHint}</span>}
-                          <span className="mx_SlashPalette_summary">{command.summary}</span>
+                          <span className="mj_SlashPalette_trigger">{command.trigger}</span>
+                          {command.argHint && <span className="mj_SlashPalette_argHint">{command.argHint}</span>}
+                          <span className="mj_SlashPalette_summary">{command.summary}</span>
                       </div>
                   ))}
         </div>
@@ -6272,8 +6292,8 @@ function Composer({
         }
     };
     return (
-        <div className="mx_MessageComposer" role="region" aria-label="Message composer" ref={voice.containerRef}>
-            <div className="mx_MessageComposer_wrapper">
+        <div className="mj_Composer" role="region" aria-label="Message composer" ref={voice.containerRef}>
+            <div className="mj_Composer_wrapper">
                 {state.connectionError && state.connectionErrorSeq !== dismissedSeq && (
                     <div className="mj_ConnectionError">
                         <span role="status">{state.connectionError}</span>
@@ -6328,9 +6348,9 @@ function Composer({
                             }}
                         />
                         <div className="mj_ComposerField" onClick={() => textarea.current?.focus()}>
-                            <div className="mx_BasicMessageComposer">
+                            <div className="mj_ComposerInput">
                                 <textarea
-                                    className="mx_BasicMessageComposer_input"
+                                    className="mj_ComposerInput_input"
                                     ref={textarea}
                                     rows={1}
                                     value={body}
@@ -6920,7 +6940,7 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
 
     useEffect(() => {
         if (uploadDialogWasOpen.current && !state.stagedUploads) {
-            appContent.current?.querySelector<HTMLTextAreaElement>(".mx_BasicMessageComposer_input")?.focus();
+            appContent.current?.querySelector<HTMLTextAreaElement>(".mj_ComposerInput_input")?.focus();
         }
         uploadDialogWasOpen.current = Boolean(state.stagedUploads);
     }, [state.stagedUploads]);
@@ -6961,7 +6981,7 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
             // Any inner overlay still mounted → it owns this press; defer.
             if (
                 document.querySelector(
-                    ".mj_MediaViewer_scrim, .mj_EventSource_scrim, .mj_UploadConfirm_scrim, .mj_NewSessionSheet, .mj_SettingsScrim, .mj_EventRowMenu, .mj_RoomItemMenu, .mj_HeaderMenu, .mj_MdPreview, [role='menu']",
+                    ".mj_MediaViewer_scrim, .mj_EventSource_scrim, .mj_UploadConfirm_scrim, .mj_NewSessionSheet, .mj_SettingsScrim, .mj_EventRowMenu, .mj_ConversationMenu, .mj_HeaderMenu, .mj_MdPreview, [role='menu']",
                 )
             ) {
                 return;
@@ -6978,24 +6998,24 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
 
     return (
         <MarkdownPreviewContext.Provider value={markdownPreview.context}>
-            <div className="mx_MatrixChat_wrapper">
-                <div ref={appContent} className="mx_MatrixChat" inert={state.stagedUploads ? true : undefined}>
+            <div className="mj_App_wrapper">
+                <div ref={appContent} className="mj_App" inert={state.stagedUploads ? true : undefined}>
                     <ConversationList client={client} state={state} width={leftPanel.width} />
                     <div
-                        className="mx_ResizeHandle mx_ResizeHandle--horizontal"
+                        className="mj_ResizeHandle mj_ResizeHandle--horizontal"
                         data-id="lp-resizer"
                         onPointerDown={leftPanel.onPointerDown}
                     >
                         <div />
                     </div>
                     <div
-                        className={`mx_RoomView_wrapper ${state.trackerView?.open || state.selectedConversationId ? "" : "mj_Chat_mobileHidden"}`}
+                        className={`mj_ChatView_wrapper ${state.trackerView?.open || state.selectedConversationId ? "" : "mj_Chat_mobileHidden"}`}
                     >
                         {state.trackerView?.open ? (
                             <TrackerPane client={client} state={state} />
                         ) : state.selectedConversationId ? (
                             <div
-                                className={`mx_RoomView${dragActive ? " mj_RoomView_dragActive" : ""}`}
+                                className={`mj_ChatView${dragActive ? " mj_ChatView_dragActive" : ""}`}
                                 onDragOver={(event) => {
                                     if (!isFileDrag(event)) return;
                                     event.preventDefault();
@@ -7024,7 +7044,7 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                                 )}
                                 <div
                                     ref={setBodyEl}
-                                    className="mx_RoomView_body mx_MainSplit_timeline"
+                                    className="mj_ChatView_body mj_MainSplit_timeline"
                                     data-layout="bubble"
                                 >
                                     {childMode ? (
@@ -7060,8 +7080,8 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                                 </div>
                             </div>
                         ) : (
-                            <main className="mx_HomePage mx_HomePage_default">
-                                <div className="mx_HomePage_default_wrapper">
+                            <main className="mj_HomePage mj_HomePage_default">
+                                <div className="mj_HomePage_default_wrapper">
                                     <img src={matronLogo} alt={state.config.brand || "Matron"} />
                                     <h1>Welcome to {state.config.brand || "Matron"}</h1>
                                 </div>
@@ -7087,7 +7107,7 @@ export function MatronApp({ client }: { client: MatronJournalClient }): React.Re
     const state = useSyncExternalStore(client.subscribe, client.getSnapshot);
     if (state.phase === "loading")
         return (
-            <div className="mx_MatrixChat_splash mj_Loading">
+            <div className="mj_App_splash mj_Loading">
                 <img src={matronLogo} alt="Matron" />
             </div>
         );

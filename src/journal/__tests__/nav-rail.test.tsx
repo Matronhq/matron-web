@@ -168,8 +168,8 @@ describe("NavRail", () => {
         await render(signedInClient([convo("c1")]));
         expect(container.querySelector(".mj_Wordmark")).toBeNull();
         expect(container.querySelector(".mj_NewSessionButton")).toBeNull();
-        expect(container.querySelector(".mj_RoomListTitle")?.textContent).toBe("Conversations");
-        expect(container.querySelector('.mj_RoomListHeader button[aria-label="New session"]')).not.toBeNull();
+        expect(container.querySelector(".mj_ConversationListTitle")?.textContent).toBe("Conversations");
+        expect(container.querySelector('.mj_ConversationListHeader button[aria-label="New session"]')).not.toBeNull();
         const footer = container.querySelector('[data-testid="nav-rail"] .mj_NavRail_footer');
         expect(footer?.querySelector('button[aria-label^="Settings"]')).not.toBeNull();
         // Theme moved into the Settings sheet (unify step 6).
@@ -197,10 +197,33 @@ describe("left panel width with the nav rail", () => {
     });
 
     it("clamps a stored list width against the window minus the rail", async () => {
-        localStorage.setItem("mx_lhs_size", "600");
+        localStorage.clear();
+        localStorage.setItem("matron_sidebar_width", "600");
         await act(async () => root.render(<MatronApp client={signedInClient([convo("c1")])} />));
-        const panel = container.querySelector<HTMLElement>(".mx_LeftPanel_outerWrapper")!;
+        const panel = container.querySelector<HTMLElement>(".mj_Sidebar_outerWrapper")!;
         // (1000 − 72) / 2 = 464: the list may take half of what the rail leaves.
         expect(panel.style.getPropertyValue("--mj-left-panel-width")).toBe("464px");
+    });
+
+    it("moves a width saved under the earlier storage key to the current one", async () => {
+        localStorage.clear();
+        localStorage.setItem("mx_lhs_size", "600");
+        await act(async () => root.render(<MatronApp client={signedInClient([convo("c1")])} />));
+        const panel = container.querySelector<HTMLElement>(".mj_Sidebar_outerWrapper")!;
+        // (1000 − 72) / 2 = 464: the list may take half of what the rail leaves.
+        expect(panel.style.getPropertyValue("--mj-left-panel-width")).toBe("464px");
+        expect(localStorage.getItem("matron_sidebar_width")).toBe("600");
+        expect(localStorage.getItem("mx_lhs_size")).toBeNull();
+    });
+
+    it("keeps the current width when both storage keys hold one", async () => {
+        localStorage.clear();
+        localStorage.setItem("matron_sidebar_width", "300");
+        localStorage.setItem("mx_lhs_size", "600");
+        await act(async () => root.render(<MatronApp client={signedInClient([convo("c1")])} />));
+        const panel = container.querySelector<HTMLElement>(".mj_Sidebar_outerWrapper")!;
+        expect(panel.style.getPropertyValue("--mj-left-panel-width")).toBe("300px");
+        expect(localStorage.getItem("matron_sidebar_width")).toBe("300");
+        expect(localStorage.getItem("mx_lhs_size")).toBeNull();
     });
 });

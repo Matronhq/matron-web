@@ -241,10 +241,10 @@ function MovePinSheet({
                     />
                 </div>
                 {view.boxes.length > 0 && (
-                    <div className="mj_RoomListTabs mj_PinSheet_boxes" role="group" aria-label="Filter by box">
+                    <div className="mj_ConversationListTabs mj_PinSheet_boxes" role="group" aria-label="Filter by box">
                         <button
                             type="button"
-                            className={`mj_RoomListTab${view.box === null ? " mj_RoomListTab_active" : ""}`}
+                            className={`mj_ConversationListTab${view.box === null ? " mj_ConversationListTab_active" : ""}`}
                             aria-pressed={view.box === null}
                             onClick={() => setBox(null)}
                         >
@@ -254,7 +254,7 @@ function MovePinSheet({
                             <button
                                 key={option.name}
                                 type="button"
-                                className={`mj_RoomListTab${view.box === option.name ? " mj_RoomListTab_active" : ""}`}
+                                className={`mj_ConversationListTab${view.box === option.name ? " mj_ConversationListTab_active" : ""}`}
                                 aria-pressed={view.box === option.name}
                                 onClick={() => setBox(view.box === option.name ? null : option.name)}
                             >

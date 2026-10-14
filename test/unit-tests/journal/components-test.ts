@@ -124,7 +124,7 @@ function tabButton(container: HTMLElement, key: "active" | "favorites" | "archiv
 
 async function openMenu(container: HTMLElement): Promise<void> {
     // The kebab was removed; the row menu opens via right-click (onContextMenu).
-    const row = container.querySelector<HTMLElement>(".mj_RoomListItem");
+    const row = container.querySelector<HTMLElement>(".mj_ConversationListItem");
     if (!row) throw new Error("Missing conversation row");
     await act(async () => {
         row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }));
@@ -784,7 +784,7 @@ describe("markdown render-site integration", () => {
 
         rendered = await renderClient(client);
 
-        expect(rendered.container.querySelector(".mx_EventTile_sending .mj_Markdown strong")?.textContent).toBe(
+        expect(rendered.container.querySelector(".mj_EventTile_sending .mj_Markdown strong")?.textContent).toBe(
             "pending bold",
         );
         const cursor = rendered.container.querySelector(".mj_Cursor");
@@ -1139,8 +1139,8 @@ describe("message model DOM contracts", () => {
 
         const row = rendered.container.querySelector('[data-event-id="1"]');
         expect(row?.querySelectorAll("time")).toHaveLength(1);
-        expect(row?.querySelectorAll(".mx_DisambiguatedProfile time")).toHaveLength(1);
-        expect(row?.querySelectorAll(".mx_EventTile_line time")).toHaveLength(0);
+        expect(row?.querySelectorAll(".mj_SenderName time")).toHaveLength(1);
+        expect(row?.querySelectorAll(".mj_EventTile_line time")).toHaveLength(0);
     });
 
     it("puts the section timestamp on the first block and none on agent continuations", async () => {
@@ -1150,9 +1150,9 @@ describe("message model DOM contracts", () => {
 
         const first = rendered.container.querySelector('[data-event-id="1"]');
         const row = rendered.container.querySelector('[data-event-id="2"]');
-        expect(row?.classList.contains("mx_EventTile_continuation")).toBe(true);
+        expect(row?.classList.contains("mj_EventTile_continuation")).toBe(true);
         // The section's single timestamp lives on the first block's profile row.
-        expect(first?.querySelectorAll(".mx_DisambiguatedProfile time")).toHaveLength(1);
+        expect(first?.querySelectorAll(".mj_SenderName time")).toHaveLength(1);
         // Continuation blocks carry no per-block timestamp, so they fill to the shared
         // right edge with no reserved 56px gutter (kills the first-block spill).
         expect(row?.querySelectorAll("time")).toHaveLength(0);
@@ -1164,7 +1164,7 @@ describe("message model DOM contracts", () => {
 
         const row = rendered.container.querySelector('[data-event-id="1"]');
         expect(row?.querySelectorAll("time")).toHaveLength(1);
-        expect(row?.querySelectorAll(".mx_EventTile_line time")).toHaveLength(1);
+        expect(row?.querySelectorAll(".mj_EventTile_line time")).toHaveLength(1);
         expect(row?.querySelectorAll(".mj_MsgAvatar")).toHaveLength(0);
     });
 
@@ -1187,8 +1187,8 @@ describe("message model DOM contracts", () => {
         rendered = await renderClient(client);
 
         const eventRow = rendered.container.querySelector('[data-event-id="1"]');
-        const textStreamRow = rendered.container.querySelector(".mj_Cursor")?.closest(".mx_EventTile");
-        const toolStreamRow = rendered.container.querySelector(".mj_LiveTool")?.closest(".mx_EventTile");
+        const textStreamRow = rendered.container.querySelector(".mj_Cursor")?.closest(".mj_EventTile");
+        const toolStreamRow = rendered.container.querySelector(".mj_LiveTool")?.closest(".mj_EventTile");
         expect(eventRow?.querySelectorAll(".mj_MsgAvatar")).toHaveLength(1);
         expect(textStreamRow?.querySelectorAll(".mj_MsgAvatar")).toHaveLength(1);
         expect(toolStreamRow?.querySelectorAll(".mj_MsgAvatar")).toHaveLength(1);
@@ -1267,19 +1267,19 @@ function renderComposerAppWithChild(
 }
 
 function composerValue(container: HTMLElement): string {
-    const textarea = container.querySelector<HTMLTextAreaElement>(".mx_BasicMessageComposer_input");
+    const textarea = container.querySelector<HTMLTextAreaElement>(".mj_ComposerInput_input");
     if (!textarea) throw new Error("Missing composer textarea");
     return textarea.value;
 }
 
 async function typeInComposer(container: HTMLElement, value: string): Promise<void> {
-    const textarea = container.querySelector<HTMLTextAreaElement>(".mx_BasicMessageComposer_input");
+    const textarea = container.querySelector<HTMLTextAreaElement>(".mj_ComposerInput_input");
     if (!textarea) throw new Error("Missing composer textarea");
     await act(async () => inputTextarea(textarea, value));
 }
 
 async function pressEnter(container: HTMLElement): Promise<void> {
-    const textarea = container.querySelector<HTMLTextAreaElement>(".mx_BasicMessageComposer_input");
+    const textarea = container.querySelector<HTMLTextAreaElement>(".mj_ComposerInput_input");
     if (!textarea) throw new Error("Missing composer textarea");
     await keydown(textarea, "Enter");
 }
@@ -1345,7 +1345,7 @@ describe("slash command palette", () => {
     });
 
     const composer = (): HTMLTextAreaElement => {
-        const textarea = rendered?.container.querySelector<HTMLTextAreaElement>(".mx_BasicMessageComposer_input");
+        const textarea = rendered?.container.querySelector<HTMLTextAreaElement>(".mj_ComposerInput_input");
         if (!textarea) throw new Error("Missing composer textarea");
         return textarea;
     };
@@ -1368,7 +1368,7 @@ describe("slash command palette", () => {
         await act(async () => inputTextarea(composer(), "/st"));
 
         expect(rendered.container.querySelector('[role="listbox"]')).not.toBeNull();
-        expect(options().map((row) => row.querySelector(".mx_SlashPalette_trigger")?.textContent)).toEqual([
+        expect(options().map((row) => row.querySelector(".mj_SlashPalette_trigger")?.textContent)).toEqual([
             "/start",
             "/stop",
             "/status",
@@ -1697,8 +1697,6 @@ describe("composer sends", () => {
         const sendButton = () => result.container.querySelector<HTMLButtonElement>(".mj_ComposerSend");
         // Absent while the composer is empty (the Mac shows nothing to press).
         expect(sendButton()).toBeNull();
-        // The dead emoji button was removed in v4 (attach · mic · send only).
-        expect(result.container.querySelector(".mx_EmojiButton")).toBeNull();
 
         await typeInComposer(result.container, "hi");
         expect(sendButton()).not.toBeNull();
@@ -2054,7 +2052,7 @@ describe("composer sent-message recall", () => {
     });
 
     const textarea = (): HTMLTextAreaElement =>
-        rendered!.container.querySelector<HTMLTextAreaElement>(".mx_BasicMessageComposer_input")!;
+        rendered!.container.querySelector<HTMLTextAreaElement>(".mj_ComposerInput_input")!;
     const value = (): string => composerValue(rendered!.container);
     const arrow = (key: "ArrowUp" | "ArrowDown") => keydown(textarea(), key);
 
@@ -2274,7 +2272,7 @@ describe("attachment composer", () => {
         const client = signedInClient();
         const stageFiles = jest.spyOn(client, "stageFiles").mockImplementation(() => undefined);
         rendered = await renderClient(client);
-        const room = rendered.container.querySelector<HTMLElement>(".mx_RoomView");
+        const room = rendered.container.querySelector<HTMLElement>(".mj_ChatView");
         if (!room) throw new Error("Missing conversation pane");
         const file = new File(["drop"], "drop.txt", { type: "text/plain" });
         const dragOver = fileDragEvent("dragover", file);
@@ -2294,8 +2292,8 @@ describe("attachment composer", () => {
     it("shows the overlay only for file drags and keeps it active over child elements", async () => {
         const client = signedInClient();
         rendered = await renderClient(client);
-        const room = rendered.container.querySelector<HTMLElement>(".mx_RoomView");
-        const child = rendered.container.querySelector<HTMLElement>(".mx_RoomView_body");
+        const room = rendered.container.querySelector<HTMLElement>(".mj_ChatView");
+        const child = rendered.container.querySelector<HTMLElement>(".mj_ChatView_body");
         if (!room || !child) throw new Error("Missing conversation pane");
 
         const textDrag = new Event("dragover", { bubbles: true, cancelable: true });
@@ -2341,7 +2339,7 @@ describe("attachment composer", () => {
         await act(async () => client.stageFiles([new File(["a"], "a.txt", { type: "text/plain" })]));
         stageFiles.mockClear();
 
-        const textareaEl = rendered.container.querySelector<HTMLTextAreaElement>(".mx_BasicMessageComposer_input")!;
+        const textareaEl = rendered.container.querySelector<HTMLTextAreaElement>(".mj_ComposerInput_input")!;
         const pasted = new File(["p"], "p.png", { type: "image/png" });
         await act(async () => {
             textareaEl.dispatchEvent(
@@ -2418,7 +2416,7 @@ describe("attachment composer", () => {
 
         expect(rendered.container.querySelector(".mj_AttachmentChip_uploading")?.textContent).toContain("Uploading…");
         expect(rendered.container.querySelector(".mj_AttachmentChip_sending")?.textContent).toContain("Sending…");
-        expect(rendered.container.querySelector(".mx_EventTile_sending")).toBeNull();
+        expect(rendered.container.querySelector(".mj_EventTile_sending")).toBeNull();
         expect(rendered.container.querySelector(".mj_MessageText")).toBeNull();
     });
 
@@ -2452,7 +2450,7 @@ describe("attachment composer", () => {
         rendered = await renderClient(client);
 
         expect(
-            [...rendered.container.querySelectorAll(".mx_EventTile_content")].map((item) => item.textContent),
+            [...rendered.container.querySelectorAll(".mj_EventTile_content")].map((item) => item.textContent),
         ).toEqual(["first event", "pending early", "pending late", "last event"]);
     });
 
@@ -3511,18 +3509,16 @@ describe("UploadConfirmDialog", () => {
     it("makes background keyboard controls inert and restores composer focus when the dialog closes", async () => {
         const client = signedInClient();
         rendered = await renderClient(client);
-        const composer = rendered.container.querySelector<HTMLTextAreaElement>(".mx_BasicMessageComposer_input")!;
+        const composer = rendered.container.querySelector<HTMLTextAreaElement>(".mj_ComposerInput_input")!;
         composer.focus();
 
         await stage(client, [new File(["a"], "a.txt", { type: "text/plain" })]);
 
-        const appContent = rendered.container.querySelector<HTMLElement>(".mx_MatrixChat")!;
+        const appContent = rendered.container.querySelector<HTMLElement>(".mj_App")!;
         const dialog = rendered.container.querySelector<HTMLElement>('[role="dialog"]')!;
         expect(appContent.hasAttribute("inert")).toBe(true);
-        expect(
-            rendered.container.querySelectorAll(".mx_MatrixChat button, .mx_MatrixChat textarea").length,
-        ).toBeGreaterThan(0);
-        for (const control of rendered.container.querySelectorAll(".mx_MatrixChat button, .mx_MatrixChat textarea")) {
+        expect(rendered.container.querySelectorAll(".mj_App button, .mj_App textarea").length).toBeGreaterThan(0);
+        for (const control of rendered.container.querySelectorAll(".mj_App button, .mj_App textarea")) {
             expect(control.closest("[inert]")).toBe(appContent);
         }
         expect(document.activeElement).toBe(dialog.querySelector<HTMLTextAreaElement>("textarea"));
@@ -3748,7 +3744,7 @@ describe("conversation menu controls", () => {
         await openMenu(rendered.container);
         await act(async () => (menuItem(rendered!.container, "Remove from Favorites") as HTMLElement).click());
 
-        expect(rendered.container.querySelector('[data-testid="room-name"]')).toBeNull();
+        expect(rendered.container.querySelector('[data-testid="conversation-name"]')).toBeNull();
         expect(client.getSnapshot().selectedConversationId).toBe(CONVERSATION.id);
     });
 
@@ -3830,7 +3826,7 @@ describe("conversation row affordances", () => {
         const roomB = { ...CONVERSATION, id: "room-b", title: "Room B" };
         pinnedStore.write(SESSION, new Set(["room-b"]));
         rendered = await renderClient(signedInWithRooms([roomA, roomB]));
-        const names = [...rendered.container.querySelectorAll('[data-testid="room-name"]')].map(
+        const names = [...rendered.container.querySelectorAll('[data-testid="conversation-name"]')].map(
             (element) => element.textContent,
         );
         expect(names[0]).toBe("Room B");
@@ -3840,7 +3836,7 @@ describe("conversation row affordances", () => {
     it("includes the visible last-activity timestamp in the row button's accessible name", async () => {
         rendered = await renderClient(signedInClient());
         const row = rendered.container.querySelector<HTMLButtonElement>('button[aria-label^="Open room"]');
-        const timestamp = rendered.container.querySelector(".mj_RoomListTime")?.textContent;
+        const timestamp = rendered.container.querySelector(".mj_ConversationListTime")?.textContent;
         expect(timestamp).toBeTruthy();
         expect(row?.getAttribute("aria-label")).toContain(`last activity ${timestamp}`);
     });
@@ -3886,7 +3882,7 @@ describe("conversation timestamp midnight invalidation", () => {
         internals(client).state = { ...client.getSnapshot(), selectedConversationId: undefined };
         rendered = await renderClient(client);
         const timestamp = (): string | null =>
-            rendered!.container.querySelector(".mj_RoomListTime")?.textContent ?? null;
+            rendered!.container.querySelector(".mj_ConversationListTime")?.textContent ?? null;
         const expectedClock = new Intl.DateTimeFormat(undefined, {
             hour: "numeric",
             minute: "2-digit",
@@ -3947,7 +3943,7 @@ describe("conversation timestamp midnight invalidation", () => {
         const expectedWeekday = new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(
             new Date(lastTimestamp),
         );
-        expect(container.querySelector(".mj_RoomListTime")?.textContent).toBe(expectedWeekday);
+        expect(container.querySelector(".mj_ConversationListTime")?.textContent).toBe(expectedWeekday);
     });
 });
 
@@ -3967,7 +3963,7 @@ describe("mobile layout", () => {
     });
 
     function sidebar(container: HTMLElement): HTMLElement {
-        const wrapper = container.querySelector<HTMLElement>(".mx_LeftPanel_outerWrapper");
+        const wrapper = container.querySelector<HTMLElement>(".mj_Sidebar_outerWrapper");
         if (!wrapper) throw new Error("Missing sidebar wrapper");
         return wrapper;
     }
@@ -4014,7 +4010,7 @@ describe("conversation list tabs", () => {
         archiveStore.write(SESSION, new Set(["archived"]));
         rendered = await renderClient(signedInWithRooms([fav, other, archived]));
         const names = (): Array<string | null> =>
-            [...rendered!.container.querySelectorAll('[data-testid="room-name"]')].map(
+            [...rendered!.container.querySelectorAll('[data-testid="conversation-name"]')].map(
                 (element) => element.textContent,
             );
 
@@ -4052,7 +4048,7 @@ describe("conversation list tabs", () => {
         favoriteStore.write(SESSION, new Set(["fav"]));
         rendered = await renderClient(signedInWithRooms([fav]));
         await act(async () => tabButton(rendered!.container, "favorites").click());
-        const search = rendered.container.querySelector<HTMLInputElement>("#room-list-search-input")!;
+        const search = rendered.container.querySelector<HTMLInputElement>("#conversation-search-input")!;
         await act(async () => {
             const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
             setter?.call(search, "zzz-no-match");
@@ -4091,7 +4087,7 @@ describe("conversation list tabs", () => {
 
     it("shows the active search-empty state when active conversations are hidden by search", async () => {
         rendered = await renderClient(signedInClient());
-        const search = rendered.container.querySelector<HTMLInputElement>("#room-list-search-input")!;
+        const search = rendered.container.querySelector<HTMLInputElement>("#conversation-search-input")!;
         await act(async () => {
             const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
             setter?.call(search, "zzz-no-match");
@@ -4110,7 +4106,7 @@ describe("conversation list tabs", () => {
         archiveStore.write(SESSION, new Set([CONVERSATION.id]));
         rendered = await renderClient(signedInClient());
         await act(async () => tabButton(rendered!.container, "archived").click());
-        const search = rendered.container.querySelector<HTMLInputElement>("#room-list-search-input")!;
+        const search = rendered.container.querySelector<HTMLInputElement>("#conversation-search-input")!;
         await act(async () => {
             const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
             setter?.call(search, "zzz-no-match");
@@ -4193,7 +4189,7 @@ describe("Coordinator notices in the timeline", () => {
         rendered = await renderClient(client);
 
         expect(rendered.container.querySelector(".mj_Unknown")).toBeNull();
-        expect(rendered.container.querySelectorAll("li.mx_EventTile")).toHaveLength(0);
+        expect(rendered.container.querySelectorAll("li.mj_EventTile")).toHaveLength(0);
     });
 });
 
@@ -4222,7 +4218,7 @@ describe("tracker item cards in the timeline", () => {
     });
 
     const rowTexts = (container: HTMLElement): string[] =>
-        [...container.querySelectorAll("li.mx_EventTile")].map(
+        [...container.querySelectorAll("li.mj_EventTile")].map(
             (row) =>
                 row.querySelector(".mj_TrackerStatusPill")?.textContent ??
                 row.querySelector(".mj_TrackerInlineNote_line")?.textContent ??
