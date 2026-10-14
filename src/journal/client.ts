@@ -9,6 +9,7 @@ import {
     JOURNAL_ATTACHMENTS_MAX,
     JournalApi,
     JournalApiError,
+    isMediaExpiredError,
     knownErrorMessage,
     loadMatronConfig,
     parseBoxDefaultsState,
@@ -380,6 +381,8 @@ export class MatronJournalClient {
     private readonly retiredStreamRefs = new Set<string>();
     private readonly mediaUrls = new Map<string, string>();
     private readonly mediaUrlRequests = new Map<string, Promise<string>>();
+    // Blob ids the server answered 404 for: reaped, permanently. Never re-requested.
+    private readonly expiredMedia = new Set<string>();
     private readonly readHighWater = new Map<string, number>();
     private readonly readTimers = new Map<string, number>();
     private pendingFiles = new Map<string, File>();
@@ -602,6 +605,7 @@ export class MatronJournalClient {
         this.boxDefaultsErrorAt = 0;
         for (const url of this.mediaUrls.values()) URL.revokeObjectURL(url);
         this.mediaUrls.clear();
+        this.expiredMedia.clear();
         // The archived-conversations key is deliberately left in place: it is a per-device
         // preference that re-login should restore. Clearing it here would also go unnoticed
         // by this tab, since storage events only fire in other tabs.
@@ -1668,6 +1672,7 @@ export class MatronJournalClient {
     public mediaUrl(mediaId: string): Promise<string> {
         const cached = this.mediaUrls.get(mediaId);
         if (cached) return Promise.resolve(cached);
+        if (this.expiredMedia.has(mediaId)) return Promise.reject(new JournalApiError("Media expired", 404));
         const inflight = this.mediaUrlRequests.get(mediaId);
         if (inflight) return inflight;
         const api = this.api;
@@ -1685,12 +1690,20 @@ export class MatronJournalClient {
                 }
                 this.mediaUrls.set(mediaId, url);
                 return url;
+            } catch (error) {
+                if (isMediaExpiredError(error) && this.sessionGen === gen) this.expiredMedia.add(mediaId);
+                throw error;
             } finally {
                 this.mediaUrlRequests.delete(mediaId);
             }
         })();
         this.mediaUrlRequests.set(mediaId, request);
         return request;
+    }
+
+    /** Whether a fetch for this blob already came back 404 (reaped server-side). */
+    public isMediaExpired(mediaId: string): boolean {
+        return this.expiredMedia.has(mediaId);
     }
 
     public selectedConversation(): Conversation | undefined {

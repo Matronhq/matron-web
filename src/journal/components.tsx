@@ -21,7 +21,7 @@ import React, {
 
 import matronLogo from "../../res/matron-logo-simple.svg";
 import { INITIAL_SGR_STATE, parseAnsi, stripLeadingSgrFragment } from "./ansi";
-import { JournalApiError } from "./api";
+import { isMediaExpiredError, JournalApiError } from "./api";
 import {
     type AgentProbe,
     BROWSER_MEMORY_SAFETY_MAX_BYTES,
@@ -104,10 +104,12 @@ import {
     buildMediaCorpus,
     isRenderableInViewer,
     type MediaItem,
+    mediaRenderKind,
     MediaViewer,
     MediaViewerContext,
     type MediaViewerContextValue,
     useMediaViewer,
+    useRenderableObjectUrl,
 } from "./media-viewer";
 import { getSnapshot, nextThemePref, setTheme, subscribe } from "./theme";
 import {
@@ -3799,6 +3801,125 @@ const FILE_KIND_ICON: Record<FileKind, (props: React.SVGProps<SVGSVGElement>) =>
     generic: FileIcon,
 };
 
+// An image the server's media reaper has deleted: say so instead of a forever-loading frame or
+// a fetch error. Reached from the payload tombstone (`expired: true`) or a 404 on fetch.
+function ExpiredImage({ caption }: { caption?: string }): React.ReactElement {
+    return (
+        <figure className="mj_Image">
+            <div
+                className="mj_MediaExpired"
+                role="img"
+                aria-label={caption ? `Image attachment, expired. ${caption}` : "Image attachment, expired"}
+            >
+                <ImageFileIcon className="mj_FileIcon" aria-hidden />
+                <span>Image expired</span>
+            </div>
+            {caption && <figcaption>{caption}</figcaption>}
+        </figure>
+    );
+}
+
+// The file counterpart: the name stays readable, the size gives way to "Expired", and there is
+// no click target — there is nothing left to download.
+function ExpiredFile({ filename, contentType }: { filename?: string; contentType?: string }): React.ReactElement {
+    const KindIcon = FILE_KIND_ICON[fileKindFromMime(contentType)];
+    const name = filename || "attachment";
+    return (
+        <span className="mj_File mj_File_expired" role="group" aria-label={`File attachment: ${name}, expired`}>
+            <KindIcon className="mj_FileIcon" aria-hidden />
+            <span className="mj_FileName">{name}</span>
+            <span className="mj_Expired">Expired</span>
+        </span>
+    );
+}
+
+// Voice notes and other short clips load straight into the player, like inline images; past this
+// size the player waits for a click so a long recording is not downloaded just by scrolling past.
+const AUDIO_AUTOLOAD_MAX_BYTES = 20 * 1024 * 1024;
+
+function InlineAudio({
+    client,
+    mediaId,
+    filename,
+    contentType,
+    size,
+}: {
+    client: MatronJournalClient;
+    mediaId: string;
+    filename?: string;
+    contentType?: string;
+    size?: number;
+}): React.ReactElement {
+    const autoload = size !== undefined && size <= AUDIO_AUTOLOAD_MAX_BYTES;
+    const [requested, setRequested] = useState(autoload);
+    const name = filename || "audio";
+    const sizeLabel = formatBytes(size);
+    if (!requested) {
+        return (
+            <button className="mj_File" onClick={() => setRequested(true)} aria-label={`Play ${name}`}>
+                <AudioFileIcon className="mj_FileIcon" />
+                <span className="mj_FileName">{name}</span>
+                {sizeLabel && <span className="mj_FileSize">{sizeLabel}</span>}
+            </button>
+        );
+    }
+    return (
+        <InlineAudioPlayer
+            client={client}
+            mediaId={mediaId}
+            filename={filename}
+            contentType={contentType}
+            sizeLabel={sizeLabel}
+            autoPlay={!autoload}
+        />
+    );
+}
+
+function InlineAudioPlayer({
+    client,
+    mediaId,
+    filename,
+    contentType,
+    sizeLabel,
+    autoPlay,
+}: {
+    client: MatronJournalClient;
+    mediaId: string;
+    filename?: string;
+    contentType?: string;
+    sizeLabel?: string;
+    autoPlay: boolean;
+}): React.ReactElement {
+    // Same authenticated blob as every other attachment, re-typed so an octet-stream blob still
+    // plays.
+    const { url, error, expired } = useRenderableObjectUrl(client, { mediaId, kind: "audio", filename, contentType });
+    if (expired) return <ExpiredFile filename={filename} contentType={contentType} />;
+    if (error) return <div className="mj_Error">{error}</div>;
+    const name = filename || "audio";
+    return (
+        <div className="mj_Audio">
+            <div className="mj_Audio_head">
+                <AudioFileIcon className="mj_FileIcon" aria-hidden />
+                <span className="mj_FileName">{name}</span>
+                {sizeLabel && <span className="mj_FileSize">{sizeLabel}</span>}
+            </div>
+            {url ? (
+                // eslint-disable-next-line jsx-a11y/media-has-caption
+                <audio
+                    className="mj_Audio_player"
+                    src={url}
+                    controls
+                    preload="metadata"
+                    autoPlay={autoPlay}
+                    aria-label={`Play ${name}`}
+                />
+            ) : (
+                <div className="mj_MediaLoading">Loading audio…</div>
+            )}
+        </div>
+    );
+}
+
 function AuthenticatedMedia({
     client,
     mediaId,
@@ -3821,6 +3942,9 @@ function AuthenticatedMedia({
     const [url, setUrl] = useState<string>();
     const [error, setError] = useState<string>();
     const [loading, setLoading] = useState(false);
+    // A 404 means the blob was reaped server-side — permanent, so it renders as expired rather
+    // than as an error. Seeded from the client so a remounted row does not ask again.
+    const [expired, setExpired] = useState(() => client.isMediaExpired(mediaId));
     const viewer = useMediaViewer();
     const markdownPreview = useMarkdownPreview();
 
@@ -3829,16 +3953,24 @@ function AuthenticatedMedia({
         try {
             setUrl(await client.mediaUrl(mediaId));
         } catch (loadError) {
-            setError(errorMessage(loadError));
+            if (isMediaExpiredError(loadError)) setExpired(true);
+            else setError(errorMessage(loadError));
         } finally {
             setLoading(false);
         }
     }, [client, mediaId]);
 
     useEffect(() => {
-        if (image) void load();
-    }, [image, load]);
+        if (image && !expired) void load();
+    }, [image, expired, load]);
 
+    if (expired) {
+        return image ? (
+            <ExpiredImage caption={caption} />
+        ) : (
+            <ExpiredFile filename={filename} contentType={contentType} />
+        );
+    }
     if (error) return <div className="mj_Error">{error}</div>;
     if (image) {
         // Reserve an aspect-ratio box BEFORE the blob decodes so the thread does not reflow when
@@ -3885,22 +4017,36 @@ function AuthenticatedMedia({
             </figure>
         );
     }
+    if (mediaRenderKind(false, contentType, filename) === "audio") {
+        return (
+            <InlineAudio client={client} mediaId={mediaId} filename={filename} contentType={contentType} size={size} />
+        );
+    }
+    const sizeLabel = formatBytes(size);
+    const sizeTag = sizeLabel && <span className="mj_FileSize">{sizeLabel}</span>;
     const KindIcon = FILE_KIND_ICON[fileKindFromMime(contentType)];
     const fileLabel = filename || "Download attachment";
     // Markdown up to 2 MB opens in the side preview panel (which offers Download); larger files
     // keep the download chip.
     if (markdownPreview && isPreviewableMarkdown({ mime: contentType, name: filename, size })) {
         return (
-            <button
-                className="mj_File mj_File_preview"
-                onClick={() =>
-                    markdownPreview.openMarkdownPreview({ blobRef: mediaId, name: filename || "attachment.md", size })
-                }
-                aria-label={`Preview ${fileLabel}`}
-            >
-                <KindIcon className="mj_FileIcon" />
-                <span className="mj_FileName">{fileLabel}</span>
-            </button>
+            <>
+                <button
+                    className="mj_File mj_File_preview"
+                    onClick={() =>
+                        markdownPreview.openMarkdownPreview({
+                            blobRef: mediaId,
+                            name: filename || "attachment.md",
+                            size,
+                        })
+                    }
+                    aria-label={`Preview ${fileLabel}`}
+                >
+                    <KindIcon className="mj_FileIcon" />
+                    <span className="mj_FileName">{fileLabel}</span>
+                </button>
+                {sizeTag}
+            </>
         );
     }
     // Renderable files (svg / pdf / video / raster) open the lightbox inline; the viewer
@@ -3908,26 +4054,34 @@ function AuthenticatedMedia({
     // download chip (HTML and unknown never render inline).
     if (viewer && isRenderableInViewer(contentType, filename)) {
         return (
-            <button
-                className="mj_File mj_File_preview"
-                onClick={(event) => viewer.openViewer(mediaId, event.currentTarget)}
-                aria-label={`Preview ${fileLabel}`}
-            >
-                <KindIcon className="mj_FileIcon" />
-                <span className="mj_FileName">{fileLabel}</span>
-            </button>
+            <>
+                <button
+                    className="mj_File mj_File_preview"
+                    onClick={(event) => viewer.openViewer(mediaId, event.currentTarget)}
+                    aria-label={`Preview ${fileLabel}`}
+                >
+                    <KindIcon className="mj_FileIcon" />
+                    <span className="mj_FileName">{fileLabel}</span>
+                </button>
+                {sizeTag}
+            </>
         );
     }
-    return url ? (
-        <a className="mj_File" href={url} download={filename || "attachment"}>
-            <KindIcon className="mj_FileIcon" />
-            <span className="mj_FileName">{fileLabel}</span>
-        </a>
-    ) : (
-        <button className="mj_File" onClick={() => void load()} disabled={loading}>
-            <KindIcon className="mj_FileIcon" />
-            <span className="mj_FileName">{loading ? "Preparing download…" : fileLabel}</span>
-        </button>
+    return (
+        <>
+            {url ? (
+                <a className="mj_File" href={url} download={filename || "attachment"}>
+                    <KindIcon className="mj_FileIcon" />
+                    <span className="mj_FileName">{fileLabel}</span>
+                </a>
+            ) : (
+                <button className="mj_File" onClick={() => void load()} disabled={loading}>
+                    <KindIcon className="mj_FileIcon" />
+                    <span className="mj_FileName">{loading ? "Preparing download…" : fileLabel}</span>
+                </button>
+            )}
+            {sizeTag}
+        </>
     );
 }
 
@@ -4330,6 +4484,7 @@ export function EventContent({
             return <DiffCard data={parseDiffPayload(event.payload)} />;
         case "image": {
             const mediaId = asString(event.payload.blob_ref);
+            if (event.payload.expired === true) return <ExpiredImage caption={asString(event.payload.caption)} />;
             return mediaId ? (
                 <AuthenticatedMedia
                     client={client}
@@ -4344,9 +4499,15 @@ export function EventContent({
         }
         case "file": {
             const mediaId = asString(event.payload.blob_ref);
+            const expired = event.payload.expired === true;
             return (
                 <div>
-                    {mediaId ? (
+                    {expired ? (
+                        <ExpiredFile
+                            filename={asString(event.payload.filename) || undefined}
+                            contentType={asString(event.payload.content_type) || undefined}
+                        />
+                    ) : mediaId ? (
                         <AuthenticatedMedia
                             client={client}
                             mediaId={mediaId}
@@ -4360,10 +4521,12 @@ export function EventContent({
                             }
                         />
                     ) : (
-                        <span className="mj_Muted">File unavailable</span>
-                    )}
-                    {formatBytes(event.payload.size) && (
-                        <span className="mj_FileSize">{formatBytes(event.payload.size)}</span>
+                        <>
+                            <span className="mj_Muted">File unavailable</span>
+                            {formatBytes(event.payload.size) && (
+                                <span className="mj_FileSize">{formatBytes(event.payload.size)}</span>
+                            )}
+                        </>
                     )}
                     {asString(event.payload.caption) && (
                         <div className="mj_FileCaption">{asString(event.payload.caption)}</div>
