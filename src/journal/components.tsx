@@ -5151,6 +5151,8 @@ function Composer({
                 ? bodyRef.current.trim()
                 : "";
         if (caption) {
+            // The field clears as the note goes, so a sent-message walk it was showing ends too.
+            sentHistory.endRecall();
             clearSentDraftRef.current(capturedConvo, draftRevisions.current.get(capturedConvo) ?? 0);
         }
         const failed = (): void => {
@@ -5161,6 +5163,8 @@ function Composer({
             .sendVoiceNote(blob, capturedConvo, sessionGen, caption || undefined)
             .then((outcome) => {
                 if (outcome !== "sent" && outcome !== "persisted-terminal") failed();
+                // A caption that went out with the note is a sent line, as on the desktop app.
+                else if (caption) sentHistory.record(caption, capturedConvo);
             })
             .catch(failed);
     };
