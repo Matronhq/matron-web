@@ -68,6 +68,7 @@ import {
 import { CoordinatorEventNotice, isUnrenderableNoticeEvent } from "./coordinator-notices";
 import { dateTimeFormat } from "./date-format";
 import { FOCUS_HIGHLIGHT_MS, focusScrollTop, jumpToLastOwnShortcutLabel, landingSeq } from "./jump-to-message";
+import { FindInChatBar, useFindInChatShortcut } from "./find-in-chat";
 import { GoToNumberDialog, goToNumberShortcutLabel, NumberSearchResult, useGoToNumberShortcut } from "./goto-number";
 import { PinDialog, type PinDialogTarget } from "./PinDialogs";
 import { CommandPalette } from "./CommandPalette";
@@ -128,6 +129,7 @@ import { notificationsFor, unreadTotal as countUnread } from "./notifications";
 import { SettingsSheet } from "./SettingsSheet";
 import { displayTitle, TaggedTitle } from "./SessionTag";
 import { groupByDay } from "./sidebar-groups";
+import { observeSeenRows } from "./seen-tracker";
 import { createLongPressController, type LongPressController } from "./longPress";
 import { MarkdownBody, markdownToPlainText } from "./markdown";
 import {
@@ -2156,7 +2158,7 @@ function ConversationListView({
                         query={query}
                         search={state.messageSearch}
                         now={renderNow}
-                        onSelect={(hit) => void client.focusMessage(hit.convo_id, hit.seq)}
+                        onSelect={(hit) => client.openSearchHit(hit)}
                     />
                 </div>
             </nav>
@@ -2458,6 +2460,7 @@ const CONVERSATION_LIST_IGNORED_STATE = new Set<keyof ClientState>([
     "sendTick",
     "dragActive",
     "focusTarget",
+    "chatSearch",
 ]);
 
 export function sameStateExcept(
@@ -5540,6 +5543,7 @@ function Timeline({
     isReadOnly?: boolean;
 }): React.ReactElement {
     const scrollRef = useRef<HTMLDivElement>(null);
+    const listRef = useRef<HTMLOListElement>(null);
     const pendingScrollFrame = useRef<number | undefined>(undefined);
     const selectedConversationId = useRef(state.selectedConversationId);
     const [isFollowingTail, setFollow] = useState(true);
@@ -5743,6 +5747,17 @@ function Timeline({
         isFollowingTail,
     ]);
 
+    // Read state: report which rows were on screen. A layout effect, so a conversation switch
+    // re-binds before any row of the new conversation can be counted under the old one. A
+    // read-only subagent transcript reports nothing.
+    const seenConversationId = isReadOnly ? undefined : state.selectedConversationId;
+    useLayoutEffect(() => {
+        const root = scrollRef.current;
+        const list = listRef.current;
+        if (!seenConversationId || !root || !list) return;
+        return observeSeenRows({ tracker: client.seen, convoId: seenConversationId, root, list });
+    }, [client, seenConversationId]);
+
     const loadEarlierMessages = (): void => {
         const node = scrollRef.current;
         if (node) {
@@ -5843,7 +5858,7 @@ function Timeline({
     const timelineMain = (
         <main className="mj_ChatView_timeline" data-testid="timeline">
             <div className="mj_ChatView_messagePanel mj_AutoHideScrollbar" ref={scrollRef} onScroll={onScroll}>
-                <ol className="mj_ChatView_messageList" aria-live="polite">
+                <ol className="mj_ChatView_messageList" aria-live="polite" ref={listRef}>
                     {state.hasOlderHistory && (
                         <li className="mj_HistoryRow">
                             <button
@@ -7079,6 +7094,11 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
 
     // The field is modal, so the shortcut stays off while the upload sheet holds the app inert.
     useGoToNumberShortcut(client, !state.stagedUploads);
+    // Ctrl/⌘F finds in the conversation on screen; with none open the browser keeps the key.
+    useFindInChatShortcut(
+        client,
+        Boolean(state.selectedConversationId) && !state.trackerView?.open && !state.stagedUploads,
+    );
 
     const reloadDraft = useCallback(
         (conversationId: string) =>
@@ -7168,6 +7188,9 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                                         state={state}
                                         mode={childMode ? "child" : "parent"}
                                     />
+                                    {state.chatSearch?.conversationId === state.selectedConversationId && (
+                                        <FindInChatBar client={client} search={state.chatSearch} />
+                                    )}
                                     <Timeline client={client} state={state} isReadOnly={childMode} />
                                     {childMode ? (
                                         <ReadOnlyHint />

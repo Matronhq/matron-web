@@ -4257,3 +4257,95 @@ describe("tracker item cards in the timeline", () => {
         expect(rowTexts(rendered.container)).toEqual(["Needs you", "You reopened #7 · Pick a database"]);
     });
 });
+
+describe("read state reporting", () => {
+    let rendered: { container: HTMLDivElement; root: Root } | undefined;
+    const observers: Array<{
+        root: Element | Document | null | undefined;
+        callback: IntersectionObserverCallback;
+        observed: Element[];
+    }> = [];
+    let originalObserver: unknown;
+
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    beforeEach(() => {
+        observers.length = 0;
+        originalObserver = (globalThis as Record<string, unknown>).IntersectionObserver;
+        class MockObserver {
+            private readonly entry;
+            public constructor(callback: IntersectionObserverCallback, options?: IntersectionObserverInit) {
+                this.entry = { root: options?.root, callback, observed: [] as Element[] };
+                observers.push(this.entry);
+            }
+            public observe(target: Element): void {
+                this.entry.observed.push(target);
+            }
+            public unobserve(target: Element): void {
+                this.entry.observed = this.entry.observed.filter((element) => element !== target);
+            }
+            public disconnect(): void {
+                this.entry.observed = [];
+            }
+        }
+        Object.defineProperty(globalThis, "IntersectionObserver", { value: MockObserver, configurable: true });
+        // Every element measures as the same 100px box, so every intersecting row counts as visible.
+        jest.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ top: 0, bottom: 100 } as DOMRect);
+    });
+
+    afterEach(async () => {
+        if (rendered) {
+            await act(async () => rendered?.root.unmount());
+            rendered.container.remove();
+            rendered = undefined;
+        }
+        jest.restoreAllMocks();
+        Object.defineProperty(globalThis, "IntersectionObserver", { value: originalObserver, configurable: true });
+    });
+
+    it("reports the selected conversation's on-screen rows to the client's tracker", async () => {
+        const client = signedInClient({ events: [textEvent(1, "one"), textEvent(2, "two")] });
+        const setVisible = jest.spyOn(client.seen, "setVisible").mockImplementation(() => {});
+        const removeSurface = jest.spyOn(client.seen, "removeSurface").mockImplementation(() => {});
+        rendered = await renderClient(client);
+
+        const timeline = observers.find((observer) =>
+            (observer.root as Element | undefined)?.classList?.contains("mj_ChatView_messagePanel"),
+        );
+        expect(timeline?.observed.map((row) => row.getAttribute("data-event-id"))).toEqual(["1", "2"]);
+        await act(async () => {
+            timeline!.callback(
+                timeline!.observed.map(
+                    (target) => ({ target, isIntersecting: true }) as unknown as IntersectionObserverEntry,
+                ),
+                {} as IntersectionObserver,
+            );
+        });
+        expect(setVisible).toHaveBeenLastCalledWith(expect.any(Symbol), "c1", [1, 2]);
+
+        await act(async () => rendered?.root.unmount());
+        rendered.container.remove();
+        rendered = undefined;
+        expect(removeSurface).toHaveBeenCalledWith(setVisible.mock.calls[0][0]);
+    });
+
+    it("reports nothing from a read-only subagent transcript", async () => {
+        const client = signedInClient({ events: [textEvent(1, "one")] });
+        internals(client).state = {
+            ...client.getSnapshot(),
+            conversations: [
+                { ...CONVERSATION, id: "p1", title: "Parent" },
+                { ...CONVERSATION, parent_convo_id: "p1" },
+            ],
+        };
+        rendered = await renderClient(client);
+        expect(rendered.container.textContent).toContain("Read-only — subagent transcript");
+        expect(
+            observers.some((observer) =>
+                (observer.root as Element | undefined)?.classList?.contains("mj_ChatView_messagePanel"),
+            ),
+        ).toBe(false);
+    });
+});
