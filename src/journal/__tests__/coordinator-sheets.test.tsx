@@ -158,6 +158,28 @@ describe("Coordinator rail entry, chooser and Routines sheet", () => {
         expect(chooser()).toBeNull();
     });
 
+    it("goes back to the chooser when the new coordinator chat is closed", async () => {
+        const client = signedInClient(
+            { coordinator: jest.fn().mockResolvedValue({ convo_id: null, consent: true }) },
+            { coordinatorConvoId: null },
+        );
+        jest.spyOn(client, "listAgents").mockResolvedValue([]);
+        await render(client);
+        await act(async () => railCoordinator().click());
+        await act(async () => button(chooser()!, "New coordinator chat…").click());
+        expect(chooser()).toBeNull();
+        const title = document.querySelector("#mj-new-session-title");
+        expect(title?.textContent).toBe("New coordinator chat");
+        await act(async () =>
+            title!
+                .closest(".mj_NewSessionSheet")!
+                .querySelector<HTMLButtonElement>('button[aria-label="Close"]')!
+                .click(),
+        );
+        expect(document.querySelector("#mj-new-session-title")).toBeNull();
+        expect(chooser()).not.toBeNull();
+    });
+
     it("shows the Coordinator in Settings with Change… and Clear, and returns to Settings from the chooser", async () => {
         const putCoordinator = jest.fn().mockResolvedValue({ convo_id: null, consent: true });
         const client = signedInClient({

@@ -2220,13 +2220,21 @@ function ConversationListView({
                     client={client}
                     title="New coordinator chat"
                     initialModel={COORDINATOR_NEW_CHAT_MODEL}
-                    onClose={closeCoordinatorSheet}
-                    onCreated={(convoId) =>
+                    // Closing the new chat goes back to the chooser; a created chat ends the flow
+                    // once it is the Coordinator (onCreated runs right after this close).
+                    onClose={() => setCoordinatorSheet({ ...coordinatorSheet, kind: "chooser", error: undefined })}
+                    onCreated={(convoId) => {
+                        const fromSettings = coordinatorSheet.fromSettings;
                         void client.setCoordinator(convoId).then((error) => {
                             // The chat started but did not become the Coordinator: say so in the chooser.
-                            if (error) setCoordinatorSheet({ kind: "chooser", fromSettings: false, error });
-                        })
-                    }
+                            if (error) {
+                                setCoordinatorSheet({ kind: "chooser", fromSettings, error });
+                                return;
+                            }
+                            setCoordinatorSheet(null);
+                            if (fromSettings) setAccountOpen(true);
+                        });
+                    }}
                 />
             )}
             {coordinatorSheet?.kind === "routines" && <RoutinesSheet client={client} onClose={closeCoordinatorSheet} />}

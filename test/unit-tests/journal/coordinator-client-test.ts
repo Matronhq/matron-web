@@ -17,6 +17,7 @@ interface ApiMock {
     patchRoutine: jest.Mock;
     deleteRoutine: jest.Mock;
     runRoutine: jest.Mock;
+    latestBriefing: jest.Mock;
 }
 
 interface Internals {
@@ -38,6 +39,7 @@ function makeClient(overrides: Partial<ClientState> = {}): { client: MatronJourn
         patchRoutine: jest.fn(),
         deleteRoutine: jest.fn(),
         runRoutine: jest.fn(),
+        latestBriefing: jest.fn(),
     };
     return { client, internals };
 }
@@ -100,6 +102,23 @@ describe("Coordinator conversation", () => {
         expect(client.getSnapshot().coordinatorConvoId).toBe("c_new");
     });
 
+    it("keeps a marker's refetch through a briefing load", async () => {
+        jest.useFakeTimers();
+        const { client, internals } = makeClient({ coordinatorConvoId: "c_old" });
+        internals.api!.coordinator.mockResolvedValue({ convo_id: "c_new", consent: true });
+        internals.api!.latestBriefing.mockResolvedValue({
+            briefing: null,
+            refresh: null,
+            next_refresh_at: null,
+            has_coordinator: true,
+        });
+        internals.handleCoordinatorMarker(marker("coordinator", { role: "assigned" }));
+        await client.loadBriefing();
+        jest.advanceTimersByTime(300);
+        await flush();
+        expect(client.getSnapshot().coordinatorConvoId).toBe("c_new");
+    });
+
     it("drops a GET answer that a newer hello overtook", async () => {
         const { client, internals } = makeClient();
         let resolve!: (value: unknown) => void;
@@ -107,7 +126,7 @@ describe("Coordinator conversation", () => {
         const read = client.coordinatorConversationId();
         internals.applyHelloCoordinator({ kind: "control", op: "hello_ok", coordinator_convo_id: "c_hello" });
         resolve({ convo_id: "c_stale" });
-        await expect(read).resolves.toBe("c_stale");
+        await expect(read).resolves.toBe("c_hello");
         expect(client.getSnapshot().coordinatorConvoId).toBe("c_hello");
     });
 

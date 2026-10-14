@@ -2269,8 +2269,9 @@ export class MatronJournalClient {
 
     /**
      * GET /coordinator: the user's Coordinator conversation, asked fresh (the rail entry opens it).
-     * Null for none, a signed-out client or a failed read; a successful read also updates
-     * `coordinatorConvoId` unless something newer landed while it was in flight.
+     * Null for none, a signed-out client or a failed read. A successful read also updates
+     * `coordinatorConvoId`; when something newer landed while it was in flight, that newer value
+     * is the answer instead.
      */
     public async coordinatorConversationId(): Promise<string | null> {
         const api = this.api;
@@ -2279,8 +2280,10 @@ export class MatronJournalClient {
         try {
             const raw = await api.coordinator();
             if (this.api !== api) return null;
+            // A hello, write or marker since the GET was sent is newer than its answer.
+            if (this.coordinatorEpoch !== epoch) return this.state.coordinatorConvoId ?? null;
             const id = coordinatorIdIn(raw);
-            if (id !== undefined && this.coordinatorEpoch === epoch) this.patch({ coordinatorConvoId: id });
+            if (id !== undefined) this.patch({ coordinatorConvoId: id });
             return id ?? null;
         } catch {
             return null;
@@ -2618,12 +2621,6 @@ export class MatronJournalClient {
     private scheduleBriefingExpiry(latest: BriefingLatest): void {
         if (this.briefingExpiryTimer !== undefined) window.clearTimeout(this.briefingExpiryTimer);
         this.briefingExpiryTimer = undefined;
-        if (this.coordinatorRefetchTimer !== undefined) window.clearTimeout(this.coordinatorRefetchTimer);
-        this.coordinatorRefetchTimer = undefined;
-        this.coordinatorEpoch += 1;
-        if (this.routinesRefetchTimer !== undefined) window.clearTimeout(this.routinesRefetchTimer);
-        this.routinesRefetchTimer = undefined;
-        this.routinesGen += 1;
         const expiresAt = latest.refresh?.state === "pending" ? latest.refresh.expires_at : undefined;
         if (expiresAt === undefined) return;
         const delay = Math.min(Math.max(0, expiresAt - Date.now()) + 1_000, 2_147_000_000);
@@ -4688,6 +4685,12 @@ export class MatronJournalClient {
         if (this.briefingExpiryTimer !== undefined) window.clearTimeout(this.briefingExpiryTimer);
         this.briefingExpiryTimer = undefined;
         this.briefingGen += 1;
+        if (this.coordinatorRefetchTimer !== undefined) window.clearTimeout(this.coordinatorRefetchTimer);
+        this.coordinatorRefetchTimer = undefined;
+        this.coordinatorEpoch += 1;
+        if (this.routinesRefetchTimer !== undefined) window.clearTimeout(this.routinesRefetchTimer);
+        this.routinesRefetchTimer = undefined;
+        this.routinesGen += 1;
         this.readTimers.clear();
         this.readHighWater.clear();
         this.ackTimer = undefined;
