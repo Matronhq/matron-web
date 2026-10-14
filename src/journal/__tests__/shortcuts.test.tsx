@@ -11,7 +11,6 @@ import { TextEncoder as NodeTextEncoder } from "node:util";
 
 import { favoriteStore, MatronJournalClient, pinnedStore, unreadStore } from "../client";
 import { MatronApp } from "../components";
-import { notificationsFor } from "../notifications";
 import { matchShortcut, shortcutLabel } from "../shortcuts";
 import type { ClientState, Conversation, JournalEvent, Session } from "../types";
 
@@ -250,12 +249,40 @@ describe("app shortcuts", () => {
     it("⌘1 opens the Coordinator's conversation when the journal names one", async () => {
         const client = signedInClient();
         const select = jest.spyOn(client, "selectConversation").mockResolvedValue();
+        const ask = jest.spyOn(client, "coordinatorConversationId").mockResolvedValue(null);
         await render(client);
         await press("1");
         expect(select).not.toHaveBeenCalled();
-        (notificationsFor(client) as unknown as { coordinatorId: string | null }).coordinatorId = "c2";
+        ask.mockResolvedValue("c2");
         await press("1");
         expect(select).toHaveBeenCalledWith("c2", { suppressNotFound: true });
+    });
+
+    it("drops a Coordinator answer that lands after another section shortcut", async () => {
+        const client = signedInClient();
+        const select = jest.spyOn(client, "selectConversation").mockResolvedValue();
+        let answer: (id: string | null) => void = () => undefined;
+        jest.spyOn(client, "coordinatorConversationId").mockReturnValue(
+            new Promise((resolve) => {
+                answer = resolve;
+            }),
+        );
+        await render(client);
+        await press("1");
+        await press("2");
+        await act(async () => answer("c2"));
+        expect(select).not.toHaveBeenCalled();
+        expect(client.getSnapshot().trackerView).toMatchObject({ open: true, view: "missions" });
+    });
+
+    it("ignores a held ⌘K's auto-repeat", async () => {
+        await render(signedInClient());
+        await press("k");
+        await press("k", { repeat: true }, document.activeElement!);
+        expect(palette()).not.toBeNull();
+        await press("k");
+        await press("k", { repeat: true });
+        expect(palette()).toBeNull();
     });
 
     it("⌘N opens the new-session sheet", async () => {
@@ -311,5 +338,28 @@ describe("app shortcuts", () => {
         const event = await press("2");
         expect(event.defaultPrevented).toBe(false);
         expect(client.getSnapshot().trackerView?.open).toBeFalsy();
+    });
+});
+
+describe("coordinatorConversationId", () => {
+    const withApi = (coordinator: jest.Mock): MatronJournalClient => {
+        const client = signedInClient();
+        (client as unknown as { api: unknown }).api = { coordinator };
+        return client;
+    };
+
+    it("asks the journal each time and answers its conversation id", async () => {
+        const coordinator = jest.fn().mockResolvedValue({ convo_id: "c9", consent: false });
+        const client = withApi(coordinator);
+        expect(await client.coordinatorConversationId()).toBe("c9");
+        expect(await client.coordinatorConversationId()).toBe("c9");
+        expect(coordinator).toHaveBeenCalledTimes(2);
+    });
+
+    it("is null for no Coordinator, an odd answer, a failed read or no session", async () => {
+        expect(await withApi(jest.fn().mockResolvedValue({ convo_id: null })).coordinatorConversationId()).toBeNull();
+        expect(await withApi(jest.fn().mockResolvedValue("nope")).coordinatorConversationId()).toBeNull();
+        expect(await withApi(jest.fn().mockRejectedValue(new Error("down"))).coordinatorConversationId()).toBeNull();
+        expect(await new MatronJournalClient().coordinatorConversationId()).toBeNull();
     });
 });

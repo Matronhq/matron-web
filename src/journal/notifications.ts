@@ -393,11 +393,6 @@ export class DesktopNotifier {
         this.snapshot = this.computeSnapshot();
     }
 
-    /** The user's Coordinator conversation, as the journal last named it; null for none or not read yet. */
-    public coordinatorConversationId(): string | null {
-        return this.coordinatorId;
-    }
-
     public readonly subscribe = (listener: () => void): (() => void) => {
         this.listeners.add(listener);
         return () => this.listeners.delete(listener);

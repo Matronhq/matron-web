@@ -27,7 +27,6 @@ Please see LICENSE files in the repository root for full details.
 import { useEffect, useRef } from "react";
 
 import type { MatronJournalClient } from "./client";
-import { notificationsFor } from "./notifications";
 
 export type Section = "coordinator" | "projects" | "decisions" | "conversations" | "memories";
 
@@ -102,28 +101,30 @@ export function useShortcutCommand(command: BusCommand, handler: () => void): vo
 // ── Actions ──
 
 const TRACKER_VIEW = { projects: "missions", decisions: "inbox", memories: "memories" } as const;
+let sectionSeq = 0;
 
 /**
  * The rail's own routing: a section opens on its home, not a page left open inside it. The
  * Coordinator has no rail entry here; ⌘1 opens its conversation when the journal names one.
  */
-export function showSection(client: MatronJournalClient, section: Section): void {
+export function showSection(client: MatronJournalClient, section: Section): Promise<void> {
+    // A later section shortcut wins over a Coordinator lookup still in flight.
+    const seq = ++sectionSeq;
     if (section === "coordinator") {
-        const convoId = notificationsFor(client).coordinatorConversationId();
-        if (convoId) void client.selectConversation(convoId, { suppressNotFound: true });
-        return;
+        return client.coordinatorConversationId().then((convoId) => {
+            if (convoId && seq === sectionSeq) void client.selectConversation(convoId, { suppressNotFound: true });
+        });
     }
-    if (section === "conversations") {
-        client.closeTrackerView();
-        return;
-    }
-    client.openTrackerView({
-        view: TRACKER_VIEW[section],
-        projectId: null,
-        missionId: null,
-        itemId: null,
-        memoryName: null,
-    });
+    if (section === "conversations") client.closeTrackerView();
+    else
+        client.openTrackerView({
+            view: TRACKER_VIEW[section],
+            projectId: null,
+            missionId: null,
+            itemId: null,
+            memoryName: null,
+        });
+    return Promise.resolve();
 }
 
 /**
@@ -157,7 +158,8 @@ export function useAppShortcuts(client: MatronJournalClient, handlers: AppShortc
     useEffect(() => {
         if (!enabled) return undefined;
         const onKeyDown = (event: KeyboardEvent): void => {
-            if (event.defaultPrevented || event.isComposing) return;
+            // A held key repeats: one press, one action (⌘K would otherwise flicker open and shut).
+            if (event.defaultPrevented || event.isComposing || event.repeat) return;
             const mac = isMacPlatform();
             const command = matchShortcut(event, mac);
             if (!command) return;
@@ -183,7 +185,7 @@ export function useAppShortcuts(client: MatronJournalClient, handlers: AppShortc
                     return;
                 case "section":
                     event.preventDefault();
-                    showSection(client, command.section);
+                    void showSection(client, command.section);
                     return;
             }
         };

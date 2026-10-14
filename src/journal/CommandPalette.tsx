@@ -48,6 +48,10 @@ export function CommandPalette({
     onCloseRef.current = onClose;
     useEffect(() => {
         const onKey = (event: KeyboardEvent): void => {
+            if (event.repeat) {
+                if (matchShortcut(event, isMacPlatform())?.kind === "commandPalette") event.preventDefault();
+                return;
+            }
             if (event.defaultPrevented || matchShortcut(event, isMacPlatform())?.kind !== "commandPalette") return;
             event.preventDefault();
             onCloseRef.current();
