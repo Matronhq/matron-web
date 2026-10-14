@@ -598,6 +598,8 @@ export class DesktopNotifier {
     // writes never take each other back and a frame or GET landing mid-write keeps them showing.
     private pending: Array<{ id: number; change: NotifyChange }> = [];
     private nextWriteId = 0;
+    // The newest write whose answer became `view`: an older write answering late is older news.
+    private newestAnsweredWrite = -1;
     private settingsError: string | null = null;
     private readonly settingsListeners = new Set<() => void>();
     private settingsSnapshot: NotifySettingsState;
@@ -645,7 +647,8 @@ export class DesktopNotifier {
             const answer = parseNotifyView(await this.env.api(session).updateNotify(notifyChangeBody(change)));
             if (sessionEpoch !== this.sessionEpoch) return;
             this.pending = this.pending.filter((write) => write.id !== id);
-            if (answer) {
+            if (answer && id > this.newestAnsweredWrite) {
+                this.newestAnsweredWrite = id;
                 this.view = answer;
                 this.settingsEpoch += 1;
             }

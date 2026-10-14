@@ -297,6 +297,25 @@ describe("notification settings store", () => {
         stop();
     });
 
+    it("keeps the later write's answer when an earlier write answers last", async () => {
+        const answers: Array<(value: unknown) => void> = [];
+        const api = {
+            notifySettings: jest.fn().mockResolvedValue(view()),
+            updateNotify: jest.fn(() => new Promise((resolve) => answers.push(resolve))),
+        };
+        const { notifier } = storeSetup(api);
+        const stop = notifier.start();
+        await flush();
+        const first = notifier.setConvoLevel("c2", "needs_me");
+        const second = notifier.setConvoLevel("c2", "none");
+        answers[1](view({ convos: [{ convo_id: "c2", level: "none", mute_until: null }] }));
+        await second;
+        answers[0](view({ convos: [{ convo_id: "c2", level: "needs_me", mute_until: null }] }));
+        await first;
+        expect(convoNotifyState(notifier.getSettingsSnapshot().view, "c2", NOW).level).toBe("none");
+        stop();
+    });
+
     it("keeps a write in flight showing over a live frame", async () => {
         const api = {
             notifySettings: jest.fn().mockResolvedValue(view()),

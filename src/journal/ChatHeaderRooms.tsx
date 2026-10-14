@@ -177,7 +177,7 @@ export function RoomsControl({
                                     )}
                                     {room.lastActivity !== undefined && (
                                         <span className="mj_RoomsMenu_time">
-                                            {formatRelativeTime(room.lastActivity, settings.now)}
+                                            {formatRelativeTime(room.lastActivity, Date.now())}
                                         </span>
                                     )}
                                 </span>
