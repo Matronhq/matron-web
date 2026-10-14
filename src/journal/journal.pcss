@@ -2940,6 +2940,52 @@ li.mj_AttachmentChip_error {
     font: 400 12px/16px var(--cpd-font-family-mono);
 }
 
+/* Running tool stream (Mac ToolStreamCard): a chevron in the header; the pane shows about three
+   lines collapsed (Mac: 76pt) and a bounded scrolling pane expanded. */
+.mj_LiveTool_header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.mj_LiveTool_header > span:first-child {
+    min-width: 0;
+    flex: 1 1 auto;
+}
+
+.mj_LiveTool_toggle {
+    display: inline-flex;
+    width: 20px;
+    height: 20px;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--cpd-color-text-tertiary);
+    cursor: pointer;
+}
+
+.mj_LiveTool_toggle svg {
+    width: 13px;
+    height: 13px;
+}
+
+.mj_LiveTool_toggle:focus-visible {
+    border-radius: 4px;
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: 1px;
+}
+
+.mj_LiveTool pre.mj_LiveTool_collapsed {
+    max-height: 76px;
+}
+
+.mj_LiveTool pre.mj_LiveTool_expanded {
+    max-height: 600px;
+}
+
 .mj_DiffCard {
     min-width: 0;
     overflow: hidden;

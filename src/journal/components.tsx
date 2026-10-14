@@ -4929,12 +4929,66 @@ function MsgAvatar(): React.ReactElement {
     return <span className="mj_MsgAvatar" style={{ WebkitMaskImage: mask, maskImage: mask }} aria-hidden />;
 }
 
+/** How much of the stream tail a collapsed tool-stream pane renders; it only shows a few lines. */
+export const TOOL_STREAM_COLLAPSED_CAP_CHARS = 4096;
+
+// The tail a collapsed pane renders, opened at a line boundary so the cut never starts mid-word
+// or inside an escape sequence, unless the first line is long (then the tail is effectively one
+// line and trimming through it would drop nearly everything). `cut` says if anything was dropped.
+export function collapsedToolStreamSlice(text: string): { text: string; cut: boolean } {
+    if (text.length <= TOOL_STREAM_COLLAPSED_CAP_CHARS) return { text, cut: false };
+    const tail = text.slice(cleanCutStart(text, text.length - TOOL_STREAM_COLLAPSED_CAP_CHARS));
+    const newline = tail.slice(0, 512).indexOf("\n");
+    return { text: newline >= 0 ? tail.slice(newline + 1) : tail, cut: true };
+}
+
+// Where a cut at `start` can open cleanly: past the rest of an escape sequence it landed inside
+// (any fragment, not only "[…m"), and past the low half of a surrogate pair it split. Unlike a
+// head-truncated buffer, the text before the cut is at hand, so the fix is exact.
+function cleanCutStart(text: string, start: number): number {
+    const lookback = Math.max(0, start - 64);
+    const escAt = text.slice(lookback, start).lastIndexOf("\x1b");
+    if (escAt >= 0) {
+        const esc = lookback + escAt;
+        let end = esc + 2; // ESC + one byte, for a non-CSI escape
+        if (text[esc + 1] === "[") {
+            while (end < text.length) {
+                const code = text.charCodeAt(end);
+                end++;
+                if (code >= 0x40 && code <= 0x7e) break;
+            }
+        }
+        if (end > start) start = end;
+    }
+    const code = text.charCodeAt(start);
+    if (code >= 0xdc00 && code <= 0xdfff) start++;
+    return start;
+}
+
 export function ToolStream({ stream }: { stream: ToolStreamState }): React.ReactElement {
+    // Mac ToolStreamCard: collapsed to the last few lines, expandable to a taller scrolling pane.
+    const [expanded, setExpanded] = useState(false);
     const nodes = useMemo(() => {
-        const cleaned = stream.headTruncated ? stripLeadingSgrFragment(stream.content) : stream.content;
-        const text = stream.headTruncated ? `… earlier output omitted …\n${cleaned}` : stream.content;
-        return parseAnsi(text, INITIAL_SGR_STATE, "", 0).nodes;
-    }, [stream.content, stream.headTruncated]);
+        let shown = stream.headTruncated ? stripLeadingSgrFragment(stream.content) : stream.content;
+        let cut = stream.headTruncated;
+        if (!expanded) {
+            const sliced = collapsedToolStreamSlice(shown);
+            shown = sliced.text;
+            cut = cut || sliced.cut;
+        }
+        return parseAnsi(cut ? `… earlier output omitted …\n${shown}` : shown, INITIAL_SGR_STATE, "", 0).nodes;
+    }, [stream.content, stream.headTruncated, expanded]);
+    // Stay pinned to the newest output unless the user has scrolled up.
+    const paneRef = useRef<HTMLPreElement>(null);
+    const pinned = useRef(true);
+    useLayoutEffect(() => {
+        const pane = paneRef.current;
+        if (pane && pinned.current) pane.scrollTop = pane.scrollHeight;
+    }, [nodes]);
+    const onScroll = (): void => {
+        const pane = paneRef.current;
+        if (pane) pinned.current = pane.scrollHeight - pane.scrollTop - pane.clientHeight < 8;
+    };
 
     return (
         <li className="mx_EventTile mx_EventTile_lastInSection" tabIndex={-1} data-layout="bubble" data-self="false">
@@ -4945,11 +4999,40 @@ export function ToolStream({ stream }: { stream: ToolStreamState }): React.React
             <div className="mx_EventTile_line">
                 <div className="mx_MTextBody mx_EventTile_content">
                     <div className="markdown-body mj_LiveTool">
-                        <div>
-                            <span className="mj_LiveDot" /> Running{" "}
-                            <code>{stream.command || stream.tool || "tool"}</code>
+                        <div className="mj_LiveTool_header">
+                            <span>
+                                <span className="mj_LiveDot" /> Running{" "}
+                                <code>{stream.command || stream.tool || "tool"}</code>
+                            </span>
+                            <button
+                                type="button"
+                                className="mj_LiveTool_toggle"
+                                aria-expanded={expanded}
+                                aria-label={expanded ? "Collapse output" : "Expand output"}
+                                onClick={() => {
+                                    // Like the Mac pane's bottom anchor: the resized pane opens on the newest output.
+                                    pinned.current = true;
+                                    setExpanded((current) => !current);
+                                }}
+                            >
+                                <svg viewBox="0 0 16 16" width={16} height={16} aria-hidden="true">
+                                    <path
+                                        d={expanded ? "m4 6 4 4 4-4" : "m6 4 4 4-4 4"}
+                                        fill="none"
+                                        stroke="currentColor"
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                    />
+                                </svg>
+                            </button>
                         </div>
-                        <pre>{nodes}</pre>
+                        <pre
+                            ref={paneRef}
+                            onScroll={onScroll}
+                            className={expanded ? "mj_LiveTool_expanded" : "mj_LiveTool_collapsed"}
+                        >
+                            {nodes}
+                        </pre>
                     </div>
                 </div>
             </div>
