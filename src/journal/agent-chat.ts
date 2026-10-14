@@ -282,6 +282,10 @@ export function rememberAgentChatAnswer(
 ): void {
     if (!scope) return;
     const answers = readAnswers(scope);
+    // A decision outranks a later "no longer waiting": the 409 a second answer for the same
+    // card gets once the first has been applied must not erase what the first one decided.
+    const previous = answers[cardKey];
+    if (answer === "expired" && (previous === "approve" || previous === "deny")) return;
     delete answers[cardKey];
     answers[cardKey] = answer;
     const keys = Object.keys(answers);

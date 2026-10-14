@@ -3714,6 +3714,14 @@ function AgentSpawnCard({
 
 type AgentChatLocalPhase = { kind: "idle" } | { kind: "sending" } | { kind: "failed"; message: string };
 
+type AgentChatAnswerOutcome =
+    { kind: "settled"; answer: RememberedAgentChatAnswer } | { kind: "failed"; message: string };
+
+// Answers still in flight, keyed by answers scope + card. Module-level so they outlive the card:
+// the request is never aborted on unmount, and a remounted card follows it instead of drawing
+// its buttons again (a second tap would race the first, and its 409 read as "expired").
+const agentChatAnswersInFlight = new Map<string, Promise<AgentChatAnswerOutcome>>();
+
 const noopAgentChatAnswer = (_decision: AgentChatDecision): Promise<unknown> => Promise.resolve();
 
 // A transport failure surfaces as a JournalApiError with status 0.
@@ -3754,45 +3762,61 @@ function AgentChatRequestCard({
     onAnswer?: (decision: AgentChatDecision) => Promise<unknown>;
 }): React.ReactElement {
     const cardKey = agentChatCardKey(event);
+    const flightKey = `${answersScope ?? ""}|${cardKey}`;
     const [remembered, setRemembered] = useState(() => rememberedAgentChatAnswer(answersScope, cardKey));
-    const [phase, setPhase] = useState<AgentChatLocalPhase>({ kind: "idle" });
-    const sendingRef = useRef(false);
+    // A card remounted while its answer is still in flight (the user left the conversation and
+    // came back) picks the request up again rather than offering the buttons a second time.
+    const [phase, setPhase] = useState<AgentChatLocalPhase>(() =>
+        agentChatAnswersInFlight.has(flightKey) ? { kind: "sending" } : { kind: "idle" },
+    );
     const mountedRef = useRef(false);
+
+    const follow = useCallback((flight: Promise<AgentChatAnswerOutcome>): void => {
+        void flight.then((outcome) => {
+            if (!mountedRef.current) return;
+            if (outcome.kind === "failed") {
+                setPhase({ kind: "failed", message: outcome.message });
+            } else {
+                setRemembered(outcome.answer);
+                setPhase({ kind: "idle" });
+            }
+        });
+    }, []);
 
     useEffect(() => {
         mountedRef.current = true;
+        const flight = agentChatAnswersInFlight.get(flightKey);
+        if (flight) follow(flight);
         return (): void => {
             mountedRef.current = false;
         };
-    }, []);
+    }, [flightKey, follow]);
 
     const settled = resolution ?? rememberedResolution(remembered);
 
-    const settle = (answer: RememberedAgentChatAnswer): void => {
-        rememberAgentChatAnswer(answersScope, cardKey, answer);
-        if (!mountedRef.current) return;
-        setRemembered(answer);
-        setPhase({ kind: "idle" });
-    };
-
     const handleAnswer = (decision: AgentChatDecision): void => {
-        if (settled || sendingRef.current) return;
-        sendingRef.current = true;
+        if (settled || agentChatAnswersInFlight.has(flightKey)) return;
         setPhase({ kind: "sending" });
-        void onAnswer(decision)
+        const flight = onAnswer(decision)
             .then(
-                () => settle(decision),
-                (error: unknown) => {
-                    if (error instanceof JournalApiError && error.status === 409) {
-                        settle("expired");
-                    } else if (mountedRef.current) {
-                        setPhase({ kind: "failed", message: agentChatErrorMessage(error) });
-                    }
-                },
+                (): AgentChatAnswerOutcome => ({ kind: "settled", answer: decision }),
+                (error: unknown): AgentChatAnswerOutcome =>
+                    error instanceof JournalApiError && error.status === 409
+                        ? { kind: "settled", answer: "expired" }
+                        : { kind: "failed", message: agentChatErrorMessage(error) },
             )
-            .finally(() => {
-                sendingRef.current = false;
+            .then((outcome): AgentChatAnswerOutcome => {
+                agentChatAnswersInFlight.delete(flightKey);
+                if (outcome.kind === "settled") {
+                    rememberAgentChatAnswer(answersScope, cardKey, outcome.answer);
+                    // A 409 never overwrites a decision already remembered for this card.
+                    const stored = rememberedAgentChatAnswer(answersScope, cardKey);
+                    return stored ? { kind: "settled", answer: stored } : outcome;
+                }
+                return outcome;
             });
+        agentChatAnswersInFlight.set(flightKey, flight);
+        follow(flight);
     };
 
     const sending = !settled && phase.kind === "sending";

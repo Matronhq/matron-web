@@ -9,12 +9,15 @@ import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
 import {
+    agentChatAnswersScope,
     agentChatFromLabel,
     agentChatHeadline,
     agentChatSessionLabel,
     agentChatToLabel,
     parseAgentChatRequest,
     readAgentChatResolutions,
+    rememberAgentChatAnswer,
+    rememberedAgentChatAnswer,
 } from "../../../src/journal/agent-chat";
 import { JournalApiError } from "../../../src/journal/api";
 import {
@@ -382,6 +385,40 @@ describe("agent_chat card", () => {
 
         expect(rendered.container.querySelector(".mj_PromptOptions")).toBeNull();
         expect(rendered.container.querySelector(".mj_Answered")?.textContent).toBe("Declined");
+    });
+
+    it("follows an answer still in flight when the card remounts, instead of offering the buttons again", async () => {
+        const client = signedInClient();
+        let settle!: () => void;
+        const answerAgentChat = jest
+            .spyOn(client, "answerAgentChat")
+            .mockReturnValue(new Promise<boolean>((resolve) => (settle = () => resolve(true))));
+        rendered = await renderEvent(client, chatCardEvent());
+        await act(async () => button(rendered!.container, "Approve")?.click());
+        await act(async () => rendered?.root.unmount());
+        rendered.container.remove();
+
+        rendered = await renderEvent(client, chatCardEvent());
+
+        expect(rendered.container.querySelector(".mj_PromptResolved_pending")?.textContent).toBe("Sending…");
+        const buttons = [...rendered.container.querySelectorAll<HTMLButtonElement>(".mj_PromptOptions button")];
+        expect(buttons.every((b) => b.disabled)).toBe(true);
+        await act(async () => buttons[0]?.click());
+        expect(answerAgentChat).toHaveBeenCalledTimes(1);
+
+        await act(async () => settle());
+
+        expect(rendered.container.querySelector(".mj_PromptOptions")).toBeNull();
+        expect(rendered.container.querySelector(".mj_Answered")?.textContent).toBe("Approved");
+    });
+
+    it("never lets a later 'no longer waiting' overwrite a remembered decision", () => {
+        const scope = agentChatAnswersScope(SESSION);
+        rememberAgentChatAnswer(scope, "c1:40", "deny");
+        rememberAgentChatAnswer(scope, "c1:40", "expired");
+        expect(rememberedAgentChatAnswer(scope, "c1:40")).toBe("deny");
+        rememberAgentChatAnswer(scope, "c1:41", "expired");
+        expect(rememberedAgentChatAnswer(scope, "c1:41")).toBe("expired");
     });
 
     it("does not show one account's remembered answer to another", async () => {
