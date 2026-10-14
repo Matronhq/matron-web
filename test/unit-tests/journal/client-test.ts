@@ -2484,6 +2484,21 @@ describe("MatronJournalClient attachment tray", () => {
         expect(tray(client)).toEqual([]);
     });
 
+    it("puts the rest back in the tray, tagged, when dispatching a frame throws", async () => {
+        const { client, state } = trayClient();
+        state.database = fakeDatabase({ events: jest.fn().mockRejectedValue(new Error("database closed")) });
+
+        client.stageFiles([png("a.png", 1), png("b.png", 2)]);
+        await expect(client.sendStagedFiles("c1", "caption")).resolves.toEqual({
+            outcome: "failed",
+            captionDelivered: true,
+        });
+
+        expect(tray(client)).toEqual([
+            expect.objectContaining({ state: "staged", batch: expect.objectContaining({ index: 2, total: 2 }) }),
+        ]);
+    });
+
     it("keeps every file and reports the caption undelivered when the first upload fails", async () => {
         const { client, send } = trayClient(jest.fn().mockRejectedValue(new Error("network unavailable")));
 

@@ -45,6 +45,7 @@ import {
     type BriefingLatest,
     type BriefingRefresh,
     type BriefingState,
+    type AttachmentBatchTag,
     type ClientState,
     type ComposerAttachment,
     type Conversation,
@@ -1710,7 +1711,39 @@ export class MatronJournalClient {
         if (this.state.selectedConversationId === convoId) this.patch({ sendTick: this.state.sendTick + 1 });
 
         const owner: AttachmentOwner = { gen, api, db };
-        const text = caption.trim();
+        try {
+            return await this.runStagedSend(convoId, plan, caption.trim(), owner);
+        } finally {
+            // Whatever way the send ended, no file of it may stay stuck as queued or uploading:
+            // anything still in the tray goes back to staged with its batch tag, ready to retry.
+            if (this.sessionGen === gen) {
+                const batches = new Map(plan.map((step) => [step.id, step.batch]));
+                const tray = this.trayOf(convoId);
+                if (
+                    tray.some((item) => batches.has(item.id) && (item.state === "queued" || item.state === "uploading"))
+                ) {
+                    this.setTray(
+                        convoId,
+                        tray.map((item): ComposerAttachment => {
+                            if (!batches.has(item.id) || (item.state !== "queued" && item.state !== "uploading")) {
+                                return item;
+                            }
+                            const batch = batches.get(item.id);
+                            return { id: item.id, file: item.file, state: "staged", ...(batch ? { batch } : {}) };
+                        }),
+                    );
+                }
+            }
+        }
+    }
+
+    private async runStagedSend(
+        convoId: string,
+        plan: { id: string; file: File; batch?: AttachmentBatchTag }[],
+        text: string,
+        owner: AttachmentOwner,
+    ): Promise<{ outcome: "sent" | "failed" | "skipped"; captionDelivered: boolean }> {
+        const { gen, api, db } = owner;
         let captionDelivered = false;
         for (const [index, step] of plan.entries()) {
             if (this.sessionGen !== gen || this.api !== api || this.database !== db) {
@@ -1749,9 +1782,15 @@ export class MatronJournalClient {
                 convoId,
                 this.trayOf(convoId).filter((item) => item.id !== step.id),
             );
-            // From here the outbox owns it: a failed frame becomes a retryable tile in the timeline.
-            await this.emitPendingAttachment(message, owner);
+            // From here the outbox owns it: a failed frame becomes a retryable tile in the timeline,
+            // and the text is with it either way.
             if (message.caption) captionDelivered = true;
+            try {
+                await this.emitPendingAttachment(message, owner);
+            } catch (error) {
+                console.warn("matron: attachment frame not dispatched", error);
+                return { outcome: "failed", captionDelivered };
+            }
         }
         return { outcome: "sent", captionDelivered };
     }
