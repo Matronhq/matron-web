@@ -673,6 +673,12 @@ async function main() {
             throw new Error(`${dataDir} holds an older dataset; remove it to seed a fresh one`);
         }
         const journal = await startJournal({ dataDir });
+        // An interrupted run must not leave its journal behind.
+        for (const signal of ["SIGINT", "SIGTERM"]) {
+            process.once(signal, () => {
+                journal.stop().finally(() => process.exit(130));
+            });
+        }
         let manifest = reuse;
         if (!manifest) {
             const t0 = Date.now();
