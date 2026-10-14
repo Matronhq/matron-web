@@ -66,16 +66,22 @@ import {
 } from "./coordinator-consent";
 import { CoordinatorEventNotice, isUnrenderableNoticeEvent } from "./coordinator-notices";
 import { dateTimeFormat } from "./date-format";
+import { FOCUS_HIGHLIGHT_MS, focusScrollTop, jumpToLastOwnShortcutLabel, landingSeq } from "./jump-to-message";
+import { FindInChatBar, useFindInChatShortcut } from "./find-in-chat";
 import { GoToNumberDialog, goToNumberShortcutLabel, NumberSearchResult, useGoToNumberShortcut } from "./goto-number";
 import { PinDialog, type PinDialogTarget } from "./PinDialogs";
+import { CommandPalette } from "./CommandPalette";
+import { shortcutLabel, useAppShortcuts, useShortcutCommand } from "./shortcuts";
 import { pinGlyph, successorHintText } from "./pins";
 import {
     AnthropicMark,
     ArchiveIcon,
+    ArrowUpToLineIcon,
     CheckIcon,
     ChevronDownIcon,
     ChevronLeftIcon,
     ChevronUpIcon,
+    ChecklistIcon,
     ClipboardIcon,
     CloseIcon,
     CodeBracketsIcon,
@@ -117,10 +123,12 @@ import {
     ProjectsIcon,
 } from "./icons";
 import { NAV_RAIL_WIDTH, NavRail, type NavKey } from "./NavRail";
+import { isAgentRoomTitle, needsYouByConversation, projectsNeedsYou } from "./needs-you";
 import { notificationsFor, unreadTotal as countUnread } from "./notifications";
 import { SettingsSheet } from "./SettingsSheet";
 import { displayTitle, TaggedTitle } from "./SessionTag";
 import { groupByDay } from "./sidebar-groups";
+import { observeSeenRows } from "./seen-tracker";
 import { createLongPressController, type LongPressController } from "./longPress";
 import { MarkdownBody, markdownToPlainText } from "./markdown";
 import {
@@ -133,7 +141,9 @@ import {
     MissionNotice,
     renderItemMarker,
 } from "./tracker/cards";
+import { ChatTasksPane } from "./tracker/ChatTasksPane";
 import { needsUser } from "./tracker/format";
+import { NeedsYouBadge } from "./tracker/glyphs";
 import {
     isPreviewableMarkdown,
     MarkdownPreviewContext,
@@ -189,6 +199,7 @@ import {
     type ClientState,
     type ComposerAttachment,
     type MessageSearchState,
+    type SearchHit,
     type Conversation,
     type ConversationMissionLink,
     type ConvoPin,
@@ -1229,7 +1240,7 @@ export function MessageSearchResults({
     query: string;
     search: MessageSearchState | undefined;
     now: number;
-    onSelect: (conversationId: string) => void;
+    onSelect: (hit: SearchHit) => void;
 }): React.ReactElement | null {
     // Only surface the section for a live query. `search` can lag the box by a debounce interval
     // or a stale query, so gate on the current box being non-empty AND the results being for it.
@@ -1264,7 +1275,7 @@ export function MessageSearchResults({
                             <button
                                 type="button"
                                 className="mj_SearchHit"
-                                onClick={() => onSelect(hit.convo_id)}
+                                onClick={() => onSelect(hit)}
                                 aria-label={`Open conversation ${hit.title || "Untitled"}`}
                             >
                                 <span className="mj_SearchHit_top">
@@ -1390,6 +1401,20 @@ function ConversationListView({
         if (restoreFocus) conversationMenuOpenerRef.current?.focus();
     }, []);
 
+    // ⌘N and ⇧⌘F (shortcuts.ts). Like the Mac, search-all-chats acts only on Conversations,
+    // where its field is.
+    useShortcutCommand("newSession", () => {
+        setAccountOpen(false);
+        closeConversationMenu();
+        setNewSessionOpen(true);
+    });
+    useShortcutCommand("searchAllChats", () => {
+        if (state.trackerView?.open) return;
+        const field = document.getElementById("conversation-search-input") as HTMLInputElement | null;
+        field?.focus();
+        field?.select();
+    });
+
     // After a menu ACTION (mark-read/archive/unarchive) the focused menuitem unmounts, and
     // archive/unarchive also remove the originating row — so restoring to the opener only works
     // when it survives. Defer past the state-change re-render, then focus the opener if it's still
@@ -1489,6 +1514,10 @@ function ConversationListView({
         [state.conversations, state.archivedIds, state.collapsedSubagentParentIds],
     );
     const childIndex = useMemo(() => childrenByParent(state.conversations), [state.conversations]);
+    // Keyed on the open-items array, which the client replaces whenever an item changes, so the
+    // memoised list re-renders (inboxItems is not in CONVERSATION_LIST_IGNORED_STATE) and the
+    // counts are rebuilt only then, not on every row render.
+    const needsYouCounts = useMemo(() => needsYouByConversation(state.inboxItems), [state.inboxItems]);
     const childRowsOf = (parentId: string): Conversation[] => childIndex.get(parentId) ?? [];
     const isTopLevelRow = (conversation: Conversation): boolean => rendersAsTopLevelRow(conversation, sidebarIndex);
     const conversations = useMemo(() => {
@@ -1577,6 +1606,8 @@ function ConversationListView({
     const unreadTotal = countUnread(state.conversations, state.archivedIds, state.unreadOverrideIds);
     // The For you badge: open items awaiting the user, the inbox's own "Needs you" filter.
     const needsYouTotal = (state.inboxItems ?? []).filter(needsUser).length;
+    // The Projects badge: what needs the user across the missions (the Mac's Missions total).
+    const projectsNeedsYouTotal = projectsNeedsYou(state.inboxItems, state.missions);
     const closeSettings = useCallback(() => setAccountOpen(false), []);
     const renderNow = Date.now();
     const pinnedRows = journalPins ? [] : visibleRows.filter((conversation) => state.pinnedIds.has(conversation.id));
@@ -1643,6 +1674,16 @@ function ConversationListView({
         const name = pin ? pin.label : conversationTitle(conversation);
         const outcomeStatus = isSubagent ? accessibleOutcome(classifyOutcome(conversation)) : undefined;
         const relativeTimestamp = formatRelativeDay(conversation.last_ts ?? conversation.created_at, renderNow);
+        // Items this conversation raised that wait on the user, and the "New" marker on a session
+        // that arrived unasked and has not been opened (a room's title, or a child's parent link,
+        // can land after the mark).
+        const needsYou = needsYouCounts.get(conversation.id) ?? 0;
+        const isNew =
+            !selected &&
+            !isSubagent &&
+            !isSubChat(conversation) &&
+            state.newConversationIds.has(conversation.id) &&
+            !isAgentRoomTitle(conversation.title);
         // When this parent's subagent rows are collapsed, surface a subtle count of the hidden
         // child rows so the collapse stays discoverable on the row itself. Gate on the CANONICAL
         // index (hasSubagentChildRows) — NOT an independent running-child count — so it agrees with
@@ -1676,7 +1717,9 @@ function ConversationListView({
                     className={`mj_ConversationListItem${selected ? " mj_ConversationListItem_selected" : ""}${isSubagent ? " mj_ConversationListItem_sub" : ""}`}
                     type="button"
                     aria-current={selected ? "page" : undefined}
-                    aria-label={`Open ${isSubagent ? "subagent" : "room"} ${name}${outcomeStatus ? `, ${outcomeStatus}` : ""}, last activity ${relativeTimestamp}${overrideUnread ? ", marked unread" : ""}${
+                    aria-label={`Open ${isSubagent ? "subagent" : "room"} ${name}${outcomeStatus ? `, ${outcomeStatus}` : ""}, last activity ${relativeTimestamp}${isNew ? ", new session" : ""}${
+                        needsYou > 0 ? `, ${needsYou} ${needsYou === 1 ? "item needs" : "items need"} you` : ""
+                    }${overrideUnread ? ", marked unread" : ""}${
                         collapsedSubagentCount > 0
                             ? `, ${collapsedSubagentCount} subagent${collapsedSubagentCount === 1 ? "" : "s"} hidden${collapsedSubagentUnread ? " (unread)" : ""}`
                             : ""
@@ -1811,13 +1854,25 @@ function ConversationListView({
                                 {collapsedSubagentUnread && <span className="mj_UnreadDot" aria-hidden />}
                             </span>
                         )}
-                        {conversation.unread_count > 0 ? (
-                            <span className="mj_UnreadBadge" aria-label={`${conversation.unread_count} unread`}>
-                                {conversation.unread_count}
+                        {/* Mac order: New, then what needs you, then unread. Announced via the row's
+                            aria-label, like the collapsed-children chip above. */}
+                        {(isNew || needsYou > 0 || conversation.unread_count > 0 || overrideUnread) && (
+                            <span className="mj_ConversationListBadges">
+                                {isNew && (
+                                    <span className="mj_ConversationListNew" aria-hidden="true">
+                                        New
+                                    </span>
+                                )}
+                                <NeedsYouBadge count={needsYou} />
+                                {conversation.unread_count > 0 ? (
+                                    <span className="mj_UnreadBadge" aria-label={`${conversation.unread_count} unread`}>
+                                        {conversation.unread_count}
+                                    </span>
+                                ) : overrideUnread ? (
+                                    <span className="mj_UnreadDot" aria-hidden />
+                                ) : null}
                             </span>
-                        ) : overrideUnread ? (
-                            <span className="mj_UnreadDot" aria-hidden />
-                        ) : null}
+                        )}
                     </span>
                 </button>
                 {/* The row menu opens via right-click / long-press for pointer + touch. This
@@ -1896,7 +1951,7 @@ function ConversationListView({
         >
             <NavRail
                 active={navActive}
-                counts={{ conversations: unreadTotal, decisions: needsYouTotal }}
+                counts={{ projects: projectsNeedsYouTotal, conversations: unreadTotal, decisions: needsYouTotal }}
                 onSelect={(key) => {
                     setAccountOpen(false);
                     closeConversationMenu();
@@ -1976,7 +2031,7 @@ function ConversationListView({
                             className="mj_IconButton"
                             type="button"
                             aria-label="New session"
-                            title="New session — runs /start"
+                            title={`New session (${shortcutLabel("n")}) — runs /start`}
                             onClick={() => {
                                 setAccountOpen(false);
                                 closeConversationMenu();
@@ -2133,7 +2188,7 @@ function ConversationListView({
                         query={query}
                         search={state.messageSearch}
                         now={renderNow}
-                        onSelect={(conversationId) => void client.selectConversation(conversationId)}
+                        onSelect={(hit) => client.openSearchHit(hit)}
                     />
                 </div>
             </nav>
@@ -2435,6 +2490,9 @@ const CONVERSATION_LIST_IGNORED_STATE = new Set<keyof ClientState>([
     "sendTick",
     "dragActive",
     "composerAttachments",
+    "chatTasks",
+    "focusTarget",
+    "chatSearch",
 ]);
 
 export function sameStateExcept(
@@ -3424,18 +3482,52 @@ function ChatHeader({
                 // Keyed by conversation id so a selection change while the menu is open
                 // remounts (and closes) it, instead of silently retargeting the actions.
                 conversation && (
-                    <HeaderOverflowMenu
-                        key={conversation.id}
-                        client={client}
-                        conversation={conversation}
-                        state={state}
-                    />
+                    <>
+                        <ChatTasksButton client={client} state={state} convoId={conversation.id} />
+                        <HeaderOverflowMenu
+                            key={conversation.id}
+                            client={client}
+                            conversation={conversation}
+                            state={state}
+                        />
+                    </>
                 )
             }
             hideControlsWhenCompact
             limits={meters}
             collapse={collapse}
         />
+    );
+}
+
+// Opens the Tasks & decisions pane beside the chat. Its badge counts this chat's open items that
+// wait on the user, from the app-wide open items that already feed the For you badge.
+function ChatTasksButton({
+    client,
+    state,
+    convoId,
+}: {
+    client: MatronJournalClient;
+    state: ClientState;
+    convoId: string;
+}): React.ReactElement {
+    const needsYou = useMemo(
+        () => (state.inboxItems ?? []).filter((item) => item.origin_convo_id === convoId && needsUser(item)).length,
+        [state.inboxItems, convoId],
+    );
+    const open = state.chatTasks?.open === true;
+    return (
+        <button
+            type="button"
+            className={`mj_IconButton mj_ChatTasksToggle${open ? " mj_ChatTasksToggle_open" : ""}`}
+            aria-label={`Tasks and decisions${needsYou > 0 ? `, ${needsYou} need you` : ""}`}
+            aria-pressed={open}
+            title="Tasks & decisions"
+            onClick={() => client.toggleChatTasks()}
+        >
+            <ChecklistIcon aria-hidden />
+            <NeedsYouBadge count={needsYou} />
+        </button>
     );
 }
 
@@ -5517,6 +5609,7 @@ function Timeline({
     isReadOnly?: boolean;
 }): React.ReactElement {
     const scrollRef = useRef<HTMLDivElement>(null);
+    const listRef = useRef<HTMLOListElement>(null);
     const pendingScrollFrame = useRef<number | undefined>(undefined);
     const selectedConversationId = useRef(state.selectedConversationId);
     const [isFollowingTail, setFollow] = useState(true);
@@ -5720,6 +5813,17 @@ function Timeline({
         isFollowingTail,
     ]);
 
+    // Read state: report which rows were on screen. A layout effect, so a conversation switch
+    // re-binds before any row of the new conversation can be counted under the old one. A
+    // read-only subagent transcript reports nothing.
+    const seenConversationId = isReadOnly ? undefined : state.selectedConversationId;
+    useLayoutEffect(() => {
+        const root = scrollRef.current;
+        const list = listRef.current;
+        if (!seenConversationId || !root || !list) return;
+        return observeSeenRows({ tracker: client.seen, convoId: seenConversationId, root, list });
+    }, [client, seenConversationId]);
+
     const loadEarlierMessages = (): void => {
         const node = scrollRef.current;
         if (node) {
@@ -5733,6 +5837,82 @@ function Timeline({
         void client.loadOlderHistory();
     };
 
+    // Jump to a message: once the client has loaded the history holding the target seq it hands
+    // over `focusTarget`; scroll that row into view and flash it. Rows are found by their
+    // data-event-id, so the memoised rows take no extra props. Off-screen rows may be laid out at
+    // an estimated height (content-visibility), and sizing them for real as they come into view
+    // moves the target, so the position is re-checked each frame until it holds still — and given
+    // up the moment the user scrolls themself.
+    const focusRun = useRef(0);
+    const focusHighlight = useRef<{ row: HTMLElement; timer: ReturnType<typeof setTimeout> } | undefined>(undefined);
+    const focusTarget = state.focusTarget;
+    useLayoutEffect(() => {
+        const node = scrollRef.current;
+        if (!node || !focusTarget || focusTarget.conversationId !== state.selectedConversationId) return;
+        client.clearFocusTarget(focusTarget.token);
+        const seq = landingSeq(
+            visibleEvents.map((event) => event.seq),
+            focusTarget.seq,
+        );
+        const rowFor = (): HTMLElement | null =>
+            seq === undefined ? null : node.querySelector<HTMLElement>(`[data-event-id="${seq}"]`);
+        const row = rowFor();
+        if (!row) return;
+        cancelPendingScrollFrame();
+        historyScrollAnchor.current = undefined;
+        historyScrollRestored.current = false;
+        setFollow(false);
+
+        const run = ++focusRun.current;
+        const stop = (): void => {
+            if (focusRun.current === run) focusRun.current += 1;
+        };
+        const userScroll = ["wheel", "touchstart", "pointerdown", "keydown"] as const;
+        for (const type of userScroll) node.addEventListener(type, stop, { once: true, passive: true });
+        let frames = 0;
+        let still = 0;
+        const place = (): void => {
+            const target = focusRun.current === run ? rowFor() : null;
+            if (target) {
+                const top = focusScrollTop(node, target);
+                if (Math.abs(node.scrollTop - top) > 1) {
+                    node.scrollTop = top;
+                    still = 0;
+                } else {
+                    still += 1;
+                }
+            }
+            if (target && still < 3 && ++frames < 60) {
+                requestAnimationFrame(place);
+                return;
+            }
+            for (const type of userScroll) node.removeEventListener(type, stop);
+        };
+        place();
+
+        const previous = focusHighlight.current;
+        if (previous) {
+            clearTimeout(previous.timer);
+            previous.row.classList.remove("mj_EventTile_focused");
+        }
+        row.classList.add("mj_EventTile_focused");
+        const timer = setTimeout(() => {
+            row.classList.remove("mj_EventTile_focused");
+            if (focusHighlight.current?.row === row) focusHighlight.current = undefined;
+        }, FOCUS_HIGHLIGHT_MS);
+        focusHighlight.current = { row, timer };
+    }, [client, focusTarget, state.selectedConversationId, visibleEvents, cancelPendingScrollFrame]);
+    useEffect(
+        () => () => {
+            focusRun.current += 1;
+            if (focusHighlight.current) clearTimeout(focusHighlight.current.timer);
+        },
+        [],
+    );
+
+    // ⇧⌘U / Ctrl+Shift+U, the floating pill's shortcut, is bound with the app's other shortcuts
+    // (shortcuts.ts useAppShortcuts), live whenever a conversation is open.
+
     // The activity indicator ('Thinking' / 'Running …') and the fire-and-forget tool-call cards
     // both ride ephemeral frames whose turn-end 'idle'/'end' frame is never replayed
     // (lib/journal-publisher.js publishActivity), so a dropped final frame would otherwise strand
@@ -5744,7 +5924,7 @@ function Timeline({
     const timelineMain = (
         <main className="mj_ChatView_timeline" data-testid="timeline">
             <div className="mj_ChatView_messagePanel mj_AutoHideScrollbar" ref={scrollRef} onScroll={onScroll}>
-                <ol className="mj_ChatView_messageList" aria-live="polite">
+                <ol className="mj_ChatView_messageList" aria-live="polite" ref={listRef}>
                     {state.hasOlderHistory && (
                         <li className="mj_HistoryRow">
                             <button
@@ -5865,6 +6045,17 @@ function Timeline({
                     conversationId={state.selectedConversationId}
                     running={sessionRunning}
                 />
+            )}
+            {!isFollowingTail && (
+                <button
+                    type="button"
+                    className="mj_JumpToLastOwn"
+                    aria-label="Jump to my last message"
+                    title={`Jump to my last message (${jumpToLastOwnShortcutLabel()})`}
+                    onClick={() => void client.jumpToLastOwnMessage()}
+                >
+                    <ArrowUpToLineIcon aria-hidden />
+                </button>
             )}
             {!isFollowingTail && (
                 <button
@@ -6852,6 +7043,8 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
         (state.sessionStatus?.context ? 1 : 0) +
         (state.sessionStatus?.limits?.filter((limit) => limit.label.trim()).length ?? 0);
     const collapse = useAdaptiveHeader(bodyEl, meterCount);
+    // The command palette puts the caret back in the composer on screen after a pick.
+    const appContent = useRef<HTMLDivElement>(null);
     // Desktop notifications and the unread count in the title / app badge, while signed in.
     useEffect(() => notificationsFor(client).start(), [client]);
     const drafts = useMemo(() => makeDraftStore(state.session), [state.session]);
@@ -6908,11 +7101,44 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
     }, [hasParent, parentId, client]);
 
     useGoToNumberShortcut(client, true);
+    // Ctrl/⌘F finds in the conversation on screen; with none open the browser keeps the key.
+    useFindInChatShortcut(client, Boolean(state.selectedConversationId) && !state.trackerView?.open);
+
+    const reloadDraft = useCallback(
+        (conversationId: string) =>
+            setDraftReloadTicks((ticks) => ({ ...ticks, [conversationId]: (ticks[conversationId] ?? 0) + 1 })),
+        [],
+    );
+    // ⌘K: the slash palette, for a conversation with a composer on screen (Mac: the chat view's).
+    const [paletteOpen, setPaletteOpen] = useState(false);
+    const composerConvo =
+        state.selectedConversationId && !state.trackerView?.open && !childMode ? state.selectedConversationId : null;
+    useEffect(() => setPaletteOpen(false), [composerConvo]);
+    useAppShortcuts(client, {
+        enabled: true,
+        onCommandPalette: composerConvo ? () => setPaletteOpen((open) => !open) : undefined,
+    });
+    // A pick replaces the draft with the command, ready for arguments, as the composer's own palette does.
+    const pickCommand = (command: BotCommand): void => {
+        setPaletteOpen(false);
+        if (!composerConvo) return;
+        const text = applyCommand(command.trigger);
+        sentHistory.endRecall();
+        draftRevisions.current.set(composerConvo, (draftRevisions.current.get(composerConvo) ?? 0) + 1);
+        drafts.setDraft(composerConvo, text);
+        drafts.persist(composerConvo);
+        reloadDraft(composerConvo);
+        requestAnimationFrame(() => {
+            const input = appContent.current?.querySelector<HTMLTextAreaElement>(".mj_ComposerInput_input");
+            input?.focus();
+            input?.setSelectionRange(text.length, text.length);
+        });
+    };
 
     return (
         <MarkdownPreviewContext.Provider value={markdownPreview.context}>
             <div className="mj_App_wrapper">
-                <div className="mj_App">
+                <div ref={appContent} className="mj_App">
                     <ConversationList client={client} state={state} width={leftPanel.width} />
                     <div
                         className="mj_ResizeHandle mj_ResizeHandle--horizontal"
@@ -6965,6 +7191,9 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                                         state={state}
                                         mode={childMode ? "child" : "parent"}
                                     />
+                                    {state.chatSearch?.conversationId === state.selectedConversationId && (
+                                        <FindInChatBar client={client} search={state.chatSearch} />
+                                    )}
                                     <Timeline client={client} state={state} isReadOnly={childMode} />
                                     {childMode ? (
                                         <ReadOnlyHint />
@@ -6974,12 +7203,7 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                                             state={state}
                                             drafts={drafts}
                                             draftReloadTick={draftReloadTicks[state.selectedConversationId] ?? 0}
-                                            reloadDraft={(conversationId) =>
-                                                setDraftReloadTicks((ticks) => ({
-                                                    ...ticks,
-                                                    [conversationId]: (ticks[conversationId] ?? 0) + 1,
-                                                }))
-                                            }
+                                            reloadDraft={reloadDraft}
                                             sendingConvos={sendingConvos}
                                             draftRevisions={draftRevisions}
                                             sentHistory={sentHistory}
@@ -6996,6 +7220,14 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                             </main>
                         )}
                     </div>
+                    {state.chatTasks?.open && state.selectedConversationId && !childMode && !state.trackerView?.open ? (
+                        <ChatTasksPane
+                            client={client}
+                            pane={state.chatTasks}
+                            convoId={state.selectedConversationId}
+                            conversations={state.conversations}
+                        />
+                    ) : null}
                     {markdownPreview.target ? (
                         <MarkdownPreviewPanel
                             client={client}
@@ -7005,6 +7237,9 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                     ) : null}
                 </div>
                 {state.goToNumberOpen && <GoToNumberDialog client={client} />}
+                {paletteOpen && composerConvo && (
+                    <CommandPalette onPick={pickCommand} onClose={() => setPaletteOpen(false)} />
+                )}
             </div>
         </MarkdownPreviewContext.Provider>
     );

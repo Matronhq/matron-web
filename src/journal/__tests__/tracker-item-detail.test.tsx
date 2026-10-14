@@ -20,9 +20,10 @@ import type {
     TrackerItem,
 } from "../types";
 import { ItemDetail } from "../tracker/ItemDetail";
-import { trackerComment, trackerItem, trackerMission } from "./tracker-fixtures";
+import { fakeSeen, type FakeSeen, trackerComment, trackerItem, trackerMission } from "./tracker-fixtures";
 
 interface FakeClient {
+    seen: FakeSeen;
     getSnapshot: jest.Mock;
     commentItem: jest.Mock;
     postTrackerComment: jest.Mock;
@@ -41,6 +42,7 @@ interface FakeClient {
 
 function fakeClient(): FakeClient {
     return {
+        seen: fakeSeen(),
         getSnapshot: jest.fn().mockReturnValue({ selectedConversationId: "c1", conversations: [] }),
         commentItem: jest.fn().mockResolvedValue(true),
         postTrackerComment: jest.fn().mockResolvedValue({ ok: true }),
@@ -82,6 +84,28 @@ async function openMenu(container: HTMLElement): Promise<void> {
 describe("ItemDetail", () => {
     beforeAll(() => {
         (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    it("reports the open item as seen through its newest comment, and lets it go on close", async () => {
+        const client = fakeClient();
+        const asClient = client as unknown as MatronJournalClient;
+        const item = trackerItem({ id: "it_9" });
+        const { root } = await mount(<ItemDetail item={item} comments={[]} client={asClient} onBack={jest.fn()} />);
+        expect(client.seen.setItemOnScreen).toHaveBeenLastCalledWith("it_9", 0);
+
+        const comments = [
+            trackerComment({ id: "cm_1", created_at: 5_000 }),
+            trackerComment({ id: "cm_2", created_at: 9_000 }),
+            trackerComment({ id: "cm_3", created_at: 7_000 }),
+        ];
+        await act(async () => {
+            root.render(<ItemDetail item={item} comments={comments} client={asClient} onBack={jest.fn()} />);
+        });
+        expect(client.seen.setItemOnScreen).toHaveBeenLastCalledWith("it_9", 9_000);
+        expect(client.seen.removeItem).not.toHaveBeenCalled();
+
+        await act(async () => root.unmount());
+        expect(client.seen.removeItem).toHaveBeenCalledWith("it_9");
     });
 
     it("shows the needs-you status pill for an open awaiting-user item", async () => {

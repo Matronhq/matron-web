@@ -27,7 +27,14 @@ import {
     MatronApp,
 } from "../../../src/journal/components";
 import { makeRecentFoldersStore } from "../../../src/journal/slash-palette";
-import type { ClientState, Conversation, JournalEvent, PendingMessage, Session } from "../../../src/journal/types";
+import type {
+    ClientState,
+    Conversation,
+    JournalEvent,
+    PendingMessage,
+    Session,
+    TrackerItem,
+} from "../../../src/journal/types";
 
 jest.mock("../../../res/matron-logo-simple.svg", () => "matron-logo.svg");
 
@@ -259,6 +266,36 @@ describe("usage limit accessibility", () => {
             item.textContent?.trim(),
         );
         expect(labels).toEqual(["Pin", "Add to Favorites", "Mark as unread", "Archive"]);
+    });
+
+    it("opens the Tasks & decisions pane from the header, badged with this chat's items that need the user", async () => {
+        const client = signedInClient();
+        const waiting = (id: string, convo: string): unknown => ({
+            id,
+            num: Number(id.slice(3)),
+            kind: "question",
+            state: "open",
+            awaiting: "user",
+            origin_convo_id: convo,
+        });
+        internals(client).state = {
+            ...client.getSnapshot(),
+            inboxItems: [waiting("it_1", "c1"), waiting("it_2", "c1"), waiting("it_3", "c2")],
+        } as ClientState;
+        rendered = await renderClient(client);
+
+        const toggle = button(rendered.container, "Tasks and decisions, 2 need you");
+        expect(toggle.getAttribute("aria-pressed")).toBe("false");
+        expect(toggle.querySelector(".mj_TrackerNeedsYouBadge_count")?.textContent).toBe("2");
+        expect(rendered.container.querySelector(".mj_ChatTasks")).toBeNull();
+
+        await act(async () => toggle.click());
+
+        expect(rendered.container.querySelector('aside[aria-label="Tasks and decisions"]')).not.toBeNull();
+        expect(toggle.getAttribute("aria-pressed")).toBe("true");
+
+        await act(async () => button(rendered!.container, "Close tasks and decisions").click());
+        expect(rendered.container.querySelector(".mj_ChatTasks")).toBeNull();
     });
 });
 
@@ -3698,6 +3735,110 @@ describe("conversation row affordances", () => {
     });
 });
 
+describe("needs-you and New badges in the conversation list and the rail", () => {
+    let rendered: { container: HTMLDivElement; root: Root } | undefined;
+
+    afterEach(async () => {
+        if (rendered) {
+            await act(async () => rendered?.root.unmount());
+            rendered.container.remove();
+            rendered = undefined;
+        }
+        jest.restoreAllMocks();
+    });
+
+    function awaiting(id: string, originConvoId: string, missionId: string | null = null): TrackerItem {
+        return {
+            id,
+            num: 1,
+            kind: "question",
+            state: "open",
+            awaiting: "user",
+            title: "Pick one",
+            origin_convo_id: originConvoId,
+            mission_id: missionId,
+        } as TrackerItem;
+    }
+
+    function patch(client: MatronJournalClient, update: Partial<ClientState>): void {
+        act(() => (client as unknown as { patch(update: Partial<ClientState>): void }).patch(update));
+    }
+
+    function row(container: HTMLElement, title: string): HTMLButtonElement {
+        const match = container.querySelector<HTMLButtonElement>(`button[aria-label^="Open room ${title},"]`);
+        if (!match) throw new Error(`Missing row: ${title}`);
+        return match;
+    }
+
+    const roomA = { ...CONVERSATION, id: "room-a", title: "Room A" };
+    const roomB = { ...CONVERSATION, id: "room-b", title: "Room B" };
+
+    it("counts the items a conversation raised that wait on the user, live as they change", async () => {
+        const client = signedInWithRooms([CONVERSATION, roomA, roomB]);
+        rendered = await renderClient(client);
+        expect(rendered.container.querySelector(".mj_ConversationListBadges .mj_TrackerNeedsYouBadge")).toBeNull();
+
+        patch(client, {
+            inboxItems: [
+                awaiting("i1", "room-a"),
+                awaiting("i2", "room-a"),
+                { ...awaiting("i3", "room-b"), awaiting: "agent" },
+            ],
+        });
+        const badge = row(rendered.container, "Room A").querySelector(".mj_TrackerNeedsYouBadge");
+        expect(badge?.textContent).toBe("2");
+        expect(row(rendered.container, "Room A").getAttribute("aria-label")).toContain("2 items need you");
+        expect(row(rendered.container, "Room B").querySelector(".mj_TrackerNeedsYouBadge")).toBeNull();
+
+        // Answering one drops the count on the row without anything else in the list changing.
+        patch(client, { inboxItems: [awaiting("i2", "room-a")] });
+        expect(row(rendered.container, "Room A").querySelector(".mj_TrackerNeedsYouBadge")?.textContent).toBe("1");
+        expect(row(rendered.container, "Room A").getAttribute("aria-label")).toContain("1 item needs you");
+    });
+
+    it("marks a session that arrived unasked as New until it is opened", async () => {
+        const client = signedInWithRooms([CONVERSATION, roomA, roomB]);
+        rendered = await renderClient(client);
+        patch(client, { newConversationIds: new Set(["room-a"]) });
+        expect(row(rendered.container, "Room A").querySelector(".mj_ConversationListNew")?.textContent).toBe("New");
+        expect(row(rendered.container, "Room A").getAttribute("aria-label")).toContain("new session");
+        expect(row(rendered.container, "Room B").querySelector(".mj_ConversationListNew")).toBeNull();
+
+        patch(client, { newConversationIds: new Set() });
+        expect(row(rendered.container, "Room A").querySelector(".mj_ConversationListNew")).toBeNull();
+    });
+
+    it("never shows New on an agent-chat room", async () => {
+        const room = { ...CONVERSATION, id: "room-c", title: "🔗 box-a and box-b" };
+        const client = signedInWithRooms([CONVERSATION, room]);
+        rendered = await renderClient(client);
+        patch(client, { newConversationIds: new Set(["room-c"]) });
+        expect(rendered.container.querySelector(".mj_ConversationListNew")).toBeNull();
+    });
+
+    it("drops New from a session whose parent link landed after it was marked", async () => {
+        const child = { ...CONVERSATION, id: "c1:codex:agent-1", title: "Worker", parent_convo_id: "c1" };
+        const client = signedInWithRooms([CONVERSATION, child]);
+        rendered = await renderClient(client);
+        patch(client, { newConversationIds: new Set([child.id]) });
+        expect(rendered.container.querySelector(".mj_ConversationListNew")).toBeNull();
+    });
+
+    it("badges Projects in the rail with what needs the user across the missions", async () => {
+        const client = signedInWithRooms([CONVERSATION]);
+        rendered = await renderClient(client);
+        const projects = (): HTMLButtonElement =>
+            rendered!.container.querySelector<HTMLButtonElement>('[data-nav="projects"]')!;
+        expect(projects().querySelector(".mj_NavRail_badge")).toBeNull();
+
+        patch(client, {
+            inboxItems: [awaiting("i1", "c1", "m1"), awaiting("i2", "c1", "m2"), awaiting("i3", "c1", null)],
+        });
+        expect(projects().querySelector(".mj_NavRail_badge")?.textContent).toBe("2");
+        expect(projects().getAttribute("aria-label")).toBe("Projects, 2 need you");
+    });
+});
+
 describe("conversation timestamp midnight invalidation", () => {
     let rendered: { container: HTMLDivElement; root: Root } | undefined;
     let originalTZ: string | undefined;
@@ -4103,5 +4244,97 @@ describe("tracker item cards in the timeline", () => {
         expect(rendered.container.querySelector(".mj_TrackerCard_needsyou")).not.toBeNull();
         expect(rendered.container.querySelector(".mj_TrackerCard_comment")).toBeNull();
         expect(rowTexts(rendered.container)).toEqual(["Needs you", "You reopened #7 · Pick a database"]);
+    });
+});
+
+describe("read state reporting", () => {
+    let rendered: { container: HTMLDivElement; root: Root } | undefined;
+    const observers: Array<{
+        root: Element | Document | null | undefined;
+        callback: IntersectionObserverCallback;
+        observed: Element[];
+    }> = [];
+    let originalObserver: unknown;
+
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    beforeEach(() => {
+        observers.length = 0;
+        originalObserver = (globalThis as Record<string, unknown>).IntersectionObserver;
+        class MockObserver {
+            private readonly entry;
+            public constructor(callback: IntersectionObserverCallback, options?: IntersectionObserverInit) {
+                this.entry = { root: options?.root, callback, observed: [] as Element[] };
+                observers.push(this.entry);
+            }
+            public observe(target: Element): void {
+                this.entry.observed.push(target);
+            }
+            public unobserve(target: Element): void {
+                this.entry.observed = this.entry.observed.filter((element) => element !== target);
+            }
+            public disconnect(): void {
+                this.entry.observed = [];
+            }
+        }
+        Object.defineProperty(globalThis, "IntersectionObserver", { value: MockObserver, configurable: true });
+        // Every element measures as the same 100px box, so every intersecting row counts as visible.
+        jest.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ top: 0, bottom: 100 } as DOMRect);
+    });
+
+    afterEach(async () => {
+        if (rendered) {
+            await act(async () => rendered?.root.unmount());
+            rendered.container.remove();
+            rendered = undefined;
+        }
+        jest.restoreAllMocks();
+        Object.defineProperty(globalThis, "IntersectionObserver", { value: originalObserver, configurable: true });
+    });
+
+    it("reports the selected conversation's on-screen rows to the client's tracker", async () => {
+        const client = signedInClient({ events: [textEvent(1, "one"), textEvent(2, "two")] });
+        const setVisible = jest.spyOn(client.seen, "setVisible").mockImplementation(() => {});
+        const removeSurface = jest.spyOn(client.seen, "removeSurface").mockImplementation(() => {});
+        rendered = await renderClient(client);
+
+        const timeline = observers.find((observer) =>
+            (observer.root as Element | undefined)?.classList?.contains("mj_ChatView_messagePanel"),
+        );
+        expect(timeline?.observed.map((row) => row.getAttribute("data-event-id"))).toEqual(["1", "2"]);
+        await act(async () => {
+            timeline!.callback(
+                timeline!.observed.map(
+                    (target) => ({ target, isIntersecting: true }) as unknown as IntersectionObserverEntry,
+                ),
+                {} as IntersectionObserver,
+            );
+        });
+        expect(setVisible).toHaveBeenLastCalledWith(expect.any(Symbol), "c1", [1, 2]);
+
+        await act(async () => rendered?.root.unmount());
+        rendered.container.remove();
+        rendered = undefined;
+        expect(removeSurface).toHaveBeenCalledWith(setVisible.mock.calls[0][0]);
+    });
+
+    it("reports nothing from a read-only subagent transcript", async () => {
+        const client = signedInClient({ events: [textEvent(1, "one")] });
+        internals(client).state = {
+            ...client.getSnapshot(),
+            conversations: [
+                { ...CONVERSATION, id: "p1", title: "Parent" },
+                { ...CONVERSATION, parent_convo_id: "p1" },
+            ],
+        };
+        rendered = await renderClient(client);
+        expect(rendered.container.textContent).toContain("Read-only — subagent transcript");
+        expect(
+            observers.some((observer) =>
+                (observer.root as Element | undefined)?.classList?.contains("mj_ChatView_messagePanel"),
+            ),
+        ).toBe(false);
     });
 });
