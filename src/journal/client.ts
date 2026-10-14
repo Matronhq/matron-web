@@ -410,6 +410,7 @@ export class MatronJournalClient {
     private inboxPendingWrites = new Map<string, TrackerItem>();
     private trackerMissionsGen = 0;
     private trackerProjectsGen = 0;
+    private conversationMissionsGen = 0;
     private trackerProjectGen = 0;
     // Pending marker-driven inbox refetch. A burst of `item` markers (a reconnect replay, a batch of
     // agent writes) coalesces into ONE inbox walk instead of one per marker.
@@ -2631,6 +2632,28 @@ export class MatronJournalClient {
         }
     }
 
+    /**
+     * Fetch the missions a conversation is or was on, for the chat header's mission chip. The
+     * result is kept for that conversation only; the header never shows it against another. A
+     * journal without the route (404) reads as "no missions", which hides the chip. Any other
+     * failure keeps what was shown.
+     */
+    public async loadConversationMissions(convoId: string): Promise<void> {
+        const api = this.api;
+        if (!api) return;
+        const gen = ++this.conversationMissionsGen;
+        try {
+            const links = await api.conversationMissions(convoId);
+            if (this.api !== api || this.conversationMissionsGen !== gen) return;
+            this.patch({ conversationMissions: { convoId, links } });
+        } catch (error) {
+            if (this.api !== api || this.conversationMissionsGen !== gen) return;
+            if (error instanceof JournalApiError && error.status === 404) {
+                this.patch({ conversationMissions: { convoId, links: [] } });
+            }
+        }
+    }
+
     // ── Tracker mutations (fresh Idempotency-Key per call → refetch the affected row + patch).
     // On failure they surface trackerError but leave the loaded data intact (await-refetch, no
     // optimistic outbox in v1). The inbox is refetched only when already loaded, so a mutation from
@@ -2972,6 +2995,16 @@ export class MatronJournalClient {
         // The inbox feeds the For you badge on the rail, so it follows item markers even while the
         // pane is closed; everything else is refetched only for an open pane.
         if (event.type === "item" && (this.inboxTracked() || this.state.inboxDone)) this.scheduleInboxRefetch();
+        // A mission marker lands in the conversation it concerns (joined, left, made current,
+        // renamed, closed): the header chip of that conversation, when it is the one on screen,
+        // follows it whether or not the pane is open.
+        if (
+            event.type === "mission" &&
+            event.convo_id === this.state.selectedConversationId &&
+            this.state.conversationMissions?.convoId === event.convo_id
+        ) {
+            void this.loadConversationMissions(event.convo_id);
+        }
         if (!this.state.trackerView?.open) return;
         // The open item's `working` block follows the conversation that owns it: a turn starting
         // or ending there changes what the thread's indicator should say, and no item marker

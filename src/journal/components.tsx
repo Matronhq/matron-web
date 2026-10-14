@@ -33,6 +33,7 @@ import {
 import { copyText } from "./clipboard";
 import { type DraftStore, makeDraftStore } from "./composer-drafts";
 import { effectiveUnread } from "./conversation-flags";
+import { chipHeadline, chipLabel, isEarlierLink, linkLine, missionSections } from "./conversation-missions";
 import { type RowContextMenu, useRowContextMenu } from "./context-menu";
 import { GoToNumberDialog, goToNumberShortcutLabel, NumberSearchResult, useGoToNumberShortcut } from "./goto-number";
 import { PinDialog, type PinDialogTarget } from "./PinDialogs";
@@ -83,6 +84,7 @@ import {
     XOctagonIcon,
     PlusCircleIcon,
     ArrowUpCircleIcon,
+    ProjectsIcon,
 } from "./icons";
 import { NAV_RAIL_WIDTH, NavRail, type NavKey } from "./NavRail";
 import { SettingsSheet } from "./SettingsSheet";
@@ -144,6 +146,7 @@ import {
     type ClientState,
     type MessageSearchState,
     type Conversation,
+    type ConversationMissionLink,
     type ConvoPin,
     conversationTitle,
     type DeviceDTO,
@@ -2518,6 +2521,17 @@ function HeaderDisclosure({
     );
 }
 
+/** The title cluster alone, or in a row with the control beside it (the mission chip). */
+function withAccessory(cluster: React.ReactElement, accessory: React.ReactNode): React.ReactElement {
+    if (!accessory) return cluster;
+    return (
+        <div className="mj_HeaderTitleRow">
+            {cluster}
+            {accessory}
+        </div>
+    );
+}
+
 export function HeaderShell({
     mode,
     onBack,
@@ -2526,6 +2540,7 @@ export function HeaderShell({
     titleNode,
     titleGlyph,
     titleBadge,
+    titleAccessory,
     subtitle,
     subtitleCompact,
     hasSubtitle,
@@ -2545,6 +2560,8 @@ export function HeaderShell({
     // requires the header to name the SUBAGENT when inside one — never the parent.
     titleGlyph?: React.ReactNode;
     titleBadge?: React.ReactNode;
+    /** A control beside the title, outside the heading (the mission chip). */
+    titleAccessory?: React.ReactNode;
     subtitle: React.ReactNode;
     subtitleCompact?: React.ReactNode;
     hasSubtitle: boolean;
@@ -2597,21 +2614,50 @@ export function HeaderShell({
             <button type="button" className="mj_BackButton" onClick={onBack} aria-label={backLabel}>
                 <ChevronLeftIcon />
             </button>
-            {titleCollapsed ? (
-                <HeaderDisclosure
-                    className="mj_HeaderCluster mj_HeaderTitleCluster mj_HeaderTitleCluster_compact"
-                    triggerClassName="mj_HeaderTitleDisclosure"
-                    panelClassName="mj_HeaderMenu mj_TitlePopover"
-                    label="Conversation details"
-                    headerRef={headerRef}
-                    before={
+            {withAccessory(
+                titleCollapsed ? (
+                    <HeaderDisclosure
+                        className="mj_HeaderCluster mj_HeaderTitleCluster mj_HeaderTitleCluster_compact"
+                        triggerClassName="mj_HeaderTitleDisclosure"
+                        panelClassName="mj_HeaderMenu mj_TitlePopover"
+                        label="Conversation details"
+                        headerRef={headerRef}
+                        before={
+                            <div
+                                id={titleHeadingId}
+                                dir="auto"
+                                role="heading"
+                                aria-level={1}
+                                className="mx_RoomHeader_heading"
+                                title={title}
+                            >
+                                {titleGlyph && (
+                                    <span className="mj_HeaderTitleGlyph" aria-hidden="true">
+                                        {titleGlyph}
+                                    </span>
+                                )}
+                                <span className="mx_RoomHeader_truncated mx_lineClamp">{titleNode ?? title}</span>
+                                {titleBadge}
+                            </div>
+                        }
+                        trigger={
+                            <>
+                                {subtitleCompact}
+                                <ChevronDownIcon aria-hidden="true" />
+                            </>
+                        }
+                    >
+                        <div className="mj_TitlePopoverTitle">{title}</div>
+                        {hasSubtitle && <div className="mj_HeaderMeta">{subtitle}</div>}
+                    </HeaderDisclosure>
+                ) : (
+                    <div className="mj_HeaderCluster mj_HeaderTitleCluster">
                         <div
                             id={titleHeadingId}
                             dir="auto"
                             role="heading"
                             aria-level={1}
                             className="mx_RoomHeader_heading"
-                            title={title}
                         >
                             {titleGlyph && (
                                 <span className="mj_HeaderTitleGlyph" aria-hidden="true">
@@ -2621,30 +2667,10 @@ export function HeaderShell({
                             <span className="mx_RoomHeader_truncated mx_lineClamp">{titleNode ?? title}</span>
                             {titleBadge}
                         </div>
-                    }
-                    trigger={
-                        <>
-                            {subtitleCompact}
-                            <ChevronDownIcon aria-hidden="true" />
-                        </>
-                    }
-                >
-                    <div className="mj_TitlePopoverTitle">{title}</div>
-                    {hasSubtitle && <div className="mj_HeaderMeta">{subtitle}</div>}
-                </HeaderDisclosure>
-            ) : (
-                <div className="mj_HeaderCluster mj_HeaderTitleCluster">
-                    <div id={titleHeadingId} dir="auto" role="heading" aria-level={1} className="mx_RoomHeader_heading">
-                        {titleGlyph && (
-                            <span className="mj_HeaderTitleGlyph" aria-hidden="true">
-                                {titleGlyph}
-                            </span>
-                        )}
-                        <span className="mx_RoomHeader_truncated mx_lineClamp">{titleNode ?? title}</span>
-                        {titleBadge}
+                        {hasSubtitle && <div className="mj_HeaderMeta">{subtitle}</div>}
                     </div>
-                    {hasSubtitle && <div className="mj_HeaderMeta">{subtitle}</div>}
-                </div>
+                ),
+                titleAccessory,
             )}
             <div className="mj_HeaderControls">
                 {usageCollapsed && hasCollapsedUsage ? (
@@ -2882,6 +2908,128 @@ function HeaderOverflowMenu({
     );
 }
 
+// The chat header's mission chip, after the Mac's: "⚑ #12 Ship the docs +2 ▾" names the
+// conversation's current mission (else its newest), and opens every mission the conversation
+// touched as Current / Also on / Earlier. Picking one opens its mission page. Hidden while the
+// conversation has never been on a mission, and until its missions are fetched.
+export function MissionChip({
+    client,
+    conversation,
+    links,
+}: {
+    client: MatronJournalClient;
+    conversation: Conversation;
+    links: readonly ConversationMissionLink[];
+}): React.ReactElement | null {
+    const [open, setOpen] = useState(false);
+    const openerRef = useRef<HTMLButtonElement>(null);
+    const panelRef = useRef<HTMLDivElement>(null);
+    const close = useCallback(() => setOpen(false), []);
+    useDismissablePopover(open, close, { openerRef, panelRef });
+    useLayoutEffect(() => {
+        if (open) panelRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+    }, [open]);
+
+    const label = chipLabel(links, conversation.title);
+    if (!label) return null;
+    const sections = missionSections(links);
+    const headline = chipHeadline(sections)!;
+    const groups: Array<[string, ConversationMissionLink[]]> = [
+        ["Current", sections.current ? [sections.current] : []],
+        ["Also on", sections.alsoOn],
+        ["Earlier", sections.earlier],
+    ];
+    const openMission = (num: number): void => {
+        close();
+        client.openTrackerMission(num);
+    };
+    const accessible =
+        `Mission ${headline.num}, ${headline.title}` +
+        (label.others > 0 ? `, and ${label.others} more` : "") +
+        ". Every mission this conversation worked on";
+
+    return (
+        <div
+            className="mj_MissionChip"
+            onBlur={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) close();
+            }}
+        >
+            <button
+                ref={openerRef}
+                type="button"
+                className={`mj_MissionChip_trigger${headline.current ? " mj_MissionChip_trigger_current" : ""}`}
+                aria-label={accessible}
+                title="Every mission this conversation worked on"
+                aria-haspopup="menu"
+                aria-expanded={open}
+                onClick={() => setOpen((current) => !current)}
+            >
+                <ProjectsIcon className="mj_MissionChip_flag" aria-hidden="true" />
+                <span className="mj_MissionChip_num">{label.number}</span>
+                {/* Always rendered, empty when unused: the chip's grid has a fixed column for each. */}
+                <span className="mj_MissionChip_name">{label.name ?? ""}</span>
+                <span className="mj_MissionChip_more">{label.others > 0 ? `+${label.others}` : ""}</span>
+                <ChevronDownIcon className="mj_MissionChip_chevron" aria-hidden="true" />
+            </button>
+            {open && (
+                <div
+                    className="mj_HeaderMenu mj_MissionMenu"
+                    role="menu"
+                    aria-label="Missions"
+                    ref={panelRef}
+                    onKeyDown={(event) => {
+                        const items = Array.from(
+                            event.currentTarget.querySelectorAll<HTMLElement>('[role="menuitem"]'),
+                        );
+                        const index = items.findIndex((item) => item === document.activeElement);
+                        if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                            event.preventDefault();
+                            const step = event.key === "ArrowDown" ? 1 : -1;
+                            const next =
+                                index === -1
+                                    ? step === 1
+                                        ? 0
+                                        : items.length - 1
+                                    : (index + step + items.length) % items.length;
+                            items[next]?.focus();
+                        } else if (event.key === "Escape") {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            close();
+                            openerRef.current?.focus();
+                        }
+                    }}
+                >
+                    {groups.map(([groupLabel, rows]) =>
+                        rows.length === 0 ? null : (
+                            <div key={groupLabel} className="mj_MissionMenu_group" role="group" aria-label={groupLabel}>
+                                <div className="mj_MissionMenu_label" aria-hidden="true">
+                                    {groupLabel}
+                                </div>
+                                {rows.map((link) => (
+                                    <button
+                                        key={link.id}
+                                        type="button"
+                                        role="menuitem"
+                                        className={`mj_MissionMenu_item${isEarlierLink(link) ? " mj_MissionMenu_item_earlier" : ""}`}
+                                        onClick={() => openMission(link.num)}
+                                    >
+                                        <span className="mj_MissionMenu_title">
+                                            <span className="mj_MissionMenu_num">#{link.num}</span> {link.title}
+                                        </span>
+                                        <span className="mj_MissionMenu_line">{linkLine(link)}</span>
+                                    </button>
+                                ))}
+                            </div>
+                        ),
+                    )}
+                </div>
+            )}
+        </div>
+    );
+}
+
 function ChatHeader({
     client,
     state,
@@ -2899,6 +3047,14 @@ function ChatHeader({
     const meters = buildUsageMeters(status, limits);
     const shortModel = status?.model ? shortModelName(status.model) : undefined;
     const hasSubtitle = Boolean(status?.model || runState);
+    // The mission chip's data: fetched whenever another conversation comes on screen (mission
+    // markers keep it fresh after that), and only ever shown for the conversation it was fetched for.
+    const convoId = conversation?.id;
+    useEffect(() => {
+        if (convoId) void client.loadConversationMissions(convoId);
+    }, [client, convoId]);
+    const missionLinks =
+        convoId && state.conversationMissions?.convoId === convoId ? state.conversationMissions.links : [];
     return (
         <HeaderShell
             mode="parent"
@@ -2925,6 +3081,11 @@ function ChatHeader({
                 )
             }
             hasSubtitle={hasSubtitle}
+            titleAccessory={
+                conversation && missionLinks.length > 0 ? (
+                    <MissionChip client={client} conversation={conversation} links={missionLinks} />
+                ) : undefined
+            }
             rightControls={
                 status?.context && (
                     <button
