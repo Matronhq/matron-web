@@ -5,7 +5,7 @@ SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
 Please see LICENSE files in the repository root for full details.
 */
 
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 
 const SHELL = readFileSync("src/journal/shell.pcss", "utf8");
 const SHEETS = ["src/journal/shell.pcss", "src/journal/journal.pcss", "src/journal/tracker.pcss"].map(
@@ -77,11 +77,24 @@ describe("token layer", () => {
         expect(extra).toEqual([]);
     });
 
-    it("defines every --cpd token the stylesheets use", () => {
+    it("defines every --mj token the stylesheets use", () => {
+        // The shell's token block, the few tokens a sheet scopes to itself (the tracker's colours) and
+        // the ones components set inline (per-box tints, the image frame height).
+        const inline = readdirSync("src/journal", { recursive: true, encoding: "utf8" })
+            .filter((file) => file.endsWith(".tsx"))
+            .flatMap((file) => [...readFileSync(`src/journal/${file}`, "utf8").matchAll(/"(--mj-[\w-]+)":/g)])
+            .map((match) => match[1]);
+        const defined = new Set([
+            ...light.keys(),
+            ...SHEETS.flatMap(([, css]) =>
+                [...stripComments(css).matchAll(/(--mj-[\w-]+):/g)].map((match) => match[1]),
+            ),
+            ...inline,
+        ]);
         const used = SHEETS.flatMap(([, css]) =>
             [...stripComments(css).matchAll(/var\((--mj-[\w-]+)/g)].map((match) => match[1]),
         );
-        expect([...new Set(used.filter((name) => !light.has(name)))]).toEqual([]);
+        expect([...new Set(used.filter((name) => !defined.has(name)))]).toEqual([]);
     });
 
     it("uses the Mac timeline gradient for the message canvas in both themes", () => {
