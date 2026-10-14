@@ -1841,6 +1841,21 @@ describe("composer sent-message recall", () => {
         expect(value()).toBe("line one\nline two");
     });
 
+    test("arrows with a modifier keep their caret meaning and never recall", async () => {
+        await renderWithSends();
+        await sendText("sent");
+        for (const modifier of ["shiftKey", "altKey", "metaKey", "ctrlKey"] as const) {
+            const up = await keydown(textarea(), "ArrowUp", { [modifier]: true });
+            expect(up.dispatched).toBe(true);
+            expect(value()).toBe("");
+        }
+        await arrow("ArrowUp");
+        expect(value()).toBe("sent");
+        const down = await keydown(textarea(), "ArrowDown", { shiftKey: true });
+        expect(down.dispatched).toBe(true);
+        expect(value()).toBe("sent");
+    });
+
     test("Up with nothing sent yet leaves the field empty", async () => {
         await renderWithSends();
         await arrow("ArrowUp");

@@ -5422,7 +5422,15 @@ function Composer({
                                         // would trap the walk there. Otherwise the palette's arrows
                                         // come first, and Up starts a walk only from an empty field
                                         // (in a draft it moves the caret).
-                                        if (convoId && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
+                                        // Plain arrows only: with a modifier they keep their usual
+                                        // caret and selection meaning (the desktop app's moveUp:/moveDown:).
+                                        const plainArrow =
+                                            (event.key === "ArrowUp" || event.key === "ArrowDown") &&
+                                            !event.shiftKey &&
+                                            !event.altKey &&
+                                            !event.metaKey &&
+                                            !event.ctrlKey;
+                                        if (convoId && plainArrow) {
                                             const walking = sentHistory.isNavigating;
                                             if (event.key === "ArrowUp" && (walking || (!open && body === ""))) {
                                                 event.preventDefault();
