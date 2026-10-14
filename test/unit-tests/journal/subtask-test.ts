@@ -53,9 +53,54 @@ describe("resolveSubtaskTarget", () => {
         expect(resolveSubtaskTarget("unknown", children)).toBeUndefined();
     });
 
-    it("prefix-matches a description the bridge cut short", () => {
-        const children = [convo("a", "Explore every auth call site and list the ones that skip the check")];
-        expect(resolveSubtaskTarget("Explore every auth call site", children)?.id).toBe("a");
+    // What the bridge does: the line carries description.slice(0, 80); the watcher titles the
+    // child description.slice(0, 37) + "…" once the description is longer than 40.
+    const bridgeLine = (description: string): string => description.slice(0, 80);
+    const watcherTitle = (description: string): string =>
+        description.length > 40 ? `${description.slice(0, 37)}…` : description;
+
+    it("matches a long description to the title the watcher cut short", () => {
+        const description = "Explore every auth call site and list the ones that skip the check";
+        const children = [convo("a", watcherTitle(description))];
+        expect(resolveSubtaskTarget(bridgeLine(description), children)?.id).toBe("a");
+    });
+
+    it("matches a description cut at 80 to the same cut title, behind a session short", () => {
+        const description = `${"Audit the payment retry path end to end, ".repeat(3)}and report`;
+        expect(bridgeLine(description)).toHaveLength(80);
+        const children = [convo("a", `🐣 [7a] ${watcherTitle(description)}`)];
+        expect(resolveSubtaskTarget(subtaskDescription(`🔀 Subtask: ${bridgeLine(description)}`)!, children)?.id).toBe(
+            "a",
+        );
+    });
+
+    it("matches a description cut at 80 to a full title that starts with it", () => {
+        const description = "x".repeat(79) + " and more";
+        const children = [convo("a", description)];
+        expect(resolveSubtaskTarget(bridgeLine(description), children)?.id).toBe("a");
+    });
+
+    it("survives a cut through an emoji on either side", () => {
+        const description = `${"a".repeat(36)}🦊 ${"b".repeat(60)}`;
+        const title = watcherTitle(description); // ends with half of the fox, then "…"
+        expect(resolveSubtaskTarget(bridgeLine(description), [convo("a", title)])?.id).toBe("a");
+        expect(
+            resolveSubtaskTarget(bridgeLine(description), [convo("a", title.replace(/\uD83E…$/, "\uFFFD…"))])?.id,
+        ).toBe("a");
+    });
+
+    it("does not link a short description to a longer title that merely starts with it", () => {
+        // "lint" may be a child that has not arrived yet: a card for "linting tool" would be wrong.
+        expect(resolveSubtaskTarget("lint", [convo("long", "linting tool")])).toBeUndefined();
+        expect(
+            resolveSubtaskTarget("Explore every auth call site", [convo("a", "Explore every auth call site and fix")]),
+        ).toBeUndefined();
+    });
+
+    it("does not link a description that only shares a short cut title's start", () => {
+        expect(resolveSubtaskTarget("Explore the cache layer", [convo("a", "Explore…")])).toBeUndefined();
+        const other = "Explore every auth call site and list the ones that skip the check";
+        expect(resolveSubtaskTarget("Explore every auth call", [convo("a", watcherTitle(other))])).toBeUndefined();
     });
 
     it("prefers an exact match over a longer title with the same start", () => {
@@ -73,7 +118,7 @@ describe("resolveSubtaskTarget", () => {
     it("matches a child whose title carries a session short and marker", () => {
         const children = [convo("a", "🐣 [7a] test triage"), convo("b", "[WIP] notes")];
         expect(resolveSubtaskTarget("test triage", children)?.id).toBe("a");
-        expect(resolveSubtaskTarget("test tri", children)?.id).toBe("a");
+        expect(resolveSubtaskTarget("test tri", children)).toBeUndefined();
         expect(resolveSubtaskTarget("[WIP] notes", children)?.id).toBe("b");
     });
 

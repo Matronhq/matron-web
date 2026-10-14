@@ -11,9 +11,9 @@ Please see LICENSE files in the repository root for full details.
  * The bridge announces every Task/Agent tool call in the parent transcript as a plain text
  * message, `🔀 Subtask: <description>`, with no machine-readable link to the child conversation it
  * spawns. The child's title is the same label the description came from, so the line is matched
- * to a child by title (as the Mac app does): exact titles first, then a prefix match, because the
- * bridge cuts the description at 80 characters while the title is the full label. Duplicate
- * titles (the same agent run again) prefer a running child, then the newest.
+ * to a child by title (as the Mac app does): exact titles first, then the same label cut short by
+ * the bridge on either side (the line's description at 80 units, the watcher's title at 37 and
+ * "…"). Duplicate titles (the same agent run again) prefer a running child, then the newest.
  *
  * The side pane shares one slot beside the chat with the other per-chat panes. A subagent wins
  * the slot, as on the Mac; opening it closes the others.
@@ -41,13 +41,46 @@ function titleForms(child: Conversation): string[] {
     return bare && bare !== raw ? [raw, bare] : [raw];
 }
 
-/** The child a subtask line most plausibly refers to, from `children` in creation order. */
+/** The bridge cuts a Subtask line's description at this many UTF-16 units. */
+export const SUBTASK_DESCRIPTION_LIMIT = 80;
+/** The bridge's subagent watcher titles a child from the same description, cut to 37 units and
+ *  "…" when it is longer than 40. */
+const TITLE_ELLIPSIS = "…";
+/** A cut title shorter than this says too little to link a line to it. */
+const MIN_CUT_TITLE_LENGTH = 12;
+
+/** `text` without a half character a cut at a UTF-16 unit can leave at its end (a lone high
+ *  surrogate, or the replacement character it may have become on the way). */
+function cutStem(text: string): string {
+    return text.replace(/(?:[\uD800-\uDBFF]|\uFFFD)+$/u, "");
+}
+
+/** Whether `title` and `description` are the same label, cut short by the bridge on either side:
+ *  a watcher title "<first 37>…" that the (longer) description starts with, or a description cut
+ *  at the bridge's limit that the (longer) title starts with. A short description that merely
+ *  starts a longer title is not a match: its own child may simply not have arrived yet. */
+function isCutMatch(description: string, title: string): boolean {
+    if (title.endsWith(TITLE_ELLIPSIS)) {
+        const head = cutStem(title.slice(0, -TITLE_ELLIPSIS.length));
+        if (head.length >= MIN_CUT_TITLE_LENGTH && description.length > head.length && description.startsWith(head))
+            return true;
+    }
+    // Trimming can take a space off the end of a cut description, so allow one unit less.
+    if (description.length >= SUBTASK_DESCRIPTION_LIMIT - 1) {
+        const head = cutStem(description);
+        if (title.length > head.length && title.startsWith(head)) return true;
+    }
+    return false;
+}
+
+/** The child a subtask line most plausibly refers to, from `children` in creation order. Exact
+ *  titles win; only without one does a title cut short by the bridge (isCutMatch) count. */
 export function resolveSubtaskTarget(description: string, children: readonly Conversation[]): Conversation | undefined {
     const exact = children.filter((child) => titleForms(child).includes(description));
     const matches =
         exact.length > 0
             ? exact
-            : children.filter((child) => titleForms(child).some((title) => title.startsWith(description)));
+            : children.filter((child) => titleForms(child).some((title) => isCutMatch(description, title)));
     for (let index = matches.length - 1; index >= 0; index -= 1) {
         if (matches[index].session_state === "running") return matches[index];
     }
