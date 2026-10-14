@@ -299,7 +299,7 @@ describe("timeline landing", () => {
     it("scrolls the target row into view, flashes it and hands the target back", async () => {
         const client = selectedClient(range(1, 30));
         const container = await render(client);
-        const panel = container.querySelector<HTMLDivElement>(".mx_RoomView_messagePanel")!;
+        const panel = container.querySelector<HTMLDivElement>(".mj_ChatView_messagePanel")!;
         Object.defineProperties(panel, {
             clientHeight: { configurable: true, value: 400 },
             scrollHeight: { configurable: true, value: 5000 },
@@ -324,7 +324,7 @@ describe("timeline landing", () => {
     it("re-checks the position after layout moves the row", async () => {
         const client = selectedClient(range(1, 30));
         const container = await render(client);
-        const panel = container.querySelector<HTMLDivElement>(".mx_RoomView_messagePanel")!;
+        const panel = container.querySelector<HTMLDivElement>(".mj_ChatView_messagePanel")!;
         let scrollTop = 4600;
         Object.defineProperties(panel, {
             clientHeight: { configurable: true, value: 400 },

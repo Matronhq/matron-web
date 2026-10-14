@@ -14,8 +14,9 @@ Please see LICENSE files in the repository root for full details.
  * being viewed carry no origin note. An open notice carries a one-tap Seen button on its row; the
  * tap closes it, so it leaves "Needs you" (and the rail badge) as soon as the write lands.
  *
- * "Done" is where it goes next: closed questions, decisions and notices, most recently touched
- * first, so something answered or read can be found again. It is loaded when the tab is first
+ * "Done" is where it goes next: questions, decisions and notices that are closed or that the user
+ * has answered, the one they last acted on first, so something answered or read can be found
+ * again. It is loaded when the tab is first
  * opened and a page at a time after that; tasks stay out, as they are the agents' work list.
  */
 

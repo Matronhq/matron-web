@@ -5,6 +5,8 @@ SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
 Please see LICENSE files in the repository root for full details.
 */
 
+import type { CoordinatorDecision } from "./coordinator-consent";
+
 export const MESSAGE_EVENT_TYPES = new Set([
     "text",
     "tool_output",
@@ -91,6 +93,40 @@ export interface DevicesResponse {
 export interface RecentFolder {
     path: string;
     last_used: number | null;
+}
+
+/** One choice a box offers on its `recent_folders` reply (`agent_options`, `model_options`,
+ *  `effort_options`): `value` is what the `start` RPC takes, `label` what the picker shows
+ *  (never empty — the parser falls back to `value`). */
+export interface StartOption {
+    value: string;
+    label: string;
+}
+
+/** Everything a box's `recent_folders` reply offers the New session sheet. Every block beside
+ *  `folders` is optional on the wire: an older bridge omits it, which parses to an empty offer
+ *  (the picker hides) rather than failing the folders it rides with. */
+export interface NewSessionOffer {
+    folders: RecentFolder[];
+    /** Coding agents a `start` there may name. Empty = the bridge predates the switch. */
+    agentOptions: StartOption[];
+    /** What a start with no `agent` runs as. */
+    defaultAgent: string | null;
+    /** Claude models, without the bridge's own `default` alias (the picker's Default row). */
+    modelOptions: StartOption[];
+    /** What a start with no `model` runs on, when the box says. Display only. */
+    defaultModel: string | null;
+    /** Claude effort levels a `start` may name. */
+    effortOptions: StartOption[];
+    /** What a start with no `effort` runs at, when the box says. Display only. */
+    defaultEffort: string | null;
+}
+
+/** The New session sheet's picks for `start`. An absent key leaves the choice to the box. */
+export interface StartSessionPicks {
+    agent?: string;
+    model?: string;
+    effort?: string;
 }
 
 export interface Conversation {
@@ -204,7 +240,7 @@ export interface NumberLookup {
 export type NumberLookupOutcome = { status: "found"; hit: NumberLookup } | { status: "none" } | { status: "failed" };
 
 /**
- * Message-content search state (Apple-parity "Messages" section). The room-list search box
+ * Message-content search state (Apple-parity "Messages" section). The conversation list search box
  * filters chat titles in-memory (the "Chats" behaviour); this holds the server-side content
  * hits for the same query. `query` is the query the current `hits` belong to, so the view can
  * ignore results that raced in after the box was cleared or retyped.
@@ -550,6 +586,9 @@ export interface ClientState {
     trackerProjectFeedLoading?: boolean;
     trackerItem?: { item: TrackerItem; comments: TrackerComment[] } | null;
     trackerMission?: MissionDetail | null;
+    /** The selected conversation's missions, for the chat header's mission chip. Absent until
+     *  fetched; a fetch for another conversation is never shown against this one. */
+    conversationMissions?: ConversationMissions;
     /** True while ANY tracker fetch is in flight (v1: one detail/list open at a time). */
     trackerLoading?: boolean;
     /** Last tracker fetch/mutation error; cleared on the next successful load. */
@@ -586,6 +625,9 @@ export interface ClientState {
     userSettingsUnsupported?: boolean;
     /** The last failed settings save; cleared by the next save. */
     userSettingsError?: string;
+    /** Settings → Coordinator: whether the Coordinator may answer chat and spawn asks (`consent`
+     *  on GET /coordinator). `enabled` undefined = not known yet, or a journal without the switch. */
+    coordinatorConsent?: { enabled?: boolean; error?: string };
 }
 
 // ── New-chat defaults (journal GET/PUT /defaults) ───────────────────────────────────────────────
@@ -830,6 +872,9 @@ export interface TrackerItem {
     created_at: number;
     updated_at: number;
     closed_at: number | null;
+    /** When the user last acted on the item (a reply, a tap, a close or reopen; else when they
+     *  filed it). Null when only agents have touched it; absent on a journal that predates it. */
+    last_user_input_at?: number | null;
     mission_id: string | null;
     mission_num: number | null;
     comment_count: number;
@@ -921,6 +966,11 @@ export interface Mission {
     project_num?: number | null;
     /** The mission's activity rollup, where the journal sends it. */
     activity?: string;
+    /** The mission's status line (one short paragraph, inline markdown), who set it and when.
+     *  Null when unset; absent from journals that predate mission status. */
+    status?: string | null;
+    status_by?: TrackerActor | null;
+    status_updated_at?: number | null;
 }
 
 export interface Milestone {
@@ -1023,7 +1073,7 @@ export interface ProjectFileRow {
  *  older one sends none of them. */
 export interface ProjectDetail {
     project: Project;
-    missions: Array<Mission & { status?: string | null; activity?: string }>;
+    missions: Mission[];
     needs_you: Array<MissionItemRef & { mission_id: string; mission_num: number }>;
     recent_milestones: Array<Milestone & { mission_num: number }>;
     sessions_by_box: Record<string, number>;
@@ -1032,6 +1082,24 @@ export interface ProjectDetail {
     milestones?: ProjectFeedPage<Milestone & { mission_num: number | null }>;
     /** Set when the asked-for project was merged: this detail is the project it went into. */
     merged_from?: { id: string; num: number };
+}
+
+/** One mission a conversation has touched (`GET /conversations/:id/missions`): the mission row
+ *  with the link's own fields beside it. */
+export interface ConversationMissionLink extends Mission {
+    /** Where the conversation's milestones go by default. At most one link is current. */
+    current: boolean;
+    /** False once the conversation left the mission. */
+    active: boolean;
+    how?: string | null;
+    joined_at?: number | null;
+    ended_at?: number | null;
+}
+
+/** The selected conversation's missions, as last fetched for it. */
+export interface ConversationMissions {
+    convoId: string;
+    links: ConversationMissionLink[];
 }
 
 export interface MissionDetail {
@@ -1247,6 +1315,15 @@ export function asString(value: unknown, fallback = ""): string {
     return typeof value === "string" ? value : fallback;
 }
 
+/**
+ * The display name of a `file` / `image` event. `name` is the key the media-send contract defines
+ * and what the bridge and the native apps emit; `filename` is the older spelling, still read so
+ * events written before the switch keep their names.
+ */
+export function mediaFileName(payload: EventPayload): string {
+    return asString(payload.name) || asString(payload.filename);
+}
+
 export function asNumber(value: unknown, fallback = 0): number {
     return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
@@ -1334,6 +1411,31 @@ export function spawnOutcomeKind(payload: EventPayload): SpawnOutcomeKind {
     return "unknown";
 }
 
+/** One agent-spawn ask as a conversation's events tell it: its card and its outcome, if any. */
+export interface SpawnConsentRows {
+    /** The `permission_request` (kind `agent_spawn`) that asked; null when it is not here. */
+    request: JournalEvent | null;
+    /** The ask's `spawn_outcome` payload; null while it has none. */
+    outcome: EventPayload | null;
+    /** The Coordinator's answer to the card, when it gave one (spawnConsentRowsIn). */
+    coordinatorDecision?: CoordinatorDecision;
+}
+
+/**
+ * Finds one agent-spawn ask in a conversation's events by its request id: the first card that
+ * names it, and the last outcome for it should there ever be two (the timeline's own rule).
+ */
+export function findSpawnConsentRows(events: readonly JournalEvent[], requestId: string): SpawnConsentRows {
+    let request: JournalEvent | null = null;
+    let outcome: EventPayload | null = null;
+    for (const event of events) {
+        if (event.payload.request_id !== requestId) continue;
+        if (event.type === "permission_request" && event.payload.kind === "agent_spawn") request ??= event;
+        else if (event.type === "spawn_outcome") outcome = event.payload;
+    }
+    return { request, outcome };
+}
+
 export function spawnOutcomeSnippet(payload: EventPayload): string {
     switch (spawnOutcomeKind(payload)) {
         case "started":
@@ -1353,8 +1455,8 @@ export function spawnOutcomeSnippet(payload: EventPayload): string {
 
 export function eventSnippet(type: string, payload: EventPayload): string {
     if (type === "text") return asString(payload.body).slice(0, 120);
-    if (type === "file") return `📎 ${asString(payload.caption) || asString(payload.filename, "File")}`.slice(0, 120);
-    if (type === "image") return `🖼 ${asString(payload.caption) || asString(payload.filename, "Image")}`.slice(0, 120);
+    if (type === "file") return `📎 ${asString(payload.caption) || mediaFileName(payload) || "File"}`.slice(0, 120);
+    if (type === "image") return `🖼 ${asString(payload.caption) || mediaFileName(payload) || "Image"}`.slice(0, 120);
     if (type === "prompt") return `? ${asString(payload.question).slice(0, 110)}`;
     if (type === "permission_request") {
         // agent_spawn payloads carry no `description` (that's a generic-permission field) — the
@@ -1363,6 +1465,7 @@ export function eventSnippet(type: string, payload: EventPayload): string {
         // into the snapshot snippet, and the two must be byte-exact or the sidebar row
         // flip-flops across a resume (same ruling just applied to the Android client).
         if (asString(payload.kind) === "agent_spawn") return "🤝 Agent spawn request";
+        if (asString(payload.kind) === "agent_chat") return "🤝 Agent chat request";
         return `Permission: ${asString(payload.description).slice(0, 100)}`;
     }
     if (type === "spawn_outcome") {

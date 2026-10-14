@@ -9,6 +9,7 @@ import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { TextEncoder as NodeTextEncoder } from "node:util";
 
+import { JournalApiError } from "../../../src/journal/api";
 import {
     archiveStore,
     BROWSER_MEMORY_SAFETY_MAX_BYTES,
@@ -123,7 +124,7 @@ function tabButton(container: HTMLElement, key: "active" | "favorites" | "archiv
 
 async function openMenu(container: HTMLElement): Promise<void> {
     // The kebab was removed; the row menu opens via right-click (onContextMenu).
-    const row = container.querySelector<HTMLElement>(".mj_RoomListItem");
+    const row = container.querySelector<HTMLElement>(".mj_ConversationListItem");
     if (!row) throw new Error("Missing conversation row");
     await act(async () => {
         row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }));
@@ -582,6 +583,143 @@ describe("permission request cards", () => {
     });
 });
 
+describe("multi-select question cards", () => {
+    let rendered: { container: HTMLDivElement; root: Root } | undefined;
+
+    const pickManyPrompt = (payload: Record<string, unknown> = {}): JournalEvent => ({
+        seq: 50,
+        convo_id: "c1",
+        ts: 1,
+        sender: "agent:claude",
+        type: "prompt",
+        payload: {
+            question: "Which checks should run?",
+            mode: "pick_many",
+            options: [
+                { id: "opt_a", label: "Lint", value: "lint" },
+                { id: "opt_b", label: "Unit tests", value: "unit" },
+                { id: "opt_c", label: "Screenshots", value: "shots" },
+            ],
+            ...payload,
+        },
+    });
+
+    const buttons = (card: Element): HTMLButtonElement[] => [...card.querySelectorAll<HTMLButtonElement>("button")];
+    const byLabel = (card: Element, label: string): HTMLButtonElement =>
+        buttons(card).find((button) => button.textContent === label)!;
+
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    afterEach(async () => {
+        if (rendered) {
+            await act(async () => rendered?.root.unmount());
+            rendered.container.remove();
+            rendered = undefined;
+        }
+        jest.restoreAllMocks();
+    });
+
+    it("toggles options without sending, then sends the ticked values in option order", async () => {
+        const client = signedInClient({ events: [pickManyPrompt()] });
+        const sendPromptReply = jest.spyOn(client, "sendPromptReply").mockReturnValue(true);
+        rendered = await renderClient(client);
+        const card = rendered.container.querySelector(".mj_PromptCard")!;
+
+        const send = byLabel(card, "Send");
+        expect(send.classList.contains("mj_PromptOption_affirmative")).toBe(true);
+        expect(send.disabled).toBe(true);
+        expect(card.querySelectorAll(".mj_PromptOption_affirmative")).toHaveLength(1);
+        const group = card.querySelector('[role="group"]')!;
+        expect(document.getElementById(group.getAttribute("aria-labelledby")!)?.textContent).toBe(
+            "Which checks should run?",
+        );
+
+        await act(async () => byLabel(card, "Screenshots").click());
+        await act(async () => byLabel(card, "Lint").click());
+        expect(sendPromptReply).not.toHaveBeenCalled();
+        expect(byLabel(card, "Lint").getAttribute("aria-pressed")).toBe("true");
+        expect(byLabel(card, "Unit tests").getAttribute("aria-pressed")).toBe("false");
+        expect(send.disabled).toBe(false);
+
+        await act(async () => send.click());
+
+        expect(sendPromptReply).toHaveBeenCalledTimes(1);
+        expect(sendPromptReply).toHaveBeenCalledWith(50, "lint, shots", undefined);
+        expect(card.querySelector(".mj_PromptOptions")).toBeNull();
+        expect(card.querySelector(".mj_PromptResolved")?.textContent).toBe("Answered");
+    });
+
+    it("unticks an option on a second tap, and disables Send once nothing is ticked", async () => {
+        const client = signedInClient({ events: [pickManyPrompt()] });
+        const sendPromptReply = jest.spyOn(client, "sendPromptReply").mockReturnValue(true);
+        rendered = await renderClient(client);
+        const card = rendered.container.querySelector(".mj_PromptCard")!;
+
+        await act(async () => byLabel(card, "Unit tests").click());
+        await act(async () => byLabel(card, "Unit tests").click());
+
+        expect(byLabel(card, "Unit tests").getAttribute("aria-pressed")).toBe("false");
+        expect(byLabel(card, "Send").disabled).toBe(true);
+        await act(async () => byLabel(card, "Send").click());
+        expect(sendPromptReply).not.toHaveBeenCalled();
+    });
+
+    it("sends plain string options by their label", async () => {
+        const client = signedInClient({ events: [pickManyPrompt({ options: ["Red", "Green", "Blue"] })] });
+        const sendPromptReply = jest.spyOn(client, "sendPromptReply").mockReturnValue(true);
+        rendered = await renderClient(client);
+        const card = rendered.container.querySelector(".mj_PromptCard")!;
+
+        await act(async () => byLabel(card, "Blue").click());
+        await act(async () => byLabel(card, "Green").click());
+        await act(async () => byLabel(card, "Send").click());
+
+        expect(sendPromptReply).toHaveBeenCalledWith(50, "Green, Blue", undefined);
+    });
+
+    it("keeps the ticks when the reply could not be sent", async () => {
+        const client = signedInClient({ events: [pickManyPrompt()] });
+        jest.spyOn(client, "sendPromptReply").mockReturnValue(false);
+        rendered = await renderClient(client);
+        const card = rendered.container.querySelector(".mj_PromptCard")!;
+
+        await act(async () => byLabel(card, "Lint").click());
+        await act(async () => byLabel(card, "Send").click());
+
+        expect(byLabel(card, "Lint").getAttribute("aria-pressed")).toBe("true");
+        expect(byLabel(card, "Send").disabled).toBe(false);
+    });
+
+    it("shows a question answered elsewhere as resolved, without toggles", async () => {
+        const reply: JournalEvent = {
+            seq: 51,
+            convo_id: "c1",
+            ts: 2,
+            sender: "user:alice",
+            type: "prompt_reply",
+            payload: { target_seq: 50, choice: "lint, unit" },
+        };
+        rendered = await renderClient(signedInClient({ events: [pickManyPrompt(), reply] }));
+        const card = rendered.container.querySelector(".mj_PromptCard")!;
+
+        expect(card.querySelector(".mj_PromptOption_toggle")).toBeNull();
+        expect(card.querySelector(".mj_PromptResolved")?.textContent).toBe("Answered");
+    });
+
+    it("leaves a single-choice question sending on the first tap", async () => {
+        const client = signedInClient({ events: [pickManyPrompt({ mode: "pick_one" })] });
+        const sendPromptReply = jest.spyOn(client, "sendPromptReply").mockReturnValue(true);
+        rendered = await renderClient(client);
+        const card = rendered.container.querySelector(".mj_PromptCard")!;
+
+        expect(card.querySelector(".mj_PromptOption_toggle")).toBeNull();
+        await act(async () => byLabel(card, "Unit tests").click());
+        expect(sendPromptReply).toHaveBeenCalledWith(50, "unit", undefined);
+    });
+});
+
 describe("markdown render-site integration", () => {
     let rendered: { container: HTMLDivElement; root: Root } | undefined;
 
@@ -646,7 +784,7 @@ describe("markdown render-site integration", () => {
 
         rendered = await renderClient(client);
 
-        expect(rendered.container.querySelector(".mx_EventTile_sending .mj_Markdown strong")?.textContent).toBe(
+        expect(rendered.container.querySelector(".mj_EventTile_sending .mj_Markdown strong")?.textContent).toBe(
             "pending bold",
         );
         const cursor = rendered.container.querySelector(".mj_Cursor");
@@ -1001,8 +1139,8 @@ describe("message model DOM contracts", () => {
 
         const row = rendered.container.querySelector('[data-event-id="1"]');
         expect(row?.querySelectorAll("time")).toHaveLength(1);
-        expect(row?.querySelectorAll(".mx_DisambiguatedProfile time")).toHaveLength(1);
-        expect(row?.querySelectorAll(".mx_EventTile_line time")).toHaveLength(0);
+        expect(row?.querySelectorAll(".mj_SenderName time")).toHaveLength(1);
+        expect(row?.querySelectorAll(".mj_EventTile_line time")).toHaveLength(0);
     });
 
     it("puts the section timestamp on the first block and none on agent continuations", async () => {
@@ -1012,9 +1150,9 @@ describe("message model DOM contracts", () => {
 
         const first = rendered.container.querySelector('[data-event-id="1"]');
         const row = rendered.container.querySelector('[data-event-id="2"]');
-        expect(row?.classList.contains("mx_EventTile_continuation")).toBe(true);
+        expect(row?.classList.contains("mj_EventTile_continuation")).toBe(true);
         // The section's single timestamp lives on the first block's profile row.
-        expect(first?.querySelectorAll(".mx_DisambiguatedProfile time")).toHaveLength(1);
+        expect(first?.querySelectorAll(".mj_SenderName time")).toHaveLength(1);
         // Continuation blocks carry no per-block timestamp, so they fill to the shared
         // right edge with no reserved 56px gutter (kills the first-block spill).
         expect(row?.querySelectorAll("time")).toHaveLength(0);
@@ -1026,7 +1164,7 @@ describe("message model DOM contracts", () => {
 
         const row = rendered.container.querySelector('[data-event-id="1"]');
         expect(row?.querySelectorAll("time")).toHaveLength(1);
-        expect(row?.querySelectorAll(".mx_EventTile_line time")).toHaveLength(1);
+        expect(row?.querySelectorAll(".mj_EventTile_line time")).toHaveLength(1);
         expect(row?.querySelectorAll(".mj_MsgAvatar")).toHaveLength(0);
     });
 
@@ -1049,8 +1187,8 @@ describe("message model DOM contracts", () => {
         rendered = await renderClient(client);
 
         const eventRow = rendered.container.querySelector('[data-event-id="1"]');
-        const textStreamRow = rendered.container.querySelector(".mj_Cursor")?.closest(".mx_EventTile");
-        const toolStreamRow = rendered.container.querySelector(".mj_LiveTool")?.closest(".mx_EventTile");
+        const textStreamRow = rendered.container.querySelector(".mj_Cursor")?.closest(".mj_EventTile");
+        const toolStreamRow = rendered.container.querySelector(".mj_LiveTool")?.closest(".mj_EventTile");
         expect(eventRow?.querySelectorAll(".mj_MsgAvatar")).toHaveLength(1);
         expect(textStreamRow?.querySelectorAll(".mj_MsgAvatar")).toHaveLength(1);
         expect(toolStreamRow?.querySelectorAll(".mj_MsgAvatar")).toHaveLength(1);
@@ -1129,19 +1267,19 @@ function renderComposerAppWithChild(
 }
 
 function composerValue(container: HTMLElement): string {
-    const textarea = container.querySelector<HTMLTextAreaElement>(".mx_BasicMessageComposer_input");
+    const textarea = container.querySelector<HTMLTextAreaElement>(".mj_ComposerInput_input");
     if (!textarea) throw new Error("Missing composer textarea");
     return textarea.value;
 }
 
 async function typeInComposer(container: HTMLElement, value: string): Promise<void> {
-    const textarea = container.querySelector<HTMLTextAreaElement>(".mx_BasicMessageComposer_input");
+    const textarea = container.querySelector<HTMLTextAreaElement>(".mj_ComposerInput_input");
     if (!textarea) throw new Error("Missing composer textarea");
     await act(async () => inputTextarea(textarea, value));
 }
 
 async function pressEnter(container: HTMLElement): Promise<void> {
-    const textarea = container.querySelector<HTMLTextAreaElement>(".mx_BasicMessageComposer_input");
+    const textarea = container.querySelector<HTMLTextAreaElement>(".mj_ComposerInput_input");
     if (!textarea) throw new Error("Missing composer textarea");
     await keydown(textarea, "Enter");
 }
@@ -1207,7 +1345,7 @@ describe("slash command palette", () => {
     });
 
     const composer = (): HTMLTextAreaElement => {
-        const textarea = rendered?.container.querySelector<HTMLTextAreaElement>(".mx_BasicMessageComposer_input");
+        const textarea = rendered?.container.querySelector<HTMLTextAreaElement>(".mj_ComposerInput_input");
         if (!textarea) throw new Error("Missing composer textarea");
         return textarea;
     };
@@ -1230,7 +1368,7 @@ describe("slash command palette", () => {
         await act(async () => inputTextarea(composer(), "/st"));
 
         expect(rendered.container.querySelector('[role="listbox"]')).not.toBeNull();
-        expect(options().map((row) => row.querySelector(".mx_SlashPalette_trigger")?.textContent)).toEqual([
+        expect(options().map((row) => row.querySelector(".mj_SlashPalette_trigger")?.textContent)).toEqual([
             "/start",
             "/stop",
             "/status",
@@ -1559,8 +1697,6 @@ describe("composer sends", () => {
         const sendButton = () => result.container.querySelector<HTMLButtonElement>(".mj_ComposerSend");
         // Absent while the composer is empty (the Mac shows nothing to press).
         expect(sendButton()).toBeNull();
-        // The dead emoji button was removed in v4 (attach · mic · send only).
-        expect(result.container.querySelector(".mx_EmojiButton")).toBeNull();
 
         await typeInComposer(result.container, "hi");
         expect(sendButton()).not.toBeNull();
@@ -1771,6 +1907,320 @@ describe("composer sends", () => {
     });
 });
 
+describe("stop turn button", () => {
+    let rendered: { container: HTMLDivElement; root: Root } | undefined;
+
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    afterEach(async () => {
+        jest.useRealTimers();
+        if (rendered) {
+            await act(async () => rendered?.root.unmount());
+            rendered.container.remove();
+            rendered = undefined;
+        }
+        jest.restoreAllMocks();
+    });
+
+    const stopButton = (container: HTMLElement): HTMLButtonElement | null =>
+        container.querySelector<HTMLButtonElement>('button[aria-label="Stop the current turn"]');
+
+    function patchState(client: MatronJournalClient, update: Partial<ClientState>): void {
+        act(() => (client as unknown as { patch(update: Partial<ClientState>): void }).patch(update));
+    }
+
+    test("shows while the turn runs and sends !esc without touching the draft", async () => {
+        const client = signedInClient();
+        const send = jest.spyOn(client, "sendMessage").mockResolvedValue(true);
+        const result = await renderComposerApp(["c1"], client);
+        rendered = result;
+        await typeInComposer(result.container, "half-written");
+
+        expect(stopButton(result.container)).not.toBeNull();
+        await act(async () => stopButton(result.container)!.click());
+
+        expect(send).toHaveBeenCalledTimes(1);
+        expect(send).toHaveBeenCalledWith("!esc", "c1");
+        expect(composerValue(result.container)).toBe("half-written");
+    });
+
+    test("is absent when no turn is running", async () => {
+        const client = signedInWithRooms([{ ...CONVERSATION, session_state: "done" }]);
+        rendered = await renderClient(client);
+        expect(stopButton(rendered.container)).toBeNull();
+    });
+
+    test("a second tap while the first is still sending is ignored", async () => {
+        let resolve!: (value: boolean) => void;
+        const client = signedInClient();
+        const send = jest
+            .spyOn(client, "sendMessage")
+            .mockReturnValue(new Promise((promiseResolve) => (resolve = promiseResolve)));
+        const result = await renderComposerApp(["c1"], client);
+        rendered = result;
+        await act(async () => stopButton(result.container)!.click());
+        await act(async () => stopButton(result.container)!.click());
+        expect(send).toHaveBeenCalledTimes(1);
+        await act(async () => resolve(true));
+        await act(async () => stopButton(result.container)!.click());
+        expect(send).toHaveBeenCalledTimes(2);
+    });
+
+    test("lingers briefly after the turn ends, then hides", async () => {
+        jest.useFakeTimers();
+        const client = signedInClient();
+        const result = await renderComposerApp(["c1"], client);
+        rendered = result;
+        expect(stopButton(result.container)).not.toBeNull();
+
+        patchState(client, { conversations: [{ ...CONVERSATION, session_state: "done" }] });
+        expect(stopButton(result.container)).not.toBeNull();
+        act(() => jest.advanceTimersByTime(499));
+        expect(stopButton(result.container)).not.toBeNull();
+        act(() => jest.advanceTimersByTime(1));
+        expect(stopButton(result.container)).toBeNull();
+    });
+
+    test("hides at once on switching to a conversation with no running turn", async () => {
+        const running = { ...CONVERSATION, id: "c1", title: "c1" };
+        const idle = { ...CONVERSATION, id: "c2", title: "c2", session_state: "done" };
+        const client = signedInWithRooms([running, idle]);
+        rendered = await renderClient(client);
+        expect(stopButton(rendered.container)).not.toBeNull();
+
+        patchState(client, { selectedConversationId: "c2" });
+        expect(stopButton(rendered.container)).toBeNull();
+    });
+
+    test("a turn that just ended does not bring Stop back on returning to it", async () => {
+        jest.useFakeTimers();
+        const client = signedInWithRooms([
+            { ...CONVERSATION, id: "c1", title: "c1" },
+            { ...CONVERSATION, id: "c2", title: "c2", session_state: "done" },
+        ]);
+        rendered = await renderClient(client);
+        patchState(client, {
+            conversations: [
+                { ...CONVERSATION, id: "c1", title: "c1", session_state: "done" },
+                { ...CONVERSATION, id: "c2", title: "c2", session_state: "done" },
+            ],
+        });
+        patchState(client, { selectedConversationId: "c2" });
+        patchState(client, { selectedConversationId: "c1" });
+        expect(stopButton(rendered.container)).toBeNull();
+    });
+
+    test("a Stop still sending in one conversation does not block Stop in another", async () => {
+        const client = signedInWithRooms([
+            { ...CONVERSATION, id: "c1", title: "c1" },
+            { ...CONVERSATION, id: "c2", title: "c2" },
+        ]);
+        const send = jest.spyOn(client, "sendMessage").mockReturnValue(new Promise<boolean>(() => {}));
+        rendered = await renderClient(client);
+        await act(async () => stopButton(rendered!.container)!.click());
+        patchState(client, { selectedConversationId: "c2" });
+        await act(async () => stopButton(rendered!.container)!.click());
+        expect(send).toHaveBeenCalledTimes(2);
+        expect(send).toHaveBeenLastCalledWith("!esc", "c2");
+    });
+
+    test("is not offered in a read-only subagent transcript", async () => {
+        const result = await renderComposerAppWithChild("p1", "k1");
+        rendered = result;
+        patchState(result.client, { selectedConversationId: "k1" });
+        expect(result.container.querySelector(".mj_ReadOnlyHint")).not.toBeNull();
+        expect(stopButton(result.container)).toBeNull();
+    });
+});
+
+describe("composer sent-message recall", () => {
+    let rendered: { container: HTMLDivElement; root: Root; client: MatronJournalClient } | undefined;
+
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    afterEach(async () => {
+        if (rendered) {
+            await act(async () => rendered?.root.unmount());
+            rendered.container.remove();
+            rendered = undefined;
+        }
+        jest.restoreAllMocks();
+    });
+
+    const textarea = (): HTMLTextAreaElement =>
+        rendered!.container.querySelector<HTMLTextAreaElement>(".mj_ComposerInput_input")!;
+    const value = (): string => composerValue(rendered!.container);
+    const arrow = (key: "ArrowUp" | "ArrowDown") => keydown(textarea(), key);
+
+    async function renderWithSends(convoIds = ["c1", "c2"]): Promise<jest.SpyInstance> {
+        rendered = await renderComposerApp(convoIds);
+        return jest.spyOn(rendered.client, "sendMessage").mockResolvedValue(true);
+    }
+
+    async function sendText(text: string): Promise<void> {
+        await typeInComposer(rendered!.container, text);
+        await pressEnter(rendered!.container);
+    }
+
+    async function select(convoId: string): Promise<void> {
+        await act(async () => {
+            await rendered!.client.selectConversation(convoId);
+        });
+    }
+
+    test("Up and Down walk this conversation's sent messages from an empty field", async () => {
+        await renderWithSends();
+        await sendText("first");
+        await sendText("second");
+        expect(value()).toBe("");
+
+        const up = await arrow("ArrowUp");
+        expect(up.dispatched).toBe(false);
+        expect(value()).toBe("second");
+        await arrow("ArrowUp");
+        expect(value()).toBe("first");
+        // At the oldest entry Up stays put.
+        await arrow("ArrowUp");
+        expect(value()).toBe("first");
+        await arrow("ArrowDown");
+        expect(value()).toBe("second");
+        // Past the newest, the (empty) draft the walk started from comes back.
+        await arrow("ArrowDown");
+        expect(value()).toBe("");
+        // The walk is over: Down does nothing more.
+        const down = await arrow("ArrowDown");
+        expect(down.dispatched).toBe(true);
+    });
+
+    test("Up leaves a non-empty draft alone so the caret can move through it", async () => {
+        await renderWithSends();
+        await sendText("sent");
+        await typeInComposer(rendered!.container, "line one\nline two");
+        const up = await arrow("ArrowUp");
+        expect(up.dispatched).toBe(true);
+        expect(value()).toBe("line one\nline two");
+    });
+
+    test("arrows with a modifier keep their caret meaning and never recall", async () => {
+        await renderWithSends();
+        await sendText("sent");
+        for (const modifier of ["shiftKey", "altKey", "metaKey", "ctrlKey"] as const) {
+            const up = await keydown(textarea(), "ArrowUp", { [modifier]: true });
+            expect(up.dispatched).toBe(true);
+            expect(value()).toBe("");
+        }
+        await arrow("ArrowUp");
+        expect(value()).toBe("sent");
+        const down = await keydown(textarea(), "ArrowDown", { shiftKey: true });
+        expect(down.dispatched).toBe(true);
+        expect(value()).toBe("sent");
+    });
+
+    test("Up with nothing sent yet leaves the field empty", async () => {
+        await renderWithSends();
+        await arrow("ArrowUp");
+        expect(value()).toBe("");
+    });
+
+    test("editing a recalled message ends the walk and keeps the edit", async () => {
+        await renderWithSends();
+        await sendText("first");
+        await sendText("second");
+        await arrow("ArrowUp");
+        await typeInComposer(rendered!.container, "second, edited");
+        const up = await arrow("ArrowUp");
+        expect(up.dispatched).toBe(true);
+        expect(value()).toBe("second, edited");
+        const down = await arrow("ArrowDown");
+        expect(down.dispatched).toBe(true);
+        expect(value()).toBe("second, edited");
+    });
+
+    test("completing a recalled command from the palette ends the walk", async () => {
+        await renderWithSends();
+        await sendText("hello");
+        await sendText("/status");
+        await arrow("ArrowUp");
+        expect(value()).toBe("/status");
+        await keydown(textarea(), "Tab");
+        const completed = value();
+        expect(completed.trim()).toBe("/status");
+        const up = await arrow("ArrowUp");
+        expect(up.dispatched).toBe(true);
+        expect(value()).toBe(completed);
+    });
+
+    test("sending a recalled message sends it again", async () => {
+        const send = await renderWithSends();
+        await sendText("deploy again");
+        await arrow("ArrowUp");
+        await pressEnter(rendered!.container);
+        expect(send).toHaveBeenLastCalledWith("deploy again", "c1");
+        expect(send).toHaveBeenCalledTimes(2);
+        expect(value()).toBe("");
+    });
+
+    test("each conversation recalls only its own sends", async () => {
+        await renderWithSends();
+        await sendText("for one");
+        await select("c2");
+        await arrow("ArrowUp");
+        expect(value()).toBe("");
+        await sendText("for two");
+        await select("c1");
+        await arrow("ArrowUp");
+        expect(value()).toBe("for one");
+        await arrow("ArrowUp");
+        expect(value()).toBe("for one");
+    });
+
+    test("leaving mid-walk does not save the recalled message as the draft", async () => {
+        await renderWithSends();
+        await sendText("sent line");
+        await arrow("ArrowUp");
+        expect(value()).toBe("sent line");
+        await select("c2");
+        await select("c1");
+        expect(value()).toBe("");
+    });
+
+    test("a message that failed to queue is not recorded", async () => {
+        const send = await renderWithSends();
+        send.mockResolvedValueOnce(false);
+        await sendText("not queued");
+        // The failed text stays in the field; clear it and try to recall.
+        await typeInComposer(rendered!.container, "");
+        await arrow("ArrowUp");
+        expect(value()).toBe("");
+    });
+
+    test("the palette keeps its arrow keys, and a recalled command doesn't trap the walk", async () => {
+        await renderWithSends();
+        await sendText("/status");
+        await sendText("hello");
+
+        // Typing a command opens the palette; Up/Down move its highlight, not history.
+        await typeInComposer(rendered!.container, "/");
+        await arrow("ArrowDown");
+        expect(textarea().getAttribute("aria-activedescendant")).toBeTruthy();
+        expect(value()).toBe("/");
+        await typeInComposer(rendered!.container, "");
+
+        // Walking onto "/status" opens the palette, but the walk still owns the arrows.
+        await arrow("ArrowUp");
+        await arrow("ArrowUp");
+        expect(value()).toBe("/status");
+        expect(textarea().getAttribute("aria-expanded")).toBe("true");
+        await arrow("ArrowDown");
+        expect(value()).toBe("hello");
+        expect(textarea().getAttribute("aria-activedescendant")).toBeNull();
+    });
+});
+
 describe("attachment composer", () => {
     let rendered: { container: HTMLDivElement; root: Root } | undefined;
 
@@ -1822,7 +2272,7 @@ describe("attachment composer", () => {
         const client = signedInClient();
         const stageFiles = jest.spyOn(client, "stageFiles").mockImplementation(() => undefined);
         rendered = await renderClient(client);
-        const room = rendered.container.querySelector<HTMLElement>(".mx_RoomView");
+        const room = rendered.container.querySelector<HTMLElement>(".mj_ChatView");
         if (!room) throw new Error("Missing conversation pane");
         const file = new File(["drop"], "drop.txt", { type: "text/plain" });
         const dragOver = fileDragEvent("dragover", file);
@@ -1842,8 +2292,8 @@ describe("attachment composer", () => {
     it("shows the overlay only for file drags and keeps it active over child elements", async () => {
         const client = signedInClient();
         rendered = await renderClient(client);
-        const room = rendered.container.querySelector<HTMLElement>(".mx_RoomView");
-        const child = rendered.container.querySelector<HTMLElement>(".mx_RoomView_body");
+        const room = rendered.container.querySelector<HTMLElement>(".mj_ChatView");
+        const child = rendered.container.querySelector<HTMLElement>(".mj_ChatView_body");
         if (!room || !child) throw new Error("Missing conversation pane");
 
         const textDrag = new Event("dragover", { bubbles: true, cancelable: true });
@@ -1889,7 +2339,7 @@ describe("attachment composer", () => {
         await act(async () => client.stageFiles([new File(["a"], "a.txt", { type: "text/plain" })]));
         stageFiles.mockClear();
 
-        const textareaEl = rendered.container.querySelector<HTMLTextAreaElement>(".mx_BasicMessageComposer_input")!;
+        const textareaEl = rendered.container.querySelector<HTMLTextAreaElement>(".mj_ComposerInput_input")!;
         const pasted = new File(["p"], "p.png", { type: "image/png" });
         await act(async () => {
             textareaEl.dispatchEvent(
@@ -1966,7 +2416,7 @@ describe("attachment composer", () => {
 
         expect(rendered.container.querySelector(".mj_AttachmentChip_uploading")?.textContent).toContain("Uploading…");
         expect(rendered.container.querySelector(".mj_AttachmentChip_sending")?.textContent).toContain("Sending…");
-        expect(rendered.container.querySelector(".mx_EventTile_sending")).toBeNull();
+        expect(rendered.container.querySelector(".mj_EventTile_sending")).toBeNull();
         expect(rendered.container.querySelector(".mj_MessageText")).toBeNull();
     });
 
@@ -2000,7 +2450,7 @@ describe("attachment composer", () => {
         rendered = await renderClient(client);
 
         expect(
-            [...rendered.container.querySelectorAll(".mx_EventTile_content")].map((item) => item.textContent),
+            [...rendered.container.querySelectorAll(".mj_EventTile_content")].map((item) => item.textContent),
         ).toEqual(["first event", "pending early", "pending late", "last event"]);
     });
 
@@ -2021,6 +2471,363 @@ describe("attachment composer", () => {
 
         expect(rendered.container.querySelector(".mj_File")?.textContent).toContain("report.pdf");
         expect(rendered.container.querySelector(".mj_AttachmentChip")).toBeNull();
+    });
+
+    it("shows the file name from the `name` key that bridge and app senders emit", async () => {
+        const client = signedInClient({
+            events: [
+                {
+                    seq: 1,
+                    convo_id: "c1",
+                    ts: 1,
+                    sender: "agent:1",
+                    type: "file",
+                    payload: { blob_ref: "bin-n", name: "build.log", content_type: "application/octet-stream" },
+                },
+                {
+                    seq: 2,
+                    convo_id: "c1",
+                    ts: 2,
+                    sender: "agent:1",
+                    type: "file",
+                    // No content type: the viewer kind must come from the `name` extension.
+                    payload: { blob_ref: "pdf-n", name: "runbook.pdf" },
+                },
+            ],
+        });
+        rendered = await renderClient(client);
+
+        const tiles = [...rendered.container.querySelectorAll("[data-event-id] .mj_File")];
+        expect(tiles.map((tile) => tile.textContent)).toEqual([
+            expect.stringContaining("build.log"),
+            expect.stringContaining("runbook.pdf"),
+        ]);
+        expect(tiles[0].classList.contains("mj_File_preview")).toBe(false);
+        expect(tiles[1].classList.contains("mj_File_preview")).toBe(true);
+    });
+
+    it("plays an audio attachment in an inline player instead of offering a download", async () => {
+        const client = signedInClient({
+            events: [
+                {
+                    seq: 1,
+                    convo_id: "c1",
+                    ts: 1,
+                    sender: "user:2",
+                    type: "file",
+                    payload: {
+                        blob_ref: "voice-1",
+                        filename: "voice-note.m4a",
+                        content_type: "audio/mp4",
+                        size: 48_000,
+                    },
+                },
+            ],
+        });
+        const mediaUrl = jest.spyOn(client, "mediaUrl").mockResolvedValue("blob:https://journal.example/voice-1");
+        const play = jest.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+        rendered = await renderClient(client);
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        const audio = rendered.container.querySelector<HTMLAudioElement>("[data-event-id] audio");
+        expect(audio).not.toBeNull();
+        expect(audio?.controls).toBe(true);
+        expect(audio?.getAttribute("src")).toBe("blob:https://journal.example/voice-1");
+        expect(mediaUrl).toHaveBeenCalledWith("voice-1");
+        expect(rendered.container.querySelector(".mj_Audio")?.textContent).toContain("voice-note.m4a");
+        expect(rendered.container.querySelector("[data-event-id] a.mj_File")).toBeNull();
+        // Loaded by scrolling into view, not by a click: it must not start playing on its own.
+        expect(play).not.toHaveBeenCalled();
+        play.mockRestore();
+    });
+
+    it("loads a small audio attachment only once its row scrolls into view", async () => {
+        const observers: { callback: IntersectionObserverCallback; disconnected: boolean }[] = [];
+        class FakeObserver {
+            public disconnected = false;
+            public constructor(public callback: IntersectionObserverCallback) {
+                observers.push(this);
+            }
+            public observe(): void {}
+            public disconnect(): void {
+                this.disconnected = true;
+            }
+        }
+        (window as unknown as { IntersectionObserver: unknown }).IntersectionObserver = FakeObserver;
+        try {
+            const client = signedInClient({
+                events: [
+                    {
+                        seq: 1,
+                        convo_id: "c1",
+                        ts: 1,
+                        sender: "user:2",
+                        type: "file",
+                        payload: { blob_ref: "voice-2", filename: "later.m4a", content_type: "audio/mp4", size: 1000 },
+                    },
+                ],
+            });
+            const mediaUrl = jest.spyOn(client, "mediaUrl").mockResolvedValue("blob:https://journal.example/voice-2");
+            const play = jest.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+            rendered = await renderClient(client);
+
+            // Off screen: nothing fetched yet, the row is a plain Play button.
+            expect(mediaUrl).not.toHaveBeenCalled();
+            expect(rendered.container.querySelector("[data-event-id] audio")).toBeNull();
+            const observer = observers.at(-1)!;
+            await act(async () => {
+                observer.callback(
+                    [{ isIntersecting: true } as IntersectionObserverEntry],
+                    observer as unknown as IntersectionObserver,
+                );
+                await Promise.resolve();
+                await Promise.resolve();
+            });
+            expect(mediaUrl).toHaveBeenCalledWith("voice-2");
+            expect(observer.disconnected).toBe(true);
+            expect(rendered.container.querySelector("[data-event-id] audio")).not.toBeNull();
+            expect(play).not.toHaveBeenCalled();
+            play.mockRestore();
+        } finally {
+            delete (window as unknown as { IntersectionObserver?: unknown }).IntersectionObserver;
+        }
+    });
+
+    it("keeps the audio row with a Retry when the fetch fails for a transient reason", async () => {
+        const client = signedInClient({
+            events: [
+                {
+                    seq: 1,
+                    convo_id: "c1",
+                    ts: 1,
+                    sender: "user:2",
+                    type: "file",
+                    payload: { blob_ref: "voice-3", filename: "flaky.m4a", content_type: "audio/mp4", size: 1000 },
+                },
+            ],
+        });
+        const mediaUrl = jest
+            .spyOn(client, "mediaUrl")
+            .mockRejectedValueOnce(new JournalApiError("Service unavailable", 503))
+            .mockResolvedValue("blob:https://journal.example/voice-3");
+        rendered = await renderClient(client);
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        expect(rendered.container.querySelector(".mj_Audio")?.textContent).toContain("flaky.m4a");
+        expect(rendered.container.querySelector("[data-event-id] audio")).toBeNull();
+        await act(async () => button(rendered!.container, "Retry loading flaky.m4a").click());
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        expect(mediaUrl).toHaveBeenCalledTimes(2);
+        expect(rendered.container.querySelector("[data-event-id] audio")?.getAttribute("src")).toBe(
+            "blob:https://journal.example/voice-3",
+        );
+    });
+
+    it("waits for a click before fetching a large audio attachment", async () => {
+        const client = signedInClient({
+            events: [
+                {
+                    seq: 1,
+                    convo_id: "c1",
+                    ts: 1,
+                    sender: "agent:1",
+                    type: "file",
+                    payload: {
+                        blob_ref: "talk-1",
+                        filename: "talk.mp3",
+                        content_type: "audio/mpeg",
+                        size: 200 * 1024 * 1024,
+                    },
+                },
+            ],
+        });
+        const mediaUrl = jest.spyOn(client, "mediaUrl").mockResolvedValue("blob:https://journal.example/talk-1");
+        const play = jest.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+        rendered = await renderClient(client);
+
+        expect(mediaUrl).not.toHaveBeenCalled();
+        expect(rendered.container.querySelector("[data-event-id] audio")).toBeNull();
+        await act(async () => button(rendered!.container, "Play talk.mp3").click());
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        expect(mediaUrl).toHaveBeenCalledWith("talk-1");
+        expect(rendered.container.querySelector("[data-event-id] audio")?.getAttribute("src")).toBe(
+            "blob:https://journal.example/talk-1",
+        );
+        // The click asked to play, so playback starts once the blob is in.
+        expect(play).toHaveBeenCalledTimes(1);
+        play.mockRestore();
+    });
+
+    it("shows a reaped image or file as expired without fetching it", async () => {
+        const client = signedInClient({
+            events: [
+                {
+                    seq: 1,
+                    convo_id: "c1",
+                    ts: 1,
+                    sender: "agent:1",
+                    type: "image",
+                    payload: { blob_ref: "img-gone", content_type: "image/png", expired: true },
+                },
+                {
+                    seq: 2,
+                    convo_id: "c1",
+                    ts: 2,
+                    sender: "agent:1",
+                    type: "file",
+                    payload: { blob_ref: null, filename: "report.pdf", size: 12_000, expired: true },
+                },
+            ],
+        });
+        const mediaUrl = jest.spyOn(client, "mediaUrl");
+        rendered = await renderClient(client);
+
+        const image = rendered.container.querySelector('[data-event-id="1"] .mj_MediaExpired');
+        expect(image?.textContent).toContain("Image expired");
+        const chip = rendered.container.querySelector('[data-event-id="2"] .mj_File_expired');
+        expect(chip?.textContent).toContain("report.pdf");
+        expect(chip?.textContent).toContain("Expired");
+        expect(chip?.tagName).not.toBe("BUTTON");
+        expect(chip?.getAttribute("aria-label")).toBe("File attachment: report.pdf, expired");
+        // The size gives way to the expired label, as on the native apps.
+        expect(rendered.container.querySelector('[data-event-id="2"] .mj_FileSize')).toBeNull();
+        expect(mediaUrl).not.toHaveBeenCalled();
+    });
+
+    it("names the expired chip and the inline audio player from the `name` key", async () => {
+        const client = signedInClient({
+            events: [
+                {
+                    seq: 1,
+                    convo_id: "c1",
+                    ts: 1,
+                    sender: "agent:1",
+                    type: "file",
+                    payload: { blob_ref: null, name: "notes.txt", size: 12_000, expired: true },
+                },
+                {
+                    seq: 2,
+                    convo_id: "c1",
+                    ts: 2,
+                    sender: "user:2",
+                    type: "file",
+                    payload: { blob_ref: "voice-name", name: "memo.m4a", content_type: "audio/mp4", size: 1000 },
+                },
+            ],
+        });
+        jest.spyOn(client, "mediaUrl").mockResolvedValue("blob:https://journal.example/voice-name");
+        rendered = await renderClient(client);
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        const chip = rendered.container.querySelector('[data-event-id="1"] .mj_File_expired');
+        expect(chip?.textContent).toContain("notes.txt");
+        expect(chip?.getAttribute("aria-label")).toBe("File attachment: notes.txt, expired");
+        expect(rendered.container.querySelector('[data-event-id="2"] .mj_Audio')?.textContent).toContain("memo.m4a");
+    });
+
+    it("flips an image or file to expired when the server answers 404", async () => {
+        const client = signedInClient({
+            events: [
+                {
+                    seq: 1,
+                    convo_id: "c1",
+                    ts: 1,
+                    sender: "agent:1",
+                    type: "image",
+                    payload: { blob_ref: "img-404", content_type: "image/png" },
+                },
+                {
+                    seq: 2,
+                    convo_id: "c1",
+                    ts: 2,
+                    sender: "agent:1",
+                    type: "file",
+                    payload: { blob_ref: "bin-404", filename: "dump.bin", size: 10 },
+                },
+            ],
+        });
+        jest.spyOn(client, "mediaUrl").mockRejectedValue(new JournalApiError("not found", 404));
+        rendered = await renderClient(client);
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        expect(rendered.container.querySelector('[data-event-id="1"] .mj_MediaExpired')?.textContent).toContain(
+            "Image expired",
+        );
+        expect(rendered.container.querySelector('[data-event-id="1"] .mj_Error')).toBeNull();
+
+        const download = rendered.container.querySelector<HTMLButtonElement>('[data-event-id="2"] button.mj_File');
+        await act(async () => download?.click());
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        const chip = rendered.container.querySelector('[data-event-id="2"] .mj_File_expired');
+        expect(chip?.textContent).toContain("dump.bin");
+        expect(rendered.container.querySelector('[data-event-id="2"] .mj_Error')).toBeNull();
+    });
+
+    it("shows an expired item in the media viewer as expired, not as a load error", async () => {
+        const client = signedInClient({
+            events: [
+                {
+                    seq: 1,
+                    convo_id: "c1",
+                    ts: 1,
+                    sender: "agent:1",
+                    type: "image",
+                    payload: { blob_ref: "img-ok", content_type: "image/png" },
+                },
+                {
+                    seq: 2,
+                    convo_id: "c1",
+                    ts: 2,
+                    sender: "agent:1",
+                    type: "file",
+                    payload: { blob_ref: "pdf-404", filename: "spec.pdf", content_type: "application/pdf" },
+                },
+            ],
+        });
+        jest.spyOn(client, "mediaUrl").mockImplementation(async (id: string) => {
+            if (id === "img-ok") return "blob:https://journal.example/img-ok";
+            throw new JournalApiError("not found", 404);
+        });
+        rendered = await renderClient(client);
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        const image = rendered.container.querySelector<HTMLImageElement>(".mj_ImageFrame img");
+        await act(async () => image?.click());
+        await act(async () => {
+            document.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight" }));
+        });
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        expect(rendered.container.querySelector(".mj_MediaViewer_count")?.textContent).toBe("2 / 2");
+        const expired = rendered.container.querySelector(".mj_MediaViewer_expired");
+        expect(expired?.textContent).toContain("File expired");
+        expect(expired?.textContent).toContain("spec.pdf");
+        expect(rendered.container.querySelector(".mj_MediaViewer_retry")).toBeNull();
     });
 
     it("opens the media viewer when an inline image is clicked, and closes on Escape", async () => {
@@ -2702,18 +3509,16 @@ describe("UploadConfirmDialog", () => {
     it("makes background keyboard controls inert and restores composer focus when the dialog closes", async () => {
         const client = signedInClient();
         rendered = await renderClient(client);
-        const composer = rendered.container.querySelector<HTMLTextAreaElement>(".mx_BasicMessageComposer_input")!;
+        const composer = rendered.container.querySelector<HTMLTextAreaElement>(".mj_ComposerInput_input")!;
         composer.focus();
 
         await stage(client, [new File(["a"], "a.txt", { type: "text/plain" })]);
 
-        const appContent = rendered.container.querySelector<HTMLElement>(".mx_MatrixChat")!;
+        const appContent = rendered.container.querySelector<HTMLElement>(".mj_App")!;
         const dialog = rendered.container.querySelector<HTMLElement>('[role="dialog"]')!;
         expect(appContent.hasAttribute("inert")).toBe(true);
-        expect(
-            rendered.container.querySelectorAll(".mx_MatrixChat button, .mx_MatrixChat textarea").length,
-        ).toBeGreaterThan(0);
-        for (const control of rendered.container.querySelectorAll(".mx_MatrixChat button, .mx_MatrixChat textarea")) {
+        expect(rendered.container.querySelectorAll(".mj_App button, .mj_App textarea").length).toBeGreaterThan(0);
+        for (const control of rendered.container.querySelectorAll(".mj_App button, .mj_App textarea")) {
             expect(control.closest("[inert]")).toBe(appContent);
         }
         expect(document.activeElement).toBe(dialog.querySelector<HTMLTextAreaElement>("textarea"));
@@ -2939,7 +3744,7 @@ describe("conversation menu controls", () => {
         await openMenu(rendered.container);
         await act(async () => (menuItem(rendered!.container, "Remove from Favorites") as HTMLElement).click());
 
-        expect(rendered.container.querySelector('[data-testid="room-name"]')).toBeNull();
+        expect(rendered.container.querySelector('[data-testid="conversation-name"]')).toBeNull();
         expect(client.getSnapshot().selectedConversationId).toBe(CONVERSATION.id);
     });
 
@@ -3021,7 +3826,7 @@ describe("conversation row affordances", () => {
         const roomB = { ...CONVERSATION, id: "room-b", title: "Room B" };
         pinnedStore.write(SESSION, new Set(["room-b"]));
         rendered = await renderClient(signedInWithRooms([roomA, roomB]));
-        const names = [...rendered.container.querySelectorAll('[data-testid="room-name"]')].map(
+        const names = [...rendered.container.querySelectorAll('[data-testid="conversation-name"]')].map(
             (element) => element.textContent,
         );
         expect(names[0]).toBe("Room B");
@@ -3031,7 +3836,7 @@ describe("conversation row affordances", () => {
     it("includes the visible last-activity timestamp in the row button's accessible name", async () => {
         rendered = await renderClient(signedInClient());
         const row = rendered.container.querySelector<HTMLButtonElement>('button[aria-label^="Open room"]');
-        const timestamp = rendered.container.querySelector(".mj_RoomListTime")?.textContent;
+        const timestamp = rendered.container.querySelector(".mj_ConversationListTime")?.textContent;
         expect(timestamp).toBeTruthy();
         expect(row?.getAttribute("aria-label")).toContain(`last activity ${timestamp}`);
     });
@@ -3077,7 +3882,7 @@ describe("conversation timestamp midnight invalidation", () => {
         internals(client).state = { ...client.getSnapshot(), selectedConversationId: undefined };
         rendered = await renderClient(client);
         const timestamp = (): string | null =>
-            rendered!.container.querySelector(".mj_RoomListTime")?.textContent ?? null;
+            rendered!.container.querySelector(".mj_ConversationListTime")?.textContent ?? null;
         const expectedClock = new Intl.DateTimeFormat(undefined, {
             hour: "numeric",
             minute: "2-digit",
@@ -3138,7 +3943,7 @@ describe("conversation timestamp midnight invalidation", () => {
         const expectedWeekday = new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(
             new Date(lastTimestamp),
         );
-        expect(container.querySelector(".mj_RoomListTime")?.textContent).toBe(expectedWeekday);
+        expect(container.querySelector(".mj_ConversationListTime")?.textContent).toBe(expectedWeekday);
     });
 });
 
@@ -3158,7 +3963,7 @@ describe("mobile layout", () => {
     });
 
     function sidebar(container: HTMLElement): HTMLElement {
-        const wrapper = container.querySelector<HTMLElement>(".mx_LeftPanel_outerWrapper");
+        const wrapper = container.querySelector<HTMLElement>(".mj_Sidebar_outerWrapper");
         if (!wrapper) throw new Error("Missing sidebar wrapper");
         return wrapper;
     }
@@ -3205,7 +4010,7 @@ describe("conversation list tabs", () => {
         archiveStore.write(SESSION, new Set(["archived"]));
         rendered = await renderClient(signedInWithRooms([fav, other, archived]));
         const names = (): Array<string | null> =>
-            [...rendered!.container.querySelectorAll('[data-testid="room-name"]')].map(
+            [...rendered!.container.querySelectorAll('[data-testid="conversation-name"]')].map(
                 (element) => element.textContent,
             );
 
@@ -3243,7 +4048,7 @@ describe("conversation list tabs", () => {
         favoriteStore.write(SESSION, new Set(["fav"]));
         rendered = await renderClient(signedInWithRooms([fav]));
         await act(async () => tabButton(rendered!.container, "favorites").click());
-        const search = rendered.container.querySelector<HTMLInputElement>("#room-list-search-input")!;
+        const search = rendered.container.querySelector<HTMLInputElement>("#conversation-search-input")!;
         await act(async () => {
             const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
             setter?.call(search, "zzz-no-match");
@@ -3282,7 +4087,7 @@ describe("conversation list tabs", () => {
 
     it("shows the active search-empty state when active conversations are hidden by search", async () => {
         rendered = await renderClient(signedInClient());
-        const search = rendered.container.querySelector<HTMLInputElement>("#room-list-search-input")!;
+        const search = rendered.container.querySelector<HTMLInputElement>("#conversation-search-input")!;
         await act(async () => {
             const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
             setter?.call(search, "zzz-no-match");
@@ -3301,7 +4106,7 @@ describe("conversation list tabs", () => {
         archiveStore.write(SESSION, new Set([CONVERSATION.id]));
         rendered = await renderClient(signedInClient());
         await act(async () => tabButton(rendered!.container, "archived").click());
-        const search = rendered.container.querySelector<HTMLInputElement>("#room-list-search-input")!;
+        const search = rendered.container.querySelector<HTMLInputElement>("#conversation-search-input")!;
         await act(async () => {
             const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
             setter?.call(search, "zzz-no-match");
@@ -3315,5 +4120,140 @@ describe("conversation list tabs", () => {
         rendered = await renderClient(client);
         await act(async () => tabButton(rendered!.container, "favorites").click());
         expect(client.getSnapshot().selectedConversationId).toBe(CONVERSATION.id);
+    });
+});
+
+describe("Coordinator notices in the timeline", () => {
+    let rendered: { container: HTMLDivElement; root: Root } | undefined;
+
+    const journalEvent = (seq: number, type: string, payload: JournalEvent["payload"]): JournalEvent => ({
+        seq,
+        convo_id: "c1",
+        ts: seq,
+        sender: "journal",
+        type,
+        payload,
+    });
+
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    afterEach(async () => {
+        if (rendered) {
+            await act(async () => rendered?.root.unmount());
+            rendered.container.remove();
+            rendered = undefined;
+        }
+    });
+
+    it("draws coordinator, routine and consent_decision events as one-line notices, never raw JSON", async () => {
+        const client = signedInClient({
+            events: [
+                journalEvent(1, "coordinator", { role: "assigned" }),
+                journalEvent(2, "routine", {
+                    routine_id: "r1",
+                    name: "daily-sweep",
+                    action: "fired",
+                    outcome: "applied now",
+                }),
+                journalEvent(3, "consent_decision", {
+                    kind: "spawn",
+                    decision: "approve",
+                    request_id: "req-1",
+                    reason: "Follows the box rules",
+                }),
+            ],
+        });
+        rendered = await renderClient(client);
+
+        expect(
+            [...rendered.container.querySelectorAll(".mj_CoordinatorNotice_text")].map((node) => node.textContent),
+        ).toEqual([
+            "This chat is now the Coordinator",
+            "Routine fired · daily-sweep",
+            "Coordinator approved the spawn request — Follows the box rules",
+        ]);
+        expect(rendered.container.querySelector(".mj_Unknown")).toBeNull();
+    });
+
+    it("drops summary events and unparseable Coordinator events from the timeline", async () => {
+        const client = signedInClient({
+            events: [
+                journalEvent(1, "summary", { text: "A rolling summary" }),
+                journalEvent(2, "coordinator", { role: "promoted" }),
+                journalEvent(3, "routine", { action: "fired" }),
+                journalEvent(4, "consent_decision", { kind: "chat" }),
+            ],
+        });
+        rendered = await renderClient(client);
+
+        expect(rendered.container.querySelector(".mj_Unknown")).toBeNull();
+        expect(rendered.container.querySelectorAll("li.mj_EventTile")).toHaveLength(0);
+    });
+});
+
+describe("tracker item cards in the timeline", () => {
+    let rendered: { container: HTMLDivElement; root: Root } | undefined;
+
+    const marker = (seq: number, payload: JournalEvent["payload"]): JournalEvent => ({
+        seq,
+        convo_id: "c1",
+        ts: seq,
+        sender: "journal",
+        type: "item",
+        payload: { item_id: "it_a", num: 7, kind: "question", title: "Pick a database", by: "agent", ...payload },
+    });
+
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    afterEach(async () => {
+        if (rendered) {
+            await act(async () => rendered?.root.unmount());
+            rendered.container.remove();
+            rendered = undefined;
+        }
+    });
+
+    const rowTexts = (container: HTMLElement): string[] =>
+        [...container.querySelectorAll("li.mj_EventTile")].map(
+            (row) =>
+                row.querySelector(".mj_TrackerStatusPill")?.textContent ??
+                row.querySelector(".mj_TrackerInlineNote_line")?.textContent ??
+                row.querySelector(".mj_Markdown")?.textContent ??
+                "",
+        );
+
+    it("shows a decided question once, at its closing marker, with no stale Needs you card", async () => {
+        const client = signedInClient({
+            events: [
+                marker(1, { action: "created", awaiting: "user" }),
+                { seq: 2, convo_id: "c1", ts: 2, sender: "agent:claude", type: "text", payload: { body: "Waiting" } },
+                marker(3, { action: "closed", resolution: "answered", by: "user" }),
+            ],
+        });
+        rendered = await renderClient(client);
+
+        expect(rendered.container.querySelectorAll(".mj_TrackerCard")).toHaveLength(1);
+        expect(rendered.container.querySelector(".mj_TrackerCard_needsyou")).toBeNull();
+        expect(rowTexts(rendered.container)).toEqual(["Waiting", "Closed · Answered"]);
+    });
+
+    it("draws a reopened item's card open again, keeping the reopen note", async () => {
+        const client = signedInClient({
+            events: [
+                marker(1, { action: "created", awaiting: "user" }),
+                marker(2, { action: "closed", resolution: "answered", comment: { id: "c", body: "Postgres" } }),
+                marker(3, { action: "reopened", awaiting: "user", by: "user" }),
+            ],
+        });
+        rendered = await renderClient(client);
+
+        expect(rendered.container.querySelectorAll(".mj_TrackerCard")).toHaveLength(1);
+        expect(rendered.container.querySelector(".mj_TrackerCard_needsyou")).not.toBeNull();
+        expect(rendered.container.querySelector(".mj_TrackerCard_comment")).toBeNull();
+        expect(rowTexts(rendered.container)).toEqual(["Needs you", "You reopened #7 · Pick a database"]);
     });
 });

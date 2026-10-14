@@ -426,11 +426,11 @@ describe("useAdaptiveHeader", () => {
         mountedProbes.push({ container, root });
 
         await act(async () => root.render(React.createElement(MatronApp, { client })));
-        expect(container.querySelector(".mx_RoomView_body")).toBeNull();
+        expect(container.querySelector(".mj_ChatView_body")).toBeNull();
         expect(observers).toHaveLength(0);
 
         await act(async () => client.selectConversation(PARENT.id));
-        const firstBody = container.querySelector<HTMLElement>(".mx_RoomView_body")!;
+        const firstBody = container.querySelector<HTMLElement>(".mj_ChatView_body")!;
         expect(firstBody).not.toBeNull();
         expect(observers).toHaveLength(1);
         expect(observers[0].observe).toHaveBeenCalledWith(firstBody);
@@ -441,11 +441,11 @@ describe("useAdaptiveHeader", () => {
         expect(container.querySelector(".mj_UsageCluster_collapsed")).not.toBeNull();
 
         await act(async () => client.clearSelection());
-        expect(container.querySelector(".mx_RoomView_body")).toBeNull();
+        expect(container.querySelector(".mj_ChatView_body")).toBeNull();
         expect(observers[0].disconnect).toHaveBeenCalledTimes(1);
 
         await act(async () => client.selectConversation(PARENT.id));
-        const secondBody = container.querySelector<HTMLElement>(".mx_RoomView_body")!;
+        const secondBody = container.querySelector<HTMLElement>(".mj_ChatView_body")!;
         expect(secondBody).not.toBe(firstBody);
         expect(observers).toHaveLength(2);
         expect(observers[1].observe).toHaveBeenCalledWith(secondBody);

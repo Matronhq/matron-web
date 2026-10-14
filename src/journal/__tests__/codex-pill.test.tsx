@@ -166,7 +166,7 @@ describe("Codex and Claude worker pills", () => {
 
         rendered = await render(<MatronApp client={client} />);
 
-        const row = rendered.container.querySelector(".mj_RoomListItem_sub");
+        const row = rendered.container.querySelector(".mj_ConversationListItem_sub");
         expect(row?.querySelector(".mj_OpenAIMark")).not.toBeNull();
         expect(row?.querySelector(".mj_Spinner")).not.toBeNull();
         expect(row?.getAttribute("aria-label")).toContain(", running,");
@@ -189,7 +189,7 @@ describe("Codex and Claude worker pills", () => {
         );
         await act(async () => rendered?.root.render(<MatronApp client={finishedClient} />));
 
-        expect(rendered.container.querySelector(".mj_RoomListItem_sub")).toBeNull();
+        expect(rendered.container.querySelector(".mj_ConversationListItem_sub")).toBeNull();
         const liveRegions = rendered.container.querySelectorAll(".mj_SubagentOutcomeStatus");
         expect(liveRegions).toHaveLength(1);
         expect(liveRegions[0]?.textContent).toBe("room:codex:review-1, interrupted; room:sub:review-2, failed");

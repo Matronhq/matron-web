@@ -109,6 +109,22 @@ test("leaves an unknown language fence unhighlighted without throwing", async ()
     expect(code?.querySelectorAll('[class^="hljs-"]').length).toBe(0);
 });
 
+test.each(["bash", "go", "python", "rust", "sql", "yaml", "diff", "json", "css", "html"])(
+    "highlights a %s fence",
+    async (lang) => {
+        const container = await renderMarkdown(`\`\`\`${lang}\nfoo = "bar" # 1\n\`\`\``);
+        expect(container.querySelector("code")?.classList.contains("hljs")).toBe(true);
+    },
+);
+
+test("leaves a language outside the curated set plain", async () => {
+    const container = await renderMarkdown("```java\nclass A {}\n```");
+    const code = container.querySelector("code");
+
+    expect(code?.className).toBe("hljs language-java");
+    expect(code?.querySelectorAll('[class^="hljs-"]').length).toBe(0);
+});
+
 test("omits highlighting while streaming", async () => {
     const container = await renderMarkdown("```ts\nconst answer: number = 42;\n```", true);
     const code = container.querySelector("code");

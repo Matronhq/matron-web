@@ -25,6 +25,17 @@ describe("JournalDatabase", () => {
         globalThis.indexedDB = new IDBFactory();
     });
 
+    it("lets exactly one of two tabs apply an event they both receive", async () => {
+        // Two tabs open the same database; desktop notifications rely on only one applying it.
+        const tabA = await JournalDatabase.open("https://journal.example", 1, "alice");
+        const tabB = await JournalDatabase.open("https://journal.example", 1, "alice");
+        const applied = await Promise.all([
+            tabA.applyJournal(event(1, "agent:dev")),
+            tabB.applyJournal(event(1, "agent:dev")),
+        ]);
+        expect(applied.filter(Boolean)).toHaveLength(1);
+    });
+
     it("applies ordered frames atomically and ignores replay duplicates", async () => {
         const database = await JournalDatabase.open("https://journal.example", 1, "alice");
         await database.replaceWithSnapshot({

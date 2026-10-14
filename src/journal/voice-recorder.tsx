@@ -241,7 +241,7 @@ export function useVoiceRecorder({
                     context.clearRect(0, 0, width, height);
                     const computed = getComputedStyle(canvas);
                     context.strokeStyle =
-                        computed.getPropertyValue("--cpd-color-icon-accent-primary").trim() || computed.color;
+                        computed.getPropertyValue("--mj-color-icon-accent-primary").trim() || computed.color;
                     context.lineWidth = Math.max(1, window.devicePixelRatio);
                     context.beginPath();
                     for (let index = 0; index < values.length; index += 1) {
