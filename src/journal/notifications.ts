@@ -566,9 +566,15 @@ export class DesktopNotifier {
         const [notify, coordinator] = await Promise.allSettled([api.notifySettings(), api.coordinator()]);
         if (sessionEpoch !== this.sessionEpoch) return;
         if (coordinator.status === "fulfilled") this.coordinatorId = parseCoordinatorId(coordinator.value);
-        if (epoch !== this.settingsEpoch) return;
+        const answer = notify.status === "fulfilled" ? parseNotifyView(notify.value) : null;
+        if (epoch !== this.settingsEpoch) {
+            // A live frame landed meanwhile and holds the newer synced part, but frames never carry
+            // this device's level: take that from the answer.
+            if (answer && this.view) this.view = { ...this.view, device_level: answer.device_level };
+            return;
+        }
         if (notify.status === "fulfilled") {
-            this.view = parseNotifyView(notify.value);
+            this.view = answer;
         } else if (notify.reason instanceof JournalApiError && notify.reason.status === 404) {
             // A journal without notification settings: the fallback rules apply.
             this.view = null;
@@ -605,7 +611,7 @@ export class DesktopNotifier {
         const now = this.env.now();
         if (typeof event.ts === "number" && event.ts < now - STALE_EVENT_MS) return;
         // A subagent's child conversation never notifies (the journal never pushes for one either).
-        if (previous?.parent_convo_id) return;
+        if (previous?.parent_convo_id || typeof event.payload.parent_convo_id === "string") return;
         const cls = classifyEvent(event, previous?.session_state);
         if (!cls) return;
         const key = eventKey(cls, { isCoordinator: event.convo_id === this.coordinatorId, isRoom: false });
@@ -728,10 +734,13 @@ export class DesktopNotifier {
     }
 
     private writePrefs(change: { enabled?: boolean; sound?: boolean }): void {
+        const next = { ...this.readPrefs(), ...this.memoryPrefs, ...change };
         try {
-            this.env.storage?.setItem(PREFS_KEY, JSON.stringify({ ...this.readPrefs(), ...change }));
+            if (!this.env.storage) throw new Error("no storage");
+            this.env.storage.setItem(PREFS_KEY, JSON.stringify(next));
+            this.memoryPrefs = {};
         } catch {
-            this.memoryPrefs = { ...this.memoryPrefs, ...change };
+            this.memoryPrefs = next;
         }
     }
 

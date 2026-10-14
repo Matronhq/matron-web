@@ -480,6 +480,37 @@ describe("DesktopNotifier", () => {
         expect(notification.shown).toHaveLength(0);
     });
 
+    it("keeps this device's level when a live frame lands while the settings are being read", async () => {
+        let answer!: (value: unknown) => void;
+        const api: Api = {
+            notifySettings: jest.fn(() => new Promise((resolve) => (answer = resolve))),
+            coordinator: jest.fn().mockResolvedValue({ convo_id: null }),
+        };
+        const { client, notifier, notification } = setup({ api });
+        notifier.start();
+        frame(client, { kind: "notify", settings: { mode: "all", has_coordinator: false, convos: [] } });
+        answer({ mode: "all", device_level: "off" });
+        await flush();
+        deliver(client, event({ type: "prompt" }));
+        expect(notification.shown).toHaveLength(0);
+    });
+
+    it("stays quiet for an event that names a parent conversation", async () => {
+        const { client, notifier, notification } = setup();
+        notifier.start();
+        await flush();
+        deliver(client, event({ convo_id: "new-child", type: "prompt", payload: { parent_convo_id: "c2" } }));
+        expect(notification.shown).toHaveLength(0);
+    });
+
+    it("remembers its switches without storage", () => {
+        const { notifier } = setup({ env: { storage: undefined } });
+        notifier.disable();
+        expect(notifier.getSnapshot().enabled).toBe(false);
+        notifier.setSound(false);
+        expect(notifier.getSnapshot()).toMatchObject({ enabled: false, sound: false });
+    });
+
     it("shows nothing until the browser allows it, and nothing once turned off", async () => {
         const blocked = setup({ permission: "default" });
         blocked.notifier.start();
