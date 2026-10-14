@@ -76,5 +76,10 @@ limit in the same pull request so the gain can't quietly slip back. Raise a limi
 reason in the pull request description. A budgeted metric that a run fails to measure counts as a
 breach.
 
+Limits sit about two to three times above the CI medians (bundle sizes about 10 KB above). That
+absorbs runner noise but still catches the regressions the harness was built for. For example, when
+every row re-rendered on each streamed token, the longest task while streaming was 190–340 ms on CI.
+It is now 0 ms, and the limit is 150 ms.
+
 The job runs the journal at a pinned commit (see `.github/workflows/perf.yml`), so a journal change
 can't break it unannounced. Move the pin forward in a pull request of its own.
