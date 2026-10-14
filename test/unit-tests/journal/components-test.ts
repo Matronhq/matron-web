@@ -2062,6 +2062,93 @@ describe("attachment composer", () => {
         play.mockRestore();
     });
 
+    it("loads a small audio attachment only once its row scrolls into view", async () => {
+        const observers: { callback: IntersectionObserverCallback; disconnected: boolean }[] = [];
+        class FakeObserver {
+            public disconnected = false;
+            public constructor(public callback: IntersectionObserverCallback) {
+                observers.push(this);
+            }
+            public observe(): void {}
+            public disconnect(): void {
+                this.disconnected = true;
+            }
+        }
+        (window as unknown as { IntersectionObserver: unknown }).IntersectionObserver = FakeObserver;
+        try {
+            const client = signedInClient({
+                events: [
+                    {
+                        seq: 1,
+                        convo_id: "c1",
+                        ts: 1,
+                        sender: "user:2",
+                        type: "file",
+                        payload: { blob_ref: "voice-2", filename: "later.m4a", content_type: "audio/mp4", size: 1000 },
+                    },
+                ],
+            });
+            const mediaUrl = jest.spyOn(client, "mediaUrl").mockResolvedValue("blob:https://journal.example/voice-2");
+            const play = jest.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+            rendered = await renderClient(client);
+
+            // Off screen: nothing fetched yet, the row is a plain Play button.
+            expect(mediaUrl).not.toHaveBeenCalled();
+            expect(rendered.container.querySelector("[data-event-id] audio")).toBeNull();
+            const observer = observers.at(-1)!;
+            await act(async () => {
+                observer.callback(
+                    [{ isIntersecting: true } as IntersectionObserverEntry],
+                    observer as unknown as IntersectionObserver,
+                );
+                await Promise.resolve();
+                await Promise.resolve();
+            });
+            expect(mediaUrl).toHaveBeenCalledWith("voice-2");
+            expect(observer.disconnected).toBe(true);
+            expect(rendered.container.querySelector("[data-event-id] audio")).not.toBeNull();
+            expect(play).not.toHaveBeenCalled();
+            play.mockRestore();
+        } finally {
+            delete (window as unknown as { IntersectionObserver?: unknown }).IntersectionObserver;
+        }
+    });
+
+    it("keeps the audio row with a Retry when the fetch fails for a transient reason", async () => {
+        const client = signedInClient({
+            events: [
+                {
+                    seq: 1,
+                    convo_id: "c1",
+                    ts: 1,
+                    sender: "user:2",
+                    type: "file",
+                    payload: { blob_ref: "voice-3", filename: "flaky.m4a", content_type: "audio/mp4", size: 1000 },
+                },
+            ],
+        });
+        const mediaUrl = jest
+            .spyOn(client, "mediaUrl")
+            .mockRejectedValueOnce(new JournalApiError("Service unavailable", 503))
+            .mockResolvedValue("blob:https://journal.example/voice-3");
+        rendered = await renderClient(client);
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        expect(rendered.container.querySelector(".mj_Audio")?.textContent).toContain("flaky.m4a");
+        expect(rendered.container.querySelector("[data-event-id] audio")).toBeNull();
+        await act(async () => button(rendered!.container, "Retry loading flaky.m4a").click());
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        expect(mediaUrl).toHaveBeenCalledTimes(2);
+        expect(rendered.container.querySelector("[data-event-id] audio")?.getAttribute("src")).toBe(
+            "blob:https://journal.example/voice-3",
+        );
+    });
+
     it("waits for a click before fetching a large audio attachment", async () => {
         const client = signedInClient({
             events: [

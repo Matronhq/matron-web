@@ -3833,8 +3833,10 @@ function ExpiredFile({ filename, contentType }: { filename?: string; contentType
     );
 }
 
-// Voice notes and other short clips load straight into the player, like inline images; past this
-// size the player waits for a click so a long recording is not downloaded just by scrolling past.
+// Voice notes and other short clips load into the player once their row scrolls into view, like
+// the viewer's thumbnails; past this size the player waits for a click so a long recording is not
+// downloaded just by scrolling past. Opening a conversation full of voice notes therefore fetches
+// only the ones on screen, not every clip in the history.
 const AUDIO_AUTOLOAD_MAX_BYTES = 20 * 1024 * 1024;
 
 function InlineAudio({
@@ -3851,12 +3853,32 @@ function InlineAudio({
     size?: number;
 }): React.ReactElement {
     const autoload = size !== undefined && size <= AUDIO_AUTOLOAD_MAX_BYTES;
-    const [requested, setRequested] = useState(autoload);
+    // `clicked` asks for playback once the blob is in; `inView` only loads it.
+    const [clicked, setClicked] = useState(false);
+    const [inView, setInView] = useState(false);
+    const holderRef = useRef<HTMLButtonElement>(null);
+    useEffect(() => {
+        if (!autoload || inView) return undefined;
+        const holder = holderRef.current;
+        if (!holder) return undefined;
+        if (typeof IntersectionObserver === "undefined") {
+            setInView(true); // jsdom / old engines: degrade to eager
+            return undefined;
+        }
+        const observer = new IntersectionObserver((entries) => {
+            if (entries.some((entry) => entry.isIntersecting)) {
+                setInView(true);
+                observer.disconnect();
+            }
+        });
+        observer.observe(holder);
+        return () => observer.disconnect();
+    }, [autoload, inView]);
     const name = filename || "audio";
     const sizeLabel = formatBytes(size);
-    if (!requested) {
+    if (!clicked && !(autoload && inView)) {
         return (
-            <button className="mj_File" onClick={() => setRequested(true)} aria-label={`Play ${name}`}>
+            <button ref={holderRef} className="mj_File" onClick={() => setClicked(true)} aria-label={`Play ${name}`}>
                 <AudioFileIcon className="mj_FileIcon" />
                 <span className="mj_FileName">{name}</span>
                 {sizeLabel && <span className="mj_FileSize">{sizeLabel}</span>}
@@ -3870,7 +3892,7 @@ function InlineAudio({
             filename={filename}
             contentType={contentType}
             sizeLabel={sizeLabel}
-            autoPlay={!autoload}
+            autoPlay={clicked}
         />
     );
 }
@@ -3892,7 +3914,12 @@ function InlineAudioPlayer({
 }): React.ReactElement {
     // Same authenticated blob as every other attachment, re-typed so an octet-stream blob still
     // plays.
-    const { url, error, expired } = useRenderableObjectUrl(client, { mediaId, kind: "audio", filename, contentType });
+    const { url, error, expired, retry } = useRenderableObjectUrl(client, {
+        mediaId,
+        kind: "audio",
+        filename,
+        contentType,
+    });
     const audioRef = useRef<HTMLAudioElement>(null);
     // A click on Play starts playback once the blob arrives. The fetch outlives the click's
     // user-activation window, so a browser with a strict autoplay policy may refuse: the player
@@ -3903,8 +3930,29 @@ function InlineAudioPlayer({
         played?.catch(() => undefined);
     }, [autoPlay, url]);
     if (expired) return <ExpiredFile filename={filename} contentType={contentType} />;
-    if (error) return <div className="mj_Error">{error}</div>;
     const name = filename || "audio";
+    if (error) {
+        // A transient failure (a 404 is `expired` above): keep the row and offer another try.
+        return (
+            <div className="mj_Audio">
+                <div className="mj_Audio_head">
+                    <AudioFileIcon className="mj_FileIcon" aria-hidden />
+                    <span className="mj_FileName">{name}</span>
+                </div>
+                <div className="mj_Error">
+                    {error}{" "}
+                    <button
+                        type="button"
+                        className="mj_Audio_retry"
+                        onClick={retry}
+                        aria-label={`Retry loading ${name}`}
+                    >
+                        Retry
+                    </button>
+                </div>
+            </div>
+        );
+    }
     return (
         <div className="mj_Audio">
             <div className="mj_Audio_head">

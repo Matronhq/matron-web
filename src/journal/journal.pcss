@@ -3085,6 +3085,22 @@ button.mj_File {
     height: 36px;
 }
 
+.mj_Audio_retry {
+    border: 1px solid var(--cpd-color-border-interactive-secondary);
+    border-radius: var(--cpd-radius-md);
+    background: var(--cpd-color-bg-canvas-raised);
+    color: var(--cpd-color-text-primary);
+    font: var(--cpd-font-body-sm-regular);
+    padding: 2px var(--cpd-space-2x);
+    margin-left: var(--cpd-space-1x);
+    cursor: pointer;
+}
+
+.mj_Audio_retry:focus-visible {
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: 2px;
+}
+
 /* Reflow fix: when the bridge sent dims, the frame carries an inline aspect-ratio + width so
    its box is reserved before the blob decodes. The sized modifier caps it to the image
    max-width and holds height via the aspect ratio; the img fills the frame exactly. Without
