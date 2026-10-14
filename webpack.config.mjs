@@ -111,7 +111,6 @@ export default (_environment, arguments_) => {
             new HtmlWebpackPlugin({ template: "./src/index.html", minify: !development }),
             new CopyWebpackPlugin({
                 patterns: [
-                    { from: "res/.well-known", to: ".well-known", noErrorOnMissing: true },
                     { from: "res/manifest.json", noErrorOnMissing: true },
                     { from: "res/icons", to: "icons", noErrorOnMissing: true },
                     { from: "res/opengraph.png", noErrorOnMissing: true },

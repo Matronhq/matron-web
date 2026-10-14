@@ -309,10 +309,28 @@ const events: JournalEvent[] = [
     {
         seq: 20,
         convo_id: "c1",
-        ts: T + 840,
+        ts: T + 835,
         sender: "journal",
         type: "summary",
         payload: { text: "Rolling summary of this conversation" },
+    },
+    {
+        // File events as the bridge and the native apps send them: the name rides in `name`
+        // (the media-send key), not the older `filename`.
+        seq: 21,
+        convo_id: "c1",
+        ts: T + 840,
+        sender: "agent:claude",
+        type: "file",
+        payload: { blob_ref: "fixture-log", name: "deploy-2026-07-25.log", content_type: "text/plain", size: 18_432 },
+    },
+    {
+        seq: 22,
+        convo_id: "c1",
+        ts: T + 860,
+        sender: "agent:claude",
+        type: "file",
+        payload: { blob_ref: "fixture-pdf", name: "rollback-runbook.pdf", size: 96_256 },
     },
 ];
 
@@ -673,8 +691,19 @@ if (trackerMode === "inbox" || trackerMode === "item") {
                 : workingParam === "queued"
                   ? { state: "queued", since: now - 2_000, until: now + 10 * 60_000 }
                   : null;
+        // ?actions=offered|chosen: the item's own one-tap answers under its body, untapped or with
+        // the user's choice marked (the item then waits on the agent).
+        const actionsParam = fixtureParams.get("actions");
+        const itemActions =
+            actionsParam === "offered" || actionsParam === "chosen"
+                ? {
+                      actions: ["Confirm the order", "Discuss first"],
+                      chosen_action: actionsParam === "chosen" ? "Confirm the order" : null,
+                      awaiting: actionsParam === "chosen" ? "agent" : "user",
+                  }
+                : {};
         tracker.trackerItem = {
-            item: { ...items[0], working },
+            item: { ...items[0], working, ...itemActions },
             comments: [
                 {
                     id: "cm_1",
