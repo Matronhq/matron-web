@@ -35,12 +35,21 @@ import { type DraftStore, makeDraftStore } from "./composer-drafts";
 import { effectiveUnread } from "./conversation-flags";
 import { type RowContextMenu, useRowContextMenu } from "./context-menu";
 import { dateTimeFormat } from "./date-format";
+import {
+    FOCUS_HIGHLIGHT_MS,
+    focusScrollTop,
+    isJumpToLastOwnShortcut,
+    isMacPlatform,
+    jumpToLastOwnShortcutLabel,
+    landingSeq,
+} from "./jump-to-message";
 import { GoToNumberDialog, goToNumberShortcutLabel, NumberSearchResult, useGoToNumberShortcut } from "./goto-number";
 import { PinDialog, type PinDialogTarget } from "./PinDialogs";
 import { pinGlyph, successorHintText } from "./pins";
 import {
     AnthropicMark,
     ArchiveIcon,
+    ArrowUpToLineIcon,
     AttachmentIcon,
     CheckIcon,
     ChevronDownIcon,
@@ -145,6 +154,7 @@ import {
     childSidebarPlacement,
     type ClientState,
     type MessageSearchState,
+    type SearchHit,
     type Conversation,
     type ConvoPin,
     conversationTitle,
@@ -998,7 +1008,7 @@ export function MessageSearchResults({
     query: string;
     search: MessageSearchState | undefined;
     now: number;
-    onSelect: (conversationId: string) => void;
+    onSelect: (hit: SearchHit) => void;
 }): React.ReactElement | null {
     // Only surface the section for a live query. `search` can lag the box by a debounce interval
     // or a stale query, so gate on the current box being non-empty AND the results being for it.
@@ -1033,7 +1043,7 @@ export function MessageSearchResults({
                             <button
                                 type="button"
                                 className="mj_SearchHit"
-                                onClick={() => onSelect(hit.convo_id)}
+                                onClick={() => onSelect(hit)}
                                 aria-label={`Open conversation ${hit.title || "Untitled"}`}
                             >
                                 <span className="mj_SearchHit_top">
@@ -1903,7 +1913,7 @@ function ConversationListView({
                                         query={query}
                                         search={state.messageSearch}
                                         now={renderNow}
-                                        onSelect={(conversationId) => void client.selectConversation(conversationId)}
+                                        onSelect={(hit) => void client.focusMessage(hit.convo_id, hit.seq)}
                                     />
                                 </div>
                             </nav>
@@ -4870,6 +4880,91 @@ function Timeline({
         void client.loadOlderHistory();
     };
 
+    // Jump to a message: once the client has loaded the history holding the target seq it hands
+    // over `focusTarget`; scroll that row into view and flash it. Rows are found by their
+    // data-event-id, so the memoised rows take no extra props. Off-screen rows may be laid out at
+    // an estimated height (content-visibility), and sizing them for real as they come into view
+    // moves the target, so the position is re-checked each frame until it holds still — and given
+    // up the moment the user scrolls themself.
+    const focusRun = useRef(0);
+    const focusHighlight = useRef<{ row: HTMLElement; timer: ReturnType<typeof setTimeout> } | undefined>(undefined);
+    const focusTarget = state.focusTarget;
+    useLayoutEffect(() => {
+        const node = scrollRef.current;
+        if (!node || !focusTarget || focusTarget.conversationId !== state.selectedConversationId) return;
+        client.clearFocusTarget(focusTarget.token);
+        const seq = landingSeq(
+            visibleEvents.map((event) => event.seq),
+            focusTarget.seq,
+        );
+        const rowFor = (): HTMLElement | null =>
+            seq === undefined ? null : node.querySelector<HTMLElement>(`[data-event-id="${seq}"]`);
+        const row = rowFor();
+        if (!row) return;
+        cancelPendingScrollFrame();
+        historyScrollAnchor.current = undefined;
+        historyScrollRestored.current = false;
+        setFollow(false);
+
+        const run = ++focusRun.current;
+        const stop = (): void => {
+            if (focusRun.current === run) focusRun.current += 1;
+        };
+        const userScroll = ["wheel", "touchstart", "pointerdown", "keydown"] as const;
+        for (const type of userScroll) node.addEventListener(type, stop, { once: true, passive: true });
+        let frames = 0;
+        let still = 0;
+        const place = (): void => {
+            const target = focusRun.current === run ? rowFor() : null;
+            if (target) {
+                const top = focusScrollTop(node, target);
+                if (Math.abs(node.scrollTop - top) > 1) {
+                    node.scrollTop = top;
+                    still = 0;
+                } else {
+                    still += 1;
+                }
+            }
+            if (target && still < 3 && ++frames < 60) {
+                requestAnimationFrame(place);
+                return;
+            }
+            for (const type of userScroll) node.removeEventListener(type, stop);
+        };
+        place();
+
+        const previous = focusHighlight.current;
+        if (previous) {
+            clearTimeout(previous.timer);
+            previous.row.classList.remove("mj_EventTile_focused");
+        }
+        row.classList.add("mj_EventTile_focused");
+        const timer = setTimeout(() => {
+            row.classList.remove("mj_EventTile_focused");
+            if (focusHighlight.current?.row === row) focusHighlight.current = undefined;
+        }, FOCUS_HIGHLIGHT_MS);
+        focusHighlight.current = { row, timer };
+    }, [client, focusTarget, state.selectedConversationId, visibleEvents, cancelPendingScrollFrame]);
+    useEffect(
+        () => () => {
+            focusRun.current += 1;
+            if (focusHighlight.current) clearTimeout(focusHighlight.current.timer);
+        },
+        [],
+    );
+
+    // ⇧⌘U / Ctrl+Shift+U: the floating pill's shortcut, live whenever a conversation is open
+    // (the pill itself only shows once the reader has scrolled away from the tail).
+    useEffect(() => {
+        const onKeyDown = (event: KeyboardEvent): void => {
+            if (event.defaultPrevented || !isJumpToLastOwnShortcut(event, isMacPlatform())) return;
+            event.preventDefault();
+            void client.jumpToLastOwnMessage();
+        };
+        document.addEventListener("keydown", onKeyDown);
+        return () => document.removeEventListener("keydown", onKeyDown);
+    }, [client]);
+
     // The activity indicator ('Thinking' / 'Running …') and the fire-and-forget tool-call cards
     // both ride ephemeral frames whose turn-end 'idle'/'end' frame is never replayed
     // (lib/journal-publisher.js publishActivity), so a dropped final frame would otherwise strand
@@ -4994,6 +5089,17 @@ function Timeline({
                     </ol>
                 </div>
             </div>
+            {!isFollowingTail && (
+                <button
+                    type="button"
+                    className="mj_JumpToLastOwn"
+                    aria-label="Jump to my last message"
+                    title={`Jump to my last message (${jumpToLastOwnShortcutLabel()})`}
+                    onClick={() => void client.jumpToLastOwnMessage()}
+                >
+                    <ArrowUpToLineIcon aria-hidden />
+                </button>
+            )}
             {!isFollowingTail && (
                 <button
                     className="mj_JumpToBottom"

@@ -1195,6 +1195,64 @@ textarea {
     outline-offset: 2px;
 }
 
+/* "Jump to my last message": sits in the top corner of the timeline once the reader has scrolled
+   away from the tail, the same shape as the jump-to-bottom button in the bottom corner. */
+.mj_JumpToLastOwn {
+    position: absolute;
+    z-index: 2;
+    top: var(--cpd-space-4x);
+    right: var(--cpd-space-4x);
+    display: inline-flex;
+    width: 36px;
+    height: 36px;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: var(--cpd-color-bg-canvas-default);
+    box-shadow: var(--cpd-shadow-float);
+    color: var(--cpd-color-text-action-accent);
+    cursor: pointer;
+    font-size: var(--cpd-font-size-lg);
+    line-height: 1;
+}
+
+.mj_JumpToLastOwn:hover {
+    background: var(--cpd-color-bg-subtle-primary);
+}
+
+.mj_JumpToLastOwn:focus-visible {
+    outline: 2px solid var(--cpd-color-icon-accent-primary);
+    outline-offset: 2px;
+}
+
+/* The row a jump landed on (a search hit, a milestone, my last message): a tint that fades out. */
+.mx_EventTile.mj_EventTile_focused {
+    border-radius: var(--cpd-radius-bubble);
+    animation: mj-focus-flash 2s ease-out forwards;
+}
+
+@keyframes mj-focus-flash {
+    0%,
+    40% {
+        background: var(--cpd-color-bg-accent-tint);
+        box-shadow: 0 0 0 4px var(--cpd-color-bg-accent-tint);
+    }
+    100% {
+        background: transparent;
+        box-shadow: 0 0 0 4px transparent;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .mx_EventTile.mj_EventTile_focused {
+        animation: none;
+        background: var(--cpd-color-bg-accent-tint);
+        box-shadow: 0 0 0 4px var(--cpd-color-bg-accent-tint);
+    }
+}
+
 .mx_EventTile[data-layout="bubble"] .mx_EventTile_line > a {
     color: inherit;
     text-decoration: none;

@@ -468,6 +468,12 @@ export interface InboxDone {
     error?: string;
 }
 
+export interface FocusTarget {
+    conversationId: string;
+    seq: number;
+    token: number;
+}
+
 export interface ClientState {
     phase: "loading" | "signed-out" | "signed-in";
     config: MatronConfig;
@@ -510,6 +516,10 @@ export interface ClientState {
     dragActive: boolean;
     stagedUploads?: StagedUploads;
     sendTick: number;
+    // A row the open timeline should scroll to and flash once it renders (a search hit, a
+    // milestone, "jump to my last message"). Set by client.focusMessage after the history holding
+    // `seq` has loaded; the timeline clears it by `token` once it has landed.
+    focusTarget?: FocusTarget;
     // Message-content search hits (Apple-parity "Messages" section). Undefined until the first
     // search of a session; cleared back to undefined when the search box empties.
     messageSearch?: MessageSearchState;
