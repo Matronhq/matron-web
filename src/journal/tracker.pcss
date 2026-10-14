@@ -1171,6 +1171,11 @@ button.mj_TrackerCrumb:hover {
     cursor: default;
     opacity: 0.6;
 }
+/* The item's own answers sit between the body card and the thread, the thread's distance from each. */
+.mj_TrackerItemActions {
+    margin-top: 0;
+    margin-bottom: 18px;
+}
 /* The user's answer: filled, and it stays fully legible on a closed item. */
 .mj_TrackerAction_chosen,
 .mj_TrackerAction_chosen:hover:not(:disabled),
@@ -2466,4 +2471,26 @@ button.mj_TrackerCard {
     background: var(--cpd-color-bg-accent-tint, var(--cpd-color-bg-subtle-secondary));
     color: var(--cpd-color-text-action-accent);
     font: var(--cpd-font-body-xs-semibold, 600 12px/16px var(--cpd-font-family-ui));
+}
+
+/* Coordinator / routine / consent-decision notices: the MissionNotice line, but not a button. */
+.mj_CoordinatorNotice {
+    cursor: default;
+    max-width: 100%;
+}
+.mj_CoordinatorNotice_text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.mj_CoordinatorNotice_twoLines .mj_CoordinatorNotice_text {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    white-space: normal;
+}
+.mj_CoordinatorNotice_glyph {
+    flex: none;
+    font-size: 14px;
 }
