@@ -27,8 +27,10 @@ import {
     type TrackerComment,
     type TrackerCommentWrite,
     type TrackerItem,
+    type TrackerItemCreate,
     type TrackerItemKind,
     type TrackerItemState,
+    type TrackerRankChange,
     type TrackerLink,
     type TrackerResolution,
     type Memory,
@@ -72,6 +74,8 @@ type TrackerMissionListState = "open" | "closed";
 
 /** `GET /items` query params (all optional; server clamps `limit` to ≤500). */
 interface ItemsFilter {
+    /** Only the items filed from this conversation. */
+    convo?: string;
     /** `done` is For you's Done view: closed, or answered and no longer waiting on the user. */
     state?: TrackerItemState | "done";
     /** One kind, or several: any of them (a journal that predates the list form answers 400). */
@@ -516,6 +520,7 @@ export class JournalApi {
     /** GET /items — the filtered/sorted item list (`next_cursor` paginates; server clamps limit ≤500). */
     public items(filter: ItemsFilter = {}): Promise<{ items: TrackerItem[]; next_cursor: string | null }> {
         const query = new URLSearchParams();
+        if (filter.convo) query.set("convo", filter.convo);
         if (filter.state) query.set("state", filter.state);
         if (filter.kind) query.set("kind", typeof filter.kind === "string" ? filter.kind : filter.kind.join(","));
         if (filter.awaiting) query.set("awaiting", filter.awaiting);
@@ -531,6 +536,16 @@ export class JournalApi {
     /** GET /items/:id — the item plus its comment thread (status rows carry `meta.from`/`meta.to`). */
     public item(id: string | number): Promise<{ item: TrackerItem; comments: TrackerComment[] }> {
         return this.json<{ item: TrackerItem; comments: TrackerComment[] }>(`/items/${encodeTrackerId(id)}`);
+    }
+
+    /** POST /items — file a new item from the user into a conversation. */
+    public createItem(body: TrackerItemCreate, idemKey?: string): Promise<{ item: TrackerItem }> {
+        return this.json<{ item: TrackerItem }>("/items", { method: "POST", body, ...idempotencyHeader(idemKey) });
+    }
+
+    /** POST /items/:id/rank — move an open task in the ordered list. */
+    public rankItem(id: string | number, change: TrackerRankChange): Promise<{ item: TrackerItem }> {
+        return this.json<{ item: TrackerItem }>(`/items/${encodeTrackerId(id)}/rank`, { method: "POST", body: change });
     }
 
     /** PATCH /items/:id — edit title/body/labels/links/awaiting or move the item to a mission. */

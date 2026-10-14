@@ -36,6 +36,7 @@ import {
 } from "./pins";
 import { mergeSessionStatus } from "./status";
 import { appendFeedPage, kindsWithMore } from "./tracker/projectActivity";
+import { CHAT_TASKS_DONE_LIMIT, chatTaskSections, planTaskMove } from "./tracker/chat-tasks";
 import { doneSortKey, inDone } from "./tracker/format";
 import {
     asNumber,
@@ -81,6 +82,7 @@ import {
     type JournalControlFrame,
     type TrackerCommentWrite,
     type TrackerItem,
+    type TrackerItemCreate,
     type UserSettings,
     type MemoryWrite,
     type TrackerResolution,
@@ -483,6 +485,10 @@ export class MatronJournalClient {
     // Pending marker-driven inbox refetch. A burst of `item` markers (a reconnect replay, a batch of
     // agent writes) coalesces into ONE inbox walk instead of one per marker.
     private trackerInboxRefetchTimer?: number;
+    // The chat's Tasks & decisions pane: a request generation for its list (a newer load, or a
+    // drag, supersedes an older load still in flight) and its coalesced marker refetch.
+    private chatTasksGen = 0;
+    private chatTasksRefetchTimer?: number;
     // Same for `mission` / `milestone` markers and the missions list.
     private trackerMissionsRefetchTimer?: number;
     private trackerMemoriesGen = 0;
@@ -2899,6 +2905,179 @@ export class MatronJournalClient {
      * journal without the route (404) reads as "no missions", which hides the chip. Any other
      * failure keeps what was shown.
      */
+    // ── The chat's Tasks & decisions pane ──────────────────────────────────────────────────────
+    // A side pane beside the conversation (not the main-region tracker): this chat's items, or
+    // every chat's, with a create form and drag reorder of the open tasks. The pane mounts while
+    // it is open and calls loadChatTasks whenever the conversation or the scope changes.
+
+    /** Opens or closes the pane (toggles without an argument). It stays open across chats. */
+    public toggleChatTasks(open = !this.state.chatTasks?.open): void {
+        this.patch({ chatTasks: { ...this.state.chatTasks, open, actionError: undefined } });
+    }
+
+    /** "This chat" or "All" for the conversation on screen; another conversation starts on its own. */
+    public setChatTasksScope(scope: "chat" | "all"): void {
+        const convoId = this.state.selectedConversationId;
+        if (!convoId) return;
+        this.patch({
+            chatTasks: {
+                ...this.state.chatTasks,
+                open: this.state.chatTasks?.open ?? true,
+                allFor: scope === "all" ? convoId : undefined,
+            },
+        });
+    }
+
+    /** The list the pane shows for the conversation on screen: its id, or "all". */
+    public chatTasksScope(): string | undefined {
+        const convoId = this.state.selectedConversationId;
+        if (!convoId) return undefined;
+        return this.state.chatTasks?.allFor === convoId ? "all" : convoId;
+    }
+
+    public dismissChatTasksError(): void {
+        const current = this.state.chatTasks;
+        if (current?.actionError) this.patch({ chatTasks: { ...current, actionError: undefined } });
+    }
+
+    /**
+     * Loads the pane's list: the open items (one page, rank order) and the latest closed ones for
+     * Done, for this conversation or across all of them. A list for another scope is cleared at
+     * once rather than shown under the wrong heading; a failed refresh keeps the rows it had.
+     */
+    public async loadChatTasks(): Promise<void> {
+        const api = this.api;
+        const scope = this.chatTasksScope();
+        if (!api || !scope) return;
+        const gen = ++this.chatTasksGen;
+        const prior = this.state.chatTasks;
+        this.patch({
+            chatTasks: {
+                ...prior,
+                open: prior?.open ?? false,
+                scope,
+                items: prior?.scope === scope ? prior.items : undefined,
+                error: prior?.scope === scope ? prior.error : undefined,
+                loading: true,
+            },
+        });
+        const convo = scope === "all" ? undefined : scope;
+        try {
+            const [open, closed] = await Promise.all([
+                api.items({ convo, state: "open", sort: "rank", limit: 500 }),
+                api.items({ convo, state: "closed", sort: "updated", limit: CHAT_TASKS_DONE_LIMIT }),
+            ]);
+            if (this.api !== api || this.chatTasksGen !== gen) return;
+            this.patch({
+                chatTasks: {
+                    ...this.state.chatTasks,
+                    open: this.state.chatTasks?.open ?? false,
+                    scope,
+                    items: [...open.items, ...closed.items],
+                    loading: false,
+                    error: undefined,
+                    unsupported: false,
+                },
+            });
+        } catch (error) {
+            if (this.api !== api || this.chatTasksGen !== gen) return;
+            const unsupported = error instanceof JournalApiError && error.status === 404;
+            this.patch({
+                chatTasks: {
+                    ...this.state.chatTasks,
+                    open: this.state.chatTasks?.open ?? false,
+                    loading: false,
+                    error: unsupported ? undefined : errorMessage(error),
+                    unsupported,
+                },
+            });
+        }
+    }
+
+    /**
+     * Files a new item from the user into the conversation on screen (whichever scope the pane
+     * shows, the item belongs to this chat). It joins the list at once; the refetch then brings the
+     * journal's order. A failure comes back with its reason, so the form keeps what was typed.
+     */
+    public async createChatItem(draft: {
+        kind: TrackerItemCreate["kind"];
+        title: string;
+        body: string;
+    }): Promise<{ ok: true } | { ok: false; reason: string }> {
+        const api = this.api;
+        const convoId = this.state.selectedConversationId;
+        if (!api || !convoId) return { ok: false, reason: "Open a chat to file a new item." };
+        const title = draft.title.trim();
+        if (!title || title.length > 200) return { ok: false, reason: "Give the item a title (up to 200 characters)." };
+        let created: TrackerItem | undefined;
+        try {
+            ({ item: created } = await api.createItem(
+                { kind: draft.kind, title, body: draft.body, convo_id: convoId },
+                crypto.randomUUID(),
+            ));
+        } catch (error) {
+            return { ok: false, reason: `Couldn't file the item: ${errorMessage(error)}` };
+        }
+        if (this.api !== api) return { ok: true };
+        const current = this.state.chatTasks;
+        if (
+            created &&
+            typeof created.id === "string" &&
+            current?.items &&
+            !current.items.some((i) => i.id === created!.id)
+        ) {
+            this.patch({ chatTasks: { ...current, items: [...current.items, created] } });
+        }
+        void this.loadChatTasks();
+        if (this.inboxTracked()) void this.loadInbox();
+        return { ok: true };
+    }
+
+    /**
+     * A drag of an open task to `toIndex` among the open tasks (counted without it). Drawn in its
+     * new place at once; the journal is told second, and a refusal puts the task back and says why.
+     */
+    public async moveChatTask(itemId: string, toIndex: number): Promise<void> {
+        const api = this.api;
+        const current = this.state.chatTasks;
+        const items = current?.items;
+        if (!api || !current || !items) return;
+        const plan = planTaskMove(chatTaskSections(items).tasks, itemId, toIndex);
+        if (!plan) return;
+        const original = items.find((item) => item.id === itemId)!;
+        // A load already in flight read the old order: it must not land over the move.
+        this.chatTasksGen += 1;
+        const swap = (list: TrackerItem[], next: TrackerItem): TrackerItem[] =>
+            list.map((item) => (item.id === itemId ? next : item));
+        this.patch({ chatTasks: { ...current, items: swap(items, plan.moved), actionError: undefined } });
+        try {
+            await api.rankItem(itemId, plan.change);
+        } catch (error) {
+            if (this.api !== api) return;
+            const now = this.state.chatTasks;
+            this.patch({
+                chatTasks: {
+                    ...now,
+                    open: now?.open ?? false,
+                    items: now?.items ? swap(now.items, original) : now?.items,
+                    actionError: `Couldn't move the task: ${errorMessage(error)}`,
+                },
+            });
+            return;
+        }
+        if (this.api !== api) return;
+        void this.loadChatTasks();
+    }
+
+    // Item markers refetch the open pane's list, coalesced like the inbox's.
+    private scheduleChatTasksRefetch(): void {
+        if (this.chatTasksRefetchTimer !== undefined) return;
+        this.chatTasksRefetchTimer = window.setTimeout(() => {
+            this.chatTasksRefetchTimer = undefined;
+            if (this.state.chatTasks?.open) void this.loadChatTasks();
+        }, 250);
+    }
+
     public async loadConversationMissions(convoId: string): Promise<void> {
         const api = this.api;
         if (!api) return;
@@ -3341,6 +3520,7 @@ export class MatronJournalClient {
         // The inbox feeds the For you badge on the rail, so it follows item markers even while the
         // pane is closed; everything else is refetched only for an open pane.
         if (event.type === "item" && (this.inboxTracked() || this.state.inboxDone)) this.scheduleInboxRefetch();
+        if (event.type === "item" && this.state.chatTasks?.open) this.scheduleChatTasksRefetch();
         // The header chip of the conversation on screen follows the mission markers that concern it
         // (see missionMarkerConcernsChip) whether or not the pane is open — also while its first load
         // is in flight (the newer load supersedes it) or after a failed one.
@@ -4368,6 +4548,8 @@ export class MatronJournalClient {
         if (this.ackTimer !== undefined) window.clearTimeout(this.ackTimer);
         if (this.trackerInboxRefetchTimer !== undefined) window.clearTimeout(this.trackerInboxRefetchTimer);
         this.trackerInboxRefetchTimer = undefined;
+        if (this.chatTasksRefetchTimer !== undefined) window.clearTimeout(this.chatTasksRefetchTimer);
+        this.chatTasksRefetchTimer = undefined;
         this.inboxWalking = false;
         this.inboxPendingWrites.clear();
         if (this.trackerMissionsRefetchTimer !== undefined) window.clearTimeout(this.trackerMissionsRefetchTimer);

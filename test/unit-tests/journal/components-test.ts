@@ -259,6 +259,36 @@ describe("usage limit accessibility", () => {
         );
         expect(labels).toEqual(["Pin", "Add to Favorites", "Mark as unread", "Archive"]);
     });
+
+    it("opens the Tasks & decisions pane from the header, badged with this chat's items that need the user", async () => {
+        const client = signedInClient();
+        const waiting = (id: string, convo: string): unknown => ({
+            id,
+            num: Number(id.slice(3)),
+            kind: "question",
+            state: "open",
+            awaiting: "user",
+            origin_convo_id: convo,
+        });
+        internals(client).state = {
+            ...client.getSnapshot(),
+            inboxItems: [waiting("it_1", "c1"), waiting("it_2", "c1"), waiting("it_3", "c2")],
+        } as ClientState;
+        rendered = await renderClient(client);
+
+        const toggle = button(rendered.container, "Tasks and decisions, 2 need you");
+        expect(toggle.getAttribute("aria-pressed")).toBe("false");
+        expect(toggle.querySelector(".mj_TrackerNeedsYouBadge_count")?.textContent).toBe("2");
+        expect(rendered.container.querySelector(".mj_ChatTasks")).toBeNull();
+
+        await act(async () => toggle.click());
+
+        expect(rendered.container.querySelector('aside[aria-label="Tasks and decisions"]')).not.toBeNull();
+        expect(toggle.getAttribute("aria-pressed")).toBe("true");
+
+        await act(async () => button(rendered!.container, "Close tasks and decisions").click());
+        expect(rendered.container.querySelector(".mj_ChatTasks")).toBeNull();
+    });
 });
 
 describe("permission request cards", () => {

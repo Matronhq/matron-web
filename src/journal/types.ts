@@ -504,6 +504,25 @@ export interface InboxDone {
     error?: string;
 }
 
+/**
+ * The chat's Tasks & decisions pane, beside the conversation. It stays open across conversation
+ * switches; `allFor` names the conversation whose pane shows "All" (any other shows "This chat",
+ * so moving to another conversation starts on its own items). `items` is the list last loaded for
+ * `scope` (the conversation id, or "all"): the open items, then the latest closed ones for Done.
+ * `error` is the last load's failure (the rows it could not replace stay); `actionError` the last
+ * failed move, until dismissed. `unsupported`: GET /items answered 404, a journal without items.
+ */
+export interface ChatTasksState {
+    open: boolean;
+    allFor?: string;
+    scope?: string;
+    items?: TrackerItem[];
+    loading?: boolean;
+    error?: string;
+    actionError?: string;
+    unsupported?: boolean;
+}
+
 export interface ClientState {
     phase: "loading" | "signed-out" | "signed-in";
     config: MatronConfig;
@@ -579,6 +598,8 @@ export interface ClientState {
     /** The selected conversation's missions, for the chat header's mission chip. Absent until
      *  fetched; a fetch for another conversation is never shown against this one. */
     conversationMissions?: ConversationMissions;
+    /** The chat's Tasks & decisions pane; absent until it is first opened. */
+    chatTasks?: ChatTasksState;
     /** True while ANY tracker fetch is in flight (v1: one detail/list open at a time). */
     trackerLoading?: boolean;
     /** Last tracker fetch/mutation error; cleared on the next successful load. */
@@ -917,6 +938,18 @@ export interface TrackerCommentWrite {
     action?: string;
     reply_to?: string;
 }
+
+/** `POST /items` body: a new item filed into the conversation `convo_id`. */
+export interface TrackerItemCreate {
+    kind: "task" | "question" | "decision";
+    title: string;
+    body: string;
+    convo_id: string;
+}
+
+/** `POST /items/:id/rank` body: to the top or bottom of the open tasks, or between two of them
+ *  (their item ids). */
+export type TrackerRankChange = { position: "top" | "bottom" } | { after: string; before: string };
 
 /** The `{num,title,kind,created_at}` digest a mission list-row carries for its newest milestone. */
 export interface MissionLastMilestone {

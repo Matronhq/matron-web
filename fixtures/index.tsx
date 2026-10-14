@@ -703,6 +703,108 @@ const signedOutState: ClientState = {
     }
 }
 
+// ?tasks=1 opens the chat's Tasks & decisions pane beside the conversation on canned items
+// (?tasks=all on the All scope, ?tasks=empty with nothing filed yet).
+{
+    const tasksMode = fixtureParams.get("tasks");
+    if (tasksMode) {
+        const hour = 3_600_000;
+        const now = Date.now();
+        const base = {
+            state: "open",
+            resolution: null,
+            body: "",
+            labels: [],
+            links: [],
+            supersedes: null,
+            origin_convo_id: "c1",
+            created_by: "agent",
+            closed_at: null,
+            mission_id: null,
+            mission_num: null,
+            comment_count: 0,
+            last_comment_at: null,
+            attachments: [],
+            has_image: false,
+            created_at: now - 5 * hour,
+            updated_at: now - 2 * hour,
+        } as const;
+        const task = (num: number, rank: number, title: string, over: Record<string, unknown> = {}) => ({
+            ...base,
+            id: `it_${num}`,
+            num,
+            kind: "task",
+            awaiting: "agent",
+            rank,
+            title,
+            ...over,
+        });
+        const items =
+            tasksMode === "empty"
+                ? []
+                : [
+                      {
+                          ...base,
+                          id: "it_214",
+                          num: 214,
+                          kind: "question",
+                          awaiting: "user",
+                          rank: 0,
+                          title: "Keep the old redirect for a week?",
+                          body: "The new route is live; the old one can go now or after the weekly report.",
+                          comment_count: 1,
+                      },
+                      task(210, 100, "Add a health check to the deploy script"),
+                      task(211, 200, "Roll the staging certificate", { body: "Expires in nine days." }),
+                      task(212, 300, "Write the rollback runbook", { awaiting: null }),
+                      {
+                          ...base,
+                          id: "it_208",
+                          num: 208,
+                          kind: "decision",
+                          awaiting: null,
+                          rank: 0,
+                          title: "Deploy from tags, not from main",
+                          created_at: now - 26 * hour,
+                      },
+                      ...(tasksMode === "all"
+                          ? [
+                                task(305, 150, "Prune backups older than 30 days", { origin_convo_id: "c2" }),
+                                {
+                                    ...base,
+                                    id: "it_306",
+                                    num: 306,
+                                    kind: "question",
+                                    awaiting: "user",
+                                    rank: 0,
+                                    title: "Run the dry-run against a copy of last night's dump?",
+                                    origin_convo_id: "c3",
+                                    updated_at: now - hour,
+                                },
+                            ]
+                          : []),
+                      task(205, 50, "Tag the release", {
+                          state: "closed",
+                          resolution: "done",
+                          awaiting: null,
+                          closed_at: now - 30 * hour,
+                      }),
+                  ];
+        const stub = client as unknown as Record<string, unknown>;
+        stub.loadChatTasks = async () => undefined;
+        stub.createChatItem = async () => ({ ok: true });
+        (state as unknown as Record<string, unknown>).chatTasks = {
+            open: true,
+            scope: tasksMode === "all" ? "all" : "c1",
+            ...(tasksMode === "all" ? { allFor: "c1" } : {}),
+            items,
+        };
+        (state as unknown as Record<string, unknown>).inboxItems = items.filter(
+            (item) => item.state === "open" && item.awaiting === "user",
+        );
+    }
+}
+
 // ?tracker=inbox | ?tracker=item opens the tracker pane on canned data (unify step 5); the
 // network loads are stubbed so the fixture stays offline.
 const trackerMode = fixtureParams.get("tracker");

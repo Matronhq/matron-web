@@ -104,6 +104,8 @@ interface TrackerApiMock {
     projects: jest.Mock;
     project: jest.Mock;
     uploadMedia: jest.Mock;
+    createItem: jest.Mock;
+    rankItem: jest.Mock;
 }
 
 interface Internals {
@@ -2214,5 +2216,232 @@ describe("MatronJournalClient.fetchMissionClosedItems", () => {
     it("resolves empty when signed out", async () => {
         const { client } = makeClient();
         await expect(client.fetchMissionClosedItems(MS_1)).resolves.toEqual({ items: [], cursor: null });
+    });
+});
+
+describe("MatronJournalClient chat Tasks & decisions pane", () => {
+    beforeAll(() => {
+        if (!globalThis.crypto) {
+            (globalThis as { crypto: Crypto }).crypto = webcrypto as unknown as Crypto;
+        } else if (typeof globalThis.crypto.randomUUID !== "function") {
+            (globalThis.crypto as { randomUUID: () => string }).randomUUID = () => webcrypto.randomUUID();
+        }
+    });
+
+    const page = (items: TrackerItem[]): { items: TrackerItem[]; next_cursor: null } => ({ items, next_cursor: null });
+
+    it("toggles the pane open and closed", () => {
+        const { client } = makeClient({ selectedConversationId: "c1" });
+        client.toggleChatTasks();
+        expect(client.getSnapshot().chatTasks?.open).toBe(true);
+        client.toggleChatTasks();
+        expect(client.getSnapshot().chatTasks?.open).toBe(false);
+    });
+
+    it("shows All only for the conversation it was chosen in", () => {
+        const { client, state } = makeClient({ selectedConversationId: "c1", chatTasks: { open: true } });
+        expect(client.chatTasksScope()).toBe("c1");
+        client.setChatTasksScope("all");
+        expect(client.chatTasksScope()).toBe("all");
+        state.state = { ...state.state, selectedConversationId: "c2" };
+        expect(client.chatTasksScope()).toBe("c2");
+        state.state = { ...state.state, selectedConversationId: "c1" };
+        client.setChatTasksScope("chat");
+        expect(client.chatTasksScope()).toBe("c1");
+    });
+
+    it("loads this chat's open and closed items", async () => {
+        const { client, state } = makeClient({ selectedConversationId: "c1", chatTasks: { open: true } });
+        const open = item({ id: "it_1", kind: "task" });
+        const closed = item({ id: "it_2", state: "closed", awaiting: null });
+        state.api = {
+            items: jest
+                .fn()
+                .mockResolvedValueOnce(page([open]))
+                .mockResolvedValueOnce(page([closed])),
+        };
+
+        await client.loadChatTasks();
+
+        expect(state.api.items).toHaveBeenNthCalledWith(1, { convo: "c1", state: "open", sort: "rank", limit: 500 });
+        expect(state.api.items).toHaveBeenNthCalledWith(2, {
+            convo: "c1",
+            state: "closed",
+            sort: "updated",
+            limit: 50,
+        });
+        expect(client.getSnapshot().chatTasks).toEqual(
+            expect.objectContaining({ open: true, scope: "c1", items: [open, closed], loading: false }),
+        );
+    });
+
+    it("loads every chat's items for All, and drops a list loaded for the other scope", async () => {
+        const { client, state } = makeClient({
+            selectedConversationId: "c1",
+            chatTasks: { open: true, allFor: "c1", scope: "c1", items: [item()] },
+        });
+        let resolve!: (value: unknown) => void;
+        state.api = {
+            items: jest
+                .fn()
+                .mockReturnValueOnce(new Promise((r) => (resolve = r)))
+                .mockResolvedValue(page([])),
+        };
+
+        const load = client.loadChatTasks();
+        expect(client.getSnapshot().chatTasks?.items).toBeUndefined();
+        expect(state.api.items).toHaveBeenCalledWith({ convo: undefined, state: "open", sort: "rank", limit: 500 });
+        resolve(page([]));
+        await load;
+        expect(client.getSnapshot().chatTasks).toEqual(expect.objectContaining({ scope: "all", items: [] }));
+    });
+
+    it("marks the tracker unsupported on a 404, and keeps the rows on any other failure", async () => {
+        const { client, state } = makeClient({
+            selectedConversationId: "c1",
+            chatTasks: { open: true, scope: "c1", items: [item()] },
+        });
+        state.api = { items: jest.fn().mockRejectedValue(new JournalApiError("down", 503)) };
+        await client.loadChatTasks();
+        expect(client.getSnapshot().chatTasks).toEqual(
+            expect.objectContaining({ items: [item()], error: "down", unsupported: false }),
+        );
+
+        state.api = { items: jest.fn().mockRejectedValue(new JournalApiError("not found", 404)) };
+        await client.loadChatTasks();
+        expect(client.getSnapshot().chatTasks).toEqual(
+            expect.objectContaining({ unsupported: true, error: undefined }),
+        );
+    });
+
+    it("files a new item into the conversation on screen and shows it at once", async () => {
+        const created = item({ id: "it_9", num: 9, kind: "task", title: "Write tests", awaiting: null });
+        const { client, state } = makeClient({
+            selectedConversationId: "c1",
+            chatTasks: { open: true, scope: "c1", items: [] },
+        });
+        let release!: () => void;
+        state.api = {
+            createItem: jest.fn().mockResolvedValue({ item: created }),
+            items: jest.fn().mockReturnValue(new Promise((r) => (release = () => r(page([created]))))),
+        };
+
+        const outcome = await client.createChatItem({ kind: "task", title: "  Write tests ", body: "Soon" });
+
+        expect(outcome).toEqual({ ok: true });
+        expect(state.api.createItem).toHaveBeenCalledWith(
+            { kind: "task", title: "Write tests", body: "Soon", convo_id: "c1" },
+            expect.any(String),
+        );
+        expect(client.getSnapshot().chatTasks?.items).toEqual([created]);
+        expect(state.api.items).toHaveBeenCalled();
+        release();
+    });
+
+    it("refuses an empty title, and says why a create failed", async () => {
+        const { client, state } = makeClient({ selectedConversationId: "c1" });
+        state.api = { createItem: jest.fn().mockRejectedValue(new Error("offline")) };
+
+        expect(await client.createChatItem({ kind: "task", title: "   ", body: "" })).toEqual({
+            ok: false,
+            reason: "Give the item a title (up to 200 characters).",
+        });
+        expect(state.api.createItem).not.toHaveBeenCalled();
+        expect(await client.createChatItem({ kind: "question", title: "Which one?", body: "" })).toEqual({
+            ok: false,
+            reason: "Couldn't file the item: offline",
+        });
+    });
+
+    const tasks = (): TrackerItem[] => [
+        item({ id: "a", num: 1, kind: "task", awaiting: null, rank: 100 }),
+        item({ id: "b", num: 2, kind: "task", awaiting: null, rank: 200 }),
+        item({ id: "c", num: 3, kind: "task", awaiting: null, rank: 300 }),
+    ];
+    const order = (client: MatronJournalClient): string[] =>
+        [...(client.getSnapshot().chatTasks?.items ?? [])].sort((x, y) => x.rank - y.rank).map((i) => i.id);
+
+    it("moves a task at once, then tells the journal and reloads", async () => {
+        const { client, state } = makeClient({
+            selectedConversationId: "c1",
+            chatTasks: { open: true, scope: "c1", items: tasks() },
+        });
+        let answer!: () => void;
+        state.api = {
+            rankItem: jest.fn().mockReturnValue(new Promise((r) => (answer = () => r({ item: tasks()[2] })))),
+            items: jest.fn().mockResolvedValue(page(tasks())),
+        };
+
+        const move = client.moveChatTask("c", 0);
+        expect(order(client)).toEqual(["c", "a", "b"]);
+        expect(state.api.rankItem).toHaveBeenCalledWith("c", { position: "top" });
+        answer();
+        await move;
+        expect(state.api.items).toHaveBeenCalled();
+    });
+
+    it("puts a task back and says why when the journal refuses the move", async () => {
+        const { client, state } = makeClient({
+            selectedConversationId: "c1",
+            chatTasks: { open: true, scope: "c1", items: tasks() },
+        });
+        state.api = { rankItem: jest.fn().mockRejectedValue(new Error("conflict")), items: jest.fn() };
+
+        await client.moveChatTask("a", 1);
+
+        expect(state.api.rankItem).toHaveBeenCalledWith("a", { after: "b", before: "c" });
+        expect(order(client)).toEqual(["a", "b", "c"]);
+        expect(client.getSnapshot().chatTasks?.actionError).toBe("Couldn't move the task: conflict");
+        expect(state.api.items).not.toHaveBeenCalled();
+
+        client.dismissChatTasksError();
+        expect(client.getSnapshot().chatTasks?.actionError).toBeUndefined();
+    });
+
+    it("a load that started before a move does not land over it", async () => {
+        const { client, state } = makeClient({
+            selectedConversationId: "c1",
+            chatTasks: { open: true, scope: "c1", items: tasks() },
+        });
+        let stale!: () => void;
+        state.api = {
+            items: jest
+                .fn()
+                .mockReturnValueOnce(new Promise((r) => (stale = () => r(page(tasks())))))
+                .mockResolvedValue(page([])),
+            rankItem: jest.fn().mockReturnValue(new Promise(() => undefined)),
+        };
+
+        const load = client.loadChatTasks();
+        void client.moveChatTask("c", 0);
+        stale();
+        await load;
+        expect(order(client)).toEqual(["c", "a", "b"]);
+    });
+
+    describe("item markers", () => {
+        beforeEach(() => jest.useFakeTimers());
+        afterEach(() => jest.useRealTimers());
+
+        it("refetch the open pane's list, coalesced", () => {
+            const { state } = makeClient({ selectedConversationId: "c1", chatTasks: { open: true, scope: "c1" } });
+            state.api = { items: jest.fn().mockResolvedValue(page([])) };
+
+            state.handleTrackerMarker(marker("item", { num: 1, action: "created" }));
+            state.handleTrackerMarker(marker("item", { num: 2, action: "created" }));
+            jest.advanceTimersByTime(250);
+
+            expect(state.api.items).toHaveBeenCalledTimes(2);
+        });
+
+        it("fetch nothing for a closed pane", () => {
+            const { state } = makeClient({ selectedConversationId: "c1", chatTasks: { open: false } });
+            state.api = { items: jest.fn().mockResolvedValue(page([])) };
+
+            state.handleTrackerMarker(marker("item", { num: 1, action: "created" }));
+            jest.advanceTimersByTime(250);
+
+            expect(state.api.items).not.toHaveBeenCalled();
+        });
     });
 });
