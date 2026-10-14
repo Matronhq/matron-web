@@ -267,6 +267,24 @@ const events: JournalEvent[] = [
         type: "spawn_outcome",
         payload: { request_id: "spawn-fixture-1", outcome: "started", room_id: "s1", child_convo_id: "s1" },
     },
+    {
+        // File events as the bridge and the native apps send them: the name rides in `name`
+        // (the media-send key), not the older `filename`.
+        seq: 16,
+        convo_id: "c1",
+        ts: T + 840,
+        sender: "agent:claude",
+        type: "file",
+        payload: { blob_ref: "fixture-log", name: "deploy-2026-07-25.log", content_type: "text/plain", size: 18_432 },
+    },
+    {
+        seq: 17,
+        convo_id: "c1",
+        ts: T + 860,
+        sender: "agent:claude",
+        type: "file",
+        payload: { blob_ref: "fixture-pdf", name: "rollback-runbook.pdf", size: 96_256 },
+    },
 ];
 
 const client = new MatronJournalClient();
