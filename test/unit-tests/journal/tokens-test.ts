@@ -79,27 +79,25 @@ describe("token layer", () => {
 
     it("defines every --cpd token the stylesheets use", () => {
         const used = SHEETS.flatMap(([, css]) =>
-            [...stripComments(css).matchAll(/var\((--cpd-[\w-]+)/g)].map((match) => match[1]),
+            [...stripComments(css).matchAll(/var\((--mj-[\w-]+)/g)].map((match) => match[1]),
         );
         expect([...new Set(used.filter((name) => !light.has(name)))]).toEqual([]);
     });
 
     it("uses the Mac timeline gradient for the message canvas in both themes", () => {
-        expect(light.get("--cpd-color-bg-room-canvas")).toBe("linear-gradient(180deg, #f2f0ea 0%, #e8e5dc 100%)");
-        expect(dark.get("--cpd-color-bg-room-canvas")).toBe("linear-gradient(180deg, #1d1b18 0%, #171512 100%)");
+        expect(light.get("--mj-color-bg-room-canvas")).toBe("linear-gradient(180deg, #f2f0ea 0%, #e8e5dc 100%)");
+        expect(dark.get("--mj-color-bg-room-canvas")).toBe("linear-gradient(180deg, #1d1b18 0%, #171512 100%)");
     });
 
     it("never applies the canvas gradient through background-color", () => {
         for (const [path, css] of SHEETS) {
-            expect(`${path}: ${/background-color:\s*var\(--cpd-color-bg-room-canvas/.test(css)}`).toBe(
-                `${path}: false`,
-            );
+            expect(`${path}: ${/background-color:\s*var\(--mj-color-bg-room-canvas/.test(css)}`).toBe(`${path}: false`);
         }
     });
 
     it("uses the Mac panel colours and keeps theme-color in step with them", () => {
-        expect(light.get("--cpd-color-bg-canvas-default")).toBe("#fff");
-        expect(dark.get("--cpd-color-bg-canvas-default")).toBe("#262421");
+        expect(light.get("--mj-color-bg-canvas-default")).toBe("#fff");
+        expect(dark.get("--mj-color-bg-canvas-default")).toBe("#262421");
         const html = readFileSync("src/index.html", "utf8");
         const theme = readFileSync("src/journal/theme.ts", "utf8");
         expect(html).toContain('"dark" ? "#262421" : "#ffffff"');
@@ -107,12 +105,12 @@ describe("token layer", () => {
     });
 
     it("uses the Mac brand teal as the accent", () => {
-        expect(light.get("--cpd-color-text-action-accent")).toBe("#0b6e7d");
-        expect(dark.get("--cpd-color-text-action-accent")).toBe("#6ecddc");
-        expect(light.get("--cpd-color-bg-accent")).toBe("#0b6e7d");
-        expect(dark.get("--cpd-color-bg-accent")).toBe("#0b6e7d");
-        expect(light.get("--cpd-color-bg-self-bubble")).toBe("#c4f5fb");
-        expect(dark.get("--cpd-color-bg-self-bubble")).toBe("#123a41");
+        expect(light.get("--mj-color-text-action-accent")).toBe("#0b6e7d");
+        expect(dark.get("--mj-color-text-action-accent")).toBe("#6ecddc");
+        expect(light.get("--mj-color-bg-accent")).toBe("#0b6e7d");
+        expect(dark.get("--mj-color-bg-accent")).toBe("#0b6e7d");
+        expect(light.get("--mj-color-bg-self-bubble")).toBe("#c4f5fb");
+        expect(dark.get("--mj-color-bg-self-bubble")).toBe("#123a41");
     });
 
     it("leaves no literal old-teal values outside the token blocks", () => {
@@ -124,84 +122,84 @@ describe("token layer", () => {
     });
 
     it("gives the status colours their system dark variants", () => {
-        expect(light.get("--cpd-color-usage-low")).toBe("#34c759");
-        expect(dark.get("--cpd-color-usage-low")).toBe("#30d158");
-        expect(dark.get("--cpd-color-usage-medium")).toBe("#ff9f0a");
-        expect(dark.get("--cpd-color-usage-high")).toBe("#ff453a");
+        expect(light.get("--mj-color-usage-low")).toBe("#34c759");
+        expect(dark.get("--mj-color-usage-low")).toBe("#30d158");
+        expect(dark.get("--mj-color-usage-medium")).toBe("#ff9f0a");
+        expect(dark.get("--mj-color-usage-high")).toBe("#ff453a");
     });
 
     it("defines the Mac shadows, identical in both themes", () => {
         for (const tokens of [light, dark]) {
-            expect(tokens.get("--cpd-shadow-bubble")).toBe("0 1px 1px rgb(18 16 14 / 0.08)");
-            expect(tokens.get("--cpd-shadow-sm")).toBe("0 1px 2px rgb(18 16 14 / 0.08)");
-            expect(tokens.get("--cpd-shadow-md")).toBe("0 3px 10px rgb(0 0 0 / 0.18)");
+            expect(tokens.get("--mj-shadow-bubble")).toBe("0 1px 1px rgb(18 16 14 / 0.08)");
+            expect(tokens.get("--mj-shadow-sm")).toBe("0 1px 2px rgb(18 16 14 / 0.08)");
+            expect(tokens.get("--mj-shadow-md")).toBe("0 3px 10px rgb(0 0 0 / 0.18)");
         }
     });
 
     it("defines the radius roles the screens use", () => {
-        expect(light.get("--cpd-radius-bubble")).toBe("8px");
-        expect(light.get("--cpd-radius-card")).toBe("8px");
-        expect(light.get("--cpd-radius-card-content")).toBe("12px");
-        expect(light.get("--cpd-radius-composer")).toBe("10px");
-        expect(light.get("--cpd-radius-code")).toBe("6px");
-        expect(light.get("--cpd-radius-field")).toBe("6px");
-        expect(light.get("--cpd-radius-popover")).toBe("12px");
+        expect(light.get("--mj-radius-bubble")).toBe("8px");
+        expect(light.get("--mj-radius-card")).toBe("8px");
+        expect(light.get("--mj-radius-card-content")).toBe("12px");
+        expect(light.get("--mj-radius-composer")).toBe("10px");
+        expect(light.get("--mj-radius-code")).toBe("6px");
+        expect(light.get("--mj-radius-field")).toBe("6px");
+        expect(light.get("--mj-radius-popover")).toBe("12px");
     });
 
     it("routes bubbles, cards, composer and modals through the radius roles", () => {
         const shell = SHEETS[0][1];
         const journal = SHEETS[1][1];
-        expect(shell).toMatch(/\.mj_EventTile_line \{[^}]*border-radius: var\(--cpd-radius-bubble\)/);
-        expect(shell).toMatch(/\.mj_ComposerField \{[^}]*border-radius: var\(--cpd-radius-composer\)/);
-        expect(shell).toMatch(/\.mj_LoginField input \{[^}]*border-radius: var\(--cpd-radius-field\)/);
-        expect(journal).toMatch(/\.mj_ToolCard \{[^}]*border-radius: var\(--cpd-radius-card\)/);
-        expect(journal).toMatch(/\.mj_DiffCard \{[^}]*border-radius: var\(--cpd-radius-card\)/);
-        expect(journal).toMatch(/\.mj_CodeBlock \{[^}]*border-radius: var\(--cpd-radius-code\)/);
-        expect(journal).toMatch(/\.mj_PromptCard \{[^}]*border-radius: var\(--cpd-radius-card-content\)/);
-        expect(journal).toMatch(/\.mj_MediaViewer \{[^}]*border-radius: var\(--cpd-radius-popover\)/);
+        expect(shell).toMatch(/\.mj_EventTile_line \{[^}]*border-radius: var\(--mj-radius-bubble\)/);
+        expect(shell).toMatch(/\.mj_ComposerField \{[^}]*border-radius: var\(--mj-radius-composer\)/);
+        expect(shell).toMatch(/\.mj_LoginField input \{[^}]*border-radius: var\(--mj-radius-field\)/);
+        expect(journal).toMatch(/\.mj_ToolCard \{[^}]*border-radius: var\(--mj-radius-card\)/);
+        expect(journal).toMatch(/\.mj_DiffCard \{[^}]*border-radius: var\(--mj-radius-card\)/);
+        expect(journal).toMatch(/\.mj_CodeBlock \{[^}]*border-radius: var\(--mj-radius-code\)/);
+        expect(journal).toMatch(/\.mj_PromptCard \{[^}]*border-radius: var\(--mj-radius-card-content\)/);
+        expect(journal).toMatch(/\.mj_MediaViewer \{[^}]*border-radius: var\(--mj-radius-popover\)/);
     });
 
     it("defines the system-first font stacks with Inter and Fira Code as fallbacks", () => {
-        expect(light.get("--cpd-font-family-ui")).toBe(
+        expect(light.get("--mj-font-family-ui")).toBe(
             '-apple-system, BlinkMacSystemFont, "SF Pro Text", Inter, "Helvetica Neue", "Segoe UI", Roboto, sans-serif',
         );
-        expect(light.get("--cpd-font-family-mono")).toBe('ui-monospace, "SF Mono", Menlo, "Fira Code", monospace');
+        expect(light.get("--mj-font-family-mono")).toBe('ui-monospace, "SF Mono", Menlo, "Fira Code", monospace');
     });
 
     it("declares no literal font family outside the family tokens", () => {
         for (const [path, css] of SHEETS) {
             const withoutTokens = css
                 .replace(/\/\*[\s\S]*?\*\//g, "")
-                .replace(/--cpd-font-family-(ui|mono):[^;]+;/g, "");
+                .replace(/--mj-font-family-(ui|mono):[^;]+;/g, "");
             expect(`${path}: ${/\bInter\b|Fira Code/.test(withoutTokens)}`).toBe(`${path}: false`);
         }
     });
 
     it("uses the Mac leading for body text", () => {
-        expect(light.get("--cpd-font-body")).toBe("400 14px/18px var(--cpd-font-family-ui)");
-        expect(light.get("--cpd-font-body-sm-regular")).toBe("400 13px/17px var(--cpd-font-family-ui)");
-        expect(light.get("--cpd-font-label")).toBe("400 13px/16px var(--cpd-font-family-ui)");
+        expect(light.get("--mj-font-body")).toBe("400 14px/18px var(--mj-font-family-ui)");
+        expect(light.get("--mj-font-body-sm-regular")).toBe("400 13px/17px var(--mj-font-family-ui)");
+        expect(light.get("--mj-font-label")).toBe("400 13px/16px var(--mj-font-family-ui)");
     });
 
     it("keeps 10–11px tertiary text at 3:1 on every dark surface it sits on", () => {
-        const ink = dark.get("--cpd-color-text-tertiary")!;
+        const ink = dark.get("--mj-color-text-tertiary")!;
         for (const surface of [
-            "--cpd-color-bg-canvas-default",
-            "--cpd-color-bg-canvas-raised",
-            "--cpd-color-bg-subtle-secondary",
+            "--mj-color-bg-canvas-default",
+            "--mj-color-bg-canvas-raised",
+            "--mj-color-bg-subtle-secondary",
         ]) {
             expect(`${surface}: ${contrast(ink, dark.get(surface)!).toFixed(2)}`).toMatch(/: ([3-9]|\d\d)\./);
         }
-        expect(dark.get("--cpd-color-icon-tertiary")).toBe(ink);
-        expect(dark.get("--cpd-color-text-placeholder")).toBe(ink);
+        expect(dark.get("--mj-color-icon-tertiary")).toBe(ink);
+        expect(dark.get("--mj-color-text-placeholder")).toBe(ink);
     });
 
     it("gives the spinner a track the arc stands out from by luminance, not only hue", () => {
         const journal = SHEETS[1][1];
-        expect(journal).toMatch(/\.mj_Spinner \{[^}]*border: 2px solid var\(--cpd-color-text-primary\)/);
-        expect(journal).toMatch(/\.mj_Spinner \{[^}]*border-top-color: var\(--cpd-color-text-action-accent\)/);
+        expect(journal).toMatch(/\.mj_Spinner \{[^}]*border: 2px solid var\(--mj-color-text-primary\)/);
+        expect(journal).toMatch(/\.mj_Spinner \{[^}]*border-top-color: var\(--mj-color-text-action-accent\)/);
         expect(
-            contrast(light.get("--cpd-color-text-primary")!, light.get("--cpd-color-text-action-accent")!),
+            contrast(light.get("--mj-color-text-primary")!, light.get("--mj-color-text-action-accent")!),
         ).toBeGreaterThan(2.5);
     });
 });
@@ -210,17 +208,17 @@ describe("token block parser", () => {
     it("ignores a selector that only appears in a comment inside another block", () => {
         const source = `
 :root {
-    --cpd-color-bg-app: #ffffff;
+    --mj-color-bg-app: #ffffff;
     /* Overridden per theme in [data-theme="dark"]. */
-    --cpd-x: { nested };
+    --mj-x: { nested };
 }
 
 [data-theme="dark"] {
-    --cpd-color-bg-app: #171512;
+    --mj-color-bg-app: #171512;
 }
 `;
-        expect(readTokenBlock("dark", source).get("--cpd-color-bg-app")).toBe("#171512");
-        expect(readTokenBlock("light", source).get("--cpd-color-bg-app")).toBe("#ffffff");
+        expect(readTokenBlock("dark", source).get("--mj-color-bg-app")).toBe("#171512");
+        expect(readTokenBlock("light", source).get("--mj-color-bg-app")).toBe("#ffffff");
     });
 });
 
@@ -235,7 +233,7 @@ describe("sign-in styles", () => {
     it("sizes inputs with border-box so they cannot overflow the column", () => {
         expect(rule(".mj_LoginField input")).toMatch(/box-sizing: border-box/);
         expect(rule(".mj_LoginField input")).toMatch(/width: 100%/);
-        expect(rule(".mj_LoginField input")).toMatch(/border-radius: var\(--cpd-radius-field\)/);
+        expect(rule(".mj_LoginField input")).toMatch(/border-radius: var\(--mj-radius-field\)/);
     });
 
     it("scrolls instead of clipping on short viewports", () => {
@@ -245,10 +243,10 @@ describe("sign-in styles", () => {
     });
 
     it("lays the screen out as one 390px column on the panel surface with no card", () => {
-        expect(rule(".mj_Login")).toMatch(/background: var\(--cpd-color-bg-canvas-default\)/);
+        expect(rule(".mj_Login")).toMatch(/background: var\(--mj-color-bg-canvas-default\)/);
         expect(rule(".mj_Login_column")).toMatch(/width: min\(390px, 100%\)/);
         expect(rule(".mj_Login_column")).not.toMatch(/box-shadow/);
-        expect(rule(".mj_LoginForm")).toMatch(/gap: var\(--cpd-space-3x\)/);
+        expect(rule(".mj_LoginForm")).toMatch(/gap: var\(--mj-space-3x\)/);
     });
 
     it("keeps the line-art logo visible on the dark surface", () => {
@@ -278,46 +276,46 @@ describe("chat styles", () => {
 
     it("defines the Mac terminal block colours, identical in both themes, at 4.5:1 or better", () => {
         const expected: Record<string, string> = {
-            "--cpd-color-terminal-bg": "#1f1f1f",
-            "--cpd-color-terminal-fg": "#dbdbdb",
-            "--cpd-color-terminal-add": "#73d173",
-            "--cpd-color-terminal-del": "#e65959",
-            "--cpd-color-terminal-muted": "#8c8c8c",
+            "--mj-color-terminal-bg": "#1f1f1f",
+            "--mj-color-terminal-fg": "#dbdbdb",
+            "--mj-color-terminal-add": "#73d173",
+            "--mj-color-terminal-del": "#e65959",
+            "--mj-color-terminal-muted": "#8c8c8c",
         };
         for (const [name, value] of Object.entries(expected)) {
             expect(light.get(name)).toBe(value);
             expect(dark.get(name)).toBe(value);
-            if (name !== "--cpd-color-terminal-bg") expect(contrast(value, "#1f1f1f")).toBeGreaterThanOrEqual(4.5);
+            if (name !== "--mj-color-terminal-bg") expect(contrast(value, "#1f1f1f")).toBeGreaterThanOrEqual(4.5);
         }
     });
 
     it("keeps diff counts and the success glyph readable in light mode (text 4.5:1 on white)", () => {
-        expect(rule(".mj_DiffCard_added")).toMatch(/color: var\(--cpd-color-text-success\)/);
-        expect(rule(".mj_DiffCard_removed")).toMatch(/color: var\(--cpd-color-text-critical-primary\)/);
-        expect(rule(".mj_ToolCard_status_ok")).toMatch(/color: var\(--cpd-color-text-success\)/);
-        expect(contrast(light.get("--cpd-color-text-success")!, "#ffffff")).toBeGreaterThanOrEqual(4.5);
-        expect(contrast(light.get("--cpd-color-text-critical-primary")!, "#ffffff")).toBeGreaterThanOrEqual(4.5);
-        expect(contrast(dark.get("--cpd-color-text-success")!, "#262421")).toBeGreaterThanOrEqual(4.5);
+        expect(rule(".mj_DiffCard_added")).toMatch(/color: var\(--mj-color-text-success\)/);
+        expect(rule(".mj_DiffCard_removed")).toMatch(/color: var\(--mj-color-text-critical-primary\)/);
+        expect(rule(".mj_ToolCard_status_ok")).toMatch(/color: var\(--mj-color-text-success\)/);
+        expect(contrast(light.get("--mj-color-text-success")!, "#ffffff")).toBeGreaterThanOrEqual(4.5);
+        expect(contrast(light.get("--mj-color-text-critical-primary")!, "#ffffff")).toBeGreaterThanOrEqual(4.5);
+        expect(contrast(dark.get("--mj-color-text-success")!, "#262421")).toBeGreaterThanOrEqual(4.5);
     });
 
     it("drops the diff row-tint tokens nothing uses any more", () => {
-        expect(light.has("--cpd-color-bg-diff-add")).toBe(false);
-        expect(dark.has("--cpd-color-bg-diff-del")).toBe(false);
+        expect(light.has("--mj-color-bg-diff-add")).toBe(false);
+        expect(dark.has("--mj-color-bg-diff-del")).toBe(false);
     });
 
     it("gives tool and diff cards the Mac chrome: shadow, no border", () => {
         for (const selector of [".mj_ToolCard", ".mj_DiffCard"]) {
-            expect(rule(selector)).toMatch(/box-shadow: var\(--cpd-shadow-sm\)/);
+            expect(rule(selector)).toMatch(/box-shadow: var\(--mj-shadow-sm\)/);
             expect(rule(selector)).not.toMatch(/border: 1px solid/);
         }
     });
 
     it("renders diff and tool bodies on the terminal block instead of tinted rows", () => {
-        expect(rule(".mj_DiffCard_body")).toMatch(/background: var\(--cpd-color-terminal-bg\)/);
-        expect(rule(".mj_DiffLine_add")).toMatch(/color: var\(--cpd-color-terminal-add\)/);
+        expect(rule(".mj_DiffCard_body")).toMatch(/background: var\(--mj-color-terminal-bg\)/);
+        expect(rule(".mj_DiffLine_add")).toMatch(/color: var\(--mj-color-terminal-add\)/);
         expect(rule(".mj_DiffLine_add")).not.toMatch(/background:/);
-        expect(rule(".mj_DiffLine_del")).toMatch(/color: var\(--cpd-color-terminal-del\)/);
-        expect(rule(".mj_DiffLine_hunk")).toMatch(/color: var\(--cpd-color-terminal-muted\)/);
+        expect(rule(".mj_DiffLine_del")).toMatch(/color: var\(--mj-color-terminal-del\)/);
+        expect(rule(".mj_DiffLine_hunk")).toMatch(/color: var\(--mj-color-terminal-muted\)/);
         expect(journal).not.toMatch(/#1e2127|#dcdcdc/);
     });
 
@@ -325,15 +323,15 @@ describe("chat styles", () => {
         // Both sit on the fixed dark terminal surface, where page-secondary ink fails contrast in light mode.
         const rules = [...journal.matchAll(/([^{}]*\.mj_DiffCard_(?:more|truncated)[^{}]*)\{([^}]*)\}/g)];
         expect(rules.length).toBeGreaterThan(0);
-        for (const [, , body] of rules) expect(body).not.toMatch(/--cpd-color-text-/);
-        expect(rules.some(([, , body]) => /color: var\(--cpd-color-terminal-muted\)/.test(body))).toBe(true);
+        for (const [, , body] of rules) expect(body).not.toMatch(/--mj-color-text-/);
+        expect(rules.some(([, , body]) => /color: var\(--mj-color-terminal-muted\)/.test(body))).toBe(true);
     });
 
     it("keeps the diff header label in page ink, since the header is not on the terminal surface", () => {
         const rules = [...journal.matchAll(/([^{}]*\.mj_DiffCard_label\b[^{}]*)\{([^}]*)\}/g)];
         expect(rules.length).toBeGreaterThan(0);
-        for (const [, , body] of rules) expect(body).not.toMatch(/--cpd-color-terminal-/);
-        expect(rules.some(([, , body]) => /color: var\(--cpd-color-text-secondary\)/.test(body))).toBe(true);
+        for (const [, , body] of rules) expect(body).not.toMatch(/--mj-color-terminal-/);
+        expect(rules.some(([, , body]) => /color: var\(--mj-color-text-secondary\)/.test(body))).toBe(true);
     });
 });
 
@@ -369,27 +367,27 @@ describe("tracker styles", () => {
         expect(rule(".mj_TrackerItemRow")).toMatch(/padding: 6px 12px/);
         expect(rule(".mj_TrackerItemRow")).toMatch(/gap: 10px/);
         expect(rule(".mj_TrackerItemRow_glyph")).toMatch(/width: 20px/);
-        expect(rule(".mj_TrackerItemRow_title")).toMatch(/font: 500 13px\/17px var\(--cpd-font-family-ui\)/);
-        expect(rule(".mj_TrackerItemRow_body")).toMatch(/font: 400 11px\/14px var\(--cpd-font-family-ui\)/);
-        expect(rule(".mj_TrackerItemRow_meta")).toMatch(/font: 400 10px\/14px var\(--cpd-font-family-ui\)/);
+        expect(rule(".mj_TrackerItemRow_title")).toMatch(/font: 500 13px\/17px var\(--mj-font-family-ui\)/);
+        expect(rule(".mj_TrackerItemRow_body")).toMatch(/font: 400 11px\/14px var\(--mj-font-family-ui\)/);
+        expect(rule(".mj_TrackerItemRow_meta")).toMatch(/font: 400 10px\/14px var\(--mj-font-family-ui\)/);
         expect(rule(".mj_TrackerItemRow_thumb")).toMatch(/width: 40px/);
-        expect(rule(".mj_TrackerItemRow_thumb")).toMatch(/border-radius: var\(--cpd-radius-sm\)/);
+        expect(rule(".mj_TrackerItemRow_thumb")).toMatch(/border-radius: var\(--mj-radius-sm\)/);
     });
 
     it("reads the item detail at a 640px measure and 16px body", () => {
         // A 640px text column at any width, and never wider than its pane (content-box overflowed by 32px).
-        expect(rule(".mj_TrackerDetail_scroll")).toMatch(/max-width: calc\(640px \+ 2 \* var\(--cpd-space-4x\)\)/);
+        expect(rule(".mj_TrackerDetail_scroll")).toMatch(/max-width: calc\(640px \+ 2 \* var\(--mj-space-4x\)\)/);
         expect(rule(".mj_TrackerDetail_scroll")).toMatch(/box-sizing: border-box/);
-        expect(rule(".mj_TrackerComposer")).toMatch(/max-width: calc\(640px \+ 2 \* var\(--cpd-space-4x\)\)/);
-        expect(rule(".mj_TrackerItemTitle")).toMatch(/font: 600 22px\/28px var\(--cpd-font-family-ui\)/);
-        expect(rule(".mj_TrackerItemBody")).toMatch(/font: 400 16px\/24px var\(--cpd-font-family-ui\)/);
-        expect(rule(".mj_TrackerItemBody")).toMatch(/box-shadow: var\(--cpd-shadow-sm\)/);
+        expect(rule(".mj_TrackerComposer")).toMatch(/max-width: calc\(640px \+ 2 \* var\(--mj-space-4x\)\)/);
+        expect(rule(".mj_TrackerItemTitle")).toMatch(/font: 600 22px\/28px var\(--mj-font-family-ui\)/);
+        expect(rule(".mj_TrackerItemBody")).toMatch(/font: 400 16px\/24px var\(--mj-font-family-ui\)/);
+        expect(rule(".mj_TrackerItemBody")).toMatch(/box-shadow: var\(--mj-shadow-sm\)/);
         expect(rule(".mj_TrackerThread")).toMatch(/gap: 18px/);
         expect(rule(".mj_TrackerComment_agent")).toMatch(/border-radius: 10px/);
         expect(rule(".mj_TrackerComment_user")).toMatch(/border-radius: 10px/);
         // The context block (mission, owner conversation): secondary captions, one line each,
         // truncated.
-        expect(rule(".mj_TrackerContext_row")).toMatch(/color: var\(--cpd-color-text-secondary\)/);
+        expect(rule(".mj_TrackerContext_row")).toMatch(/color: var\(--mj-color-text-secondary\)/);
         expect(rule(".mj_TrackerContext_row")).toMatch(/max-width: 100%/);
         expect(rule(".mj_TrackerContext_text")).toMatch(/white-space: nowrap/);
         expect(rule(".mj_TrackerContext_text")).toMatch(/text-overflow: ellipsis/);
@@ -404,8 +402,8 @@ describe("tracker styles", () => {
         expect(lightNeedsYouText).toBeDefined();
         expect(contrast(lightNeedsYouText!, "#e8e5dc")).toBeGreaterThanOrEqual(4.5);
         expect(rule(".mj_TrackerItemRow_status_needsyou")).toMatch(/color: var\(--mj-needsyou-text\)/);
-        expect(rule(".mj_TrackerItemRow_status_muted")).toMatch(/color: var\(--cpd-color-text-secondary\)/);
-        expect(rule(".mj_TrackerComment_time")).toMatch(/color: var\(--cpd-color-text-secondary\)/);
+        expect(rule(".mj_TrackerItemRow_status_muted")).toMatch(/color: var\(--mj-color-text-secondary\)/);
+        expect(rule(".mj_TrackerComment_time")).toMatch(/color: var\(--mj-color-text-secondary\)/);
     });
 
     it("falls back to a resizable two-line reply box where field-sizing is unsupported", () => {
@@ -415,14 +413,14 @@ describe("tracker styles", () => {
     });
 
     it("gives the reply bar the chat composer's field and a glyph send", () => {
-        expect(rule(".mj_TrackerComposer_input")).toMatch(/box-shadow: var\(--cpd-shadow-sm\)/);
-        expect(rule(".mj_TrackerComposer_input")).toMatch(/border-radius: var\(--cpd-radius-composer\)/);
+        expect(rule(".mj_TrackerComposer_input")).toMatch(/box-shadow: var\(--mj-shadow-sm\)/);
+        expect(rule(".mj_TrackerComposer_input")).toMatch(/border-radius: var\(--mj-radius-composer\)/);
         expect(rule(".mj_TrackerComposer_input")).toMatch(/min-height: 32px/);
         expect(rule(".mj_TrackerComposer_send")).toMatch(/background: transparent/);
         expect(rule(".mj_TrackerComposer")).toMatch(/background: transparent/);
         expect(rule(".mj_TrackerComposer_input")).toMatch(/field-sizing: content/);
         expect(rule(".mj_TrackerComposer_input")).toMatch(/max-height: 144px/);
-        expect(rule(".mj_TrackerComposer_send")).toMatch(/color: var\(--cpd-color-text-action-accent\)/);
+        expect(rule(".mj_TrackerComposer_send")).toMatch(/color: var\(--mj-color-text-action-accent\)/);
     });
 
     it("keeps the reply field border-box, themed and shrinkable across both of its rules", () => {
@@ -430,8 +428,8 @@ describe("tracker styles", () => {
         // what matters is what they add up to.
         const bodies = [...tracker.matchAll(/\n\.mj_TrackerComposer_input \{([^}]*)\}/g)].map((m) => m[1]).join("\n");
         expect(bodies).toMatch(/box-sizing: border-box/);
-        expect(bodies).toMatch(/background: var\(--cpd-color-bg-canvas-default\)/);
-        expect(bodies).toMatch(/color: var\(--cpd-color-text-primary\)/);
+        expect(bodies).toMatch(/background: var\(--mj-color-bg-canvas-default\)/);
+        expect(bodies).toMatch(/color: var\(--mj-color-text-primary\)/);
         // A flex child with field-sizing must be allowed to shrink, or a long URL widens the bar.
         expect(bodies).toMatch(/min-width: 0/);
     });
@@ -447,14 +445,14 @@ describe("memory styles", () => {
 
     it("uses only tokens that exist (the memory rules referenced undefined size/weight tokens)", () => {
         const defined = new Set(readTokenBlock("light").keys());
-        const used = [...tracker.matchAll(/var\((--cpd-[\w-]+)/g)].map((match) => match[1]);
+        const used = [...tracker.matchAll(/var\((--mj-[\w-]+)/g)].map((match) => match[1]);
         expect([...new Set(used.filter((name) => !defined.has(name)))]).toEqual([]);
     });
 
     it("titles the memory form with the name, not a caps section header", () => {
         expect(rule(".mj_TrackerMemoryForm .mj_TrackerSection_header")).toMatch(/text-transform: none/);
         expect(rule(".mj_TrackerMemoryForm .mj_TrackerSection_header")).toMatch(
-            /font: 600 17px\/22px var\(--cpd-font-family-mono\)/,
+            /font: 600 17px\/22px var\(--mj-font-family-mono\)/,
         );
         expect(rule(".mj_TrackerMemoryForm .mj_TrackerCaption")).toMatch(/text-transform: none/);
         expect(rule(".mj_TrackerMemoriesHead .mj_TrackerCaption")).toMatch(/text-transform: none/);
@@ -465,10 +463,10 @@ describe("memory styles", () => {
     });
 
     it("styles memory rows like the Mac list: mono medium name, capsule type chip", () => {
-        expect(rule(".mj_TrackerMemoryRow_name")).toMatch(/font: 500 13px\/17px var\(--cpd-font-family-mono\)/);
-        expect(rule(".mj_TrackerMemoryRow_type")).toMatch(/border-radius: var\(--cpd-radius-pill\)/);
-        expect(rule(".mj_TrackerMemoryRow_desc")).toMatch(/font: 400 13px\/17px var\(--cpd-font-family-ui\)/);
-        expect(rule(".mj_TrackerMemoryRow_meta")).toMatch(/font: 400 10px\/14px var\(--cpd-font-family-ui\)/);
+        expect(rule(".mj_TrackerMemoryRow_name")).toMatch(/font: 500 13px\/17px var\(--mj-font-family-mono\)/);
+        expect(rule(".mj_TrackerMemoryRow_type")).toMatch(/border-radius: var\(--mj-radius-pill\)/);
+        expect(rule(".mj_TrackerMemoryRow_desc")).toMatch(/font: 400 13px\/17px var\(--mj-font-family-ui\)/);
+        expect(rule(".mj_TrackerMemoryRow_meta")).toMatch(/font: 400 10px\/14px var\(--mj-font-family-ui\)/);
     });
 });
 
@@ -487,13 +485,13 @@ describe("project styles", () => {
         expect(rule(".mj_ProjectsGrid")).toMatch(/gap: 16px/);
         expect(rule(".mj_ProjectCard")).toMatch(/border-radius: 12px/);
         expect(rule(".mj_ProjectCard")).toMatch(/padding: 14px/);
-        expect(rule(".mj_ProjectCard_title")).toMatch(/font: 600 16px\/20px var\(--cpd-font-family-ui\)/);
+        expect(rule(".mj_ProjectCard_title")).toMatch(/font: 600 16px\/20px var\(--mj-font-family-ui\)/);
         expect(rule(".mj_ProjectCard_status")).toMatch(/-webkit-line-clamp: 3/);
         expect(rule(".mj_NeedsYouPill")).toMatch(/background: #d70015/); // white 10px text needs 4.5:1; #ff3b30 is 3.5:1
     });
 
     it("styles the project page header, cards and two columns", () => {
-        expect(rule(".mj_ProjectPage_title")).toMatch(/font: 700 26px\/32px var\(--cpd-font-family-ui\)/);
+        expect(rule(".mj_ProjectPage_title")).toMatch(/font: 700 26px\/32px var\(--mj-font-family-ui\)/);
         expect(rule(".mj_ProjectCardSection")).toMatch(/border-radius: 12px/);
         expect(tracker).toMatch(
             /@container \(min-width: 900px\)\s*\{\s*\.mj_ProjectPage_columns \{[^}]*grid-template-columns: 1fr 0\.8fr/,
@@ -529,7 +527,7 @@ describe("sidebar styles", () => {
     });
 
     it("uses the sidebar surface for the rail and list, and a white search field on it", () => {
-        expect(rule(".mj_Sidebar_outerWrapper")).toMatch(/background: var\(--cpd-color-bg-sidebar\)/);
-        expect(rule(".mj_ConversationSearch_inputWrapper")).toMatch(/background: var\(--cpd-color-bg-canvas-default\)/);
+        expect(rule(".mj_Sidebar_outerWrapper")).toMatch(/background: var\(--mj-color-bg-sidebar\)/);
+        expect(rule(".mj_ConversationSearch_inputWrapper")).toMatch(/background: var\(--mj-color-bg-canvas-default\)/);
     });
 });

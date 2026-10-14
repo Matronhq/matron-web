@@ -3864,9 +3864,9 @@ function PromptCard({
                         aria-hidden="true"
                         style={
                             durablyDenied
-                                ? { color: "var(--cpd-color-text-critical-primary)" }
+                                ? { color: "var(--mj-color-text-critical-primary)" }
                                 : durablyAllowed
-                                  ? { color: "var(--cpd-color-usage-low)" }
+                                  ? { color: "var(--mj-color-usage-low)" }
                                   : undefined
                         }
                     >
@@ -3876,9 +3876,9 @@ function PromptCard({
                         className="mj_Answered"
                         style={
                             durablyDenied
-                                ? { color: "var(--cpd-color-text-critical-primary)" }
+                                ? { color: "var(--mj-color-text-critical-primary)" }
                                 : durablyAllowed
-                                  ? { color: "var(--cpd-color-usage-low)" }
+                                  ? { color: "var(--mj-color-usage-low)" }
                                   : undefined
                         }
                     >
@@ -4119,7 +4119,7 @@ function AgentChatRequestCard({
             {!settled && phase.kind === "failed" && (
                 <div className="mj_PromptResolved mj_PromptResolved_failed" role="alert">
                     <span className="mj_PromptGlyph" aria-hidden="true" />
-                    <span className="mj_Answered" style={{ color: "var(--cpd-color-text-critical-primary)" }}>
+                    <span className="mj_Answered" style={{ color: "var(--mj-color-text-critical-primary)" }}>
                         {phase.message}
                     </span>
                 </div>
@@ -4132,7 +4132,7 @@ function AgentChatRequestCard({
                         className="mj_PromptGlyph mj_PromptGlyph_ok"
                         aria-hidden="true"
                         style={{
-                            color: settled.approved ? "var(--cpd-color-usage-low)" : "var(--cpd-color-text-secondary)",
+                            color: settled.approved ? "var(--mj-color-usage-low)" : "var(--mj-color-text-secondary)",
                         }}
                     >
                         {settled.approved ? <PromptCheckGlyph /> : <PromptDeniedGlyph />}
