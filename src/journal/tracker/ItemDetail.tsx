@@ -783,26 +783,28 @@ export function ItemDetail({
     // (the journal records it as the item's `chosen_action`, and closes a notice answered Seen).
     // The tap shows as chosen while it is on its way. Same retry rule as a comment's buttons: one
     // slot holding the last attempted label, so a failed tap retried keeps its key and a different
-    // label gets a fresh one.
+    // label gets a fresh one. Both the slot and the marker name the item they belong to: this view
+    // is reused when another item is opened, and a key from one item's failed tap must never be
+    // replayed as another item's answer.
     const offeredActions = offeredItemActions(item);
-    const [sendingAction, setSendingAction] = useState<string | null>(null);
-    const itemTapKeyRef = useRef<{ label: string; key: string } | null>(null);
+    const [sendingAction, setSendingAction] = useState<{ itemId: string; label: string } | null>(null);
+    const itemTapKeyRef = useRef<{ itemId: string; label: string; key: string } | null>(null);
     const chosenAction =
-        [sendingAction, item.chosen_action].find(
+        [sendingAction?.itemId === item.id ? sendingAction.label : null, item.chosen_action].find(
             (label): label is string => !!label && offeredActions.includes(label),
         ) ?? null;
     const tapItemAction = async (label: string): Promise<void> => {
         if (busy || !offeredActions.includes(label) || label === chosenAction) return;
         let slot = itemTapKeyRef.current;
-        if (!slot || slot.label !== label) {
-            slot = { label, key: crypto.randomUUID() };
+        if (!slot || slot.itemId !== item.id || slot.label !== label) {
+            slot = { itemId: item.id, label, key: crypto.randomUUID() };
             itemTapKeyRef.current = slot;
         }
         setBusy(true);
-        setSendingAction(label);
+        setSendingAction({ itemId: item.id, label });
         try {
             const ok = await client.commentItem(item.num, { action: label, body: label }, slot.key);
-            if (ok) itemTapKeyRef.current = null;
+            if (ok && itemTapKeyRef.current === slot) itemTapKeyRef.current = null;
         } finally {
             setSendingAction(null);
             setBusy(false);

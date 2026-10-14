@@ -990,6 +990,22 @@ describe("ItemDetail buttons on the item itself", () => {
         expect(keys[2]).not.toBe(keys[1]);
     });
 
+    it("never reuses one item's failed-tap key for the same label on another item", async () => {
+        const client = fakeClient();
+        client.commentItem.mockResolvedValueOnce(false);
+        const { container, root } = await mount(detail(client, question({ id: "it_12", num: 12 })));
+        await act(async () => {
+            itemButtons(container)[0].click();
+        });
+        await act(async () => root.render(detail(client, question({ id: "it_13", num: 13 }))));
+        await act(async () => {
+            itemButtons(container)[0].click();
+        });
+
+        expect(client.commentItem.mock.calls.map((call) => call[0])).toEqual([12, 13]);
+        expect(client.commentItem.mock.calls[1][2]).not.toBe(client.commentItem.mock.calls[0][2]);
+    });
+
     it("keeps the item's buttons apart from a comment offering the same label", async () => {
         const client = fakeClient();
         const { container } = await mount(
