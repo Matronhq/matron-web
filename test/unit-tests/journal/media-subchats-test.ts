@@ -180,6 +180,46 @@ describe("client.conversationEvents", () => {
     });
 });
 
+describe("client.conversationEvents for the conversation on screen", () => {
+    it("loads its first page through the chat's own history paging, not beside it", async () => {
+        const client = signedInClient([PARENT], "parent");
+        const stored = [text("parent", 1, "hello")];
+        const database = {
+            putHistory: jest.fn().mockResolvedValue(undefined),
+            events: jest.fn().mockResolvedValue(stored),
+            reconcilePersistedOwnMessages: jest.fn().mockResolvedValue(undefined),
+        };
+        internals(client).database = database;
+        internals(client).api = { messages: jest.fn().mockResolvedValue({ events: stored }) };
+        const loadOlder = jest.spyOn(client, "loadOlderHistory");
+
+        await expect(client.conversationEvents("parent")).resolves.toEqual(stored);
+        expect(loadOlder).toHaveBeenCalledTimes(1);
+        expect(client.getSnapshot().loadingHistory).toBe(false);
+        expect(client.getSnapshot().hasOlderHistory).toBe(false);
+    });
+
+    it("waits for a page already in flight instead of fetching it again", async () => {
+        const client = signedInClient([PARENT], "parent");
+        const stored = [text("parent", 1, "hello")];
+        const api = { messages: jest.fn() };
+        internals(client).database = { putHistory: jest.fn(), events: jest.fn().mockResolvedValue(stored) };
+        internals(client).api = api;
+        patchState(client, { loadingHistory: true });
+
+        let settled = false;
+        const pending = client.conversationEvents("parent").then((events) => {
+            settled = true;
+            return events;
+        });
+        await Promise.resolve();
+        expect(settled).toBe(false);
+        patchState(client, { loadingHistory: false });
+        await expect(pending).resolves.toEqual(stored);
+        expect(api.messages).not.toHaveBeenCalled();
+    });
+});
+
 describe("Subtask lines", () => {
     it("draws a matched Subtask line as a card that opens the subagent beside the chat", async () => {
         const client = signedInClient([PARENT, LINT, DOCS], "parent", [

@@ -40,8 +40,27 @@ function MediaThumb({
 }): React.ReactElement {
     const [url, setUrl] = useState<string>();
     const [expired, setExpired] = useState(() => item.expired === true || client.isMediaExpired(item.mediaId));
+    // An image is fetched only once its thumbnail comes near the visible part of the grid, so a
+    // chat with hundreds of images does not download every one of them when the sheet opens.
+    const thumbRef = useRef<HTMLButtonElement>(null);
+    const [near, setNear] = useState(() => typeof IntersectionObserver !== "function");
     useEffect(() => {
-        if (expired) return undefined;
+        const node = thumbRef.current;
+        if (near || expired || !node) return undefined;
+        const observer = new IntersectionObserver(
+            (entries) => {
+                if (entries.some((entry) => entry.isIntersecting)) {
+                    observer.disconnect();
+                    setNear(true);
+                }
+            },
+            { rootMargin: "200px" },
+        );
+        observer.observe(node);
+        return () => observer.disconnect();
+    }, [near, expired]);
+    useEffect(() => {
+        if (expired || !near) return undefined;
         let cancelled = false;
         client.mediaUrl(item.mediaId).then(
             (loaded) => {
@@ -54,7 +73,7 @@ function MediaThumb({
         return () => {
             cancelled = true;
         };
-    }, [client, item.mediaId, expired]);
+    }, [client, item.mediaId, expired, near]);
     const label = item.caption || item.filename || "Image";
     if (expired) {
         return (
@@ -69,6 +88,7 @@ function MediaThumb({
     }
     return (
         <button
+            ref={thumbRef}
             type="button"
             className="mj_MediaBrowser_thumb"
             aria-label={`Open image, ${label}`}
@@ -140,10 +160,12 @@ export function MediaBrowserSheet({
     }, []);
 
     // Escape closes the sheet, unless the media viewer on top of it is open (it closes first).
+    const viewerOpen = useRef(false);
+    viewerOpen.current = viewer !== undefined;
     useEffect(() => {
         const onKey = (event: KeyboardEvent): void => {
             if (event.key !== "Escape" || event.defaultPrevented) return;
-            if (document.querySelector(".mj_MediaViewer_scrim")) return;
+            if (viewerOpen.current) return;
             event.preventDefault();
             onClose();
         };
@@ -215,9 +237,10 @@ export function MediaBrowserSheet({
                 <EmptyTab icon={<MediaBrowserIcon aria-hidden />} title="No media yet" />
             ) : (
                 <div className="mj_MediaBrowser_grid">
-                    {entries.media.map((item) => (
+                    {entries.media.map((item, index) => (
                         <MediaThumb
-                            key={item.mediaId}
+                            // The same blob can be posted twice; its position keeps the key unique.
+                            key={`${index}:${item.mediaId}`}
                             client={client}
                             item={item}
                             onOpen={(opener) =>
@@ -239,8 +262,8 @@ export function MediaBrowserSheet({
                 <MediaViewerContext.Provider value={fileViewerValue}>
                     <MarkdownPreviewContext.Provider value={fileMarkdownValue}>
                         <ul className="mj_MediaBrowser_list mj_MediaBrowser_files">
-                            {entries.files.map((item) => (
-                                <li key={item.mediaId} className="mj_MediaBrowser_file">
+                            {entries.files.map((item, index) => (
+                                <li key={`${index}:${item.mediaId}`} className="mj_MediaBrowser_file">
                                     {renderFile(item)}
                                 </li>
                             ))}

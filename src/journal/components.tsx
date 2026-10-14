@@ -7099,7 +7099,7 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
             // Any inner overlay still mounted → it owns this press; defer.
             if (
                 document.querySelector(
-                    ".mj_MediaViewer_scrim, .mj_EventSource_scrim, .mj_UploadConfirm_scrim, .mj_NewSessionSheet, .mj_SettingsScrim, .mj_EventRowMenu, .mj_ConversationMenu, .mj_HeaderMenu, .mj_MdPreview, [role='menu']",
+                    ".mj_MediaViewer_scrim, .mj_MediaBrowser_scrim, .mj_EventSource_scrim, .mj_UploadConfirm_scrim, .mj_NewSessionSheet, .mj_SettingsScrim, .mj_EventRowMenu, .mj_ConversationMenu, .mj_HeaderMenu, .mj_MdPreview, [role='menu']",
                 )
             ) {
                 return;
