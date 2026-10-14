@@ -3336,6 +3336,18 @@ describe("session creation orchestration", () => {
         });
     });
 
+    it("maps a Codex browser-tools refusal to an error, not an uncertain start", async () => {
+        const client = withAgentReply({ ok: false, origin: "agent", code: "bad_request" });
+
+        await expect(client.startSessionRpc(9, "", true, { agent: "codex" })).resolves.toEqual({
+            kind: "error",
+            message: "That box can't give Codex browser tools — untick Browser tools.",
+        });
+        await expect(client.startSessionRpc(9, "", false, { agent: "claude" })).resolves.toEqual({
+            kind: "uncertain",
+        });
+    });
+
     it("returns typed not-connected fallbacks while the connection is absent", async () => {
         const client = new MatronJournalClient();
         internals(client).state = signedInState(client);

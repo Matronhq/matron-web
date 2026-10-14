@@ -791,6 +791,11 @@ export class MatronJournalClient {
         if (reply.origin === "agent" && reply.code === "bad_agent") {
             return { kind: "error", message: "That box can't start that agent — pick another." };
         }
+        // A bridge without Codex's app-server transport refuses browser tools on an explicit Codex
+        // start: a definite refusal, so no session is coming — not "may have started".
+        if (reply.origin === "agent" && reply.code === "bad_request" && picks.agent === "codex" && browser) {
+            return { kind: "error", message: "That box can't give Codex browser tools — untick Browser tools." };
+        }
         return { kind: "uncertain" };
     }
 
