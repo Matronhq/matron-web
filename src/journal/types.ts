@@ -93,6 +93,40 @@ export interface RecentFolder {
     last_used: number | null;
 }
 
+/** One choice a box offers on its `recent_folders` reply (`agent_options`, `model_options`,
+ *  `effort_options`): `value` is what the `start` RPC takes, `label` what the picker shows
+ *  (never empty — the parser falls back to `value`). */
+export interface StartOption {
+    value: string;
+    label: string;
+}
+
+/** Everything a box's `recent_folders` reply offers the New session sheet. Every block beside
+ *  `folders` is optional on the wire: an older bridge omits it, which parses to an empty offer
+ *  (the picker hides) rather than failing the folders it rides with. */
+export interface NewSessionOffer {
+    folders: RecentFolder[];
+    /** Coding agents a `start` there may name. Empty = the bridge predates the switch. */
+    agentOptions: StartOption[];
+    /** What a start with no `agent` runs as. */
+    defaultAgent: string | null;
+    /** Claude models, without the bridge's own `default` alias (the picker's Default row). */
+    modelOptions: StartOption[];
+    /** What a start with no `model` runs on, when the box says. Display only. */
+    defaultModel: string | null;
+    /** Claude effort levels a `start` may name. */
+    effortOptions: StartOption[];
+    /** What a start with no `effort` runs at, when the box says. Display only. */
+    defaultEffort: string | null;
+}
+
+/** The New session sheet's picks for `start`. An absent key leaves the choice to the box. */
+export interface StartSessionPicks {
+    agent?: string;
+    model?: string;
+    effort?: string;
+}
+
 export interface Conversation {
     id: string;
     title: string;
@@ -911,6 +945,11 @@ export interface Mission {
     project_num?: number | null;
     /** The mission's activity rollup, where the journal sends it. */
     activity?: string;
+    /** The mission's status line (one short paragraph, inline markdown), who set it and when.
+     *  Null when unset; absent from journals that predate mission status. */
+    status?: string | null;
+    status_by?: TrackerActor | null;
+    status_updated_at?: number | null;
 }
 
 export interface Milestone {
@@ -1013,7 +1052,7 @@ export interface ProjectFileRow {
  *  older one sends none of them. */
 export interface ProjectDetail {
     project: Project;
-    missions: Array<Mission & { status?: string | null; activity?: string }>;
+    missions: Mission[];
     needs_you: Array<MissionItemRef & { mission_id: string; mission_num: number }>;
     recent_milestones: Array<Milestone & { mission_num: number }>;
     sessions_by_box: Record<string, number>;
@@ -1342,6 +1381,7 @@ export function eventSnippet(type: string, payload: EventPayload): string {
         // into the snapshot snippet, and the two must be byte-exact or the sidebar row
         // flip-flops across a resume (same ruling just applied to the Android client).
         if (asString(payload.kind) === "agent_spawn") return "🤝 Agent spawn request";
+        if (asString(payload.kind) === "agent_chat") return "🤝 Agent chat request";
         return `Permission: ${asString(payload.description).slice(0, 100)}`;
     }
     if (type === "spawn_outcome") {

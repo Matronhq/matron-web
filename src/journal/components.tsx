@@ -21,6 +21,23 @@ import React, {
 
 import matronLogo from "../../res/matron-logo-simple.svg";
 import { INITIAL_SGR_STATE, parseAnsi, stripLeadingSgrFragment } from "./ansi";
+import {
+    agentChatAnswersScope,
+    agentChatCardKey,
+    agentChatFromLabel,
+    agentChatHeadline,
+    agentChatToLabel,
+    type AgentChatDecision,
+    type AgentChatRequest,
+    type AgentChatResolution,
+    isAgentChatPayload,
+    parseAgentChatRequest,
+    readAgentChatResolutions,
+    rememberAgentChatAnswer,
+    rememberedAgentChatAnswer,
+    type RememberedAgentChatAnswer,
+    unanswerableAgentRequestNotice,
+} from "./agent-chat";
 import { isMediaExpiredError, JournalApiError } from "./api";
 import {
     type AgentProbe,
@@ -173,7 +190,9 @@ import {
     parseMediaDims,
     type JournalEvent,
     type PendingMessage,
-    type RecentFolder,
+    type NewSessionOffer,
+    type StartOption,
+    type StartSessionPicks,
     rendersAsTopLevelRow,
     isSubChat,
     type SessionStatus,
@@ -495,12 +514,85 @@ type SheetState =
           step: "folders";
           agent: DeviceDTO;
           foldersRequestId: number;
-          folders?: RecentFolder[];
+          offer?: NewSessionOffer;
           foldersError?: string;
       }
     | { step: "starting"; agent: DeviceDTO }
     | { step: "uncertain" }
-    | { step: "error"; agent: DeviceDTO; message: string };
+    // The box's offer rides along so Retry sends the same picks, and Change options can go back
+    // to the form to pick another.
+    | { step: "error"; agent: DeviceDTO; message: string; offer?: NewSessionOffer };
+
+// The sheet's own agent, model and effort picks. null = no pick: the box's default applies.
+interface SheetPicks {
+    agent: string | null;
+    model: string | null;
+    effort: string | null;
+}
+
+const NO_PICKS: SheetPicks = { agent: null, model: null, effort: null };
+
+const EMPTY_OFFER: NewSessionOffer = {
+    folders: [],
+    agentOptions: [],
+    defaultAgent: null,
+    modelOptions: [],
+    defaultModel: null,
+    effortOptions: [],
+    defaultEffort: null,
+};
+
+const CLAUDE_AGENT = "claude";
+
+function offers(options: StartOption[], value: string | null): value is string {
+    return value !== null && options.some((option) => option.value === value);
+}
+
+// The agent `start` names: the pick when this box offers it, else the box's default, else its
+// first offer. Reads as Claude on a bridge that offers none, which is what such a bridge runs.
+function selectedAgent(offer: NewSessionOffer, picks: SheetPicks): string {
+    if (offers(offer.agentOptions, picks.agent)) return picks.agent;
+    if (offers(offer.agentOptions, offer.defaultAgent)) return offer.defaultAgent;
+    return offer.agentOptions[0]?.value ?? CLAUDE_AGENT;
+}
+
+// A pick this box doesn't list is dropped, not parked: carried to the next box it would be a
+// `bad_model` (or `bad_agent`, `bad_effort`) waiting to happen.
+function prunePicks(offer: NewSessionOffer, picks: SheetPicks): SheetPicks {
+    return {
+        agent: offers(offer.agentOptions, picks.agent) ? picks.agent : null,
+        model: offers(offer.modelOptions, picks.model) ? picks.model : null,
+        effort: offers(offer.effortOptions, picks.effort) ? picks.effort : null,
+    };
+}
+
+function startPicks(offer: NewSessionOffer | undefined, picks: SheetPicks): StartSessionPicks {
+    if (!offer) return {};
+    const result: StartSessionPicks = {};
+    const agent = selectedAgent(offer, picks);
+    // Named whenever the box offered agents, even its default: saying what was shown beats
+    // trusting the box default not to have moved since. A bridge that offered none isn't told.
+    if (offer.agentOptions.length > 0) result.agent = agent;
+    // Model and effort are Claude's: a Codex session takes neither, and the bridge refuses one.
+    // No pick omits the key, so the box's own default (the user's, else the box's) applies.
+    if (agent === CLAUDE_AGENT) {
+        if (offers(offer.modelOptions, picks.model)) result.model = picks.model;
+        if (offers(offer.effortOptions, picks.effort)) result.effort = picks.effort;
+    }
+    return result;
+}
+
+// The nil row's title: "Default (Opus)" on a box that names its default, plain "Default" else.
+function defaultRowTitle(options: StartOption[], value: string | null): string {
+    if (value === null) return "Default";
+    return `Default (${options.find((option) => option.value === value)?.label ?? value})`;
+}
+
+// A recent folder's caption: how long since a session last started there. last_used is epoch ms;
+// null is the bridge's default folder on a box that has never started one.
+function folderLastUsed(lastUsed: number | null, now: number): string {
+    return lastUsed === null ? "Never used" : formatSampleAge(Math.max(0, now - lastUsed));
+}
 
 // What an offline box's row says while its Wake button is at work. Absent = not being woken.
 type RowWake = "waking" | "failed";
@@ -581,6 +673,7 @@ export function NewSessionSheet({
     const now = useMinuteClock();
     const [workdir, setWorkdir] = useState("");
     const [browserTools, setBrowserTools] = useState(false);
+    const [picks, setPicks] = useState<SheetPicks>(NO_PICKS);
     const [showBack, setShowBack] = useState(false);
     const sheetStateRef = useRef(sheetState);
     const agentsRef = useRef<DeviceDTO[]>([]);
@@ -638,8 +731,8 @@ export function NewSessionSheet({
             const foldersRequestId = ++foldersRequestIdRef.current;
             setShowBack(backAvailable);
             transition({ step: "folders", agent, foldersRequestId });
-            void client.recentFolders(agent.device_id).then(
-                (folders) => {
+            void client.newSessionOffer(agent.device_id).then(
+                (offer) => {
                     const current = sheetStateRef.current;
                     if (
                         !mountedRef.current ||
@@ -650,7 +743,8 @@ export function NewSessionSheet({
                     ) {
                         return;
                     }
-                    transition({ ...current, folders });
+                    setPicks((current) => prunePicks(offer, current));
+                    transition({ ...current, offer });
                 },
                 () => {
                     const current = sheetStateRef.current;
@@ -663,7 +757,7 @@ export function NewSessionSheet({
                     ) {
                         return;
                     }
-                    transition({ ...current, folders: [], foldersError: "Couldn't load recent folders." });
+                    transition({ ...current, offer: EMPTY_OFFER, foldersError: "Couldn't load recent folders." });
                 },
             );
         },
@@ -711,9 +805,14 @@ export function NewSessionSheet({
 
     const start = async (agent: DeviceDTO, path = workdir, browser = browserTools): Promise<void> => {
         if (startingRef.current || dismissedRef.current) return;
+        const current = sheetStateRef.current;
+        const offer =
+            (current.step === "folders" || current.step === "error") && current.agent.device_id === agent.device_id
+                ? current.offer
+                : undefined;
         startingRef.current = true;
         transition({ step: "starting", agent });
-        const outcome = await client.startSessionRpc(agent.device_id, path, browser);
+        const outcome = await client.startSessionRpc(agent.device_id, path, browser, startPicks(offer, picks));
         if (!mountedRef.current || dismissedRef.current) return;
         if (outcome.kind === "created") {
             dismissedRef.current = true;
@@ -726,10 +825,18 @@ export function NewSessionSheet({
             return;
         }
         startingRef.current = false;
-        transition({ step: "error", agent, message: outcome.message });
+        transition({ step: "error", agent, message: outcome.message, offer });
     };
 
     const folderState = sheetState.step === "folders" ? sheetState : undefined;
+    const offer = folderState?.offer;
+    const agentPick = offer ? selectedAgent(offer, picks) : CLAUDE_AGENT;
+    // One choice is no choice: the switch shows only with a second agent to switch to. The model
+    // and effort pickers hide for a box that offers none (an older bridge, or one whose default
+    // agent is Codex) and while Codex is picked.
+    const agentSwitchVisible = (offer?.agentOptions.length ?? 0) > 1;
+    const modelPickerVisible = offer !== undefined && offer.modelOptions.length > 0 && agentPick === CLAUDE_AGENT;
+    const effortPickerVisible = offer !== undefined && offer.effortOptions.length > 0 && agentPick === CLAUDE_AGENT;
 
     return (
         <div className="mj_UploadConfirm_scrim" role="dialog" aria-modal="true" aria-labelledby="mj-new-session-title">
@@ -827,24 +934,28 @@ export function NewSessionSheet({
                     <>
                         <p>Start on {agentName(folderState.agent)}</p>
                         <BoxUsage status={boxStatuses[folderState.agent.device_id]} now={now} />
-                        {folderState.folders === undefined ? (
+                        {offer === undefined ? (
                             <div role="status">
                                 <span className="mj_Spinner" aria-hidden="true" /> Loading recent folders…
                             </div>
                         ) : (
-                            folderState.folders.length > 0 && (
+                            offer.folders.length > 0 && (
                                 <div role="list" aria-label="Recent folders">
-                                    {folderState.folders.map((folder) => (
+                                    {offer.folders.map((folder) => (
                                         <button
                                             key={folder.path}
                                             type="button"
                                             role="listitem"
+                                            className="mj_NewSessionSheet_folder"
                                             onClick={() => {
                                                 setWorkdir(folder.path);
                                                 void start(folderState.agent, folder.path, browserTools);
                                             }}
                                         >
-                                            {folder.path}
+                                            <span className="mj_NewSessionSheet_folderPath">{folder.path}</span>
+                                            <span className="mj_NewSessionSheet_folderUsed">
+                                                {folderLastUsed(folder.last_used, now)}
+                                            </span>
                                         </button>
                                     ))}
                                 </div>
@@ -861,6 +972,76 @@ export function NewSessionSheet({
                             onChange={(event) => setWorkdir(event.target.value)}
                             placeholder="Agent default"
                         />
+                        {offer && agentSwitchVisible && (
+                            <div
+                                className="mj_TrackerSegment mj_NewSessionSheet_agentSwitch"
+                                role="group"
+                                aria-label="Agent"
+                            >
+                                {offer.agentOptions.map((option) => (
+                                    <button
+                                        key={option.value}
+                                        type="button"
+                                        aria-pressed={agentPick === option.value}
+                                        onClick={() => setPicks((current) => ({ ...current, agent: option.value }))}
+                                    >
+                                        {option.label}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                        {offer && (modelPickerVisible || effortPickerVisible) && (
+                            <div className="mj_NewSessionSheet_picks">
+                                {modelPickerVisible && (
+                                    <div className="mj_NewSessionSheet_pick">
+                                        <label htmlFor="mj-new-session-model">Model</label>
+                                        <select
+                                            id="mj-new-session-model"
+                                            value={picks.model ?? ""}
+                                            onChange={(event) =>
+                                                setPicks((current) => ({
+                                                    ...current,
+                                                    model: event.target.value || null,
+                                                }))
+                                            }
+                                        >
+                                            <option value="">
+                                                {defaultRowTitle(offer.modelOptions, offer.defaultModel)}
+                                            </option>
+                                            {offer.modelOptions.map((option) => (
+                                                <option key={option.value} value={option.value}>
+                                                    {option.label}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                )}
+                                {effortPickerVisible && (
+                                    <div className="mj_NewSessionSheet_pick">
+                                        <label htmlFor="mj-new-session-effort">Effort</label>
+                                        <select
+                                            id="mj-new-session-effort"
+                                            value={picks.effort ?? ""}
+                                            onChange={(event) =>
+                                                setPicks((current) => ({
+                                                    ...current,
+                                                    effort: event.target.value || null,
+                                                }))
+                                            }
+                                        >
+                                            <option value="">
+                                                {defaultRowTitle(offer.effortOptions, offer.defaultEffort)}
+                                            </option>
+                                            {offer.effortOptions.map((option) => (
+                                                <option key={option.value} value={option.value}>
+                                                    {option.label}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                )}
+                            </div>
+                        )}
                         <label>
                             <input
                                 type="checkbox"
@@ -910,6 +1091,21 @@ export function NewSessionSheet({
                     <>
                         <p className="mj_UploadConfirm_error">{sheetState.message}</p>
                         <div className="mj_UploadConfirm_actions">
+                            {sheetState.offer && (
+                                <button
+                                    type="button"
+                                    onClick={() =>
+                                        transition({
+                                            step: "folders",
+                                            agent: sheetState.agent,
+                                            foldersRequestId: foldersRequestIdRef.current,
+                                            offer: sheetState.offer,
+                                        })
+                                    }
+                                >
+                                    Change options
+                                </button>
+                            )}
                             <button
                                 type="button"
                                 className="mj_UploadConfirm_send"
@@ -3709,6 +3905,218 @@ function AgentSpawnCard({
     );
 }
 
+type AgentChatLocalPhase = { kind: "idle" } | { kind: "sending" } | { kind: "failed"; message: string };
+
+type AgentChatAnswerOutcome =
+    { kind: "settled"; answer: RememberedAgentChatAnswer } | { kind: "failed"; message: string };
+
+// Answers still in flight, keyed by answers scope + card. Module-level so they outlive the card:
+// the request is never aborted on unmount, and a remounted card follows it instead of drawing
+// its buttons again (a second tap would race the first, and its 409 read as "expired").
+const agentChatAnswersInFlight = new Map<string, Promise<AgentChatAnswerOutcome>>();
+
+const noopAgentChatAnswer = (_decision: AgentChatDecision): Promise<unknown> => Promise.resolve();
+
+// A transport failure surfaces as a JournalApiError with status 0.
+function agentChatErrorMessage(error: unknown): string {
+    if (error instanceof JournalApiError && error.status === 404) return "That request is no longer on the server.";
+    if (error instanceof JournalApiError && error.status !== 0) return "The server refused that answer.";
+    return "Couldn't reach the server — check your connection and try again.";
+}
+
+function rememberedResolution(answer: RememberedAgentChatAnswer | undefined): AgentChatResolution | undefined {
+    if (answer === undefined) return undefined;
+    return answer === "expired" ? { kind: "expired" } : { kind: "answered", approved: answer === "approve" };
+}
+
+// The agent-chat consent card: who is asking to talk to whom, about what and why, and the two
+// buttons that answer it. Same .mj_PromptCard chrome as the spawn card. Unlike the spawn card
+// there is no durable outcome event to wait for: a 200 from the answer call IS the decision, so
+// it is remembered locally. Precedence: what the timeline says (the consent item's closing
+// marker — a decision made on another device, or the ask lapsing) > the answer remembered here
+// > the in-flight/failed tap > answerable. A 409 means the ask stopped waiting between drawing
+// and the tap; that is nothing the user can act on, so it settles the card rather than erroring.
+// An answer in flight is never aborted when the card unmounts (leaving the conversation): the
+// decision may already be on the server, and it is still remembered when the call settles.
+function AgentChatRequestCard({
+    event,
+    request,
+    resolution,
+    answersScope,
+    isReadOnly = false,
+    onAnswer = noopAgentChatAnswer,
+}: {
+    event: JournalEvent;
+    request: AgentChatRequest;
+    resolution?: AgentChatResolution;
+    /** Where this session's answers are remembered (agentChatAnswersScope). */
+    answersScope?: string;
+    isReadOnly?: boolean;
+    onAnswer?: (decision: AgentChatDecision) => Promise<unknown>;
+}): React.ReactElement {
+    const cardKey = agentChatCardKey(event);
+    const flightKey = `${answersScope ?? ""}|${cardKey}`;
+    const [remembered, setRemembered] = useState(() => rememberedAgentChatAnswer(answersScope, cardKey));
+    // A card remounted while its answer is still in flight (the user left the conversation and
+    // came back) picks the request up again rather than offering the buttons a second time.
+    const [phase, setPhase] = useState<AgentChatLocalPhase>(() =>
+        agentChatAnswersInFlight.has(flightKey) ? { kind: "sending" } : { kind: "idle" },
+    );
+    const mountedRef = useRef(false);
+
+    const follow = useCallback((flight: Promise<AgentChatAnswerOutcome>): void => {
+        void flight.then((outcome) => {
+            if (!mountedRef.current) return;
+            if (outcome.kind === "failed") {
+                setPhase({ kind: "failed", message: outcome.message });
+            } else {
+                setRemembered(outcome.answer);
+                setPhase({ kind: "idle" });
+            }
+        });
+    }, []);
+
+    useEffect(() => {
+        mountedRef.current = true;
+        const flight = agentChatAnswersInFlight.get(flightKey);
+        if (flight) follow(flight);
+        return (): void => {
+            mountedRef.current = false;
+        };
+    }, [flightKey, follow]);
+
+    const settled = resolution ?? rememberedResolution(remembered);
+
+    const handleAnswer = (decision: AgentChatDecision): void => {
+        if (settled || agentChatAnswersInFlight.has(flightKey)) return;
+        setPhase({ kind: "sending" });
+        const flight = onAnswer(decision)
+            .then(
+                (): AgentChatAnswerOutcome => ({ kind: "settled", answer: decision }),
+                (error: unknown): AgentChatAnswerOutcome =>
+                    error instanceof JournalApiError && error.status === 409
+                        ? { kind: "settled", answer: "expired" }
+                        : { kind: "failed", message: agentChatErrorMessage(error) },
+            )
+            .then((outcome): AgentChatAnswerOutcome => {
+                agentChatAnswersInFlight.delete(flightKey);
+                if (outcome.kind === "settled") {
+                    rememberAgentChatAnswer(answersScope, cardKey, outcome.answer);
+                    // A 409 never overwrites a decision already remembered for this card.
+                    const stored = rememberedAgentChatAnswer(answersScope, cardKey);
+                    return stored ? { kind: "settled", answer: stored } : outcome;
+                }
+                return outcome;
+            });
+        agentChatAnswersInFlight.set(flightKey, flight);
+        follow(flight);
+    };
+
+    const sending = !settled && phase.kind === "sending";
+    const fields: Array<[string, string, string]> = [
+        ["from", "From", agentChatFromLabel(request)],
+        ["to", "To", agentChatToLabel(request)],
+    ];
+    if (request.topic) fields.push(["about", "About", request.topic]);
+    if (request.justification) fields.push(["why", "Why", request.justification]);
+
+    return (
+        <div className="mj_PromptCard mj_PromptCard_chat">
+            <div className="mj_PromptHeader">
+                <span className="mj_PromptLabel">Agent chat request</span>
+                <time className="mj_PromptTime" dateTime={new Date(event.ts).toISOString()}>
+                    {formatTime(event.ts)}
+                </time>
+            </div>
+            <div className="mj_PromptBody">
+                <span className="mj_PromptGlyph" aria-hidden="true">
+                    <PromptPeopleGlyph />
+                </span>
+                <span className="mj_PromptQuestion">{agentChatHeadline(request)}</span>
+            </div>
+            <div className="mj_SpawnDetails">
+                {fields.map(([key, label, value]) => (
+                    <div key={key} className={`mj_SpawnDetail mj_ChatDetail_${key}`}>
+                        <span className="mj_SpawnDetail_label">{label}</span>
+                        <span className="mj_SpawnDetail_value">{value}</span>
+                    </div>
+                ))}
+            </div>
+            {!isReadOnly && !settled && (
+                <div className="mj_PromptOptions">
+                    <button type="button" disabled={sending} onClick={() => handleAnswer("deny")}>
+                        Decline
+                    </button>
+                    <button
+                        type="button"
+                        className="mj_PromptOption_affirmative"
+                        disabled={sending}
+                        onClick={() => handleAnswer("approve")}
+                    >
+                        Approve
+                    </button>
+                </div>
+            )}
+            {sending && (
+                <div className="mj_PromptResolved mj_PromptResolved_pending">
+                    <span className="mj_PromptGlyph" aria-hidden="true" />
+                    <span className="mj_Muted">Sending…</span>
+                </div>
+            )}
+            {!settled && phase.kind === "failed" && (
+                <div className="mj_PromptResolved mj_PromptResolved_failed" role="alert">
+                    <span className="mj_PromptGlyph" aria-hidden="true" />
+                    <span className="mj_Answered" style={{ color: "var(--cpd-color-text-critical-primary)" }}>
+                        {phase.message}
+                    </span>
+                </div>
+            )}
+            {settled?.kind === "answered" && (
+                <div
+                    className={`mj_PromptResolved ${settled.approved ? "mj_PromptResolved_allowed" : "mj_PromptResolved_denied"}`}
+                >
+                    <span
+                        className="mj_PromptGlyph mj_PromptGlyph_ok"
+                        aria-hidden="true"
+                        style={{
+                            color: settled.approved ? "var(--cpd-color-usage-low)" : "var(--cpd-color-text-secondary)",
+                        }}
+                    >
+                        {settled.approved ? <PromptCheckGlyph /> : <PromptDeniedGlyph />}
+                    </span>
+                    <span className="mj_Answered">{settled.approved ? "Approved" : "Declined"}</span>
+                </div>
+            )}
+            {settled?.kind === "expired" && (
+                <div className="mj_PromptResolved mj_PromptResolved_expired">
+                    <span className="mj_PromptGlyph" aria-hidden="true" />
+                    <span className="mj_Muted">This request is no longer waiting for an answer.</span>
+                </div>
+            )}
+        </div>
+    );
+}
+
+function PromptPeopleGlyph(): React.ReactElement {
+    return (
+        <svg
+            viewBox="0 0 24 24"
+            width="15"
+            height="15"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.7"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+        >
+            <circle cx="9" cy="8" r="3" />
+            <path d="M3.5 19a5.5 5.5 0 0 1 11 0" />
+            <path d="M16 5.5a3 3 0 0 1 0 5" />
+            <path d="M17.5 14a5.5 5.5 0 0 1 3 5" />
+        </svg>
+    );
+}
+
 // Minimal standalone row for the durable spawn_outcome event itself (§ design "Timeline
 // rendering of spawn_outcome itself") — keeps the record legible once the card has scrolled
 // away, and stops the default case's raw JSON <details> dump.
@@ -4426,6 +4834,7 @@ function isSuppressedTrackerEvent(event: JournalEvent): boolean {
 }
 
 const EMPTY_SPAWN_OUTCOMES: ReadonlyMap<string, EventPayload> = new Map();
+const EMPTY_AGENT_CHAT_RESOLUTIONS: ReadonlyMap<string, AgentChatResolution> = new Map();
 
 // A permission-decision reply is a prompt_reply targeting a permission_request
 // card. The card already renders the decision inline (answered/allowed/denied
@@ -4445,6 +4854,7 @@ export function EventContent({
     event,
     answeredPromptReplies,
     spawnOutcomes = EMPTY_SPAWN_OUTCOMES,
+    agentChatResolutions = EMPTY_AGENT_CHAT_RESOLUTIONS,
     itemCards = EMPTY_ITEM_CARD_FOLD,
     isReadOnly = false,
     resolvedAction,
@@ -4453,6 +4863,7 @@ export function EventContent({
     event: JournalEvent;
     answeredPromptReplies: ReadonlyMap<string, { choice?: string }>;
     spawnOutcomes?: ReadonlyMap<string, EventPayload>;
+    agentChatResolutions?: ReadonlyMap<string, AgentChatResolution>;
     itemCards?: ItemCardFold;
     isReadOnly?: boolean;
     resolvedAction?: (itemId: string) => "send" | "cancel" | undefined;
@@ -4514,6 +4925,27 @@ export function EventContent({
                 />
             );
         case "permission_request": {
+            if (isAgentChatPayload(event.payload)) {
+                const request = parseAgentChatRequest(event.payload);
+                // A malformed agent-chat payload can't be answered: the generic PromptCard's
+                // Allow/Deny would post a prompt_reply nothing reads. Draw an inert notice instead.
+                if (!request) {
+                    return <div className="mj_AgentRequestNotice">{unanswerableAgentRequestNotice(event.payload)}</div>;
+                }
+                return (
+                    <AgentChatRequestCard
+                        key={`${event.convo_id}:${event.seq}`}
+                        event={event}
+                        request={request}
+                        resolution={agentChatResolutions.get(agentChatCardKey(event))}
+                        answersScope={agentChatAnswersScope(client.getSnapshot().session)}
+                        isReadOnly={isReadOnly}
+                        onAnswer={(decision) =>
+                            client.answerAgentChat(request.roomId, request.targetDeviceId, decision)
+                        }
+                    />
+                );
+            }
             if (asString(event.payload.kind) === "agent_spawn") {
                 const requestId = asString(event.payload.request_id);
                 // A malformed agent_spawn payload (no request_id/task) can never be resolved:
@@ -4627,6 +5059,7 @@ function EventRow({
     event,
     answeredPromptReplies,
     spawnOutcomes,
+    agentChatResolutions,
     itemCards,
     isReadOnly = false,
     resolvedAction,
@@ -4638,6 +5071,7 @@ function EventRow({
     event: JournalEvent;
     answeredPromptReplies: ReadonlyMap<string, { choice?: string }>;
     spawnOutcomes?: ReadonlyMap<string, EventPayload>;
+    agentChatResolutions?: ReadonlyMap<string, AgentChatResolution>;
     itemCards?: ItemCardFold;
     isReadOnly?: boolean;
     resolvedAction: (itemId: string) => "send" | "cancel" | undefined;
@@ -4697,6 +5131,7 @@ function EventRow({
                             event={event}
                             answeredPromptReplies={answeredPromptReplies}
                             spawnOutcomes={spawnOutcomes}
+                            agentChatResolutions={agentChatResolutions}
                             itemCards={itemCards}
                             isReadOnly={isReadOnly}
                             resolvedAction={resolvedAction}
@@ -4714,12 +5149,66 @@ function MsgAvatar(): React.ReactElement {
     return <span className="mj_MsgAvatar" style={{ WebkitMaskImage: mask, maskImage: mask }} aria-hidden />;
 }
 
+/** How much of the stream tail a collapsed tool-stream pane renders; it only shows a few lines. */
+export const TOOL_STREAM_COLLAPSED_CAP_CHARS = 4096;
+
+// The tail a collapsed pane renders, opened at a line boundary so the cut never starts mid-word
+// or inside an escape sequence, unless the first line is long (then the tail is effectively one
+// line and trimming through it would drop nearly everything). `cut` says if anything was dropped.
+export function collapsedToolStreamSlice(text: string): { text: string; cut: boolean } {
+    if (text.length <= TOOL_STREAM_COLLAPSED_CAP_CHARS) return { text, cut: false };
+    const tail = text.slice(cleanCutStart(text, text.length - TOOL_STREAM_COLLAPSED_CAP_CHARS));
+    const newline = tail.slice(0, 512).indexOf("\n");
+    return { text: newline >= 0 ? tail.slice(newline + 1) : tail, cut: true };
+}
+
+// Where a cut at `start` can open cleanly: past the rest of an escape sequence it landed inside
+// (any fragment, not only "[…m"), and past the low half of a surrogate pair it split. Unlike a
+// head-truncated buffer, the text before the cut is at hand, so the fix is exact.
+function cleanCutStart(text: string, start: number): number {
+    const lookback = Math.max(0, start - 64);
+    const escAt = text.slice(lookback, start).lastIndexOf("\x1b");
+    if (escAt >= 0) {
+        const esc = lookback + escAt;
+        let end = esc + 2; // ESC + one byte, for a non-CSI escape
+        if (text[esc + 1] === "[") {
+            while (end < text.length) {
+                const code = text.charCodeAt(end);
+                end++;
+                if (code >= 0x40 && code <= 0x7e) break;
+            }
+        }
+        if (end > start) start = end;
+    }
+    const code = text.charCodeAt(start);
+    if (code >= 0xdc00 && code <= 0xdfff) start++;
+    return start;
+}
+
 export function ToolStream({ stream }: { stream: ToolStreamState }): React.ReactElement {
+    // Mac ToolStreamCard: collapsed to the last few lines, expandable to a taller scrolling pane.
+    const [expanded, setExpanded] = useState(false);
     const nodes = useMemo(() => {
-        const cleaned = stream.headTruncated ? stripLeadingSgrFragment(stream.content) : stream.content;
-        const text = stream.headTruncated ? `… earlier output omitted …\n${cleaned}` : stream.content;
-        return parseAnsi(text, INITIAL_SGR_STATE, "", 0).nodes;
-    }, [stream.content, stream.headTruncated]);
+        let shown = stream.headTruncated ? stripLeadingSgrFragment(stream.content) : stream.content;
+        let cut = stream.headTruncated;
+        if (!expanded) {
+            const sliced = collapsedToolStreamSlice(shown);
+            shown = sliced.text;
+            cut = cut || sliced.cut;
+        }
+        return parseAnsi(cut ? `… earlier output omitted …\n${shown}` : shown, INITIAL_SGR_STATE, "", 0).nodes;
+    }, [stream.content, stream.headTruncated, expanded]);
+    // Stay pinned to the newest output unless the user has scrolled up.
+    const paneRef = useRef<HTMLPreElement>(null);
+    const pinned = useRef(true);
+    useLayoutEffect(() => {
+        const pane = paneRef.current;
+        if (pane && pinned.current) pane.scrollTop = pane.scrollHeight;
+    }, [nodes]);
+    const onScroll = (): void => {
+        const pane = paneRef.current;
+        if (pane) pinned.current = pane.scrollHeight - pane.scrollTop - pane.clientHeight < 8;
+    };
 
     return (
         <li className="mx_EventTile mx_EventTile_lastInSection" tabIndex={-1} data-layout="bubble" data-self="false">
@@ -4730,11 +5219,40 @@ export function ToolStream({ stream }: { stream: ToolStreamState }): React.React
             <div className="mx_EventTile_line">
                 <div className="mx_MTextBody mx_EventTile_content">
                     <div className="markdown-body mj_LiveTool">
-                        <div>
-                            <span className="mj_LiveDot" /> Running{" "}
-                            <code>{stream.command || stream.tool || "tool"}</code>
+                        <div className="mj_LiveTool_header">
+                            <span>
+                                <span className="mj_LiveDot" /> Running{" "}
+                                <code>{stream.command || stream.tool || "tool"}</code>
+                            </span>
+                            <button
+                                type="button"
+                                className="mj_LiveTool_toggle"
+                                aria-expanded={expanded}
+                                aria-label={expanded ? "Collapse output" : "Expand output"}
+                                onClick={() => {
+                                    // Like the Mac pane's bottom anchor: the resized pane opens on the newest output.
+                                    pinned.current = true;
+                                    setExpanded((current) => !current);
+                                }}
+                            >
+                                <svg viewBox="0 0 16 16" width={16} height={16} aria-hidden="true">
+                                    <path
+                                        d={expanded ? "m4 6 4 4 4-4" : "m6 4 4 4-4 4"}
+                                        fill="none"
+                                        stroke="currentColor"
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                    />
+                                </svg>
+                            </button>
                         </div>
-                        <pre>{nodes}</pre>
+                        <pre
+                            ref={paneRef}
+                            onScroll={onScroll}
+                            className={expanded ? "mj_LiveTool_expanded" : "mj_LiveTool_collapsed"}
+                        >
+                            {nodes}
+                        </pre>
                     </div>
                 </div>
             </div>
@@ -5023,6 +5541,9 @@ function Timeline({
         }
         return outcomes;
     }, [state.events]);
+    // Agent-chat cards settled by the timeline itself (the consent item's closing marker): a
+    // decision made on another device, or the ask lapsing.
+    const agentChatResolutions = useMemo(() => readAgentChatResolutions(state.events), [state.events]);
     const releasedActions = useMemo(() => {
         const actions = new Map<string, "send" | "cancel">();
         for (const event of state.events) {
@@ -5177,6 +5698,7 @@ function Timeline({
                                             event={item.event}
                                             answeredPromptReplies={answeredPromptReplies}
                                             spawnOutcomes={spawnOutcomes}
+                                            agentChatResolutions={agentChatResolutions}
                                             itemCards={itemCards}
                                             isReadOnly={isReadOnly}
                                             resolvedAction={resolvedAction}

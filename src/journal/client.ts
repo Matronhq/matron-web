@@ -54,6 +54,7 @@ import {
     type JournalBoxStatusFrame,
     isSubChat,
     type MatronLinkKind,
+    type Mission,
     type NumberLookup,
     type NumberLookupKind,
     type NumberLookupOutcome,
@@ -61,6 +62,7 @@ import {
     type JournalEvent,
     MESSAGE_EVENT_TYPES,
     normalizeServerUrl,
+    type NewSessionOffer,
     type PendingMessage,
     type RecentFolder,
     rendersAsTopLevelRow,
@@ -69,6 +71,8 @@ import {
     type ServerFrame,
     type Session,
     type SnapshotResponse,
+    type StartOption,
+    type StartSessionPicks,
     type TrackerAttachment,
     type JournalControlFrame,
     type TrackerCommentWrite,
@@ -97,6 +101,10 @@ const MESSAGE_SEARCH_MAX_QUERY_LEN = 256;
 const MESSAGE_SEARCH_TIMEOUT_MS = 15_000;
 /** How long "go to number" waits for the journal before reporting a failed lookup. */
 export const NUMBER_LOOKUP_TIMEOUT_MS = 15_000;
+/** A mission page's closed items come in pages of this many (the Mac's closed-items page). */
+export const MISSION_CLOSED_PAGE = 50;
+/** How many `GET /items` pages of closed items one `fetchMissionClosedItems` call walks at most. */
+const MISSION_CLOSED_SCAN_PAGES = 4;
 
 const NUMBER_LOOKUP_KINDS: readonly NumberLookupKind[] = ["item", "mission", "milestone", "project"];
 const isTrackerNumber = (value: unknown): value is number =>
@@ -222,6 +230,39 @@ export type WorkerKind = "claude" | "codex";
 /** How one item comment went: written, or not — with why, unless the session ended meanwhile
  *  (signed out, or another account signed in), when there is nothing left to report it to. */
 export type TrackerCommentOutcome = { ok: true } | { ok: false; reason?: string };
+
+function parseRecentFolders(raw: unknown): RecentFolder[] {
+    if (!Array.isArray(raw)) return [];
+    return raw.flatMap((entry): RecentFolder[] => {
+        if (typeof entry !== "object" || entry === null || Array.isArray(entry)) return [];
+        const folder = entry as Record<string, unknown>;
+        if (
+            typeof folder.path !== "string" ||
+            folder.path.length === 0 ||
+            (folder.last_used !== null && (typeof folder.last_used !== "number" || !Number.isFinite(folder.last_used)))
+        ) {
+            return [];
+        }
+        return [{ path: folder.path, last_used: folder.last_used }];
+    });
+}
+
+// Bridge order is kept. A repeated value is dropped: the value is the option's identity.
+function parseStartOptions(raw: unknown): StartOption[] {
+    if (!Array.isArray(raw)) return [];
+    const seen = new Set<string>();
+    return raw.flatMap((entry): StartOption[] => {
+        if (typeof entry !== "object" || entry === null || Array.isArray(entry)) return [];
+        const { value, label } = entry as Record<string, unknown>;
+        if (typeof value !== "string" || value.length === 0 || seen.has(value)) return [];
+        seen.add(value);
+        return [{ value, label: typeof label === "string" && label.length > 0 ? label : value }];
+    });
+}
+
+function parseOfferDefault(raw: unknown): string | null {
+    return typeof raw === "string" && raw.length > 0 ? raw : null;
+}
 
 export function workerKind(conversation: Conversation): WorkerKind | null {
     if (!isSubChat(conversation)) return null;
@@ -658,25 +699,28 @@ export class MatronJournalClient {
     }
 
     public async recentFolders(agentDeviceId: number): Promise<RecentFolder[]> {
+        return (await this.newSessionOffer(agentDeviceId)).folders;
+    }
+
+    // A box's `recent_folders` reply: its folders, plus the agent, model and effort choices a
+    // `start` there may name. A failed or malformed reply is an empty offer, never a throw.
+    public async newSessionOffer(agentDeviceId: number): Promise<NewSessionOffer> {
         const reply = await this.agentRpc(agentDeviceId, "recent_folders", {});
-        if (!reply.ok || typeof reply.result !== "object" || reply.result === null || Array.isArray(reply.result)) {
-            return [];
-        }
-        const folders = (reply.result as Record<string, unknown>).folders;
-        if (!Array.isArray(folders)) return [];
-        return folders.flatMap((raw): RecentFolder[] => {
-            if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return [];
-            const folder = raw as Record<string, unknown>;
-            if (
-                typeof folder.path !== "string" ||
-                folder.path.length === 0 ||
-                (folder.last_used !== null &&
-                    (typeof folder.last_used !== "number" || !Number.isFinite(folder.last_used)))
-            ) {
-                return [];
-            }
-            return [{ path: folder.path, last_used: folder.last_used }];
-        });
+        const result =
+            reply.ok && typeof reply.result === "object" && reply.result !== null && !Array.isArray(reply.result)
+                ? (reply.result as Record<string, unknown>)
+                : {};
+        return {
+            folders: parseRecentFolders(result.folders),
+            agentOptions: parseStartOptions(result.agent_options),
+            defaultAgent: parseOfferDefault(result.default_agent),
+            // The bridge's model list mirrors its /model buttons, which lead with the `default`
+            // alias; the sheet's own Default row already stands for that, so drop the duplicate.
+            modelOptions: parseStartOptions(result.model_options).filter((option) => option.value !== "default"),
+            defaultModel: parseOfferDefault(result.default_model),
+            effortOptions: parseStartOptions(result.effort_options).filter((option) => option.value !== "default"),
+            defaultEffort: parseOfferDefault(result.default_effort),
+        };
     }
 
     // One ask of a box that may be asleep. The journal boots an idle-stopped box whenever a
@@ -690,12 +734,17 @@ export class MatronJournalClient {
         return "failed";
     }
 
-    public startSessionRpc(agentDeviceId: number, workdir: string, browser: boolean): Promise<StartOutcome> {
+    public startSessionRpc(
+        agentDeviceId: number,
+        workdir: string,
+        browser: boolean,
+        picks: StartSessionPicks = {},
+    ): Promise<StartOutcome> {
         if (this.startSessionRequest) {
             return Promise.resolve({ kind: "error", message: "A session is already starting — please wait." });
         }
 
-        const request = this.performStartSessionRpc(agentDeviceId, workdir, browser);
+        const request = this.performStartSessionRpc(agentDeviceId, workdir, browser, picks);
         this.startSessionRequest = request;
         const clear = (): void => {
             if (this.startSessionRequest === request) this.startSessionRequest = undefined;
@@ -708,11 +757,15 @@ export class MatronJournalClient {
         agentDeviceId: number,
         workdir: string,
         browser: boolean,
+        picks: StartSessionPicks,
     ): Promise<StartOutcome> {
-        const params: { workdir?: string; browser?: true } = {};
+        const params: { workdir?: string; browser?: true } & StartSessionPicks = {};
         const normalizedWorkdir = workdir.trim();
         if (normalizedWorkdir) params.workdir = normalizedWorkdir;
         if (browser) params.browser = true;
+        if (picks.agent) params.agent = picks.agent;
+        if (picks.model) params.model = picks.model;
+        if (picks.effort) params.effort = picks.effort;
 
         const reply = await this.agentRpc(agentDeviceId, "start", params);
         if (reply.ok) {
@@ -735,6 +788,22 @@ export class MatronJournalClient {
         }
         if (reply.origin === "agent" && reply.code === "bad_workdir") {
             return { kind: "error", message: "That folder doesn't exist on the box." };
+        }
+        // The pickers only ever show what this box's own reply offered, so these mean the box
+        // has changed since; the Default rows always work.
+        if (reply.origin === "agent" && reply.code === "bad_model") {
+            return { kind: "error", message: "That box doesn't offer that model — pick another." };
+        }
+        if (reply.origin === "agent" && reply.code === "bad_effort") {
+            return { kind: "error", message: "That box doesn't offer that effort — pick another." };
+        }
+        if (reply.origin === "agent" && reply.code === "bad_agent") {
+            return { kind: "error", message: "That box can't start that agent — pick another." };
+        }
+        // A bridge without Codex's app-server transport refuses browser tools on an explicit Codex
+        // start: a definite refusal, so no session is coming — not "may have started".
+        if (reply.origin === "agent" && reply.code === "bad_request" && picks.agent === "codex" && browser) {
+            return { kind: "error", message: "That box can't give Codex browser tools — untick Browser tools." };
         }
         return { kind: "uncertain" };
     }
@@ -1663,6 +1732,16 @@ export class MatronJournalClient {
     ): Promise<void> {
         if (!this.api) throw new Error("Not signed in.");
         await this.api.answerAgentSpawn(requestId, decision, signal);
+    }
+
+    public async answerAgentChat(
+        roomId: string,
+        targetDeviceId: number,
+        decision: "approve" | "deny",
+        signal?: AbortSignal,
+    ): Promise<boolean> {
+        if (!this.api) throw new Error("Not signed in.");
+        return this.api.answerAgentChat(roomId, targetDeviceId, decision, signal);
     }
 
     // Concurrent callers for the same id (the viewer body and its DownloadLink mount in the
@@ -2642,6 +2721,41 @@ export class MatronJournalClient {
                 trackerLoading: false,
             });
         }
+    }
+
+    /**
+     * One page of a mission's closed items, most recently updated first. `GET /items` has no
+     * mission filter, so this walks the user's closed items newest first (at most
+     * MISSION_CLOSED_SCAN_PAGES requests of 500) and keeps the mission's own, stopping once `want`
+     * are found. The walk starts no further back than the mission's creation (`since`): the journal
+     * bumps an item's `updated_at` whenever it is put on a mission, so none of the mission's items
+     * is older than the mission. `cursor` is where the walk stopped, null once every candidate has
+     * been seen — pass it back to continue. Not store state: the mission page holds the pages it
+     * asked for. Rejects on a failed request, and resolves empty when signed out.
+     */
+    public async fetchMissionClosedItems(
+        mission: Pick<Mission, "id" | "created_at">,
+        cursor: string | null = null,
+        want: number = MISSION_CLOSED_PAGE,
+    ): Promise<{ items: TrackerItem[]; cursor: string | null }> {
+        const api = this.api;
+        if (!api) return { items: [], cursor: null };
+        const since = Number.isInteger(mission.created_at) && mission.created_at > 0 ? mission.created_at : undefined;
+        const items: TrackerItem[] = [];
+        let next = cursor;
+        for (let page = 0; page < MISSION_CLOSED_SCAN_PAGES; page++) {
+            const res = await api.items({
+                state: "closed",
+                sort: "updated",
+                limit: 500,
+                ...(since !== undefined ? { since } : {}),
+                cursor: next ?? undefined,
+            });
+            for (const item of res.items) if (item.mission_id === mission.id) items.push(item);
+            next = res.next_cursor;
+            if (!next || items.length >= want) break;
+        }
+        return { items, cursor: next };
     }
 
     // ── Tracker mutations (fresh Idempotency-Key per call → refetch the affected row + patch).
