@@ -884,17 +884,22 @@ textarea {
        height once it has been laid out. */
     content-visibility: auto;
     contain-intrinsic-size: auto 52px;
+    /* content-visibility clips painting at the row's edge; leave room for the focus ring. */
+    overflow-clip-margin: 4px;
 }
 
 /* The same for transcript rows: a long conversation otherwise re-lays out every loaded row
    whenever the streaming bubble grows. The newest rows always render, so their real heights
    are known when the timeline pins itself to the bottom; only rows well above the tail are
-   skipped until they scroll into view. */
-.mx_RoomView_MessageList > .mx_EventTile:nth-last-child(n + 40) {
-    content-visibility: auto;
-    contain-intrinsic-size: auto 96px;
-    /* content-visibility clips painting at the row's edge; leave room for the bubble shadow. */
-    overflow-clip-margin: 4px;
+   skipped until they scroll into view. When such a row first renders at its real height, scroll
+   anchoring keeps the reader's place, so browsers without it (Safari) render every row. */
+@supports (overflow-anchor: auto) {
+    .mx_RoomView_MessageList > .mx_EventTile:nth-last-child(n + 40) {
+        content-visibility: auto;
+        contain-intrinsic-size: auto 96px;
+        /* content-visibility clips painting at the row's edge; leave room for the bubble shadow. */
+        overflow-clip-margin: 4px;
+    }
 }
 
 /* Row-menu trigger: invisible + non-interactive for pointer users (who open the menu via
