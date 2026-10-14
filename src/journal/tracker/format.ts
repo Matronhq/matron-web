@@ -82,6 +82,14 @@ export function itemStatusText(
 }
 
 /**
+ * True for a consent card: an item the journal filed for a chat or spawn request, carrying a
+ * `matron://consent/...` link. It closes when the request is decided and cannot be reopened.
+ */
+export function isConsentItem(item: Pick<TrackerItem, "links">): boolean {
+    return (item.links ?? []).some((link) => typeof link?.url === "string" && link.url.startsWith("matron://consent/"));
+}
+
+/**
  * Resolutions offered for an item, primary first (client convention; the server accepts any).
  * A question can only be "answered" once the user has actually replied.
  */
