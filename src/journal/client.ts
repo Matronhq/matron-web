@@ -979,6 +979,13 @@ export class MatronJournalClient {
             this.trackerMissionGen += 1;
             this.trackerProjectGen += 1;
         }
+        if (this.state.chatSearch && this.state.chatSearch.conversationId !== conversationId) {
+            // The bar closes below; a search still in flight there must not answer a bar opened on
+            // that conversation again later.
+            this.chatSearchSeq += 1;
+            this.chatSearchAbort?.abort();
+            this.chatSearchAbort = undefined;
+        }
         this.patch({
             selectedConversationId: conversationId,
             // Selecting a conversation closes the Tracker pane so the chosen room becomes visible

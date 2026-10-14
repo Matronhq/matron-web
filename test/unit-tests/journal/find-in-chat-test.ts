@@ -329,6 +329,21 @@ describe("client find in chat", () => {
         expect(client.getSnapshot().focusTarget).toBeUndefined();
     });
 
+    it("switching to another conversation and back ignores the abandoned search's answer", async () => {
+        let answer!: (value: unknown) => void;
+        const search = jest.fn().mockImplementationOnce(() => new Promise((resolve) => (answer = resolve)));
+        const { client } = searchClient(range(1, 50), search);
+        await client.selectConversation("c1");
+        const searching = client.beginChatSearch("deploy");
+        await client.selectConversation("c2");
+        await client.selectConversation("c1");
+        client.openChatSearch();
+        answer(hits(20));
+        await searching;
+        expect(client.getSnapshot().chatSearch).toEqual(expect.objectContaining({ query: "", matchSeqs: [] }));
+        expect(client.getSnapshot().focusTarget).toBeUndefined();
+    });
+
     it("a new query cancels the previous query's jump still paging history", async () => {
         let answerSecond!: (value: unknown) => void;
         const search = jest
