@@ -1957,6 +1957,18 @@ describe("MatronJournalClient spawnConsentRows", () => {
         expect(rows.request?.seq).toBe(30);
     });
 
+    it("leaves the conversation's own paging and selection state alone", async () => {
+        const messages = jest.fn().mockResolvedValue({ events: [card("sp_1", 30)] });
+        const { client } = withStore([], messages);
+        const before = client.getSnapshot();
+
+        await client.spawnConsentRows("c1", "sp_1");
+
+        // Opening c1 later must still load its own latest page and track its own paging.
+        expect((client as unknown as { history: Map<string, unknown> }).history.has("c1")).toBe(false);
+        expect(client.getSnapshot()).toBe(before);
+    });
+
     it("does not fetch the same conversation again after a miss", async () => {
         const messages = jest.fn().mockResolvedValue({ events: [] });
         const { client } = withStore([], messages);
