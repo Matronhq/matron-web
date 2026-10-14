@@ -300,6 +300,20 @@ describe("client find in chat", () => {
         expect(focus).not.toHaveBeenCalled();
     });
 
+    it("a search answered after the tracker opened leaves the tracker up", async () => {
+        let answer!: (value: unknown) => void;
+        const search = jest.fn().mockImplementationOnce(() => new Promise((resolve) => (answer = resolve)));
+        const { client } = searchClient(range(1, 50), search);
+        await client.selectConversation("c1");
+        const focus = jest.spyOn(client, "focusMessage");
+        const searching = client.beginChatSearch("deploy");
+        client.openTrackerView({ view: "inbox" });
+        answer(hits(20));
+        await searching;
+        expect(client.getSnapshot().trackerView).toBeDefined();
+        expect(focus).not.toHaveBeenCalled();
+    });
+
     it("a bar opened later on the same conversation ignores an abandoned search's answer", async () => {
         let answer!: (value: unknown) => void;
         const search = jest.fn().mockImplementationOnce(() => new Promise((resolve) => (answer = resolve)));

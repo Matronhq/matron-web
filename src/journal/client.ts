@@ -1454,6 +1454,8 @@ export class MatronJournalClient {
             this.cancelChatSearchFocus();
             return;
         }
+        // The tracker opened over the conversation meanwhile: landing would close it again.
+        if (this.state.trackerView) return;
         await this.focusMessage(conversationId, matchSeqs[index], "search");
     }
 
