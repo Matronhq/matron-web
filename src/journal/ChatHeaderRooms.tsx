@@ -196,9 +196,7 @@ export function RoomsControl({
                                         aria-hidden="true"
                                     />
                                     <span className="mj_RoomsMenu_title">{room.title}</span>
-                                    {silenced && (
-                                        <BellSlashIcon className="mj_RoomsMenu_muted" aria-hidden />
-                                    )}
+                                    {silenced && <BellSlashIcon className="mj_RoomsMenu_muted" aria-hidden />}
                                     {room.lastActivity !== undefined && (
                                         <span className="mj_RoomsMenu_time">
                                             {formatRelativeTime(room.lastActivity, now)}
