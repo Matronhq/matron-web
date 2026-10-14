@@ -2039,7 +2039,11 @@ export class MatronJournalClient {
             selectedProjectId: opts.projectId === null ? undefined : (opts.projectId ?? prev?.selectedProjectId),
             ...(briefingOpen ? { briefingOpen } : {}),
         };
-        this.patch({ trackerView: next });
+        // The tracker covers the transcript: a jump still paging history is dropped, and a target
+        // not yet landed is withdrawn, or returning to the conversation would flash a jump the
+        // user has since left.
+        this.focusToken += 1;
+        this.patch({ trackerView: next, ...(this.state.focusTarget ? { focusTarget: undefined } : {}) });
     }
 
     // Memories view entry points: a name opens that memory's editor, "" opens the new-memory form,
