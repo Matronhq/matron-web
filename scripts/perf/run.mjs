@@ -20,6 +20,8 @@ Please see LICENSE files in the repository root for full details.
  *                         stream, soak)
  *   --runs=N              repeat each timed scenario N times and report the median (default 3)
  *   --cpu=N               CPU throttling factor, as in DevTools (default 1)
+ *   --latency=MS          add this much round-trip latency to every HTTP request, as a remote
+ *                         journal would (default 0)
  *   --out=FILE            write the JSON result here (default perf-results.json)
  *   --budget=FILE         compare against a budget file and exit 1 on a breach
  *   --profile=DIR         save a CPU profile (.cpuprofile, opens in DevTools) per browser page
@@ -49,6 +51,7 @@ const WEBAPP = path.join(ROOT, "webapp");
 const SCALE = args.scale ?? "full";
 const RUNS = Number(args.runs ?? 3);
 const CPU = Number(args.cpu ?? 1);
+const LATENCY = Number(args.latency ?? 0);
 const PROFILE = args.profile ? path.resolve(String(args.profile)) : null;
 let currentScenario = "";
 let profileCount = 0;
@@ -128,6 +131,15 @@ async function newPage(browser) {
     const cdp = await context.newCDPSession(page);
     await cdp.send("Performance.enable", { timeDomain: "threadTicks" });
     if (CPU > 1) await cdp.send("Emulation.setCPUThrottlingRate", { rate: CPU });
+    if (LATENCY > 0) {
+        await cdp.send("Network.enable");
+        await cdp.send("Network.emulateNetworkConditions", {
+            offline: false,
+            latency: LATENCY,
+            downloadThroughput: -1,
+            uploadThroughput: -1,
+        });
+    }
     if (PROFILE) {
         fs.mkdirSync(PROFILE, { recursive: true });
         await cdp.send("Profiler.enable");
@@ -754,6 +766,7 @@ async function main() {
     const result = {
         when: new Date().toISOString(),
         cpuThrottle: CPU,
+        latencyMs: LATENCY,
         runs: RUNS,
         chromium: chromium.name(),
         scenarios,
