@@ -276,7 +276,7 @@ export async function loadMatronConfig(): Promise<MatronConfig> {
     }
 
     try {
-        const response = await fetch("config.json", { cache: "no-store" });
+        const response = await fetch(`${process.env.PUBLIC_PATH ?? ""}config.json`, { cache: "no-store" });
         if (!response.ok) return {};
         return (await response.json()) as MatronConfig;
     } catch {

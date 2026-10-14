@@ -43,6 +43,9 @@ class VersionAssetPlugin {
 export default (_environment, arguments_) => {
     const development = arguments_.mode !== "production";
     const version = process.env.VERSION ?? `${packageJson.version}${development ? "-dev" : ""}`;
+    // Where webapp/ is served from. Every URL the build emits starts with it, so index.html also
+    // works at the client-side routes the journal serves it for (/u/*, /app/*).
+    const publicPath = (process.env.PUBLIC_PATH || "/").replace(/\/*$/, "/");
 
     return {
         mode: development ? "development" : "production",
@@ -51,6 +54,7 @@ export default (_environment, arguments_) => {
         entry: "./src/journal/index.tsx",
         output: {
             path: path.join(root, "webapp"),
+            publicPath,
             filename: "assets/[name].[contenthash:8].js",
             chunkFilename: "assets/[name].[contenthash:8].js",
             assetModuleFilename: "assets/[name].[contenthash:8][ext]",
@@ -114,7 +118,10 @@ export default (_environment, arguments_) => {
                     { from: "config.json", noErrorOnMissing: true },
                 ],
             }),
-            new webpack.DefinePlugin({ "process.env.VERSION": JSON.stringify(version) }),
+            new webpack.DefinePlugin({
+                "process.env.VERSION": JSON.stringify(version),
+                "process.env.PUBLIC_PATH": JSON.stringify(publicPath),
+            }),
             new VersionAssetPlugin(version),
         ],
         devServer: {
