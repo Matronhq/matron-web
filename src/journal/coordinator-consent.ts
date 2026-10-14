@@ -16,7 +16,7 @@ Please see LICENSE files in the repository root for full details.
  */
 
 import { agentChatAskId, agentChatCardKey, parseAgentChatRequest } from "./agent-chat";
-import { asString, type EventPayload, type JournalEvent } from "./types";
+import { asString, type EventPayload, findSpawnConsentRows, type JournalEvent, type SpawnConsentRows } from "./types";
 
 export interface CoordinatorDecision {
     kind: "chat" | "spawn";
@@ -92,6 +92,17 @@ export function readCoordinatorDecisions(events: readonly JournalEvent[]): Reado
         if (card) decisions.set(card, decision);
     }
     return decisions;
+}
+
+/**
+ * findSpawnConsentRows, plus the Coordinator's answer to the card it found: the tracker item's
+ * copy of the card carries the same badge as the timeline's.
+ */
+export function spawnConsentRowsIn(events: readonly JournalEvent[], requestId: string): SpawnConsentRows {
+    const rows = findSpawnConsentRows(events, requestId);
+    if (!rows.request) return rows;
+    const coordinatorDecision = readCoordinatorDecisions(events).get(agentChatCardKey(rows.request));
+    return coordinatorDecision ? { ...rows, coordinatorDecision } : rows;
 }
 
 // ── Stop session ──────────────────────────────────────────────────────────────────────────────

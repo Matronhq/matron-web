@@ -16,6 +16,7 @@ import {
     pinnedStore,
     unreadStore,
 } from "../../../src/journal/client";
+import { AgentSpawnCard } from "../../../src/journal/agent-spawn-card";
 import { resetSessionStops } from "../../../src/journal/coordinator-consent";
 import { EventContent, MatronApp } from "../../../src/journal/components";
 import { eventSnippet } from "../../../src/journal/types";
@@ -914,5 +915,52 @@ describe("agent_spawn card answered by the Coordinator", () => {
             "Approved by the Coordinator — Fine",
         );
         expect(stopButton()).toBeNull();
+    });
+});
+
+describe("agent_spawn card settled by its consent item", () => {
+    let rendered: { container: HTMLDivElement; root: Root } | undefined;
+
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    afterEach(async () => {
+        if (rendered) {
+            await act(async () => rendered?.root.unmount());
+            rendered.container.remove();
+            rendered = undefined;
+        }
+    });
+
+    async function renderCard(props: Partial<React.ComponentProps<typeof AgentSpawnCard>>): Promise<Element> {
+        const container = document.createElement("div");
+        document.body.append(container);
+        const root = createRoot(container);
+        await act(async () => {
+            root.render(React.createElement(AgentSpawnCard, { event: spawnCardEvent(), outcome: null, ...props }));
+        });
+        rendered = { container, root };
+        return container.querySelector(".mj_PromptCard_spawn")!;
+    }
+
+    it("says the Coordinator answered when the item closed for its decision", async () => {
+        const card = await renderCard({
+            settled: true,
+            coordinatorDecision: { kind: "spawn", approved: true, reason: "Fine", askId: "spawn-1" },
+        });
+
+        expect(card.querySelectorAll("button")).toHaveLength(0);
+        expect(card.querySelector(".mj_CoordinatorBadge_text")?.textContent).toBe("Approved by the Coordinator — Fine");
+        expect(card.querySelector(".mj_PromptResolved_approved")?.textContent).toBe("Approved — starting the session");
+        expect(card.querySelector(".mj_PromptResolved_expired")).toBeNull();
+    });
+
+    it("reads as answered elsewhere when settled without a Coordinator decision", async () => {
+        const card = await renderCard({ settled: true });
+
+        expect(card.querySelectorAll("button")).toHaveLength(0);
+        expect(card.querySelector(".mj_CoordinatorBadge")).toBeNull();
+        expect(card.querySelector(".mj_PromptResolved_expired")?.textContent).toBe("Already answered or expired");
     });
 });

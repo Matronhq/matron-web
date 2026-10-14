@@ -19,20 +19,26 @@ Please see LICENSE files in the repository root for full details.
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
+import { AgentSpawnCard, type AgentSpawnDecision, isAnswerableAgentSpawn } from "../agent-spawn-card";
 import { JOURNAL_ATTACHMENTS_MAX } from "../api";
 import { type MatronJournalClient, type TrackerCommentOutcome, voiceNoteFile } from "../client";
+import { stopSpawnedSession } from "../coordinator-consent";
 import { ChevronLeftIcon, CloseIcon, KebabIcon, PlusCircleIcon, SendIcon } from "../icons";
 import { parseOwnTrackerUrl } from "../link-path";
 import { parseTrackerHref } from "../markdown";
 import { MediaViewer, MediaViewerContext, type MediaViewerContextValue } from "../media-viewer";
-import type {
-    TrackerAttachment,
-    TrackerComment,
-    TrackerCommentWrite,
-    TrackerItem,
-    TrackerLink,
-    TrackerLinkHandler,
-    TrackerResolution,
+import {
+    asString,
+    type SpawnConsentRows,
+    spawnOutcomeKind,
+    spawnOutcomeSnippet,
+    type TrackerAttachment,
+    type TrackerComment,
+    type TrackerCommentWrite,
+    type TrackerItem,
+    type TrackerLink,
+    type TrackerLinkHandler,
+    type TrackerResolution,
 } from "../types";
 import { useVoiceRecorder, VoiceErrorBanner, VoiceMicButton, VoiceRecordingBar } from "../voice-recorder";
 import {
@@ -45,6 +51,7 @@ import {
     needsUser,
     offeredItemActions,
     resolveActionLabel,
+    spawnConsentRequestId,
     statusRowText,
 } from "./format";
 import { CommentBubbleGlyph, MissionGlyph, TrackerGlyph } from "./glyphs";
@@ -130,6 +137,99 @@ function ItemActions({
                     </button>
                 );
             })}
+        </div>
+    );
+}
+
+/**
+ * The agent-spawn ask a consent item stands for, read from the conversation that asked and read
+ * again whenever that conversation moves (a card arriving, its outcome landing). Undefined until
+ * the first read for this ask finishes, and for an item that is not a spawn consent item.
+ */
+function useSpawnConsentRows(
+    client: MatronJournalClient,
+    convoId: string,
+    requestId: string | null,
+    convoSeq: number | undefined,
+): SpawnConsentRows | undefined {
+    const [read, setRead] = useState<{ key: string; rows: SpawnConsentRows } | null>(null);
+    const key = requestId ? `${convoId}\n${requestId}` : "";
+    useEffect(() => {
+        if (!requestId) return;
+        let live = true;
+        void client.spawnConsentRows(convoId, requestId).then((rows) => {
+            if (live) setRead({ key, rows });
+        });
+        return (): void => {
+            live = false;
+        };
+    }, [client, convoId, requestId, convoSeq, key]);
+    return read && read.key === key ? read.rows : undefined;
+}
+
+/**
+ * The spawn consent card for a consent item, between the item's links and its body so the answer
+ * sits near the top. The full card when its own event is in this browser's store: what the user
+ * approves is then exactly what the timeline card shows, through the same answer call. Without it
+ * there is nothing to approve: the id in the item's link is agent-written and could name an ask the
+ * user has never seen, so the placeholder offers no buttons. It says the card has not arrived while
+ * the ask may still be waiting, or how the ask ended when its outcome is here (the latest history
+ * page can hold the outcome but not the older card) or the item is closed. A closed item settles the
+ * card: the journal closes it the moment the ask is answered.
+ */
+function SpawnConsentCard({
+    rows,
+    closed,
+    onAnswer,
+    onOpenRoom,
+    onStopSession,
+}: {
+    rows: SpawnConsentRows;
+    closed: boolean;
+    onAnswer: (decision: AgentSpawnDecision, signal?: AbortSignal) => Promise<void>;
+    onOpenRoom: (roomId: string) => void;
+    onStopSession: (convoId: string) => void;
+}): React.ReactElement {
+    const { request, outcome, coordinatorDecision } = rows;
+    if (request) {
+        const answerable = isAnswerableAgentSpawn(request.payload);
+        return (
+            <div className="mj_TrackerConsent">
+                <AgentSpawnCard
+                    event={request}
+                    outcome={outcome}
+                    coordinatorDecision={coordinatorDecision}
+                    isReadOnly={!answerable}
+                    settled={closed}
+                    onAnswer={answerable ? onAnswer : undefined}
+                    onOpen={onOpenRoom}
+                    onStopSession={onStopSession}
+                />
+            </div>
+        );
+    }
+    const roomId = outcome && spawnOutcomeKind(outcome) === "started" ? asString(outcome.room_id) : "";
+    return (
+        <div className="mj_TrackerConsent">
+            <div className="mj_PromptCard mj_PromptCard_spawn mj_TrackerConsent_waiting">
+                <div className="mj_PromptHeader">
+                    <span className="mj_PromptLabel">Agent spawn request</span>
+                </div>
+                <p className="mj_TrackerConsent_note">
+                    {outcome
+                        ? spawnOutcomeSnippet(outcome)
+                        : closed
+                          ? "This request is no longer waiting for an answer."
+                          : "The request card hasn't reached this browser yet. It can be approved once it arrives, or from the conversation it was asked in."}
+                </p>
+                {roomId ? (
+                    <div className="mj_PromptResolved">
+                        <button type="button" className="mj_SpawnOpenButton" onClick={() => onOpenRoom(roomId)}>
+                            Open
+                        </button>
+                    </div>
+                ) : null}
+            </div>
         </div>
     );
 }
@@ -591,14 +691,33 @@ export function ItemDetail({
         return client.postTrackerComment(item.num, write, key);
     };
 
-    const urgent = needsUser(item);
-    const hasUserReply = useMemo(() => comments.some((comment) => comment.author === "user"), [comments]);
-    const resolutions = item.state === "open" ? availableResolutions(item, hasUserReply) : [];
-
     const snapshot = client.getSnapshot();
     const selectedConvoId = snapshot.selectedConversationId;
     // Keyed on the conversation list (replaced on a rename or load), so the line follows it live.
     const conversations = snapshot.conversations;
+
+    // A spawn consent item carries the ask's card, answered here as in the conversation.
+    const spawnRequestId = spawnConsentRequestId(item);
+    const originSeq = conversations.find((conversation) => conversation.id === item.origin_convo_id)?.last_seq;
+    const spawnRows = useSpawnConsentRows(client, item.origin_convo_id, spawnRequestId, originSeq);
+    const answerSpawn = async (decision: AgentSpawnDecision, signal?: AbortSignal): Promise<void> => {
+        if (spawnRequestId) await client.answerSpawnConsent(item.num, spawnRequestId, decision, signal);
+    };
+    const openSpawnRoom = (roomId: string): void => {
+        client.closeTrackerView();
+        void client.selectConversation(roomId, { suppressNotFound: true });
+    };
+    const stopSpawnSession = (convoId: string): void => {
+        void stopSpawnedSession(convoId, (target) => client.sendMessage("/stop", target));
+    };
+
+    const urgent = needsUser(item);
+    const hasUserReply = useMemo(() => comments.some((comment) => comment.author === "user"), [comments]);
+    // A consent item still waiting for its answer offers no close: Approve and Decline are its only
+    // honest ones, and dismissing it would hide an ask that stays open on the journal. The journal
+    // closes the item itself once the ask is decided. One whose outcome is in has nothing to hide.
+    const awaitingConsent = isConsentItem(item) && !spawnRows?.outcome;
+    const resolutions = item.state === "open" && !awaitingConsent ? availableResolutions(item, hasUserReply) : [];
     const agents = snapshot.agents;
     const originLabel = useMemo(() => itemOriginLabel(item, conversations, agents), [item, conversations, agents]);
     // Always drawn for an item filed from a conversation, unless the detail is shown inside that
@@ -1002,6 +1121,16 @@ export function ItemDetail({
                             <LinkChip key={link.url} link={link} onTrackerLink={onTrackerLink} />
                         ))}
                     </div>
+                ) : null}
+
+                {spawnRequestId && spawnRows ? (
+                    <SpawnConsentCard
+                        rows={spawnRows}
+                        closed={item.state === "closed"}
+                        onAnswer={answerSpawn}
+                        onOpenRoom={openSpawnRoom}
+                        onStopSession={stopSpawnSession}
+                    />
                 ) : null}
 
                 {/* The item's body attachments ride with the body: placed inline where it refers to
