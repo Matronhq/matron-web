@@ -178,6 +178,7 @@ interface Internals {
     state: ClientState;
     api?: Record<string, jest.Mock>;
     handleTrackerMarker(event: JournalEvent): void;
+    conversationMissionsCache: Map<string, ConversationMissionLink[]>;
 }
 
 function signedIn(conversationMissions: jest.Mock): { client: MatronJournalClient; internals: Internals } {
@@ -307,30 +308,66 @@ describe("chat header mission chip", () => {
 });
 
 describe("conversation missions in the client", () => {
-    const marker = (convoId: string): JournalEvent => ({
+    const marker = (convoId: string, payload: Record<string, unknown> = {}): JournalEvent => ({
         kind: "journal",
         seq: 5,
         convo_id: convoId,
         ts: 1,
         sender: "journal",
         type: "mission",
-        payload: { mission_id: "ms_1", num: 12, action: "joined" },
+        payload: { mission_id: "ms_1", num: 12, action: "joined", ...payload },
     });
 
+    // Marker refetches are coalesced on a 250 ms timer; run it and let the load settle.
+    const flushMarkers = async (): Promise<void> => {
+        jest.advanceTimersByTime(250);
+        await jest.runAllTimersAsync();
+    };
+
+    afterEach(() => jest.useRealTimers());
+
     it("refetches the chip's missions on a mission marker in the conversation on screen", async () => {
+        jest.useFakeTimers();
         const fetch = jest.fn().mockResolvedValue([CURRENT]);
         const { client, internals } = signedIn(fetch);
         await client.loadConversationMissions("c1");
         expect(client.getSnapshot().conversationMissions).toEqual({ convoId: "c1", links: [CURRENT] });
 
         internals.handleTrackerMarker(marker("c1"));
+        await flushMarkers();
         expect(fetch).toHaveBeenCalledTimes(2);
-        // Another conversation's marker costs nothing.
-        internals.handleTrackerMarker(marker("c2"));
+        // Another conversation's marker about a mission the chip does not list costs nothing.
+        internals.handleTrackerMarker(marker("c2", { mission_id: "ms_9", num: 99 }));
+        await flushMarkers();
         expect(fetch).toHaveBeenCalledTimes(2);
     });
 
+    it("coalesces a burst of markers into one fetch", async () => {
+        jest.useFakeTimers();
+        const fetch = jest.fn().mockResolvedValue([CURRENT]);
+        const { internals } = signedIn(fetch);
+        internals.handleTrackerMarker(marker("c1", { action: "left" }));
+        internals.handleTrackerMarker(marker("c1", { action: "current_changed" }));
+        internals.handleTrackerMarker(marker("c1"));
+        expect(fetch).not.toHaveBeenCalled();
+        await flushMarkers();
+        expect(fetch).toHaveBeenCalledTimes(1);
+        expect(fetch).toHaveBeenCalledWith("c1");
+    });
+
+    it("follows a rename or close of a listed mission written to its origin conversation", async () => {
+        jest.useFakeTimers();
+        const renamed = { ...CURRENT, title: "Ship the new docs" };
+        const fetch = jest.fn().mockResolvedValueOnce([CURRENT]).mockResolvedValueOnce([renamed]);
+        const { client, internals } = signedIn(fetch);
+        await client.loadConversationMissions("c1");
+        internals.handleTrackerMarker(marker("c-origin", { action: "updated" }));
+        await flushMarkers();
+        expect(client.getSnapshot().conversationMissions).toEqual({ convoId: "c1", links: [renamed] });
+    });
+
     it("follows a marker that lands while the first load is in flight, or after it failed", async () => {
+        jest.useFakeTimers();
         let resolveFirst!: (links: ConversationMissionLink[]) => void;
         const fetch = jest
             .fn()
@@ -342,18 +379,35 @@ describe("conversation missions in the client", () => {
         const first = client.loadConversationMissions("c1");
         // The marker's load starts after the first and wins over its pre-join answer.
         internals.handleTrackerMarker(marker("c1"));
-        await Promise.resolve();
+        await flushMarkers();
         resolveFirst([]);
         await first;
-        await new Promise((resolve) => setTimeout(resolve, 0));
         expect(client.getSnapshot().conversationMissions).toEqual({ convoId: "c1", links: [CURRENT] });
 
         internals.state = { ...internals.state, conversationMissions: undefined };
+        internals.conversationMissionsCache.clear();
         await client.loadConversationMissions("c1");
         expect(client.getSnapshot().conversationMissions).toBeUndefined();
         internals.handleTrackerMarker(marker("c1"));
-        await new Promise((resolve) => setTimeout(resolve, 0));
+        await flushMarkers();
         expect(client.getSnapshot().conversationMissions).toEqual({ convoId: "c1", links: [ALSO_NEW] });
+    });
+
+    it("shows a conversation's last missions at once on returning to it, then refreshes them", async () => {
+        let resolveThird!: (links: ConversationMissionLink[]) => void;
+        const fetch = jest
+            .fn()
+            .mockResolvedValueOnce([CURRENT])
+            .mockResolvedValueOnce([ALSO_NEW])
+            .mockReturnValueOnce(new Promise((resolve) => (resolveThird = resolve)));
+        const { client } = signedIn(fetch);
+        await client.loadConversationMissions("c1");
+        await client.loadConversationMissions("c2");
+        const back = client.loadConversationMissions("c1");
+        expect(client.getSnapshot().conversationMissions).toEqual({ convoId: "c1", links: [CURRENT] });
+        resolveThird([CURRENT, ALSO_OLD]);
+        await back;
+        expect(client.getSnapshot().conversationMissions).toEqual({ convoId: "c1", links: [CURRENT, ALSO_OLD] });
     });
 
     it("keeps what it showed on a transient failure and ignores a superseded load", async () => {
