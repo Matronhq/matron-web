@@ -173,6 +173,21 @@ describe("stopSpawnedSession", () => {
         expect(sessionStopState("child-1")).toEqual({ kind: "sent" });
         expect(send).toHaveBeenCalledTimes(3);
     });
+
+    it("forgets every tap on reset, and a send still in flight then lands nowhere", async () => {
+        await stopSpawnedSession("child-1", jest.fn().mockResolvedValue(true));
+        let finish!: (sent: boolean) => void;
+        const stopping = stopSpawnedSession("child-2", () => new Promise<boolean>((done) => (finish = done)));
+        expect(sessionStopState("child-2")).toEqual({ kind: "sending" });
+
+        resetSessionStops();
+        expect(sessionStopState("child-1")).toEqual({ kind: "idle" });
+        expect(sessionStopState("child-2")).toEqual({ kind: "idle" });
+
+        finish(true);
+        await stopping;
+        expect(sessionStopState("child-2")).toEqual({ kind: "idle" });
+    });
 });
 
 describe("parseCoordinatorConsent", () => {

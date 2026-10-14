@@ -97,7 +97,8 @@ export function readCoordinatorDecisions(events: readonly JournalEvent[]): Reado
 // ── Stop session ──────────────────────────────────────────────────────────────────────────────
 // Where a Stop session tap is, per spawned conversation. In memory only (the stopped session's
 // own chat is the durable record), and outside the card so a card that scrolls away and back
-// keeps its state.
+// keeps its state. Signing out forgets it all (resetSessionStops), so the next account never
+// sees another account's "Stop sent"; a send still in flight then lands nowhere.
 
 export type SessionStopState =
     { kind: "idle" } | { kind: "sending" } | { kind: "sent" } | { kind: "failed"; message: string };
@@ -105,6 +106,9 @@ export type SessionStopState =
 const IDLE: SessionStopState = { kind: "idle" };
 const stopStates = new Map<string, SessionStopState>();
 const stopListeners = new Set<() => void>();
+// Bumped by resetSessionStops, so a send that started before a sign-out cannot write its answer
+// into the next session's state.
+let stopGeneration = 0;
 
 function setStopState(convoId: string, state: SessionStopState): void {
     stopStates.set(convoId, state);
@@ -127,20 +131,21 @@ export function sessionStopState(convoId: string): SessionStopState {
 export async function stopSpawnedSession(convoId: string, send: (convoId: string) => Promise<boolean>): Promise<void> {
     const current = sessionStopState(convoId).kind;
     if (current === "sending" || current === "sent") return;
+    const generation = stopGeneration;
     setStopState(convoId, { kind: "sending" });
+    let sent = false;
     try {
-        const sent = await send(convoId);
-        setStopState(
-            convoId,
-            sent ? { kind: "sent" } : { kind: "failed", message: "Couldn't send the stop. Try again." },
-        );
+        sent = await send(convoId);
     } catch {
-        setStopState(convoId, { kind: "failed", message: "Couldn't send the stop. Try again." });
+        sent = false;
     }
+    if (generation !== stopGeneration) return;
+    setStopState(convoId, sent ? { kind: "sent" } : { kind: "failed", message: "Couldn't send the stop. Try again." });
 }
 
-/** Test seam: forget every Stop session tap. */
+/** Forget every Stop session tap: on sign-out (MatronJournalClient.logout), and between tests. */
 export function resetSessionStops(): void {
+    stopGeneration += 1;
     stopStates.clear();
     for (const listener of stopListeners) listener();
 }

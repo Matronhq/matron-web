@@ -18,7 +18,7 @@ import {
 } from "./api";
 import { JournalConnection } from "./connection";
 import { effectiveUnread, makeIdSetStore, type IdSetStore } from "./conversation-flags";
-import { parseCoordinatorConsent } from "./coordinator-consent";
+import { parseCoordinatorConsent, resetSessionStops } from "./coordinator-consent";
 import { JournalDatabase } from "./database";
 import { parseOwnTrackerUrl, parseTrackerLinkPath, type TrackerLinkPath } from "./link-path";
 import {
@@ -680,6 +680,7 @@ export class MatronJournalClient {
         this.database = undefined;
         this.api = undefined;
         this.coordinatorConsentConfirmed = undefined;
+        resetSessionStops();
         this.defaultsServer = undefined;
         this.defaultsPending.clear();
         this.defaultsSaving.clear();
