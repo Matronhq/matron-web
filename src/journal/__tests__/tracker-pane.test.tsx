@@ -695,3 +695,48 @@ describe("For you inbox origin notes", () => {
         expect(origins).toEqual([null, "from Listed chat", "from Auth refactor", "from Another chat"]);
     });
 });
+
+describe("TrackerPane project filing", () => {
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+    afterEach(() => {
+        document.body.innerHTML = "";
+    });
+
+    it("creates a project from the Projects home through the client", async () => {
+        const client = {
+            ...fakeClient(),
+            createTrackerProject: jest.fn().mockResolvedValue({ project: trackerProject({ num: 7 }) }),
+        };
+        const { container } = await mount(
+            <TrackerPane
+                client={client as unknown as MatronJournalClient}
+                state={paneState({ trackerView: { open: true, view: "missions" }, projects: [trackerProject()] })}
+            />,
+        );
+        const button = [...container.querySelectorAll<HTMLButtonElement>("button")].find(
+            (node) => node.textContent === "New project",
+        )!;
+        await act(async () => button.click());
+        const input = document.querySelector<HTMLInputElement>("#mj-new-project-name")!;
+        await act(async () => {
+            Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "Launch");
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+        await act(async () => document.querySelector<HTMLFormElement>('[role="dialog"] form')!.requestSubmit());
+        expect(client.createTrackerProject).toHaveBeenCalledWith("Launch", "");
+        expect(document.querySelector('[role="dialog"]')).toBeNull();
+    });
+
+    it("loads the projects for a project page opened straight from a link", async () => {
+        const client = fakeClient();
+        await mount(
+            <TrackerPane
+                client={client as unknown as MatronJournalClient}
+                state={paneState({ trackerView: { open: true, view: "missions", selectedProjectId: 2645 } })}
+            />,
+        );
+        expect(client.loadProjects).toHaveBeenCalledTimes(1);
+    });
+});

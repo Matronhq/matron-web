@@ -10,12 +10,14 @@ Please see LICENSE files in the repository root for full details.
  * status as the headline, then two columns — Needs you and the merged Latest feed on the left;
  * the missions and the reference sections folded (decisions, files, sessions, the description) on
  * the right. Built from GET /projects/:id; "Show more" on Latest pages the roll-up through
- * GET /projects/:id/feed once every loaded row shows.
+ * GET /projects/:id/feed once every loaded row shows. The head's "…" menu holds "Merge into…", and
+ * a mission row's right-click menu "Move to project…".
  */
 
 import React, { useState } from "react";
 
-import type { ProjectDecisionRow, ProjectDetail, ProjectFileRow } from "../types";
+import { KebabIcon } from "../icons";
+import type { Project, ProjectDecisionRow, ProjectDetail, ProjectFileRow } from "../types";
 import { formatRelativeTime, oneLine } from "./format";
 import { TrackerGlyph } from "./glyphs";
 import {
@@ -42,7 +44,51 @@ import {
     showsAboutFold,
     timeOfDay,
 } from "./projectActivity";
+import { MergeProjectSheet, mergeTargets, useRowMove } from "./ProjectFiling";
 import { activityClass, NeedsYouPill } from "./ProjectsDashboard";
+
+/** The head's "…" menu: "Merge into…", disabled with nowhere to merge into. */
+function ProjectActionsMenu({ canMerge, onMerge }: { canMerge: boolean; onMerge: () => void }): React.ReactElement {
+    const [open, setOpen] = useState(false);
+    return (
+        <div
+            className="mj_TrackerMenu"
+            onBlur={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(false);
+            }}
+            onKeyDown={(event) => {
+                if (event.key === "Escape") setOpen(false);
+            }}
+        >
+            <button
+                type="button"
+                className="mj_IconButton mj_TrackerMenu_button"
+                aria-label="Project actions"
+                aria-haspopup="menu"
+                aria-expanded={open}
+                onClick={() => setOpen((value) => !value)}
+            >
+                <KebabIcon />
+            </button>
+            {open ? (
+                <div className="mj_TrackerMenu_list" role="menu">
+                    <button
+                        type="button"
+                        role="menuitem"
+                        className="mj_TrackerMenu_item"
+                        disabled={!canMerge}
+                        onClick={() => {
+                            setOpen(false);
+                            onMerge();
+                        }}
+                    >
+                        Merge into…
+                    </button>
+                </div>
+            ) : null}
+        </div>
+    );
+}
 
 export function ProjectPage({
     detail,
@@ -51,6 +97,9 @@ export function ProjectPage({
     onOpenMission,
     onOpenItem,
     onLoadMore,
+    projects,
+    onMerge,
+    onMoveMission,
     now = Date.now(),
 }: {
     detail: ProjectDetail;
@@ -61,6 +110,12 @@ export function ProjectPage({
     onOpenItem: (num: number) => void;
     /** "Show more" once every loaded row shows: fetch the next page of every kind that has one. */
     onLoadMore?: () => void;
+    /** Every known project: the merge and move choices are its open ones. */
+    projects?: Project[];
+    /** "Merge into…": this project into another; resolves true once merged. Without it, no menu. */
+    onMerge?: (projectId: string, intoId: string) => Promise<boolean>;
+    /** A mission row's "Move to project…"; resolves true once moved. */
+    onMoveMission?: (missionId: string, projectId: string) => Promise<boolean>;
     /** Injectable for tests. */
     now?: number;
 }): React.ReactElement {
@@ -70,6 +125,9 @@ export function ProjectPage({
     const openMissions = missions.filter((mission) => mission.state === "open");
     const closedMissions = missions.filter((mission) => mission.state !== "open");
     const [limit, setLimit] = useState<number | null>(FIRST_PAGE_LIMIT);
+    const [merging, setMerging] = useState(false);
+    const rowMove = useRowMove(projects, onMoveMission);
+    const merges = mergeTargets(project, projects);
     const rows = activityRows(detail, limit);
     const relative = (ms: number): string => formatRelativeTime(ms, now);
 
@@ -106,7 +164,19 @@ export function ProjectPage({
                 <button type="button" className="mj_TrackerTextButton" onClick={onBack}>
                     ‹ Projects
                 </button>
+                {onMerge && project.state === "open" ? (
+                    <ProjectActionsMenu canMerge={merges.length > 0} onMerge={() => setMerging(true)} />
+                ) : null}
             </div>
+            {merging && onMerge ? (
+                <MergeProjectSheet
+                    project={project}
+                    targets={merges}
+                    onMerge={(intoId) => onMerge(project.id, intoId)}
+                    onClose={() => setMerging(false)}
+                />
+            ) : null}
+            {rowMove.layer}
             <div className="mj_ProjectPage_scroll">
                 <header className="mj_ProjectPage_header">
                     <div className="mj_ProjectPage_heading">
@@ -229,6 +299,9 @@ export function ProjectPage({
                                     type="button"
                                     className={`mj_ProjectMission${mission.state === "open" ? "" : " mj_ProjectMission_closed"}`}
                                     onClick={() => onOpenMission(mission.num)}
+                                    {...(mission.state === "open"
+                                        ? rowMove.rowProps({ ...mission, project_id: mission.project_id ?? project.id })
+                                        : {})}
                                 >
                                     <span
                                         className={`mj_ProjectMission_dot mj_ProjectMission_dot_${activityClass(mission.activity, mission.needs_you, mission.state === "open")}`}

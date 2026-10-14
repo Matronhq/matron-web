@@ -8,16 +8,38 @@ Please see LICENSE files in the repository root for full details.
 /*
  * The Projects home (unify step 7): the Mac's card dashboard (MacProjectsHome / ProjectCardView).
  * One card per open project — title, a red "Needs you · n" pill, the status preview (or "No status
- * yet"), and a footer with the open-mission count and the last activity. Closed projects sit behind
- * a toggle. A filter field narrows the page to the projects and missions the typed words name.
- * Presentational: the pane owns loading and routing.
+ * yet"), and a footer with the open-mission count and the last activity. Missions in no project
+ * follow, the ones quiet for over a week folded away, and closed projects sit behind a toggle. A
+ * filter field narrows the page to the projects and missions the typed words name; "New project"
+ * opens its sheet. Presentational: the pane owns loading, routing and the writes.
  */
 
 import React, { useState } from "react";
 
 import type { Mission, Project } from "../types";
 import { formatRelativeTime, oneLine } from "./format";
+import { NewProjectSheet, useRowMove } from "./ProjectFiling";
 import { filterProjects, filterTerms, missionMatches } from "./projectsFilter";
+
+/** "Quiet for over a week": the journal's own threshold, quiet from exactly seven days. */
+export const QUIET_AFTER_MS = 7 * 86_400_000;
+
+/** When anything last happened on a mission: the journal's `last_activity_at` when it sends one,
+ *  else the newest of its last milestone, status and update. */
+export function missionLastActivity(mission: Mission): number {
+    return (
+        mission.last_activity_at ??
+        Math.max(mission.last_milestone_at ?? 0, mission.status_updated_at ?? 0, mission.updated_at, mission.created_at)
+    );
+}
+
+/** Quiet: the journal's rollup when it sends one, else a week without activity. Anything asking
+ *  the user is never quiet, so the fold can never hide a question. */
+export function isQuietMission(mission: Mission, now: number): boolean {
+    if (mission.needs_you > 0) return false;
+    if (mission.activity) return mission.activity === "quiet";
+    return now - missionLastActivity(mission) >= QUIET_AFTER_MS;
+}
 
 /** The row dot both project views use: running, waiting (a waiting rollup or anything needing you), or idle. */
 export function activityClass(activity: string | undefined, needsYou: number, open: boolean): string {
@@ -74,12 +96,42 @@ function ProjectCard({
     );
 }
 
+function LooseMissionRow({
+    mission,
+    onOpen,
+    rowProps,
+}: {
+    mission: Mission;
+    onOpen: (num: number) => void;
+    rowProps: { onContextMenu?: (event: React.MouseEvent) => void };
+}): React.ReactElement {
+    return (
+        <button type="button" className="mj_ProjectMission" onClick={() => onOpen(mission.num)} {...rowProps}>
+            <span
+                className={`mj_ProjectMission_dot mj_ProjectMission_dot_${activityClass(mission.activity, mission.needs_you, true)}`}
+                aria-hidden="true"
+            />
+            <span className="mj_ProjectNum">#{mission.num}</span>
+            <span className="mj_ProjectMission_main">
+                <span className="mj_ProjectMission_title">{mission.title}</span>
+                <span className="mj_ProjectMission_status">
+                    {mission.last_milestone ? oneLine(mission.last_milestone.title) : "No milestones yet"}
+                </span>
+            </span>
+            <NeedsYouPill count={mission.needs_you} />
+        </button>
+    );
+}
+
 export function ProjectsDashboard({
     header,
     projects,
     unfiled = [],
     onOpenProject,
     onOpenMission = () => undefined,
+    onCreateProject,
+    onMoveMission,
+    now = Date.now(),
 }: {
     /** Heads the dashboard above the cards (the Coordinator's latest briefing card). */
     header?: React.ReactNode;
@@ -88,9 +140,18 @@ export function ProjectsDashboard({
     unfiled?: Mission[];
     onOpenProject: (num: number) => void;
     onOpenMission?: (num: number) => void;
+    /** "New project": resolves to why it failed, or null once made. Without it there is no button. */
+    onCreateProject?: (title: string, body: string) => Promise<string | null>;
+    /** A mission row's right-click "Move to project…". Resolves true once moved. */
+    onMoveMission?: (missionId: string, projectId: string) => Promise<boolean>;
+    /** Injectable for tests. */
+    now?: number;
 }): React.ReactElement {
     const [showClosed, setShowClosed] = useState(false);
+    const [showQuiet, setShowQuiet] = useState(false);
+    const [creating, setCreating] = useState(false);
     const [query, setQuery] = useState("");
+    const rowMove = useRowMove(projects, onMoveMission);
     const terms = filterTerms(query);
     const filtering = terms.length > 0;
     const allOpen = projects.filter((project) => project.state === "open");
@@ -101,17 +162,35 @@ export function ProjectsDashboard({
         projects.filter((project) => project.state !== "open" && project.merged_into_num == null),
         unfiled,
     );
-    const loose = unfiled.filter(
+    const allLoose = unfiled.filter(
         (mission) => mission.state === "open" && !mission.project_id && missionMatches(terms, mission),
     );
-    // Closed projects that match are results too, so the filter shows them without the toggle.
+    const loose = allLoose.filter((mission) => !isQuietMission(mission, now));
+    const quiet = allLoose
+        .filter((mission) => isQuietMission(mission, now))
+        .sort((a, b) => missionLastActivity(b) - missionLastActivity(a));
+    // Closed projects that match are results too, so the filter shows them without the toggle; the
+    // quiet fold's rows likewise, and a tap on it then changes nothing until the filter clears.
     const closedShown = showClosed || filtering;
+    const quietShown = showQuiet || filtering;
 
-    if (projects.length === 0 && loose.length === 0 && !filtering) {
+    const newProject = onCreateProject ? (
+        <button type="button" className="mj_TrackerButton mj_ProjectsNew" onClick={() => setCreating(true)}>
+            New project
+        </button>
+    ) : null;
+    const newProjectSheet =
+        creating && onCreateProject ? (
+            <NewProjectSheet onCreate={onCreateProject} onClose={() => setCreating(false)} />
+        ) : null;
+
+    if (projects.length === 0 && allLoose.length === 0 && !filtering) {
         const empty = (
             <div className="mj_TrackerEmpty">
                 <p className="mj_TrackerEmpty_title">No projects yet</p>
                 <p className="mj_TrackerEmpty_hint">Agents file their missions into projects as they start work.</p>
+                {newProject}
+                {newProjectSheet}
             </div>
         );
         return header ? (
@@ -149,8 +228,11 @@ export function ProjectsDashboard({
                         {open.length} of {allOpen.length}
                     </span>
                 ) : null}
+                {newProject}
             </div>
-            {filtering && open.length === 0 && closed.length === 0 && loose.length === 0 ? (
+            {newProjectSheet}
+            {rowMove.layer}
+            {filtering && open.length === 0 && closed.length === 0 && allLoose.length === 0 ? (
                 <div className="mj_TrackerEmpty">
                     <p className="mj_TrackerEmpty_title">No projects match “{query.trim()}”</p>
                     <p className="mj_TrackerEmpty_hint">Check the spelling or try another word.</p>
@@ -182,28 +264,42 @@ export function ProjectsDashboard({
                         <span className="mj_ProjectSection_count">{loose.length}</span>
                     </h2>
                     {loose.map((mission) => (
-                        <button
+                        <LooseMissionRow
                             key={mission.id}
-                            type="button"
-                            className="mj_ProjectMission"
-                            onClick={() => onOpenMission(mission.num)}
-                        >
-                            <span
-                                className={`mj_ProjectMission_dot mj_ProjectMission_dot_${activityClass(mission.activity, mission.needs_you, true)}`}
-                                aria-hidden="true"
-                            />
-                            <span className="mj_ProjectNum">#{mission.num}</span>
-                            <span className="mj_ProjectMission_main">
-                                <span className="mj_ProjectMission_title">{mission.title}</span>
-                                <span className="mj_ProjectMission_status">
-                                    {mission.last_milestone
-                                        ? oneLine(mission.last_milestone.title)
-                                        : "No milestones yet"}
-                                </span>
-                            </span>
-                            <NeedsYouPill count={mission.needs_you} />
-                        </button>
+                            mission={mission}
+                            onOpen={onOpenMission}
+                            rowProps={rowMove.rowProps(mission)}
+                        />
                     ))}
+                </section>
+            )}
+            {quiet.length > 0 && (
+                <section className="mj_ProjectsQuiet">
+                    <button
+                        type="button"
+                        className="mj_ProjectsQuietToggle"
+                        aria-expanded={quietShown}
+                        onClick={() => {
+                            if (!filtering) setShowQuiet((value) => !value);
+                        }}
+                    >
+                        <span className="mj_ProjectsQuietToggle_chevron" aria-hidden="true">
+                            ›
+                        </span>
+                        Quiet for over a week ({quiet.length})
+                    </button>
+                    {quietShown ? (
+                        <div className="mj_ProjectCardSection mj_ProjectsQuiet_rows">
+                            {quiet.map((mission) => (
+                                <LooseMissionRow
+                                    key={mission.id}
+                                    mission={mission}
+                                    onOpen={onOpenMission}
+                                    rowProps={rowMove.rowProps(mission)}
+                                />
+                            ))}
+                        </div>
+                    ) : null}
                 </section>
             )}
             {closed.length > 0 && !filtering && (

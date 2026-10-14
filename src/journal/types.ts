@@ -956,6 +956,9 @@ export interface Mission {
     project_num?: number | null;
     /** The mission's activity rollup, where the journal sends it. */
     activity?: string;
+    /** When anything last happened on the mission (milestone, status, its conversations), where
+     *  the journal sends it. */
+    last_activity_at?: number | null;
     /** The mission's status line (one short paragraph, inline markdown), who set it and when.
      *  Null when unset; absent from journals that predate mission status. */
     status?: string | null;

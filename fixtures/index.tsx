@@ -787,8 +787,13 @@ if (trackerMode === "projects" || trackerMode === "project" || trackerMode === "
     }
     const tracker = state as unknown as Record<string, unknown>;
     tracker.projects = projects;
-    // One mission filed in no project, shown below the cards.
-    tracker.missions = [{ ...mission(1311, "Log retention clean-up", null, "idle", 0), project_id: null }];
+    // Missions filed in no project, shown below the cards: one active, two quiet for over a week
+    // (folded under "Quiet for over a week").
+    tracker.missions = [
+        { ...mission(1311, "Log retention clean-up", null, "idle", 0), project_id: null },
+        { ...mission(1187, "Try a smaller base image", null, "quiet", 0), project_id: null },
+        { ...mission(1102, "Archive the old status page", null, "quiet", 0), project_id: null },
+    ];
     tracker.trackerView =
         trackerMode === "project"
             ? { open: true, view: "missions", selectedProjectId: 2645 }

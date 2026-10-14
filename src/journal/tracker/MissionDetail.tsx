@@ -10,8 +10,9 @@ Please see LICENSE files in the repository root for full details.
  * (with close-summary when closed), the status card (hidden when the mission has none),
  * milestones newest-first with jump-to-conversation (20 at a time), the mission's open items split
  * into "Needs you" and "Open tasks & decisions", its closed items (fetched on demand, a page at a
- * time), its conversations, and a close-with-summary affordance for an open mission. Mutations
- * route through the client; the store refetch keeps the view live.
+ * time), its conversations, and a close-with-summary affordance for an open mission. An open
+ * mission's header offers "Move to project…". Mutations route through the client; the store
+ * refetch keeps the view live.
  */
 
 import React, { useMemo, useState } from "react";
@@ -42,6 +43,7 @@ import {
     statusByline,
 } from "./format";
 import { JumpGlyph, MilestoneGlyph, TrackerGlyph } from "./glyphs";
+import { MoveToProjectSheet, moveTargets } from "./ProjectFiling";
 
 function MilestoneRow({
     milestone,
@@ -227,6 +229,7 @@ export function MissionDetail({
     onBack,
     onOpenRoot,
     onOpenProject,
+    projects,
     now,
 }: {
     detail: MissionDetailData | null | undefined;
@@ -243,9 +246,12 @@ export function MissionDetail({
     /** The first crumb's target (the Projects dashboard); `onBack` when not given. */
     onOpenRoot?: () => void;
     onOpenProject?: (num: number) => void;
+    /** Every known project, for "Move to project…" (its open ones). Without any, no move. */
+    projects?: Project[];
     /** Injectable for tests. */
     now?: number;
 }): React.ReactElement {
+    const [moving, setMoving] = useState(false);
     const [inputsOnly, setInputsOnly] = useState(false);
     const [milestoneLimit, setMilestoneLimit] = useState(MILESTONE_PAGE);
     const [summary, setSummary] = useState("");
@@ -296,6 +302,10 @@ export function MissionDetail({
     const closed = mission.state === "closed";
     const status = mission.status?.trim() ? mission.status : null;
     const byline = status ? statusByline(mission.status_updated_at, mission.status_by, now) : null;
+
+    // Every open project; the button only when there is one besides the mission's own.
+    const targets = moveTargets(projects);
+    const canMove = !closed && targets.some((target) => target.id !== mission.project_id);
 
     const jump = (milestone: Milestone): void => {
         client.closeTrackerView();
@@ -350,6 +360,15 @@ export function MissionDetail({
                 </nav>
             </div>
 
+            {moving ? (
+                <MoveToProjectSheet
+                    missionLabel={`#${mission.num}`}
+                    currentProjectId={mission.project_id}
+                    targets={targets}
+                    onMove={(projectId) => client.moveTrackerMission(mission.id, projectId)}
+                    onClose={() => setMoving(false)}
+                />
+            ) : null}
             <div className="mj_TrackerDetail_scroll">
                 <header className="mj_TrackerMissionHead">
                     <div className="mj_TrackerMissionHead_title">
@@ -362,6 +381,15 @@ export function MissionDetail({
                         >
                             {closed ? "Closed" : "Open"}
                         </span>
+                        {canMove ? (
+                            <button
+                                type="button"
+                                className="mj_TrackerTextButton mj_TrackerMissionHead_move"
+                                onClick={() => setMoving(true)}
+                            >
+                                Move to project…
+                            </button>
+                        ) : null}
                     </div>
                     {mission.body.trim() ? (
                         <div className="mj_TrackerProse">

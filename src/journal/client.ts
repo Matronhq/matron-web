@@ -67,6 +67,7 @@ import {
     normalizeServerUrl,
     type NewSessionOffer,
     type PendingMessage,
+    type Project,
     type RecentFolder,
     rendersAsTopLevelRow,
     type RpcReply,
@@ -3331,6 +3332,77 @@ export class MatronJournalClient {
         return true;
     }
 
+    // ── Project filing (the Mac's "New project", "Move to project…" and "Merge into…"). ──
+
+    /**
+     * "New project": creates it, refreshes the Projects home and opens the new project's page. A
+     * failure comes back with its reason for the sheet to show beside what was typed, rather than
+     * on the tracker's banner, so the sheet stays open with nothing lost.
+     */
+    public async createTrackerProject(title: string, body = ""): Promise<{ project: Project } | { error: string }> {
+        const api = this.api;
+        if (!api) return { error: "Not signed in." };
+        let project: Project;
+        try {
+            ({ project } = await api.createProject({ title: title.trim(), body: body.trim() }, crypto.randomUUID()));
+        } catch (error) {
+            return { error: errorMessage(error) };
+        }
+        if (this.api !== api) return { project };
+        await this.loadProjects();
+        this.openTrackerProject(project.num);
+        return { project };
+    }
+
+    /**
+     * "Move to project…": files the mission into another open project, then refetches what shows
+     * it — the mission page when it is the one shown, the missions and projects lists when loaded,
+     * and the open project page (which it may just have left).
+     */
+    public async moveTrackerMission(missionId: string, projectId: string): Promise<boolean> {
+        const api = this.api;
+        if (!api) return false;
+        try {
+            await api.patchMission(missionId, { project: projectId }, crypto.randomUUID());
+        } catch (error) {
+            if (this.api === api) this.patch({ trackerError: projectFilingFailure(error) });
+            return false;
+        }
+        if (this.api !== api) return true;
+        await Promise.all([
+            this.isSelectedTrackerMission(missionId) ? this.loadMission(missionId) : undefined,
+            this.state.missions ? this.loadMissions() : undefined,
+            this.state.projects ? this.loadProjects() : undefined,
+            this.state.trackerProject ? this.loadProject(this.state.trackerProject.project.num) : undefined,
+        ]);
+        return true;
+    }
+
+    /**
+     * "Merge into…": the journal moves every mission of `sourceId` to `intoId` and closes the
+     * source as merged. The page follows its missions to the project they went into, when the
+     * source's page is still the one shown. The journal lets the user merge, and of the agents
+     * only the Coordinator; a refusal shows on the tracker's banner and the page stays.
+     */
+    public async mergeTrackerProject(sourceId: string, intoId: string): Promise<boolean> {
+        const api = this.api;
+        if (!api) return false;
+        let into: Project;
+        try {
+            ({ project: into } = await api.mergeProject(sourceId, intoId));
+        } catch (error) {
+            if (this.api === api) this.patch({ trackerError: projectFilingFailure(error) });
+            return false;
+        }
+        if (this.api !== api) return true;
+        const shown = this.state.trackerProject?.project;
+        if (shown?.id === sourceId && this.state.trackerView?.selectedProjectId === shown.num) {
+            this.openTrackerProject(into.num);
+        }
+        await Promise.all([this.loadProjects(), this.state.missions ? this.loadMissions() : undefined]);
+        return true;
+    }
+
     // WS invalidation for tracker markers (`item` / `mission` / `milestone` journal frames).
     // A marker is a change connected clients must reflect without re-polling; we refetch ONLY the
     // tracker data the OPEN pane is showing. A closed pane fetches nothing: reopening it remounts the
@@ -4476,6 +4548,25 @@ export function sanitizeBriefingLatest(raw: unknown): BriefingLatest {
         next_refresh_at: finite(value.next_refresh_at) ?? null,
         has_coordinator: value.has_coordinator === true,
     };
+}
+
+/**
+ * Why a filing write (move a mission, merge projects) did not happen, in the user's words where
+ * the journal says why: a closed project on either end, or a merge only the user or the
+ * Coordinator may make. Anything else is the ordinary error message.
+ */
+export function projectFilingFailure(error: unknown): string {
+    if (error instanceof JournalApiError) {
+        const blockedBy = error.body?.blocked_by;
+        if (error.status === 409 && (blockedBy === "project_closed" || blockedBy === "into_closed")) {
+            return "That project is closed, so nothing can move into it.";
+        }
+        if (error.status === 409 && blockedBy === "closed") return "This project is already closed.";
+        if (error.status === 403 && error.body?.detail === "not_coordinator") {
+            return "Only you or your Coordinator can merge projects.";
+        }
+    }
+    return errorMessage(error);
 }
 
 export function errorMessage(error: unknown): string {

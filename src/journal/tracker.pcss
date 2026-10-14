@@ -2352,6 +2352,116 @@ button.mj_TrackerCard {
     margin-top: 16px;
 }
 
+/* — Filing: "New project", the quiet fold, the move and merge sheets, a row's move menu. — */
+.mj_ProjectsFilter .mj_ProjectsNew {
+    flex: none;
+    margin-left: auto;
+    white-space: nowrap;
+}
+
+.mj_TrackerEmpty .mj_ProjectsNew {
+    align-self: center;
+    margin-top: 12px;
+}
+
+.mj_ProjectsQuiet {
+    margin-top: 16px;
+}
+
+.mj_ProjectsQuietToggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    border: 0;
+    background: transparent;
+    padding: 4px 0;
+    color: var(--mj-color-text-primary);
+    font: 600 15px/20px var(--mj-font-family-ui);
+    cursor: pointer;
+}
+
+.mj_ProjectsQuietToggle_chevron {
+    display: inline-block;
+    width: 10px;
+    color: var(--mj-color-text-secondary);
+    transition: transform 0.15s ease;
+}
+
+.mj_ProjectsQuietToggle[aria-expanded="true"] .mj_ProjectsQuietToggle_chevron {
+    transform: rotate(90deg);
+}
+
+.mj_ProjectsQuiet_rows {
+    margin-top: 8px;
+}
+
+.mj_ProjectSheet textarea {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    border: 1px solid var(--mj-color-border-interactive-secondary);
+    border-radius: var(--mj-radius-field);
+    background: var(--mj-color-bg-canvas-default);
+    color: var(--mj-color-text-primary);
+    padding: 8px 12px;
+    font: 400 13.5px/20px var(--mj-font-family-ui);
+    resize: vertical;
+}
+
+.mj_ProjectSheet textarea:focus {
+    border-color: var(--mj-color-border-interactive-primary);
+    outline: none;
+}
+
+.mj_ProjectSheet .mj_ProjectSheet_note {
+    margin: 6px 0 0;
+    color: var(--mj-color-text-secondary);
+    font: 400 12px/16px var(--mj-font-family-ui);
+}
+
+.mj_NewSessionSheet [role="listitem"].mj_ProjectSheet_target {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.mj_NewSessionSheet [role="listitem"].mj_ProjectSheet_target[aria-current="true"] {
+    opacity: 1;
+    color: var(--mj-color-text-secondary);
+}
+
+.mj_ProjectSheet_targetTitle {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_UploadConfirm_actions button.mj_UploadConfirm_send.mj_ProjectSheet_danger {
+    background: var(--mj-color-text-critical-primary);
+    color: #fff;
+}
+
+.mj_TrackerMenu_list.mj_RowMoveMenu {
+    position: fixed;
+    right: auto;
+    z-index: 1000;
+}
+
+.mj_TrackerMenu_item:disabled {
+    color: var(--mj-color-text-tertiary);
+    cursor: default;
+}
+
+.mj_TrackerMenu_item:disabled:hover {
+    background: transparent;
+}
+
+.mj_TrackerMissionHead_move {
+    margin-left: auto;
+}
+
 /* — Coordinator briefing: a full-width card heading the Projects dashboard, a sibling of the
    project cards (same border, radius, canvas fill, shadow and type ramp). — */
 .mj_BriefingCardSlot {
