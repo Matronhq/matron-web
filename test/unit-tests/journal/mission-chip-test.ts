@@ -325,9 +325,35 @@ describe("conversation missions in the client", () => {
 
         internals.handleTrackerMarker(marker("c1"));
         expect(fetch).toHaveBeenCalledTimes(2);
-        // Another conversation's marker, or a conversation not yet fetched, costs nothing.
+        // Another conversation's marker costs nothing.
         internals.handleTrackerMarker(marker("c2"));
         expect(fetch).toHaveBeenCalledTimes(2);
+    });
+
+    it("follows a marker that lands while the first load is in flight, or after it failed", async () => {
+        let resolveFirst!: (links: ConversationMissionLink[]) => void;
+        const fetch = jest
+            .fn()
+            .mockReturnValueOnce(new Promise((resolve) => (resolveFirst = resolve)))
+            .mockResolvedValueOnce([CURRENT])
+            .mockRejectedValueOnce(new Error("offline"))
+            .mockResolvedValueOnce([ALSO_NEW]);
+        const { client, internals } = signedIn(fetch);
+        const first = client.loadConversationMissions("c1");
+        // The marker's load starts after the first and wins over its pre-join answer.
+        internals.handleTrackerMarker(marker("c1"));
+        await Promise.resolve();
+        resolveFirst([]);
+        await first;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(client.getSnapshot().conversationMissions).toEqual({ convoId: "c1", links: [CURRENT] });
+
+        internals.state = { ...internals.state, conversationMissions: undefined };
+        await client.loadConversationMissions("c1");
+        expect(client.getSnapshot().conversationMissions).toBeUndefined();
+        internals.handleTrackerMarker(marker("c1"));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(client.getSnapshot().conversationMissions).toEqual({ convoId: "c1", links: [ALSO_NEW] });
     });
 
     it("keeps what it showed on a transient failure and ignores a superseded load", async () => {

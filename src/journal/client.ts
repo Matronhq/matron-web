@@ -2997,12 +2997,9 @@ export class MatronJournalClient {
         if (event.type === "item" && (this.inboxTracked() || this.state.inboxDone)) this.scheduleInboxRefetch();
         // A mission marker lands in the conversation it concerns (joined, left, made current,
         // renamed, closed): the header chip of that conversation, when it is the one on screen,
-        // follows it whether or not the pane is open.
-        if (
-            event.type === "mission" &&
-            event.convo_id === this.state.selectedConversationId &&
-            this.state.conversationMissions?.convoId === event.convo_id
-        ) {
+        // follows it whether or not the pane is open — also while its first load is in flight
+        // (the newer load supersedes it) or after a failed one.
+        if (event.type === "mission" && event.convo_id === this.state.selectedConversationId) {
             void this.loadConversationMissions(event.convo_id);
         }
         if (!this.state.trackerView?.open) return;
