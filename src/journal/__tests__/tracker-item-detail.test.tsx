@@ -9,7 +9,7 @@ import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
 import type { MatronJournalClient } from "../client";
-import type { StatusSnapshot } from "../types";
+import type { StatusSnapshot, TrackerHandover } from "../types";
 import { ItemDetail } from "../tracker/ItemDetail";
 import { trackerComment, trackerItem, trackerMission } from "./tracker-fixtures";
 
@@ -954,5 +954,72 @@ describe("ItemDetail context block", () => {
         await act(async () => container.querySelector<HTMLButtonElement>(".mj_TrackerOrigin")!.click());
         expect(client.closeTrackerView).toHaveBeenCalled();
         expect(client.selectConversation).toHaveBeenCalledWith("c-old");
+    });
+
+    it("updates the offer caption below the current owner and clears it when settled", async () => {
+        const client = fakeClient();
+        const item = trackerItem({ origin_convo_id: "c-old", origin_convo_title: "Original chat" });
+        const handover: TrackerHandover = {
+            state: "awaiting_user",
+            to_convo_id: "c-target",
+            to_convo_title: "Review changes",
+            expires_at: Date.now() + 60_000,
+        };
+        const { container, root } = await mount(detail(client, item));
+        expect(container.querySelector(".mj_TrackerHandover")).toBeNull();
+        await act(async () => root.render(detail(client, { ...item, handover })));
+        const caption = container.querySelector(".mj_TrackerHandover")!;
+        expect(caption.textContent).toBe("Offered to Review changes · waiting for your OK");
+        expect(caption.previousElementSibling?.textContent).toBe("Opened from Original chat");
+
+        await act(async () => root.render(detail(client, { ...item, handover: { ...handover, state: "offered" } })));
+        expect(container.querySelector(".mj_TrackerHandover")?.textContent).toBe(
+            "Offered to Review changes · waiting for them to accept",
+        );
+        expect(container.querySelector(".mj_TrackerOrigin")?.textContent).toBe("Opened from Original chat");
+        await act(async () => root.render(detail(client, { ...item, handover: null })));
+        expect(container.querySelector(".mj_TrackerHandover")).toBeNull();
+        await act(async () => root.unmount());
+    });
+
+    it.each([null, "", "   "])("shows an unnamed offer inside its owner's chat (title %p)", async (title) => {
+        const client = fakeClient();
+        const item = trackerItem({
+            handover: {
+                state: "offered",
+                to_convo_id: "c-target",
+                to_convo_title: title,
+                expires_at: Date.now() + 60_000,
+            },
+        });
+        const { container, root } = await mount(detail(client, item));
+        expect(container.querySelector(".mj_TrackerOrigin")).toBeNull();
+        expect(container.querySelector(".mj_TrackerHandover")?.textContent).toBe(
+            "Offered to Conversation · waiting for them to accept",
+        );
+        await act(async () => root.unmount());
+    });
+
+    it("removes an expired offer while the detail stays open", async () => {
+        jest.useFakeTimers();
+        try {
+            const client = fakeClient();
+            const item = trackerItem({
+                handover: {
+                    state: "offered",
+                    to_convo_id: "c-target",
+                    to_convo_title: "Review changes",
+                    expires_at: Date.now() + 1_000,
+                },
+            });
+            const { container, root } = await mount(detail(client, item));
+            expect(container.querySelector(".mj_TrackerHandover")).not.toBeNull();
+            await act(async () => jest.advanceTimersByTime(1_000));
+            expect(container.querySelector(".mj_TrackerHandover")).toBeNull();
+            expect(container.querySelector(".mj_TrackerContext")).toBeNull();
+            await act(async () => root.unmount());
+        } finally {
+            jest.useRealTimers();
+        }
     });
 });

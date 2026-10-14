@@ -786,6 +786,14 @@ export interface TrackerWorking {
     until: number | null;
 }
 
+/** A pending offer to move an item to another conversation. The owner changes only on acceptance. */
+export interface TrackerHandover {
+    state: "awaiting_user" | "offered";
+    to_convo_id: string;
+    to_convo_title: string | null;
+    expires_at: number;
+}
+
 export interface TrackerItem {
     id: string;
     num: number;
@@ -823,6 +831,8 @@ export interface TrackerItem {
     /** Null when the owning session is idle; absent on a journal that predates the field and on
      *  another person's item. */
     working?: TrackerWorking | null;
+    /** Null when no handover waits; absent on older journals and cached items. */
+    handover?: TrackerHandover | null;
 }
 
 export interface TrackerComment {
