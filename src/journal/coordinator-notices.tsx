@@ -16,6 +16,7 @@ Please see LICENSE files in the repository root for full details.
 
 import React from "react";
 
+import { oneLineConsentReason } from "./coordinator-consent";
 import { AlarmIcon, PersonCheckIcon, ShieldCheckIcon, ShieldXIcon, WarningTriangleIcon } from "./icons";
 import { asString, type EventPayload, type JournalEvent } from "./types";
 
@@ -92,10 +93,7 @@ export function consentDecisionNotice(payload: EventPayload): NoticeLine | null 
     const what = kind === "spawn" ? "spawn request" : "chat request";
     // Every run of line breaks becomes one space, blank lines included (Mac: split on isNewline,
     // empty pieces dropped).
-    const reason = asString(payload.reason)
-        .split(/[\n\v\f\r\u0085\u2028\u2029]+/)
-        .join(" ")
-        .trim();
+    const reason = oneLineConsentReason(payload.reason);
     const line = `Coordinator ${verb} the ${what}`;
     return { text: reason ? `${line} — ${reason}` : line, glyph: decision === "approve" ? "approved" : "declined" };
 }

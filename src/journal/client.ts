@@ -18,6 +18,7 @@ import {
 } from "./api";
 import { JournalConnection } from "./connection";
 import { effectiveUnread, makeIdSetStore, type IdSetStore } from "./conversation-flags";
+import { parseCoordinatorConsent } from "./coordinator-consent";
 import { JournalDatabase } from "./database";
 import { parseOwnTrackerUrl, parseTrackerLinkPath, type TrackerLinkPath } from "./link-path";
 import {
@@ -487,6 +488,12 @@ export class MatronJournalClient {
     // timed_out, which no frame announces).
     private briefingGen = 0;
     private settingsGen = 0;
+    // Coordinator consent switch: bumped by every write, so a GET sent before one is dropped and
+    // only the latest write's answer moves the switch; the journal's last known value (where a
+    // failed write puts the switch back); and the write chain that keeps PUTs in tap order.
+    private coordinatorConsentEpoch = 0;
+    private coordinatorConsentConfirmed?: boolean;
+    private coordinatorConsentWrite: Promise<void> = Promise.resolve();
     private briefingExpiryTimer?: number;
     // New-chat defaults. What the sheet shows is always `defaultsServer` (the latest answer from
     // the journal: a GET result, a PUT response's key, or a live frame, applied in arrival order)
@@ -672,6 +679,7 @@ export class MatronJournalClient {
         this.database?.close();
         this.database = undefined;
         this.api = undefined;
+        this.coordinatorConsentConfirmed = undefined;
         this.defaultsServer = undefined;
         this.defaultsPending.clear();
         this.defaultsSaving.clear();
@@ -2100,6 +2108,53 @@ export class MatronJournalClient {
             }
             return false;
         }
+    }
+
+    // ── Coordinator consent approval (Settings → Coordinator; GET/PUT /coordinator `consent`) ──
+
+    /** GET /coordinator: the switch's value. A journal without `consent` leaves it hidden. */
+    public async loadCoordinatorConsent(): Promise<void> {
+        const api = this.api;
+        if (!api) return;
+        const epoch = this.coordinatorConsentEpoch;
+        try {
+            const enabled = parseCoordinatorConsent(await api.coordinator());
+            // A write since the GET was sent is newer than its answer.
+            if (this.api !== api || this.coordinatorConsentEpoch !== epoch) return;
+            this.coordinatorConsentConfirmed = enabled;
+            this.patch({ coordinatorConsent: { ...this.state.coordinatorConsent, enabled } });
+        } catch {
+            // Keep what is shown: a blip must not take the switch away.
+        }
+    }
+
+    /**
+     * PUT /coordinator {consent}. The switch moves at once; a failed write puts it back to the
+     * journal's last known value and says why. Writes go one at a time, in tap order, so the
+     * journal ends on the last tap, and only the latest write's answer moves the switch.
+     */
+    public setCoordinatorConsent(enabled: boolean): Promise<void> {
+        const api = this.api;
+        const current = this.state.coordinatorConsent?.enabled;
+        if (!api || current === undefined || current === enabled) return Promise.resolve();
+        const epoch = ++this.coordinatorConsentEpoch;
+        this.patch({ coordinatorConsent: { enabled, error: undefined } });
+        const write = this.coordinatorConsentWrite.then(async () => {
+            if (this.api !== api) return;
+            try {
+                const stored = parseCoordinatorConsent(await api.putCoordinatorConsent(enabled)) ?? enabled;
+                if (this.api !== api) return;
+                this.coordinatorConsentConfirmed = stored;
+                if (this.coordinatorConsentEpoch === epoch) this.patch({ coordinatorConsent: { enabled: stored } });
+            } catch (error) {
+                if (this.api !== api || this.coordinatorConsentEpoch !== epoch) return;
+                this.patch({
+                    coordinatorConsent: { enabled: this.coordinatorConsentConfirmed, error: errorMessage(error) },
+                });
+            }
+        });
+        this.coordinatorConsentWrite = write;
+        return write;
     }
 
     // A settings frame (or hello_ok) is the journal's word on the current value; it supersedes any

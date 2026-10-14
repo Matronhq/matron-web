@@ -343,7 +343,15 @@ const events: JournalEvent[] = [
         ts: T + 870,
         sender: "journal",
         type: "item",
-        payload: { item_id: "it_41", num: 41, kind: "question", title: "Which region should the staging bucket use?", action: "created", by: "agent", awaiting: "user" },
+        payload: {
+            item_id: "it_41",
+            num: 41,
+            kind: "question",
+            title: "Which region should the staging bucket use?",
+            action: "created",
+            by: "agent",
+            awaiting: "user",
+        },
     },
     {
         seq: 24,
@@ -351,7 +359,15 @@ const events: JournalEvent[] = [
         ts: T + 875,
         sender: "journal",
         type: "item",
-        payload: { item_id: "it_42", num: 42, kind: "task", title: "Rotate the staging deploy key", action: "created", by: "agent", awaiting: "agent" },
+        payload: {
+            item_id: "it_42",
+            num: 42,
+            kind: "task",
+            title: "Rotate the staging deploy key",
+            action: "created",
+            by: "agent",
+            awaiting: "agent",
+        },
     },
     {
         seq: 25,
@@ -359,7 +375,16 @@ const events: JournalEvent[] = [
         ts: T + 880,
         sender: "journal",
         type: "item",
-        payload: { item_id: "it_41", num: 41, kind: "question", title: "Which region should the staging bucket use?", action: "commented", by: "user", awaiting: "agent", comment: { id: "cm_1", body: "Same region as production." } },
+        payload: {
+            item_id: "it_41",
+            num: 41,
+            kind: "question",
+            title: "Which region should the staging bucket use?",
+            action: "commented",
+            by: "user",
+            awaiting: "agent",
+            comment: { id: "cm_1", body: "Same region as production." },
+        },
     },
     {
         seq: 26,
@@ -367,7 +392,16 @@ const events: JournalEvent[] = [
         ts: T + 890,
         sender: "journal",
         type: "item",
-        payload: { item_id: "it_41", num: 41, kind: "question", title: "Which region should the staging bucket use?", action: "closed", by: "agent", resolution: "answered", comment: { id: "cm_2", body: "Created the bucket in the production region." } },
+        payload: {
+            item_id: "it_41",
+            num: 41,
+            kind: "question",
+            title: "Which region should the staging bucket use?",
+            action: "closed",
+            by: "agent",
+            resolution: "answered",
+            comment: { id: "cm_2", body: "Created the bucket in the production region." },
+        },
     },
     {
         seq: 27,
@@ -375,7 +409,16 @@ const events: JournalEvent[] = [
         ts: T + 900,
         sender: "journal",
         type: "item",
-        payload: { item_id: "it_42", num: 42, kind: "task", title: "Rotate the staging deploy key", action: "commented", by: "agent", awaiting: "user", comment: { id: "cm_3", body: "Needs an admin to approve the new key." } },
+        payload: {
+            item_id: "it_42",
+            num: 42,
+            kind: "task",
+            title: "Rotate the staging deploy key",
+            action: "commented",
+            by: "agent",
+            awaiting: "user",
+            comment: { id: "cm_3", body: "Needs an admin to approve the new key." },
+        },
     },
     // Agent-chat consent card, waiting on the user: who asks whom, about what and why, with
     // Decline / Approve answered over the journal's answer route.
@@ -506,6 +549,47 @@ const events: JournalEvent[] = [
             ],
         },
     },
+    // A chat card the Coordinator answered: the consent_decision (seq 38) settles it, and the
+    // card's outcome line carries the Coordinator's reason. (The spawn card at seq 14 is answered
+    // the same way by seq 17, and offers Stop session for the session it started.)
+    {
+        seq: 37,
+        convo_id: "c1",
+        ts: T + 1140,
+        sender: "agent:claude",
+        type: "permission_request",
+        payload: {
+            kind: "agent_chat",
+            request: "invite",
+            room_id: "room-fixture-3",
+            from_device_id: 1,
+            from_name: "box-a",
+            from_convo_id: "c1",
+            from_convo_title: "matron-web · deploy",
+            target_device_id: 2,
+            to_name: "box-b",
+            to_convo_id: "c2",
+            to_convo_title: "infra: backup rotation",
+            topic: "Compare the nginx configs",
+            justification: "box-b runs the same proxy and changed its timeouts last week.",
+        },
+    },
+    {
+        seq: 38,
+        convo_id: "c1",
+        ts: T + 1160,
+        sender: "journal",
+        type: "consent_decision",
+        payload: {
+            kind: "chat",
+            room_id: "room-fixture-3",
+            target_device_id: 2,
+            decision: "approve",
+            by: "coordinator",
+            convo_id: "c1",
+            reason: "Both boxes work on the same deploy",
+        },
+    },
 ];
 
 // ?toolstream adds a running tool_stream tile with more output than its collapsed pane shows.
@@ -595,7 +679,8 @@ const signedOutState: ClientState = {
             created_at: now - 30 * 86_400_000,
             updated_at: now,
             last_milestone_at: now,
-            closed_at: over.endedDaysAgo != null && over.state === "closed" ? now - over.endedDaysAgo * 86_400_000 : null,
+            closed_at:
+                over.endedDaysAgo != null && over.state === "closed" ? now - over.endedDaysAgo * 86_400_000 : null,
             open_items: 1,
             needs_you: 0,
             conversations: 1,
@@ -760,7 +845,9 @@ if (trackerMode === "projects" || trackerMode === "project" || trackerMode === "
                 ref(3951, "task", "agent", "Screenshot every themed surface in dark mode"),
                 ref(3944, "decision", null, "Tokens come from the Mac palette, not the old theme"),
             ],
-            conversations: [{ id: "c1", title: "Unify matron-web and the Mac app design", state: "running", box: "box-a" }],
+            conversations: [
+                { id: "c1", title: "Unify matron-web and the Mac app design", state: "running", box: "box-a" },
+            ],
         };
         stub.fetchMissionClosedItems = async () => ({
             items: [
@@ -1107,6 +1194,19 @@ if (trackerMode === "inbox" || trackerMode === "item") {
     ],
     defaultEffort: "high",
 });
+
+// Settings → Coordinator shows the consent-approval switch (on); a flip just moves it. Stop session
+// on a Coordinator-approved spawn "sends" at once, or fails with ?stop=fail.
+{
+    const stub = client as unknown as Record<string, unknown>;
+    const patch = (update: Partial<ClientState>): void =>
+        (client as unknown as { patch: (update: Partial<ClientState>) => void }).patch(update);
+    state.coordinatorConsent = { enabled: true };
+    stub.loadCoordinatorConsent = async () => undefined;
+    stub.setCoordinatorConsent = async (enabled: boolean) => patch({ coordinatorConsent: { enabled } });
+    const stopFails = fixtureParams.get("stop") === "fail";
+    stub.sendMessage = async () => !stopFails;
+}
 
 // Media stubs: a short generated tone for the voice note, a 404 for the reaped blob.
 function toneWav(seconds = 2, rate = 8000): Blob {
