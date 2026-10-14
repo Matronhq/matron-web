@@ -2471,6 +2471,7 @@ const CONVERSATION_LIST_IGNORED_STATE = new Set<keyof ClientState>([
     "hasOlderHistory",
     "sendTick",
     "dragActive",
+    "focusTarget",
 ]);
 
 export function sameStateExcept(
