@@ -2268,36 +2268,41 @@ export class MatronJournalClient {
     // ── The Coordinator conversation (rail entry, Settings → Coordinator; /coordinator `convo_id`) ──
 
     /**
-     * GET /coordinator: the user's Coordinator conversation, asked fresh (the rail entry opens it).
-     * Null for none, a signed-out client or a failed read. A successful read also updates
-     * `coordinatorConvoId`; when something newer landed while it was in flight, that newer value
-     * is the answer instead.
+     * GET /coordinator: the user's Coordinator conversation, asked fresh each time. The one lookup
+     * for anything that opens the Coordinator (the rail entry, a keyboard shortcut): call it and
+     * pass a non-null answer to `selectConversation(id, { suppressNotFound: true })`, or use
+     * `openCoordinator()`, rather than reading `/coordinator` again.
+     *
+     * Resolves to the journal's answer (null = no Coordinator), which also updates
+     * `coordinatorConvoId`; when a hello, write or marker landed while the read was in flight, that
+     * newer value instead. A failed read falls back to the last known value, so an offline click
+     * still opens it. Null for a signed-out client, or a failed read with nothing known.
      */
     public async coordinatorConversationId(): Promise<string | null> {
         const api = this.api;
         if (!api) return null;
         const epoch = this.coordinatorEpoch;
+        let raw: unknown;
         try {
-            const raw = await api.coordinator();
-            if (this.api !== api) return null;
-            // A hello, write or marker since the GET was sent is newer than its answer.
-            if (this.coordinatorEpoch !== epoch) return this.state.coordinatorConvoId ?? null;
-            const id = coordinatorIdIn(raw);
-            if (id !== undefined) this.patch({ coordinatorConvoId: id });
-            return id ?? null;
+            raw = await api.coordinator();
         } catch {
-            return null;
+            return this.api === api ? (this.state.coordinatorConvoId ?? null) : null;
         }
+        if (this.api !== api) return null;
+        // A hello, write or marker since the GET was sent is newer than its answer.
+        if (this.coordinatorEpoch !== epoch) return this.state.coordinatorConvoId ?? null;
+        const id = coordinatorIdIn(raw);
+        if (id !== undefined) this.patch({ coordinatorConvoId: id });
+        return id ?? null;
     }
 
     /**
-     * The rail's Coordinator entry: opens the Coordinator conversation. Asks the journal first and
-     * falls back to the last known value when the read fails. Resolves false when there is none,
-     * so the caller can offer the chooser.
+     * The rail's Coordinator entry: opens the Coordinator conversation (`coordinatorConversationId`
+     * semantics: the journal first, the last known value when the read fails). Resolves false
+     * when there is none, so the caller can offer the chooser.
      */
     public async openCoordinator(): Promise<boolean> {
-        const fresh = await this.coordinatorConversationId();
-        const id = fresh ?? (this.state.coordinatorConvoId || null);
+        const id = await this.coordinatorConversationId();
         if (!id) return false;
         this.closeTrackerView();
         void this.selectConversation(id, { suppressNotFound: true });
@@ -2475,6 +2480,9 @@ export class MatronJournalClient {
             this.replaceRoutine(routineIn(raw));
             return undefined;
         } catch (error) {
+            if (this.api !== api) return undefined;
+            // An edit of a routine deleted elsewhere: drop it from the list, as a pause does.
+            if (!isNew && error instanceof JournalApiError && error.status === 404) void this.loadRoutines();
             return routineFailure(error, isNew);
         }
     }

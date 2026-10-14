@@ -150,6 +150,24 @@ describe("Coordinator conversation", () => {
         expect(select).toHaveBeenCalledWith("c_known", { suppressNotFound: true });
     });
 
+    it("answers the one Coordinator lookup a shortcut can use as is", async () => {
+        const { client, internals } = makeClient({ coordinatorConvoId: "c_known" });
+        internals.api!.coordinator.mockResolvedValueOnce({ convo_id: "c_new", consent: false });
+        await expect(client.coordinatorConversationId()).resolves.toBe("c_new");
+        expect(client.getSnapshot().coordinatorConvoId).toBe("c_new");
+        // A failed read answers the last known value; an odd answer or none answers null.
+        internals.api!.coordinator.mockRejectedValueOnce(new JournalApiError("offline", 0));
+        await expect(client.coordinatorConversationId()).resolves.toBe("c_new");
+        internals.api!.coordinator.mockResolvedValueOnce("nope");
+        await expect(client.coordinatorConversationId()).resolves.toBeNull();
+        internals.api!.coordinator.mockResolvedValueOnce({ convo_id: null });
+        await expect(client.coordinatorConversationId()).resolves.toBeNull();
+        expect(client.getSnapshot().coordinatorConvoId).toBeNull();
+        internals.api!.coordinator.mockRejectedValueOnce(new JournalApiError("offline", 0));
+        await expect(client.coordinatorConversationId()).resolves.toBeNull();
+        await expect(new MatronJournalClient().coordinatorConversationId()).resolves.toBeNull();
+    });
+
     it("sets and clears the Coordinator through PUT /coordinator, following the journal's answer", async () => {
         const { client, internals } = makeClient({ coordinatorConvoId: null });
         internals.api!.putCoordinator.mockResolvedValueOnce({ convo_id: "c_pick", consent: true });
