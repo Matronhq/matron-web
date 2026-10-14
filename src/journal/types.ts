@@ -81,11 +81,34 @@ export interface DeviceDTO {
     last_seen_at?: number;
     connected: boolean;
     is_self: boolean;
+    /** The journal-held tag character shown before an agent box's chat titles; null = automatic. */
+    tag_char?: string | null;
+    /** Enrolment time (ms); the Devices list sorts newest first within apps and agent boxes. */
+    created_at?: number;
+    /** How many events the device's cursor trails the user's head. */
+    lag?: number;
     status?: BoxStatus;
     /** An agent box's stored defaults for new sessions (see BoxDefaults). Absent on journals
      *  that predate per-box defaults, and on client devices. */
     defaults?: BoxDefaults;
 }
+
+/** POST /pair/preview: who is asking to pair, and how long the code has left (seconds). */
+export interface PairPreview {
+    requester_ip: string;
+    expires_in: number;
+}
+
+/** POST /link/start: the code this device shows, and its lifetime (seconds). */
+export interface LinkStart {
+    link_code: string;
+    expires_in: number;
+}
+
+/** POST /link/status: still waiting for a scan, or claimed by a device asking to sign in. */
+export type LinkStatus =
+    | { status: "waiting"; expires_in: number }
+    | { status: "claimed"; device_name: string; requester_ip: string; expires_in: number };
 
 export interface DevicesResponse {
     devices: DeviceDTO[];
@@ -251,6 +274,22 @@ export interface MessageSearchState {
     hits: SearchHit[];
     loading: boolean;
     failed: boolean;
+}
+
+/**
+ * Find in chat: one search within the open conversation. `matchSeqs` holds the matching messages'
+ * seqs newest first and `index` the one in view (0 = newest). An empty `query` is a bar opened with
+ * nothing searched yet.
+ */
+export interface ChatSearchState {
+    conversationId: string;
+    query: string;
+    matchSeqs: number[];
+    index: number;
+    loading: boolean;
+    failed: boolean;
+    /** Bumped each time the bar should take keyboard focus (Ctrl/⌘F while it is already open). */
+    focusTick: number;
 }
 
 export interface JournalControlFrame {
@@ -474,28 +513,48 @@ export interface PendingMessage {
         | "electron_binary_unsupported";
     errorMessage?: string;
     canRetry?: boolean;
+    /** Set on an attachment sent together with others from one composer message. */
+    batch?: AttachmentBatchTag;
 }
 
 export type ConnectionState = "offline" | "connecting" | "online";
 
-export interface StagedUploadItem {
+/**
+ * One attachment's place in a multi-attachment composer send. Every attachment of a send with more
+ * than one carries the same `id`, so the bridge can gather their frames back into the one message
+ * the user wrote; `index` is 1-based and `total` is how many frames complete the batch. On the
+ * wire it rides in the media payload as `batch_id` / `batch_index` / `batch_total`.
+ */
+export interface AttachmentBatchTag {
     id: string;
-    file: File;
-    /** Built on first confirm attempt; reused by persist retries so a page has ONE row identity. */
-    message?: PendingMessage;
+    index: number;
+    total: number;
 }
 
-export interface StagedUploads {
-    convoId: string;
-    items: StagedUploadItem[];
-    /** Cumulative count ever staged into this queue (paste-append increments). Header: "File k of N", k = total - items.length + 1. */
-    total: number;
-    /** P23 transient-submission lock: set synchronously at confirm entry; all modal actions inert while true. */
-    confirming: boolean;
-    /** Terminal invalidation notice (items cleared, error page shown). */
-    error?: "archived";
-    /** Non-terminal persist failure: page kept, inline error shown, Send retries. */
-    persistError?: boolean;
+/**
+ * A file in the composer's attachment tray: picked, pasted or dropped, and not yet sent. It leaves
+ * with the composer text when the user sends, so the agent gets the file and the words about it
+ * as one turn.
+ */
+export interface ComposerAttachment {
+    id: string;
+    file: File;
+    /**
+     * `staged` waits for a send; `queued` is part of a send in flight and waiting its turn;
+     * `uploading` is on its way; `failed` didn't go out and stays for the next send to retry.
+     */
+    state: "staged" | "queued" | "uploading" | "failed";
+    /** Uploaded fraction (0…1) while uploading. */
+    progress?: number;
+    /** Why it failed, in prose. */
+    error?: string;
+    /** A file that can never upload (empty, or too big for the browser): it blocks the send until removed. */
+    unsendable?: boolean;
+    /**
+     * The tag this file's frame was about to carry when its send failed. A retry re-emits it under
+     * the same batch, so the bridge can still complete the message its siblings already started.
+     */
+    batch?: AttachmentBatchTag;
 }
 
 /** The loaded part of For you's Done list. `error` is the last load's failure; the rows it could
@@ -505,6 +564,31 @@ export interface InboxDone {
     nextCursor: string | null;
     loading: boolean;
     error?: string;
+}
+
+/**
+ * The chat's Tasks & decisions pane, beside the conversation. It stays open across conversation
+ * switches; `allFor` names the conversation whose pane shows "All" (any other shows "This chat",
+ * so moving to another conversation starts on its own items). `items` is the list last loaded for
+ * `scope` (the conversation id, or "all"): the open items, then the latest closed ones for Done.
+ * `error` is the last load's failure (the rows it could not replace stay); `actionError` the last
+ * failed move, until dismissed. `unsupported`: GET /items answered 404, a journal without items.
+ */
+export interface ChatTasksState {
+    open: boolean;
+    allFor?: string;
+    scope?: string;
+    items?: TrackerItem[];
+    loading?: boolean;
+    error?: string;
+    actionError?: string;
+    unsupported?: boolean;
+}
+
+export interface FocusTarget {
+    conversationId: string;
+    seq: number;
+    token: number;
 }
 
 export interface ClientState {
@@ -527,6 +611,12 @@ export interface ClientState {
      * expanded. Threaded into every buildSidebarIndex call so render/selection/unread/mark-all agree.
      */
     collapsedSubagentParentIds: Set<string>;
+    /**
+     * Sessions that arrived while this tab was live without this device asking for them (an
+     * agent, the Coordinator or a routine started them) and that the user has not opened since.
+     * Their rows carry a "New" marker. In memory only: a reload starts clean.
+     */
+    newConversationIds: Set<string>;
     controlError?: string;
     preferencesUnavailable?: boolean;
     selectedConversationId?: string;
@@ -547,11 +637,18 @@ export interface ClientState {
     textStreams: Record<string, string>;
     toolStreams: Record<string, ToolStreamState>;
     dragActive: boolean;
-    stagedUploads?: StagedUploads;
+    /** Each conversation's attachment tray, by conversation id; a conversation with none has no key. */
+    composerAttachments: Record<string, ComposerAttachment[]>;
     sendTick: number;
+    // A row the open timeline should scroll to and flash once it renders (a search hit, a
+    // milestone, "jump to my last message"). Set by client.focusMessage after the history holding
+    // `seq` has loaded; the timeline clears it by `token` once it has landed.
+    focusTarget?: FocusTarget;
     // Message-content search hits (Apple-parity "Messages" section). Undefined until the first
     // search of a session; cleared back to undefined when the search box empties.
     messageSearch?: MessageSearchState;
+    // Find in chat: the search bar over the open conversation, while it is up.
+    chatSearch?: ChatSearchState;
     // Tracker pane (Missions / Milestones / Decisions-Inbox). `trackerView` is the main-region
     // discriminant (checked ahead of selectedConversationId — one surface at a time). The rest are
     // store-resident so sidebar badges stay live off WS invalidation:
@@ -582,6 +679,8 @@ export interface ClientState {
     /** The selected conversation's missions, for the chat header's mission chip. Absent until
      *  fetched; a fetch for another conversation is never shown against this one. */
     conversationMissions?: ConversationMissions;
+    /** The chat's Tasks & decisions pane; absent until it is first opened. */
+    chatTasks?: ChatTasksState;
     /** True while ANY tracker fetch is in flight (v1: one detail/list open at a time). */
     trackerLoading?: boolean;
     /** Last tracker fetch/mutation error; cleared on the next successful load. */
@@ -938,6 +1037,18 @@ export interface TrackerCommentWrite {
     action?: string;
     reply_to?: string;
 }
+
+/** `POST /items` body: a new item filed into the conversation `convo_id`. */
+export interface TrackerItemCreate {
+    kind: "task" | "question" | "decision";
+    title: string;
+    body: string;
+    convo_id: string;
+}
+
+/** `POST /items/:id/rank` body: to the top or bottom of the open tasks, or between two of them
+ *  (their item ids). */
+export type TrackerRankChange = { position: "top" | "bottom" } | { after: string; before: string };
 
 /** The `{num,title,kind,created_at}` digest a mission list-row carries for its newest milestone. */
 export interface MissionLastMilestone {

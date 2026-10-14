@@ -33,6 +33,7 @@ import {
     ROUTINES_UNSUPPORTED,
     sortRoutines,
 } from "./routines";
+import { newestOwnMessageSeq } from "./jump-to-message";
 import { parseOwnTrackerUrl, parseTrackerLinkPath, type TrackerLinkPath } from "./link-path";
 import {
     DEFAULT_PIN_LIMIT,
@@ -47,8 +48,11 @@ import {
     readCachedPins,
     writeCachedPins,
 } from "./pins";
+import { isAgentRoomTitle, isStartCommand, NEW_CONVERSATION_STALE_MS, startedSessionIntents } from "./needs-you";
+import { SeenTracker } from "./seen-tracker";
 import { mergeSessionStatus } from "./status";
 import { appendFeedPage, kindsWithMore } from "./tracker/projectActivity";
+import { CHAT_TASKS_DONE_FETCH, chatTaskSections, planTaskMove } from "./tracker/chat-tasks";
 import { doneSortKey, inDone } from "./tracker/format";
 import {
     asNumber,
@@ -58,7 +62,9 @@ import {
     type BriefingLatest,
     type BriefingRefresh,
     type BriefingState,
+    type AttachmentBatchTag,
     type ClientState,
+    type ComposerAttachment,
     type Conversation,
     type ConversationMissionLink,
     type BoxDefaults,
@@ -67,6 +73,9 @@ import {
     type DefaultsState,
     type ConvoPin,
     type DeviceDTO,
+    type LinkStart,
+    type LinkStatus,
+    type PairPreview,
     type JournalBoxStatusFrame,
     isSubChat,
     type MatronLinkKind,
@@ -95,6 +104,7 @@ import {
     type RoutinesState,
     type TrackerCommentWrite,
     type TrackerItem,
+    type TrackerItemCreate,
     type UserSettings,
     type MemoryWrite,
     type TrackerResolution,
@@ -110,6 +120,16 @@ const SESSION_KEY = "matron_journal_session_v1";
 const LAST_SERVER_KEY = "matron_journal_last_server";
 const SELECTED_CONVERSATION_KEY_PREFIX = "matron_journal_selected_conversation_v1";
 const HISTORY_PAGE_SIZE = 80;
+// A jump to a message pages history back at most this many pages (80 rows each) before landing on
+// the oldest row loaded: a hit thousands of messages deep must not fetch the whole conversation
+// while the transcript sits still.
+const FOCUS_MAX_PAGES = 20;
+// While another history page is in flight a jump waits for it, polling this often, this many times.
+const FOCUS_WAIT_MS = 50;
+const FOCUS_MAX_WAITS = 300;
+// Find in chat steps through a conversation's whole match list, so it asks for more than the
+// sidebar's search; the journal caps a single-conversation search at this.
+const CHAT_SEARCH_LIMIT = 500;
 // Message-content search hits per query (server caps at 50; 20 keeps the Messages section tight).
 const MESSAGE_SEARCH_LIMIT = 20;
 // Max query length the server accepts (over this it returns 400); guard client-side so an
@@ -179,6 +199,27 @@ function sanitizeSearchHits(response: { hits?: unknown } | null | undefined): Se
     }
     return hits;
 }
+/**
+ * The matching seqs of a find-in-chat response, newest first and without repeats. Only `seq` (and
+ * `convo_id`, to drop anything outside the conversation) is read, so both the journal's
+ * newest-first hits and an older journal's ranked ones parse.
+ */
+export function conversationMatchSeqs(
+    response: { hits?: unknown } | null | undefined,
+    conversationId: string,
+): number[] {
+    const raw = response?.hits;
+    if (!Array.isArray(raw)) return [];
+    const seqs = new Set<number>();
+    for (const item of raw) {
+        if (!item || typeof item !== "object") continue;
+        const hit = item as Record<string, unknown>;
+        if (hit.convo_id !== undefined && hit.convo_id !== conversationId) continue;
+        if (typeof hit.seq === "number" && Number.isSafeInteger(hit.seq) && hit.seq >= 0) seqs.add(hit.seq);
+    }
+    return [...seqs].sort((a, b) => b - a);
+}
+
 const RPC_CREATE_WATCHDOG_MS = 10_000;
 // How long a marker-driven refetch waits, so a burst of markers costs one GET.
 const MARKER_REFETCH_DELAY_MS = 250;
@@ -240,6 +281,8 @@ type PersistPendingAttachmentOutcome =
 
 /** What one ask of a possibly sleeping box found: it answered, it is still booting, or the ask
  *  never reached the journal. */
+/** Which feature started a jump to a message (see focusMessage). */
+export type FocusOwner = "link" | "search" | "lastOwnMessage";
 export type AgentProbe = "up" | "booting" | "failed";
 
 export type StartOutcome =
@@ -311,6 +354,7 @@ function blankState(): ClientState {
         favoriteIds: new Set(),
         unreadOverrideIds: new Set(),
         collapsedSubagentParentIds: new Set(),
+        newConversationIds: new Set(),
         controlError: undefined,
         events: [],
         pendingMessages: [],
@@ -323,6 +367,7 @@ function blankState(): ClientState {
         boxStatuses: {},
         agents: [],
         dragActive: false,
+        composerAttachments: {},
         sendTick: 0,
     };
 }
@@ -405,6 +450,16 @@ function capToolStream(value: string): { content: string; truncated: boolean } {
     return { content: new TextDecoder().decode(slice), truncated: true };
 }
 
+/** A tray file's failed upload, in the words its chip shows. */
+function stagedUploadError(error: unknown): string {
+    const aborted =
+        (error instanceof DOMException && error.name === "AbortError") ||
+        (error instanceof JournalApiError && error.status === 0 && /abort/i.test(error.message));
+    if (aborted) return "The upload was interrupted.";
+    if (error instanceof Error && error.message) return error.message;
+    return "Upload failed.";
+}
+
 function abortPromise(signal: AbortSignal): Promise<never> {
     return new Promise((_, reject) => {
         const rejectAbort = (): void => reject(new DOMException("The upload timed out.", "AbortError"));
@@ -441,6 +496,9 @@ export class MatronJournalClient {
     private searchAbort?: AbortController;
     private database?: JournalDatabase;
     private connection?: JournalConnection;
+    // Read state: which timeline rows and tracker items were actually on screen, reported as
+    // `seen` / `item_seen` over the socket. Separate from read_marker and the unread badge.
+    public readonly seen = new SeenTracker({ send: (op) => this.connection?.send(op) ?? false });
     private readonly history = new Map<string, ConversationHistoryState>();
     // The latest-history-page fetch a spawn consent item made per conversation, keyed
     // `${sessionGen}:${convoId}`: in flight (later reads wait on it) or done (a card that is not in
@@ -458,7 +516,6 @@ export class MatronJournalClient {
     private readonly readHighWater = new Map<string, number>();
     private readonly readTimers = new Map<string, number>();
     private pendingFiles = new Map<string, File>();
-    private stagedSendChain: Promise<void> = Promise.resolve();
     private transientAttachmentErrors = new Map<string, PendingMessage>();
     private readonly dismissedAttachments = new Set<string>();
     private readonly attachmentOperations = new Map<string, Promise<void>>();
@@ -499,6 +556,13 @@ export class MatronJournalClient {
     // Pending marker-driven inbox refetch. A burst of `item` markers (a reconnect replay, a batch of
     // agent writes) coalesces into ONE inbox walk instead of one per marker.
     private trackerInboxRefetchTimer?: number;
+    // The chat's Tasks & decisions pane: a request generation for its list (a newer load, or a
+    // drag, supersedes an older load still in flight) and its coalesced marker refetch.
+    private chatTasksGen = 0;
+    private chatTasksRefetchTimer?: number;
+    // Ranks staged by a move the journal has not confirmed yet: a load that lands meanwhile (a
+    // second move's refetch, a marker) still reads the old rank, so these win until it answers.
+    private chatTasksStaged = new Map<string, number>();
     // Same for `mission` / `milestone` markers and the missions list.
     private trackerMissionsRefetchTimer?: number;
     private trackerMemoriesGen = 0;
@@ -573,7 +637,23 @@ export class MatronJournalClient {
     private ackTimer?: number;
     private pendingAck = 0;
     private historyError?: string;
+    // Bumped by every jump to a message; a paging jump whose token is stale has been superseded.
+    private focusToken = 0;
+    // Which feature started the jump now running: closing find-in-chat cancels only its own jump,
+    // never a "jump to my last message" that happens to be in flight while the bar is up.
+    private focusOwner?: FocusOwner;
+    // Find in chat: only the newest request applies, and closing the bar supersedes one in flight.
+    private chatSearchSeq = 0;
+    private chatSearchAbort?: AbortController;
     private startSessionRequest?: Promise<StartOutcome>;
+    // The session starts this device asked for and has not seen born yet: a conversation that
+    // answers one is the user's own, and never gets the "New" marker.
+    private startIntents = startedSessionIntents();
+    // Live-born conversations whose first frames (a session_status, a title-less meta) could not
+    // yet say whether they are a room, a child or the answer to a start, by id with the first
+    // frame's time. The verdict waits for a titled convo_meta or a message; an entry that never
+    // gets one ages out after NEW_CONVERSATION_STALE_MS.
+    private newVerdictPending = new Map<string, number>();
     private rpcCreateWatchdog?: number;
     private rpcCreateWatchdogConvo?: string;
     private rpcCreateWatchdogGen?: number;
@@ -699,6 +779,7 @@ export class MatronJournalClient {
         this.dismissedAttachments.clear();
         this.pendingFiles.clear();
         this.transientAttachmentErrors.clear();
+        this.seen.reset();
         this.connection?.stop();
         this.connection = undefined;
         if (this.storageListener) {
@@ -730,6 +811,8 @@ export class MatronJournalClient {
         for (const url of this.mediaUrls.values()) URL.revokeObjectURL(url);
         this.mediaUrls.clear();
         this.expiredMedia.clear();
+        this.startIntents = startedSessionIntents();
+        this.newVerdictPending.clear();
         // The archived-conversations key is deliberately left in place: it is a per-device
         // preference that re-login should restore. Clearing it here would also go unnoticed
         // by this tab, since storage events only fire in other tabs.
@@ -850,16 +933,32 @@ export class MatronJournalClient {
         if (picks.model) params.model = picks.model;
         if (picks.effort) params.effort = picks.effort;
 
+        // The session this start brings is the user's own: it must not arrive marked "New".
+        this.startIntents.noteBox(agentDeviceId, Date.now());
         const reply = await this.agentRpc(agentDeviceId, "start", params);
         if (reply.ok) {
             if (typeof reply.result !== "object" || reply.result === null || Array.isArray(reply.result)) {
                 return { kind: "uncertain" };
             }
             const convoId = (reply.result as Record<string, unknown>).convo_id;
-            return typeof convoId === "string" && convoId.length > 0
-                ? { kind: "created", convoId }
-                : { kind: "uncertain" };
+            if (typeof convoId === "string" && convoId.length > 0) {
+                // Its first frames may have beaten this reply. If they already settled its verdict,
+                // only the box's ask is left, and any mark it got is undone: it is the user's own
+                // even when the sheet was dismissed and it is not opened. Otherwise (not seen yet,
+                // or its verdict still waits for the titled meta) it is claimed by id.
+                const seen = this.state.conversations.some((candidate) => candidate.id === convoId);
+                if (seen && !this.newVerdictPending.has(convoId)) {
+                    this.startIntents.forgetBox(agentDeviceId);
+                    this.clearNewMark(convoId);
+                } else {
+                    this.startIntents.noteConversation(convoId, agentDeviceId);
+                }
+                return { kind: "created", convoId };
+            }
+            return { kind: "uncertain" };
         }
+        // A refusal brings no session; a session that does arrive on this box later is not this ask's.
+        if (reply.origin !== "timeout") this.startIntents.forgetBox(agentDeviceId);
         if (reply.origin === "relay") {
             return {
                 kind: "error",
@@ -958,6 +1057,8 @@ export class MatronJournalClient {
         // idle session reports "not syncing" as an error.
         if (opts?.fromRpcCreate) this.armRpcCreateWatchdog(conversationId);
         if (opts?.clearUnread ?? true) this.clearUnreadOverride(conversationId);
+        // Opening a conversation, by any route, ends its "New" marker.
+        this.clearNewMark(conversationId);
         storeSelectedConversation(this.state.session, conversationId);
         // Selecting a conversation closes the Tracker pane, so it drops the cached item detail the
         // same way closeTrackerView does.
@@ -965,6 +1066,13 @@ export class MatronJournalClient {
             this.trackerItemGen += 1;
             this.trackerMissionGen += 1;
             this.trackerProjectGen += 1;
+        }
+        if (this.state.chatSearch && this.state.chatSearch.conversationId !== conversationId) {
+            // The bar closes below; a search still in flight there must not answer a bar opened on
+            // that conversation again later.
+            this.chatSearchSeq += 1;
+            this.chatSearchAbort?.abort();
+            this.chatSearchAbort = undefined;
         }
         this.patch({
             selectedConversationId: conversationId,
@@ -974,6 +1082,11 @@ export class MatronJournalClient {
             ...(this.state.trackerView ? { trackerItem: null, trackerMission: null, trackerProject: null } : {}),
             events: [],
             pendingMessages: [],
+            focusTarget: undefined,
+            // Find in chat searches one conversation; opening another closes its bar.
+            ...(this.state.chatSearch && this.state.chatSearch.conversationId !== conversationId
+                ? { chatSearch: undefined }
+                : {}),
             loadingHistory: false,
             hasOlderHistory: this.history.get(conversationId)?.hasMore ?? true,
             activity: this.activities.get(conversationId),
@@ -994,6 +1107,9 @@ export class MatronJournalClient {
     }
 
     public clearSelection(): void {
+        // Find in chat belongs to the conversation being left: a search still in flight must not
+        // reopen it, nor answer a bar opened there later.
+        this.endChatSearch();
         this.connection?.send({ op: "viewing", convo_id: null });
         if (this.state.session) storeSelectedConversation(this.state.session, undefined);
         this.patch({ selectedConversationId: undefined, events: [], pendingMessages: [] });
@@ -1287,6 +1403,221 @@ export class MatronJournalClient {
         }
     }
 
+    // ── Jump to a message ───────────────────────────────────────────────────
+
+    /**
+     * Opens `conversationId` on the row with `seq` (a search hit, a milestone's anchor) instead of
+     * at its tail: pages history back until that seq is loaded, then hands the timeline a
+     * `focusTarget` to scroll to and flash. A seq that is not rendered (a milestone's own marker, a
+     * deleted row) lands on the nearest row before it; one older than the history reached in
+     * FOCUS_MAX_PAGES pages lands on the oldest row loaded. A newer jump, or opening another
+     * conversation, supersedes one still paging. Resolves true when a target was handed over.
+     */
+    public async focusMessage(conversationId: string, seq: number, owner: FocusOwner = "link"): Promise<boolean> {
+        if (!conversationId || !Number.isSafeInteger(seq) || seq < 0) return false;
+        const token = ++this.focusToken;
+        this.focusOwner = owner;
+        if (this.state.selectedConversationId !== conversationId) {
+            await this.selectConversation(conversationId, { suppressNotFound: true });
+        } else {
+            this.closeTrackerView();
+        }
+        const loaded = (): boolean => {
+            if (this.state.events.some((event) => event.seq === seq)) return true;
+            const history = this.history.get(conversationId);
+            return Boolean(history?.initialized && history.oldestSeq !== undefined && history.oldestSeq <= seq);
+        };
+        if (!(await this.pageHistoryUntil(conversationId, token, loaded))) return false;
+        this.patch({ focusTarget: { conversationId, seq, token } });
+        return true;
+    }
+
+    /**
+     * Scrolls the open conversation to the newest message the user sent themself — what scrolling
+     * can't find once an agent has run for hours. Pages back until one is loaded (bounded like
+     * focusMessage). Resolves false when there is none to land on; the transcript stays put.
+     */
+    public async jumpToLastOwnMessage(): Promise<boolean> {
+        const conversationId = this.state.selectedConversationId;
+        if (!conversationId || this.state.trackerView) return false;
+        const token = ++this.focusToken;
+        this.focusOwner = "lastOwnMessage";
+        const found = (): boolean => newestOwnMessageSeq(this.state.events) !== undefined;
+        if (!(await this.pageHistoryUntil(conversationId, token, found))) return false;
+        const seq = newestOwnMessageSeq(this.state.events);
+        if (seq === undefined) return false;
+        this.patch({ focusTarget: { conversationId, seq, token } });
+        return true;
+    }
+
+    /** The timeline landed on (or gave up on) the target handed over with `token`. */
+    public clearFocusTarget(token: number): void {
+        if (this.state.focusTarget?.token === token) this.patch({ focusTarget: undefined });
+    }
+
+    // ── Find in chat ────────────────────────────────────────────────────────
+
+    /**
+     * Ctrl/⌘F: opens the search bar over the open conversation with nothing searched yet, or —
+     * with the bar already up — keeps its search and asks for the field to take focus again.
+     */
+    public openChatSearch(): void {
+        const conversationId = this.state.selectedConversationId;
+        if (!conversationId || this.state.trackerView) return;
+        const current = this.state.chatSearch;
+        this.patch({
+            chatSearch:
+                current?.conversationId === conversationId
+                    ? { ...current, focusTick: current.focusTick + 1 }
+                    : {
+                          conversationId,
+                          query: "",
+                          matchSeqs: [],
+                          index: 0,
+                          loading: false,
+                          failed: false,
+                          focusTick: 1,
+                      },
+        });
+    }
+
+    /**
+     * Searches one conversation (the open one unless `conversationId` says otherwise, which it then
+     * opens) and jumps to the newest match, paging history back as far as it lies. The journal
+     * searches the whole conversation, not just the loaded rows. `startingAt` is the message a
+     * sidebar search result showed: the jump lands there instead, and it counts among the matches
+     * even when the narrower in-chat matching would not have found it. Only leading whitespace is
+     * trimmed: a trailing space tells the journal the last word is finished.
+     */
+    public async beginChatSearch(
+        rawQuery: string,
+        opts: { conversationId?: string; startingAt?: number } = {},
+    ): Promise<void> {
+        const query = rawQuery.replace(/^\s+/, "");
+        const conversationId = opts.conversationId ?? this.state.selectedConversationId;
+        if (!query.trim() || query.length > MESSAGE_SEARCH_MAX_QUERY_LEN || !conversationId || !this.api) return;
+        if (this.state.selectedConversationId !== conversationId) {
+            await this.selectConversation(conversationId, { suppressNotFound: true });
+            if (this.state.selectedConversationId !== conversationId) return;
+        } else {
+            this.closeTrackerView();
+        }
+        this.chatSearchAbort?.abort();
+        // The previous query's jump, if still paging, must not land while this one searches.
+        this.cancelChatSearchFocus();
+        const seq = ++this.chatSearchSeq;
+        const controller = new AbortController();
+        this.chatSearchAbort = controller;
+        const focusTick =
+            this.state.chatSearch?.conversationId === conversationId ? this.state.chatSearch.focusTick : 0;
+        const startingAt = opts.startingAt;
+        this.patch({
+            chatSearch: { conversationId, query, matchSeqs: [], index: 0, loading: true, failed: false, focusTick },
+        });
+        const call = this.api.searchConversation(conversationId, query, CHAT_SEARCH_LIMIT, controller.signal);
+        void call.catch(() => undefined);
+        let timer: ReturnType<typeof setTimeout>;
+        const timeout = new Promise<never>((_resolve, reject) => {
+            timer = setTimeout(() => {
+                reject(new Error("timeout"));
+                controller.abort();
+            }, MESSAGE_SEARCH_TIMEOUT_MS);
+        });
+        const stale = (): boolean =>
+            seq !== this.chatSearchSeq ||
+            this.state.chatSearch?.conversationId !== conversationId ||
+            this.state.selectedConversationId !== conversationId;
+        let matchSeqs: number[];
+        let failed = false;
+        try {
+            matchSeqs = conversationMatchSeqs(await Promise.race([call, timeout]), conversationId);
+        } catch {
+            matchSeqs = [];
+            failed = true;
+        } finally {
+            clearTimeout(timer!);
+            if (this.chatSearchAbort === controller) this.chatSearchAbort = undefined;
+        }
+        if (stale()) return;
+        if (startingAt !== undefined && Number.isSafeInteger(startingAt) && !matchSeqs.includes(startingAt)) {
+            matchSeqs = [...matchSeqs, startingAt].sort((a, b) => b - a);
+        }
+        const index = startingAt === undefined ? 0 : Math.max(0, matchSeqs.indexOf(startingAt));
+        this.patch({ chatSearch: { conversationId, query, matchSeqs, index, loading: false, failed, focusTick } });
+        if (matchSeqs.length === 0) {
+            // "No matches": an earlier query's deep jump still paging must not land afterwards.
+            this.cancelChatSearchFocus();
+            return;
+        }
+        // The tracker opened over the conversation meanwhile: landing would close it again.
+        if (this.state.trackerView) return;
+        await this.focusMessage(conversationId, matchSeqs[index], "search");
+    }
+
+    /** Steps to the adjacent match: `older` walks up into history. Stops at either end. */
+    public async stepChatSearch(older: boolean): Promise<void> {
+        const search = this.state.chatSearch;
+        if (!search || search.loading) return;
+        const next = search.index + (older ? 1 : -1);
+        if (next < 0 || next >= search.matchSeqs.length) return;
+        this.patch({ chatSearch: { ...search, index: next } });
+        await this.focusMessage(search.conversationId, search.matchSeqs[next], "search");
+    }
+
+    /**
+     * Closes the bar. The transcript stays where it is, so a search jump still paging is cancelled
+     * too — left running, it would scroll the transcript after the user closed search.
+     */
+    public endChatSearch(): void {
+        this.chatSearchSeq += 1;
+        this.chatSearchAbort?.abort();
+        this.chatSearchAbort = undefined;
+        if (this.state.chatSearch) this.patch({ chatSearch: undefined });
+        this.cancelChatSearchFocus();
+    }
+
+    /** A sidebar search result: open its conversation on the message, with the find bar up. */
+    public openSearchHit(hit: SearchHit): void {
+        const query = this.state.messageSearch?.query;
+        if (query) void this.beginChatSearch(query, { conversationId: hit.convo_id, startingAt: hit.seq });
+        else void this.focusMessage(hit.convo_id, hit.seq);
+    }
+
+    private cancelChatSearchFocus(): void {
+        if (this.focusOwner !== "search") return;
+        const token = this.focusToken;
+        this.focusToken += 1;
+        this.focusOwner = undefined;
+        // A target already handed over but not yet landed goes too.
+        if (this.state.focusTarget?.token === token) this.patch({ focusTarget: undefined });
+    }
+
+    /**
+     * Loads older pages of the open conversation until `done()` holds or history runs out, at most
+     * FOCUS_MAX_PAGES pages. A page already in flight (the "Load earlier" button) is waited out
+     * rather than raced; a failed page stops the walk. Resolves false when the jump was superseded
+     * (a newer jump, or another conversation opened) — the caller then lands nothing.
+     */
+    private async pageHistoryUntil(conversationId: string, token: number, done: () => boolean): Promise<boolean> {
+        const current = (): boolean =>
+            this.focusToken === token && this.state.selectedConversationId === conversationId;
+        let pages = 0;
+        let waits = 0;
+        while (current() && !done()) {
+            if (this.history.get(conversationId)?.hasMore === false) break;
+            if (this.state.loadingHistory) {
+                if (++waits > FOCUS_MAX_WAITS) break;
+                await new Promise((resolve) => setTimeout(resolve, FOCUS_WAIT_MS));
+                continue;
+            }
+            if (pages >= FOCUS_MAX_PAGES) break;
+            pages += 1;
+            await this.loadOlderHistory({ suppressNotFound: true });
+            if (this.historyError) break;
+        }
+        return current();
+    }
+
     public async sendMessage(bodyInput: string, targetConvoId?: string): Promise<boolean> {
         const body = bodyInput.trim();
         const conversationId = targetConvoId ?? this.state.selectedConversationId;
@@ -1304,6 +1635,10 @@ export class MatronJournalClient {
         };
         await db.addToOutbox(message); // the only awaited durable step
         if (!owns()) return false;
+        if (isStartCommand(body)) {
+            const box = this.state.conversations.find((candidate) => candidate.id === conversationId)?.agent_device_id;
+            this.startIntents.noteBox(box ?? null, Date.now());
+        }
         // sendTick is a synchronous "a send happened → scroll to bottom" signal; bump it now (the
         // message is durably queued) rather than gating it behind the async refresh below.
         if (this.state.selectedConversationId === conversationId) {
@@ -1572,6 +1907,14 @@ export class MatronJournalClient {
             size: message.size,
             local_id: message.localId,
             ...(message.caption ? { caption: message.caption } : {}),
+            // Absent for a lone attachment, so its frame is exactly what an older bridge expects.
+            ...(message.batch
+                ? {
+                      batch_id: message.batch.id,
+                      batch_index: message.batch.index,
+                      batch_total: message.batch.total,
+                  }
+                : {}),
         };
     }
 
@@ -1642,128 +1985,214 @@ export class MatronJournalClient {
         }
     }
 
-    public stageFiles(files: File[]): void {
-        if (files.length === 0) return;
-        const staged = this.state.stagedUploads;
-        if (staged) {
-            if (this.isChildConvo(staged.convoId)) return;
-            if (staged.error) return;
-            this.patch({
-                stagedUploads: {
-                    ...staged,
-                    items: [...staged.items, ...files.map((file) => ({ id: crypto.randomUUID(), file }))],
-                    total: staged.total + files.length,
-                },
-            });
-            return;
-        }
-        const convoId = this.state.selectedConversationId;
-        if (!convoId) return;
-        if (this.isChildConvo(convoId)) return;
-        this.patch({
-            stagedUploads: {
-                convoId,
-                items: files.map((file) => ({ id: crypto.randomUUID(), file })),
-                total: files.length,
-                confirming: false,
-            },
+    /**
+     * Adds files to a conversation's attachment tray (the selected one by default). Picking, pasting
+     * and dropping all land here; nothing uploads until the user sends.
+     */
+    public stageFiles(files: File[], convoId = this.state.selectedConversationId): void {
+        if (files.length === 0 || !convoId || this.isChildConvo(convoId)) return;
+        const added = files.map((file): ComposerAttachment => {
+            const unsendable =
+                file.size === 0
+                    ? "That file is empty."
+                    : file.size > BROWSER_MEMORY_SAFETY_MAX_BYTES
+                      ? "Too large for this browser to upload."
+                      : undefined;
+            return unsendable
+                ? { id: crypto.randomUUID(), file, state: "failed", error: unsendable, unsendable: true }
+                : { id: crypto.randomUUID(), file, state: "staged" };
         });
+        this.setTray(convoId, [...this.trayOf(convoId), ...added]);
     }
 
-    public async confirmStagedFile(itemId: string, captionInput?: string): Promise<void> {
-        const staged = this.state.stagedUploads;
-        if (!staged || staged.confirming || staged.error) return;
-        const head = staged.items[0];
-        if (!head || head.id !== itemId) return;
-        if (this.isChildConvo(staged.convoId)) return;
-        this.patch({ stagedUploads: { ...staged, confirming: true } });
+    /** Takes one file out of the tray. A file already part of a send in flight stays. */
+    public removeStagedFile(convoId: string, id: string): void {
+        const tray = this.trayOf(convoId);
+        const item = tray.find((candidate) => candidate.id === id);
+        if (!item || item.state === "queued" || item.state === "uploading") return;
+        this.setTray(
+            convoId,
+            tray.filter((candidate) => candidate.id !== id),
+        );
+    }
 
+    /**
+     * Sends a conversation's tray with the composer text, as one turn: the files upload one at a
+     * time, each followed by its media frame. The text rides on the first as its caption (once, so
+     * the agent doesn't read it per file), and with more than one file every frame carries the same
+     * batch tag, so the bridge hands them to the agent together.
+     *
+     * Stops at the first failed upload: a later file sent without the earlier one it goes with would
+     * reach the agent out of context. The failed file and the ones after it stay in the tray, keeping
+     * their batch tags, and the next send retries them. `captionDelivered` says whether the text went
+     * out with a file that made it, so the composer knows whether to put it back.
+     */
+    public async sendStagedFiles(
+        convoId: string,
+        caption: string,
+    ): Promise<{ outcome: "sent" | "failed" | "skipped"; captionDelivered: boolean }> {
+        const skipped = { outcome: "skipped" as const, captionDelivered: false };
         const gen = this.sessionGen;
         const api = this.api;
         const db = this.database;
-        if (!api || !db) {
-            const current = this.state.stagedUploads;
-            if (current) this.patch({ stagedUploads: { ...current, confirming: false } });
-            return;
+        if (!api || !db || this.isChildConvo(convoId) || !this.stagedConvoValid(convoId)) return skipped;
+        const tray = this.trayOf(convoId);
+        if (
+            tray.length === 0 ||
+            tray.some((item) => item.unsendable || item.state === "queued" || item.state === "uploading")
+        ) {
+            return skipped;
         }
+        // Fresh tags only across files that haven't failed out of an earlier send, and only when
+        // there is more than one: a lone file goes untagged, and a retried one keeps its own tag.
+        const untagged = tray.filter((item) => !item.batch);
+        const batchId = untagged.length > 1 ? crypto.randomUUID() : undefined;
+        let freshIndex = 0;
+        const plan = tray.map((item) => ({
+            id: item.id,
+            file: item.file,
+            batch: item.batch ?? (batchId ? { id: batchId, index: ++freshIndex, total: untagged.length } : undefined),
+        }));
+        const planned = new Set(plan.map((step) => step.id));
+        this.setTray(
+            convoId,
+            tray.map((item) =>
+                planned.has(item.id) ? { ...item, state: "queued", progress: undefined, error: undefined } : item,
+            ),
+        );
+        if (this.state.selectedConversationId === convoId) this.patch({ sendTick: this.state.sendTick + 1 });
+
         const owner: AttachmentOwner = { gen, api, db };
-        const convoId = staged.convoId;
-
-        if (!this.stagedConvoValid(convoId)) {
-            this.patch({ stagedUploads: { ...staged, items: [], confirming: false, error: "archived" } });
-            return;
-        }
-
-        const caption = captionInput?.trim() ? captionInput.trim() : undefined;
-        const message = head.message ?? this.buildPendingAttachment(head.file, convoId, caption);
-        head.message = message;
-        if (caption) message.caption = caption;
-        else delete message.caption;
-
-        const persistOutcome = await this.persistPendingAttachment(message, head.file, db, gen);
-        if (this.sessionGen !== gen) return;
-        const current = this.state.stagedUploads;
-        if (!current) return;
-        if (persistOutcome.kind === "persist-failed") {
-            this.transientAttachmentErrors.delete(message.localId);
-            this.pendingFiles.delete(message.localId);
-            if (this.state.selectedConversationId === convoId) {
-                await this.refreshSelectedConversation(convoId, db, gen).catch(() => undefined);
-            }
-            const afterPurge = this.state.stagedUploads;
-            if (!afterPurge) return;
-            this.patch({ stagedUploads: { ...afterPurge, confirming: false, persistError: true } });
-            return;
-        }
-        if (this.state.selectedConversationId === convoId) {
-            this.patch({ sendTick: this.state.sendTick + 1 });
-        }
-        void this.refreshSelectedConversation(convoId, db, gen).catch(() => undefined);
-        const rest = current.items.slice(1);
-        this.patch({
-            stagedUploads: rest.length
-                ? { ...current, items: rest, confirming: false, persistError: false }
-                : undefined,
-        });
-
-        if (persistOutcome.kind === "persisted-terminal") return;
-
-        this.stagedSendChain = this.stagedSendChain.then(async () => {
-            try {
-                if (this.sessionGen !== gen || this.database !== db) return;
-                if (!this.stagedConvoValid(convoId)) {
-                    message.attachState = "error";
-                    message.errorKind = "upload_failed";
-                    message.errorMessage = "Conversation was archived in another tab — unarchive to retry.";
-                    if (await this.persistAttachment(message, db, gen)) {
-                        await this.refreshSelectedConversation(convoId, db, gen).catch(() => undefined);
-                    }
-                    return;
+        try {
+            return await this.runStagedSend(convoId, plan, caption.trim(), owner);
+        } finally {
+            // Whatever way the send ended, no file of it may stay stuck as queued or uploading:
+            // anything still in the tray goes back to staged with its batch tag, ready to retry.
+            if (this.sessionGen === gen) {
+                const batches = new Map(plan.map((step) => [step.id, step.batch]));
+                const tray = this.trayOf(convoId);
+                if (
+                    tray.some((item) => batches.has(item.id) && (item.state === "queued" || item.state === "uploading"))
+                ) {
+                    this.setTray(
+                        convoId,
+                        tray.map((item): ComposerAttachment => {
+                            if (!batches.has(item.id) || (item.state !== "queued" && item.state !== "uploading")) {
+                                return item;
+                            }
+                            const batch = batches.get(item.id);
+                            return { id: item.id, file: item.file, state: "staged", ...(batch ? { batch } : {}) };
+                        }),
+                    );
                 }
-                await this.runPendingUpload(message, head.file, owner);
-            } catch {
-                // Rejection isolation: one failed upload must not poison the chain.
             }
-        });
+        }
     }
 
-    public skipStagedFile(itemId: string): void {
-        const staged = this.state.stagedUploads;
-        if (!staged || staged.confirming || staged.error) return;
-        const head = staged.items[0];
-        if (!head || head.id !== itemId) return;
-        const rest = staged.items.slice(1);
-        this.patch({
-            stagedUploads: rest.length ? { ...staged, items: rest, persistError: false } : undefined,
-        });
+    private async runStagedSend(
+        convoId: string,
+        plan: { id: string; file: File; batch?: AttachmentBatchTag }[],
+        text: string,
+        owner: AttachmentOwner,
+    ): Promise<{ outcome: "sent" | "failed" | "skipped"; captionDelivered: boolean }> {
+        const { gen, api, db } = owner;
+        let captionDelivered = false;
+        for (const [index, step] of plan.entries()) {
+            if (this.sessionGen !== gen || this.api !== api || this.database !== db) {
+                return { outcome: "skipped", captionDelivered };
+            }
+            let mediaId: string;
+            try {
+                if (this.isChildConvo(convoId)) throw new Error("Can't send to a read-only subagent transcript.");
+                if (!this.stagedConvoValid(convoId)) throw new Error("This conversation was archived.");
+                this.updateStaged(convoId, step.id, { state: "uploading", progress: 0 });
+                mediaId = await this.uploadStagedFile(convoId, step.id, step.file, api);
+            } catch (error) {
+                if (this.sessionGen !== gen) return { outcome: "skipped", captionDelivered };
+                const unsent = new Map(plan.slice(index).map((later) => [later.id, later.batch]));
+                this.setTray(
+                    convoId,
+                    this.trayOf(convoId).map((item): ComposerAttachment => {
+                        if (!unsent.has(item.id)) return item;
+                        const batch = unsent.get(item.id);
+                        const kept: ComposerAttachment = { id: item.id, file: item.file, state: "staged" };
+                        if (batch) kept.batch = batch;
+                        if (item.id === step.id) {
+                            kept.state = "failed";
+                            kept.error = stagedUploadError(error);
+                        }
+                        return kept;
+                    }),
+                );
+                return { outcome: "failed", captionDelivered };
+            }
+            const message = this.buildPendingAttachment(step.file, convoId, index === 0 ? text : undefined);
+            message.blobRef = mediaId;
+            if (step.batch) message.batch = step.batch;
+            // Out of the tray as it joins the timeline, so the two never show the same file.
+            this.setTray(
+                convoId,
+                this.trayOf(convoId).filter((item) => item.id !== step.id),
+            );
+            // From here the outbox owns it: a failed frame becomes a retryable tile in the timeline,
+            // and the text is with it either way.
+            if (message.caption) captionDelivered = true;
+            try {
+                await this.emitPendingAttachment(message, owner);
+            } catch (error) {
+                console.warn("matron: attachment frame not dispatched", error);
+                return { outcome: "failed", captionDelivered };
+            }
+        }
+        return { outcome: "sent", captionDelivered };
     }
 
-    public cancelStagedFiles(): void {
-        const staged = this.state.stagedUploads;
-        if (!staged) return;
-        // The confirming lock guards all mutations at the client boundary.
-        if (staged.confirming) return;
-        this.patch({ stagedUploads: undefined });
+    private trayOf(convoId: string): ComposerAttachment[] {
+        return this.state.composerAttachments[convoId] ?? [];
+    }
+
+    private setTray(convoId: string, items: ComposerAttachment[]): void {
+        const next = { ...this.state.composerAttachments };
+        if (items.length > 0) next[convoId] = items;
+        else delete next[convoId];
+        this.patch({ composerAttachments: next });
+    }
+
+    private updateStaged(convoId: string, id: string, change: Partial<ComposerAttachment>): void {
+        const tray = this.trayOf(convoId);
+        if (!tray.some((item) => item.id === id)) return;
+        this.setTray(
+            convoId,
+            tray.map((item) => (item.id === id ? { ...item, ...change } : item)),
+        );
+    }
+
+    private async uploadStagedFile(convoId: string, id: string, file: File, api: JournalApi): Promise<string> {
+        const controller = new AbortController();
+        const timer = window.setTimeout(() => controller.abort(), uploadTimeoutMsFor(file.size));
+        // Tracked with the outbox uploads, so signing out or the conversation turning into a
+        // read-only subagent transcript aborts it too.
+        this.inFlightUploads.set(id, controller);
+        this.uploadConvos.set(id, convoId);
+        try {
+            const bytes = await Promise.race([file.arrayBuffer(), abortPromise(controller.signal)]);
+            const response = await api.uploadMedia(
+                bytes,
+                file.type || "application/octet-stream",
+                controller.signal,
+                (fraction) => this.updateStaged(convoId, id, { progress: fraction }),
+            );
+            if (typeof response.media_id !== "string" || response.media_id.trim() === "") {
+                throw new Error("The journal server returned a malformed media response.");
+            }
+            return response.media_id;
+        } finally {
+            window.clearTimeout(timer);
+            if (this.inFlightUploads.get(id) === controller) {
+                this.inFlightUploads.delete(id);
+                this.uploadConvos.delete(id);
+            }
+        }
     }
 
     private stagedConvoValid(convoId: string): boolean {
@@ -1981,7 +2410,11 @@ export class MatronJournalClient {
             selectedProjectId: opts.projectId === null ? undefined : (opts.projectId ?? prev?.selectedProjectId),
             ...(briefingOpen ? { briefingOpen } : {}),
         };
-        this.patch({ trackerView: next });
+        // The tracker covers the transcript: a jump still paging history is dropped, and a target
+        // not yet landed is withdrawn, or returning to the conversation would flash a jump the
+        // user has since left.
+        this.focusToken += 1;
+        this.patch({ trackerView: next, ...(this.state.focusTarget ? { focusTarget: undefined } : {}) });
     }
 
     // Memories view entry points: a name opens that memory's editor, "" opens the new-memory form,
@@ -2154,12 +2587,13 @@ export class MatronJournalClient {
     }
 
     /**
-     * "Open in chat": the Coordinator conversation the briefing was posted to. The client has no
-     * jump-to-seq (search hits open their conversation the same way), so this opens the
-     * conversation; the briefing is its latest message unless the Coordinator has said more since.
+     * "Open in chat": the Coordinator conversation the briefing was posted to, landed on the
+     * briefing's own message. Without a seq (an older journal) it opens at the tail, where the
+     * briefing is unless the Coordinator has said more since.
      */
-    public openBriefingInChat(convoId: string): void {
-        void this.selectConversation(convoId, { suppressNotFound: true });
+    public openBriefingInChat(convoId: string, seq?: number): void {
+        if (seq !== undefined && Number.isSafeInteger(seq)) void this.focusMessage(convoId, seq);
+        else void this.selectConversation(convoId, { suppressNotFound: true });
     }
 
     // GET /briefings/latest. A 404 means the journal predates briefings: the card stays hidden
@@ -2782,6 +3216,71 @@ export class MatronJournalClient {
         this.patch({ defaults: { loading: false, unsupported: false, ...this.state.defaults, ...update } });
     }
 
+    // ── Device admin (Settings → Devices). Pull-based, as on the Mac: the screen re-fetches the
+    // roster after every change; only the agent roster (session tags) is pushed, by `device_meta`.
+
+    private deviceAdminApi(): JournalApi {
+        if (!this.api) throw new JournalApiError("Not signed in.", 401, "unauthenticated");
+        return this.api;
+    }
+
+    /** GET /devices: every device on the account, this one included. */
+    public async listDevices(): Promise<DeviceDTO[]> {
+        return (await this.deviceAdminApi().devices()).devices;
+    }
+
+    /** Rename a device; the Boxes group re-reads its names. */
+    public async renameDevice(deviceId: number, name: string): Promise<void> {
+        await this.deviceAdminApi().renameDevice(deviceId, name);
+        void this.loadBoxDefaults();
+    }
+
+    /** Set an agent box's tag character, or clear it back to automatic (null). */
+    public async setDeviceTag(deviceId: number, tagChar: string | null): Promise<void> {
+        await this.deviceAdminApi().setDeviceTag(deviceId, tagChar);
+    }
+
+    /**
+     * Revoke a device. A 404 means it was already revoked elsewhere and counts as done. Revoking
+     * this device is a sign-out: the token is already dead, so the client signs out at once.
+     */
+    public async revokeDevice(device: Pick<DeviceDTO, "device_id" | "is_self">): Promise<void> {
+        try {
+            await this.deviceAdminApi().revokeDevice(device.device_id);
+        } catch (error) {
+            if (!(error instanceof JournalApiError && error.status === 404)) throw error;
+        }
+        if (device.is_self) {
+            await this.logout("This device was revoked. Sign in again to continue.");
+            return;
+        }
+        void this.loadBoxDefaults();
+    }
+
+    public pairPreview(pairCode: string): Promise<PairPreview> {
+        return this.deviceAdminApi().pairPreview(pairCode);
+    }
+
+    public pairApprove(pairCode: string, agentName: string, tagChar: string | null): Promise<void> {
+        return this.deviceAdminApi().pairApprove(pairCode, agentName, tagChar);
+    }
+
+    public linkStart(): Promise<LinkStart> {
+        return this.deviceAdminApi().linkStart();
+    }
+
+    public linkStatus(): Promise<LinkStatus> {
+        return this.deviceAdminApi().linkStatus();
+    }
+
+    public linkApprove(linkCode: string): Promise<void> {
+        return this.deviceAdminApi().linkApprove(linkCode);
+    }
+
+    public linkDeny(linkCode: string): Promise<void> {
+        return this.deviceAdminApi().linkDeny(linkCode);
+    }
+
     // ── Per-box defaults (Settings → Boxes; GET /devices `defaults`, PUT /devices/:id/defaults) ──
 
     /**
@@ -3221,6 +3720,201 @@ export class MatronJournalClient {
      * journal without the route (404) reads as "no missions", which hides the chip. Any other
      * failure keeps what was shown.
      */
+    // ── The chat's Tasks & decisions pane ──────────────────────────────────────────────────────
+    // A side pane beside the conversation (not the main-region tracker): this chat's items, or
+    // every chat's, with a create form and drag reorder of the open tasks. The pane mounts while
+    // it is open and calls loadChatTasks whenever the conversation or the scope changes.
+
+    /** Opens or closes the pane (toggles without an argument). It stays open across chats. */
+    public toggleChatTasks(open = !this.state.chatTasks?.open): void {
+        this.patch({ chatTasks: { ...this.state.chatTasks, open, actionError: undefined } });
+    }
+
+    /** "This chat" or "All" for the conversation on screen; another conversation starts on its own. */
+    public setChatTasksScope(scope: "chat" | "all"): void {
+        const convoId = this.state.selectedConversationId;
+        if (!convoId) return;
+        this.patch({
+            chatTasks: {
+                ...this.state.chatTasks,
+                open: this.state.chatTasks?.open ?? true,
+                allFor: scope === "all" ? convoId : undefined,
+            },
+        });
+    }
+
+    /** The list the pane shows for the conversation on screen: its id, or "all". */
+    public chatTasksScope(): string | undefined {
+        const convoId = this.state.selectedConversationId;
+        if (!convoId) return undefined;
+        return this.state.chatTasks?.allFor === convoId ? "all" : convoId;
+    }
+
+    public dismissChatTasksError(): void {
+        const current = this.state.chatTasks;
+        if (current?.actionError) this.patch({ chatTasks: { ...current, actionError: undefined } });
+    }
+
+    /**
+     * Loads the pane's list: the open items (one page, rank order) and the latest closed ones for
+     * Done, for this conversation or across all of them. A list for another scope is cleared at
+     * once rather than shown under the wrong heading; a failed refresh keeps the rows it had.
+     */
+    public async loadChatTasks(): Promise<void> {
+        const api = this.api;
+        const scope = this.chatTasksScope();
+        if (!api || !scope) return;
+        const gen = ++this.chatTasksGen;
+        const prior = this.state.chatTasks;
+        this.patch({
+            chatTasks: {
+                ...prior,
+                open: prior?.open ?? false,
+                scope,
+                items: prior?.scope === scope ? prior.items : undefined,
+                error: prior?.scope === scope ? prior.error : undefined,
+                // A refused move belongs to the list it was made in.
+                actionError: prior?.scope === scope ? prior.actionError : undefined,
+                loading: true,
+            },
+        });
+        const convo = scope === "all" ? undefined : scope;
+        try {
+            const [open, closed] = await Promise.all([
+                api.items({ convo, state: "open", sort: "rank", limit: 500 }),
+                // The journal sorts closed items by their last change, not by when they closed, so a
+                // wider page is read for Done to pick the latest closed from.
+                api.items({ convo, state: "closed", sort: "updated", limit: CHAT_TASKS_DONE_FETCH }),
+            ]);
+            if (this.api !== api || this.chatTasksGen !== gen) return;
+            this.patch({
+                chatTasks: {
+                    ...this.state.chatTasks,
+                    open: this.state.chatTasks?.open ?? false,
+                    scope,
+                    items: [...open.items, ...closed.items].map((item) => {
+                        const rank = this.chatTasksStaged.get(item.id);
+                        return rank === undefined || item.state !== "open" ? item : { ...item, rank };
+                    }),
+                    loading: false,
+                    error: undefined,
+                    unsupported: false,
+                },
+            });
+        } catch (error) {
+            if (this.api !== api || this.chatTasksGen !== gen) return;
+            const unsupported = error instanceof JournalApiError && error.status === 404;
+            this.patch({
+                chatTasks: {
+                    ...this.state.chatTasks,
+                    open: this.state.chatTasks?.open ?? false,
+                    loading: false,
+                    error: unsupported ? undefined : errorMessage(error),
+                    unsupported,
+                },
+            });
+        }
+    }
+
+    /**
+     * Files a new item from the user into the conversation on screen (whichever scope the pane
+     * shows, the item belongs to this chat). It joins the list at once; the refetch then brings the
+     * journal's order. A failure comes back with its reason, so the form keeps what was typed.
+     * `idempotencyKey`: the form passes the same key for every try of one draft, so a retry after a
+     * create that landed but whose answer was lost is deduped instead of filing the item twice.
+     */
+    public async createChatItem(
+        draft: {
+            kind: TrackerItemCreate["kind"];
+            title: string;
+            body: string;
+        },
+        idempotencyKey?: string,
+    ): Promise<{ ok: true } | { ok: false; reason: string }> {
+        const api = this.api;
+        const convoId = this.state.selectedConversationId;
+        if (!api || !convoId) return { ok: false, reason: "Open a chat to file a new item." };
+        const title = draft.title.trim();
+        if (!title || title.length > 200) return { ok: false, reason: "Give the item a title (up to 200 characters)." };
+        let created: TrackerItem | undefined;
+        try {
+            ({ item: created } = await api.createItem(
+                { kind: draft.kind, title, body: draft.body, convo_id: convoId },
+                idempotencyKey ?? crypto.randomUUID(),
+            ));
+        } catch (error) {
+            return { ok: false, reason: `Couldn't file the item: ${errorMessage(error)}` };
+        }
+        if (this.api !== api) return { ok: true };
+        const current = this.state.chatTasks;
+        // Only into a list it belongs to: the pane may have moved to another chat meanwhile.
+        if (
+            created &&
+            typeof created.id === "string" &&
+            (current?.scope === "all" || current?.scope === convoId) &&
+            current?.items &&
+            !current.items.some((i) => i.id === created!.id)
+        ) {
+            this.patch({ chatTasks: { ...current, items: [...current.items, created] } });
+        }
+        void this.loadChatTasks();
+        if (this.inboxTracked()) void this.loadInbox();
+        return { ok: true };
+    }
+
+    /**
+     * A drag of an open task to `toIndex` among the open tasks (counted without it). Drawn in its
+     * new place at once; the journal is told second, and a refusal puts the task back and says why.
+     */
+    public async moveChatTask(itemId: string, toIndex: number): Promise<void> {
+        const api = this.api;
+        const current = this.state.chatTasks;
+        const items = current?.items;
+        if (!api || !current || !items) return;
+        const plan = planTaskMove(chatTaskSections(items).tasks, itemId, toIndex);
+        if (!plan) return;
+        const original = items.find((item) => item.id === itemId)!;
+        // A load already in flight read the old order: it must not land over the move.
+        this.chatTasksGen += 1;
+        // Rank only: a load that landed meanwhile may carry newer fields for the same item.
+        const withRank = (list: TrackerItem[], rank: number): TrackerItem[] =>
+            list.map((item) => (item.id === itemId ? { ...item, rank } : item));
+        const staged = plan.moved.rank;
+        this.chatTasksStaged.set(itemId, staged);
+        this.patch({ chatTasks: { ...current, items: withRank(items, staged), actionError: undefined } });
+        try {
+            await api.rankItem(itemId, plan.change);
+        } catch (error) {
+            // A later move of the same task owns the entry from here on.
+            if (this.chatTasksStaged.get(itemId) === staged) this.chatTasksStaged.delete(itemId);
+            if (this.api !== api) return;
+            const now = this.state.chatTasks;
+            this.patch({
+                chatTasks: {
+                    ...now,
+                    open: now?.open ?? false,
+                    items: now?.items ? withRank(now.items, original.rank) : now?.items,
+                    actionError: `Couldn't move the task: ${errorMessage(error)}`,
+                },
+            });
+            // The refusal may mean the list is stale (a neighbour closed or moved): read it again.
+            void this.loadChatTasks();
+            return;
+        }
+        if (this.chatTasksStaged.get(itemId) === staged) this.chatTasksStaged.delete(itemId);
+        if (this.api !== api) return;
+        void this.loadChatTasks();
+    }
+
+    // Item markers refetch the open pane's list, coalesced like the inbox's.
+    private scheduleChatTasksRefetch(): void {
+        if (this.chatTasksRefetchTimer !== undefined) return;
+        this.chatTasksRefetchTimer = window.setTimeout(() => {
+            this.chatTasksRefetchTimer = undefined;
+            if (this.state.chatTasks?.open) void this.loadChatTasks();
+        }, 250);
+    }
+
     public async loadConversationMissions(convoId: string): Promise<void> {
         const api = this.api;
         if (!api) return;
@@ -3663,6 +4357,7 @@ export class MatronJournalClient {
         // The inbox feeds the For you badge on the rail, so it follows item markers even while the
         // pane is closed; everything else is refetched only for an open pane.
         if (event.type === "item" && (this.inboxTracked() || this.state.inboxDone)) this.scheduleInboxRefetch();
+        if (event.type === "item" && this.state.chatTasks?.open) this.scheduleChatTasksRefetch();
         // The header chip of the conversation on screen follows the mission markers that concern it
         // (see missionMarkerConcernsChip) whether or not the pane is open — also while its first load
         // is in flight (the newer load supersedes it) or after a failed one.
@@ -3800,7 +4495,6 @@ export class MatronJournalClient {
         this.uploadConvos.clear();
         this.dismissedAttachments.clear();
         this.pendingFiles.clear();
-        this.stagedSendChain = Promise.resolve();
         this.transientAttachmentErrors.clear();
         this.connection?.stop();
         this.database?.close();
@@ -4356,6 +5050,10 @@ export class MatronJournalClient {
             return;
         }
         if (frame.kind === "control" && frame.op === "error") {
+            // Read-state reports are fire-and-forget with no reply (a conversation or item the
+            // journal refuses, e.g. one removed meanwhile). Advisory, as on the other apps: never
+            // an error banner for something the user didn't do.
+            if (frame.ref === "seen" || frame.ref === "item_seen") return;
             this.patch({ connectionError: frame.detail || `Journal operation failed: ${frame.code ?? "unknown"}` });
         }
     }
@@ -4400,12 +5098,80 @@ export class MatronJournalClient {
 
         await this.refreshConversations();
         this.abortUploadsForChildConvos();
+        if (!previous || this.newVerdictPending.has(event.convo_id)) this.considerNewConversation(event, !previous);
         if (event.convo_id === this.state.selectedConversationId) {
             await this.refreshSelectedConversation(event.convo_id);
             if (MESSAGE_EVENT_TYPES.has(event.type) && !event.sender.startsWith("user:")) {
                 this.scheduleRead(event.convo_id, event.seq);
             }
         }
+    }
+
+    // A conversation this tab sees for the first time, live. One this device asked for is the
+    // user's own and opens the way they started it; any other (an agent, the Coordinator or a
+    // routine started it) never takes the selection, and is marked "New" in the list until opened.
+    // Not for one already on screen, a subagent's child, an agent-chat room, or a reconnect's
+    // replay of sessions born while this tab was away.
+    //
+    // As on the Mac, the verdict waits for a frame that can settle it: a convo_meta carrying the
+    // title (which also names the box), or a message. A new session's first frame is usually its
+    // session_status, ahead of the meta, and judged on that the title is still empty (a room would
+    // pass as a session) and the box unknown (a /start's own session would not answer its ask).
+    private considerNewConversation(event: JournalEvent, firstFrame: boolean): void {
+        const id = event.convo_id;
+        const now = Date.now();
+        if (firstFrame) {
+            // A reconnect's replay of a conversation born while this tab was away.
+            if (typeof event.ts === "number" && event.ts < now - NEW_CONVERSATION_STALE_MS) return;
+        } else {
+            const since = this.newVerdictPending.get(id);
+            if (since === undefined || since < now - NEW_CONVERSATION_STALE_MS) {
+                this.newVerdictPending.delete(id);
+                return;
+            }
+        }
+        const titled = event.type === "convo_meta" && typeof event.payload.title === "string";
+        const conversation = this.state.conversations.find((candidate) => candidate.id === id);
+        const box = conversation?.agent_device_id ?? null;
+        const settles =
+            titled ||
+            (MESSAGE_EVENT_TYPES.has(event.type) &&
+                // A message from a conversation that has not named its box cannot answer an ask
+                // waiting on a particular box, nor rule one out: its title settles it.
+                (box !== null || !this.startIntents.awaitsKnownBox(now)));
+        if (!settles) {
+            if (firstFrame) this.parkNewVerdict(id, now);
+            return;
+        }
+        this.newVerdictPending.delete(id);
+        if (id === this.state.selectedConversationId || this.state.newConversationIds.has(id)) return;
+        // A child's id carries ":sub:" (Claude) or ":codex:" (Codex) before its parent link, learned
+        // from a later convo_meta, lands.
+        if (!conversation || isSubChat(conversation) || /:(?:sub|codex):[^:]+$/.test(id)) return;
+        if (isAgentRoomTitle(conversation.title)) return;
+        if (this.startIntents.claim(conversation, now)) return;
+        // Keep only marks a row can still show, so the set stays the size of what is on screen.
+        const visible = new Set(
+            this.state.conversations
+                .filter((candidate) => !isSubChat(candidate) && !isAgentRoomTitle(candidate.title))
+                .map((candidate) => candidate.id),
+        );
+        const kept = [...this.state.newConversationIds].filter((candidate) => visible.has(candidate));
+        this.patch({ newConversationIds: new Set([...kept, id]) });
+    }
+
+    private clearNewMark(id: string): void {
+        if (!this.state.newConversationIds.has(id)) return;
+        const newConversationIds = new Set(this.state.newConversationIds);
+        newConversationIds.delete(id);
+        this.patch({ newConversationIds });
+    }
+
+    private parkNewVerdict(id: string, now: number): void {
+        for (const [candidate, since] of this.newVerdictPending) {
+            if (since < now - NEW_CONVERSATION_STALE_MS) this.newVerdictPending.delete(candidate);
+        }
+        this.newVerdictPending.set(id, now);
     }
 
     private async reconcilePersistedOwnMessages(database: JournalDatabase): Promise<void> {
@@ -4694,6 +5460,9 @@ export class MatronJournalClient {
         if (this.ackTimer !== undefined) window.clearTimeout(this.ackTimer);
         if (this.trackerInboxRefetchTimer !== undefined) window.clearTimeout(this.trackerInboxRefetchTimer);
         this.trackerInboxRefetchTimer = undefined;
+        if (this.chatTasksRefetchTimer !== undefined) window.clearTimeout(this.chatTasksRefetchTimer);
+        this.chatTasksRefetchTimer = undefined;
+        this.chatTasksStaged.clear();
         this.inboxWalking = false;
         this.inboxPendingWrites.clear();
         if (this.trackerMissionsRefetchTimer !== undefined) window.clearTimeout(this.trackerMissionsRefetchTimer);

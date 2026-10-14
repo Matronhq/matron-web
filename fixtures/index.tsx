@@ -13,7 +13,7 @@ Please see LICENSE files in the repository root for full details.
  * via webpack.fixtures.mjs) — in every state, both themes, without a login or live server.
  *
  * Playwright reaches the client via window.__matron to drive states (stage a file →
- * upload modal, etc.). Theme comes from ?theme=dark on <html data-theme>.
+ * attachment tray, etc.). Theme comes from ?theme=dark on <html data-theme>.
  */
 
 import React from "react";
@@ -705,6 +705,108 @@ const signedOutState: ClientState = {
     }
 }
 
+// ?tasks=1 opens the chat's Tasks & decisions pane beside the conversation on canned items
+// (?tasks=all on the All scope, ?tasks=empty with nothing filed yet).
+{
+    const tasksMode = fixtureParams.get("tasks");
+    if (tasksMode) {
+        const hour = 3_600_000;
+        const now = Date.now();
+        const base = {
+            state: "open",
+            resolution: null,
+            body: "",
+            labels: [],
+            links: [],
+            supersedes: null,
+            origin_convo_id: "c1",
+            created_by: "agent",
+            closed_at: null,
+            mission_id: null,
+            mission_num: null,
+            comment_count: 0,
+            last_comment_at: null,
+            attachments: [],
+            has_image: false,
+            created_at: now - 5 * hour,
+            updated_at: now - 2 * hour,
+        } as const;
+        const task = (num: number, rank: number, title: string, over: Record<string, unknown> = {}) => ({
+            ...base,
+            id: `it_${num}`,
+            num,
+            kind: "task",
+            awaiting: "agent",
+            rank,
+            title,
+            ...over,
+        });
+        const items =
+            tasksMode === "empty"
+                ? []
+                : [
+                      {
+                          ...base,
+                          id: "it_214",
+                          num: 214,
+                          kind: "question",
+                          awaiting: "user",
+                          rank: 0,
+                          title: "Keep the old redirect for a week?",
+                          body: "The new route is live; the old one can go now or after the weekly report.",
+                          comment_count: 1,
+                      },
+                      task(210, 100, "Add a health check to the deploy script"),
+                      task(211, 200, "Roll the staging certificate", { body: "Expires in nine days." }),
+                      task(212, 300, "Write the rollback runbook", { awaiting: null }),
+                      {
+                          ...base,
+                          id: "it_208",
+                          num: 208,
+                          kind: "decision",
+                          awaiting: null,
+                          rank: 0,
+                          title: "Deploy from tags, not from main",
+                          created_at: now - 26 * hour,
+                      },
+                      ...(tasksMode === "all"
+                          ? [
+                                task(305, 150, "Prune backups older than 30 days", { origin_convo_id: "c2" }),
+                                {
+                                    ...base,
+                                    id: "it_306",
+                                    num: 306,
+                                    kind: "question",
+                                    awaiting: "user",
+                                    rank: 0,
+                                    title: "Run the dry-run against a copy of last night's dump?",
+                                    origin_convo_id: "c3",
+                                    updated_at: now - hour,
+                                },
+                            ]
+                          : []),
+                      task(205, 50, "Tag the release", {
+                          state: "closed",
+                          resolution: "done",
+                          awaiting: null,
+                          closed_at: now - 30 * hour,
+                      }),
+                  ];
+        const stub = client as unknown as Record<string, unknown>;
+        stub.loadChatTasks = async () => undefined;
+        stub.createChatItem = async () => ({ ok: true });
+        (state as unknown as Record<string, unknown>).chatTasks = {
+            open: true,
+            scope: tasksMode === "all" ? "all" : "c1",
+            ...(tasksMode === "all" ? { allFor: "c1" } : {}),
+            items,
+        };
+        (state as unknown as Record<string, unknown>).inboxItems = items.filter(
+            (item) => item.state === "open" && item.awaiting === "user",
+        );
+    }
+}
+
 // ?tracker=inbox | ?tracker=item opens the tracker pane on canned data (unify step 5); the
 // network loads are stubbed so the fixture stays offline.
 const trackerMode = fixtureParams.get("tracker");
@@ -1214,6 +1316,41 @@ if (trackerMode === "inbox" || trackerMode === "item") {
     }
 }
 
+// ?badges=1: the conversation list's needs-you counts and "New" marker, and the Projects badge in
+// the rail. Two questions from c2 and one from c1 wait on the user (two of them on a mission), and
+// c3 arrived without the user starting it and has not been opened.
+if (fixtureParams.get("badges") === "1") {
+    const now = Date.now();
+    const question = (id: string, origin: string, missionId: string | null): Record<string, unknown> => ({
+        id,
+        num: 0,
+        kind: "question",
+        state: "open",
+        resolution: null,
+        awaiting: "user",
+        rank: 0,
+        title: "Pick one",
+        body: "",
+        labels: [],
+        links: [],
+        supersedes: null,
+        origin_convo_id: origin,
+        created_by: "agent",
+        created_at: now,
+        updated_at: now,
+        closed_at: null,
+        mission_id: missionId,
+        mission_num: null,
+        comment_count: 0,
+        last_comment_at: null,
+        attachments: [],
+        has_image: false,
+    });
+    const tracker = state as unknown as Record<string, unknown>;
+    tracker.inboxItems = [question("it_a", "c2", "ms_a"), question("it_b", "c2", null), question("it_c", "c1", "ms_b")];
+    state.newConversationIds = new Set(["c3"]);
+}
+
 // Stub the new-session data path so a driver click on "New session" reaches the folders
 // form (agent → recent folders) where the themed inputs / checkbox / Start live.
 (client as unknown as { listAgents: () => Promise<unknown[]> }).listAgents = async () => [
@@ -1368,6 +1505,92 @@ if (trackerMode === "inbox" || trackerMode === "item") {
     };
 }
 
+// Settings → Devices: a made-up roster (this browser, a phone, two agent boxes). Rename, tag and
+// revoke edit it in place. Add Agent previews any full code as a request from a fixture host and
+// the box "connects" on the first poll; Link a Device shows a fixed code, and with ?link=claimed a
+// device asks to sign in on the first poll.
+{
+    const stub = client as unknown as Record<string, unknown>;
+    const now = Date.now();
+    let roster = [
+        {
+            device_id: 1,
+            kind: "client",
+            name: "Browser",
+            created_at: now - 9 * DAY_MS,
+            lag: 0,
+            last_seen_at: now,
+            connected: true,
+            is_self: true,
+        },
+        {
+            device_id: 3,
+            kind: "client",
+            name: "Phone",
+            created_at: now - 4 * DAY_MS,
+            lag: 12,
+            last_seen_at: now - 2 * 3600_000,
+            connected: false,
+            is_self: false,
+        },
+        {
+            device_id: 2,
+            kind: "agent",
+            name: "box-a",
+            tag_char: "a",
+            created_at: now - 30 * DAY_MS,
+            lag: 0,
+            last_seen_at: now - 60_000,
+            connected: true,
+            is_self: false,
+        },
+        {
+            device_id: 4,
+            kind: "agent",
+            name: "box-b",
+            tag_char: null,
+            created_at: now - 20 * DAY_MS,
+            lag: 0,
+            last_seen_at: now - 3 * DAY_MS,
+            connected: false,
+            is_self: false,
+        },
+    ];
+    const edit = (id: number, change: Record<string, unknown>): void => {
+        roster = roster.map((device) => (device.device_id === id ? { ...device, ...change } : device));
+    };
+    stub.listDevices = async () => roster;
+    stub.renameDevice = async (id: number, name: string) => edit(id, { name });
+    stub.setDeviceTag = async (id: number, tag: string | null) => edit(id, { tag_char: tag });
+    stub.revokeDevice = async (device: { device_id: number }) => {
+        roster = roster.filter((entry) => entry.device_id !== device.device_id);
+    };
+    stub.pairPreview = async () => ({ requester_ip: "box-c.example.com", expires_in: 540 });
+    stub.pairApprove = async (_code: string, name: string, tag: string | null) => {
+        roster = [
+            ...roster,
+            {
+                device_id: 5,
+                kind: "agent",
+                name,
+                tag_char: tag,
+                created_at: Date.now(),
+                lag: 0,
+                last_seen_at: Date.now(),
+                connected: true,
+                is_self: false,
+            },
+        ];
+    };
+    stub.linkStart = async () => ({ link_code: "KTNM-3VQ8", expires_in: 300 });
+    stub.linkStatus = async () =>
+        fixtureParams.get("link") === "claimed"
+            ? { status: "claimed", device_name: "Laptop", requester_ip: "laptop.example.com", expires_in: 280 }
+            : { status: "waiting", expires_in: 290 };
+    stub.linkApprove = async () => undefined;
+    stub.linkDeny = async () => undefined;
+}
+
 // Media stubs: a short generated tone for the voice note, a 404 for the reaped blob.
 function toneWav(seconds = 2, rate = 8000): Blob {
     const samples = seconds * rate;
@@ -1422,25 +1645,45 @@ const PNG_8X8 =
 const imageFile = (name: string): File =>
     new File([Uint8Array.from(atob(PNG_8X8), (c) => c.charCodeAt(0))], name, { type: "image/png" });
 
-// Expose hooks so the Playwright driver can drive states (stage files → upload modal, etc.).
+// Patch the fixture client's state directly (it has no database), as the client's own patch() does.
+const patchState = (update: Partial<ClientState>): void =>
+    (client as unknown as { patch: (update: Partial<ClientState>) => void }).patch(update);
+const runbook = (): File => new File([new Uint8Array(1024)], "deploy-runbook.pdf", { type: "application/pdf" });
+const errorLog = (): File => new File([new Uint8Array(512)], "error-log.txt", { type: "text/plain" });
+
+// Expose hooks so the Playwright driver can drive states (stage files → attachment tray, etc.).
 (window as unknown as { __matron: unknown }).__matron = {
     client,
     stageImage: (name = "screenshot.png") => client.stageFiles([imageFile(name)]),
-    // Single NON-image file → hatched "image preview" placeholder + the single-file case
-    // (no thumbnail strip, no "n of N" pill).
-    stageDoc: () =>
-        client.stageFiles([new File([new Uint8Array(1024)], "deploy-runbook.pdf", { type: "application/pdf" })]),
-    stageTwo: () =>
-        client.stageFiles([
-            imageFile("Screenshot 2026-07-25 at 10.12.05.png"),
-            new File([new Uint8Array(512)], "error-log.txt", { type: "text/plain" }),
-        ]),
+    stageDoc: () => client.stageFiles([runbook()]),
+    stageTwo: () => client.stageFiles([imageFile("Screenshot 2026-07-25 at 10.12.05.png"), errorLog()]),
+    // A send in flight: the first file uploading, the rest waiting their turn.
+    trayUploading: () =>
+        patchState({
+            composerAttachments: {
+                c1: [
+                    { id: "t1", file: imageFile("screenshot.png"), state: "uploading", progress: 0.62 },
+                    { id: "t2", file: runbook(), state: "queued" },
+                    { id: "t3", file: errorLog(), state: "queued" },
+                ],
+            },
+        }),
+    // A send that stopped at a failed upload: the reason on the chip, a retry beside remove.
+    trayFailed: () =>
+        patchState({
+            composerAttachments: {
+                c1: [
+                    { id: "t2", file: runbook(), state: "failed", error: "File too large." },
+                    { id: "t3", file: errorLog(), state: "staged" },
+                ],
+            },
+        }),
     setTheme: (t: string) => document.documentElement.setAttribute("data-theme", t),
     // Drive the child (subagent) view: select the running child s1 of parent c1 → back chip +
     // ↳ header + ringed current pill. The fixture client has no database, so selectConversation
     // no-ops; patch the state directly (mirrors the client's own patch()).
     selectChild: () =>
-        (client as unknown as { patch: (update: Partial<ClientState>) => void }).patch({
+        patchState({
             selectedConversationId: "s1",
             events: [],
             pendingMessages: [],
