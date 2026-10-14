@@ -483,6 +483,19 @@ describe("JournalApi search", () => {
 
         await expect(api.search("", 20)).rejects.toMatchObject({ status: 400 });
     });
+
+    it("scopes find-in-chat to one conversation in the journal's newest-first mode", async () => {
+        const hits = [{ convo_id: "c 1", seq: 9, ts: 1, sender: "user:alice" }];
+        fetchMock.mockResolvedValue(jsonResponse({ hits }));
+        const api = new JournalApi("https://journal.example", "token");
+        const controller = new AbortController();
+
+        await expect(api.searchConversation("c 1", "roll out", 500, controller.signal)).resolves.toEqual({ hits });
+        expect(String(fetchMock.mock.calls[0][0])).toBe(
+            "https://journal.example/search?q=roll+out&limit=500&mode=recent&convo_id=c+1",
+        );
+        expect(fetchMock.mock.calls[0][1]).toEqual(expect.objectContaining({ signal: controller.signal }));
+    });
 });
 
 // GET /devices `status` — the box's last capacity report (protocol.md "Box status"):
