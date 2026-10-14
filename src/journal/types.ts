@@ -945,6 +945,11 @@ export interface Mission {
     project_num?: number | null;
     /** The mission's activity rollup, where the journal sends it. */
     activity?: string;
+    /** The mission's status line (one short paragraph, inline markdown), who set it and when.
+     *  Null when unset; absent from journals that predate mission status. */
+    status?: string | null;
+    status_by?: TrackerActor | null;
+    status_updated_at?: number | null;
 }
 
 export interface Milestone {
@@ -1047,7 +1052,7 @@ export interface ProjectFileRow {
  *  older one sends none of them. */
 export interface ProjectDetail {
     project: Project;
-    missions: Array<Mission & { status?: string | null; activity?: string }>;
+    missions: Mission[];
     needs_you: Array<MissionItemRef & { mission_id: string; mission_num: number }>;
     recent_milestones: Array<Milestone & { mission_num: number }>;
     sessions_by_box: Record<string, number>;

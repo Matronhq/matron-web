@@ -519,7 +519,7 @@ const signedOutState: ClientState = {
 // ?tracker=inbox | ?tracker=item opens the tracker pane on canned data (unify step 5); the
 // network loads are stubbed so the fixture stays offline.
 const trackerMode = fixtureParams.get("tracker");
-if (trackerMode === "projects" || trackerMode === "project") {
+if (trackerMode === "projects" || trackerMode === "project" || trackerMode === "mission") {
     const now = Date.now();
     const project = (
         num: number,
@@ -606,6 +606,78 @@ if (trackerMode === "projects" || trackerMode === "project") {
         trackerMode === "project"
             ? { open: true, view: "missions", selectedProjectId: 2645 }
             : { open: true, view: "missions" };
+    // ?tracker=mission: a mission page with a status, both item groups and enough milestones to page.
+    if (trackerMode === "mission") {
+        tracker.trackerView = { open: true, view: "missions", selectedMissionId: 1706 };
+        const steps = [
+            "Projects dashboard and project page merged",
+            "Settings sheet follows the Mac layout",
+            "User: run phase 2 all the way through, missions included",
+            "Tracker pane restyled with the new tokens",
+            "Chat header and composer aligned",
+            "Sidebar groups and session tags landed",
+        ];
+        const milestones = Array.from({ length: 24 }, (_, index) => ({
+            id: `ml_${index}`,
+            mission_id: "ms_1706",
+            num: 3990 - index,
+            kind: index % 6 === 2 ? "user_input" : "progress",
+            title: index < steps.length ? steps[index] : `Review round ${24 - index} addressed`,
+            body: index === 0 ? "Both pages read from the same project rollups." : "",
+            convo_id: "c1",
+            seq: 24 - index,
+            device_id: 1,
+            created_by: "agent",
+            created_at: now - (index + 1) * 3 * 3_600_000,
+        }));
+        const ref = (num: number, kind: string, awaiting: string | null, title: string) => ({
+            id: `it_${num}`,
+            num,
+            kind,
+            state: "open",
+            awaiting,
+            title,
+            origin_convo_id: "c1",
+            updated_at: now - 3_600_000,
+        });
+        tracker.trackerMission = {
+            mission: {
+                ...mission(1706, "Unify matron-web and the Mac app design", null, "running", 1),
+                body: "Bring the web client in line with the Mac app, one surface at a time.",
+                status: "Step 7 (projects) in progress; steps 2 to 6 are open PRs waiting on **review**.",
+                status_by: "agent",
+                status_updated_at: now - 12 * 60_000,
+                project_id: "pj_2645",
+                project_num: 2645,
+                open_items: 3,
+                milestones: milestones.length,
+            },
+            milestones,
+            items: [
+                ref(3939, "question", "user", "Merge unify step 2: sign-in follows the Mac app?"),
+                ref(3951, "task", "agent", "Screenshot every themed surface in dark mode"),
+                ref(3944, "decision", null, "Tokens come from the Mac palette, not the old theme"),
+            ],
+            conversations: [{ id: "c1", title: "Unify matron-web and the Mac app design", state: "running", box: "box-a" }],
+        };
+        stub.fetchMissionClosedItems = async () => ({
+            items: [
+                { num: 3901, kind: "task", resolution: "done", title: "Audit every web surface against the Mac app" },
+                { num: 3912, kind: "question", resolution: "answered", title: "Keep the old accent colour?" },
+                { num: 3920, kind: "decision", resolution: "decided", title: "One design token file for both themes" },
+            ].map((row) => ({
+                id: `it_${row.num}`,
+                state: "closed",
+                awaiting: null,
+                mission_id: "ms_1706",
+                mission_num: 1706,
+                origin_convo_id: "c1",
+                updated_at: now - 86_400_000,
+                ...row,
+            })),
+            cursor: null,
+        });
+    }
     if (trackerMode === "project") {
         tracker.trackerProject = {
             project: { ...projects[0], body: "Audit first, then the Mac app sets the direction and the web follows." },
