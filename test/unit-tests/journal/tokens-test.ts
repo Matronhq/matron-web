@@ -72,6 +72,11 @@ describe("token layer", () => {
         expect(missing).toEqual([]);
     });
 
+    it("defines every --cpd token the stylesheets use", () => {
+        const used = SHEETS.flatMap(([, css]) => [...css.matchAll(/var\((--cpd-[\w-]+)/g)].map((match) => match[1]));
+        expect([...new Set(used.filter((name) => !light.has(name)))]).toEqual([]);
+    });
+
     it("declares no dark token that light lacks", () => {
         const extra = [...dark.keys()].filter((name) => !light.has(name));
         expect(extra).toEqual([]);
