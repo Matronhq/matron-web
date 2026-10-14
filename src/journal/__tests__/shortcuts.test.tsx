@@ -285,6 +285,30 @@ describe("app shortcuts", () => {
         expect(client.getSnapshot().trackerView).toMatchObject({ open: true, view: "missions" });
     });
 
+    it("drops a Coordinator answer that lands after the user went elsewhere without a shortcut", async () => {
+        const client = signedInClient();
+        let answer: (id: string | null) => void = () => undefined;
+        jest.spyOn(client, "coordinatorConversationId").mockImplementation(
+            () =>
+                new Promise((resolve) => {
+                    answer = resolve;
+                }),
+        );
+        await render(client);
+        await press("1");
+        act(() => client.openTrackerView({ view: "inbox" }));
+        const select = jest.spyOn(client, "selectConversation").mockResolvedValue();
+        await act(async () => answer("c2"));
+        expect(select).not.toHaveBeenCalled();
+        expect(client.getSnapshot().trackerView).toMatchObject({ open: true, view: "inbox" });
+
+        // Back to the conversation through the rail, not a shortcut.
+        await press("1");
+        act(() => client.closeTrackerView());
+        await act(async () => answer("c2"));
+        expect(select).not.toHaveBeenCalled();
+    });
+
     it("ignores a held ⌘K's auto-repeat", async () => {
         await render(signedInClient());
         await press("k");

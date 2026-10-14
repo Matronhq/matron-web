@@ -110,11 +110,17 @@ let sectionSeq = 0;
  * Coordinator has no rail entry here; ⌘1 opens its conversation when the journal names one.
  */
 export function showSection(client: MatronJournalClient, section: Section): Promise<void> {
-    // A later section shortcut wins over a Coordinator lookup still in flight.
+    // A later section shortcut wins over a Coordinator lookup still in flight, and so does any
+    // other navigation meanwhile (the rail, a conversation row, a search hit).
     const seq = ++sectionSeq;
     if (section === "coordinator") {
+        const { selectedConversationId, trackerView } = client.getSnapshot();
         return client.coordinatorConversationId().then((convoId) => {
-            if (convoId && seq === sectionSeq) void client.selectConversation(convoId, { suppressNotFound: true });
+            const now = client.getSnapshot();
+            const moved = now.selectedConversationId !== selectedConversationId || now.trackerView !== trackerView;
+            if (convoId && seq === sectionSeq && !moved) {
+                void client.selectConversation(convoId, { suppressNotFound: true });
+            }
         });
     }
     if (section === "conversations") client.closeTrackerView();
