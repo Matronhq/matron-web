@@ -315,6 +315,15 @@ function NewItemForm({ client, onDone }: { client: MatronJournalClient; onDone: 
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const titleRef = useRef<HTMLInputElement>(null);
+    // One key per draft: a retry of the same draft reuses it, so the journal dedupes a create that
+    // landed but whose answer was lost. Any edit makes it a new draft with a new key.
+    const draftKey = useRef<string>(crypto.randomUUID());
+    const edit =
+        <T,>(set: (value: T) => void) =>
+        (value: T): void => {
+            draftKey.current = crypto.randomUUID();
+            set(value);
+        };
     const titleId = useId();
     const detailsId = useId();
 
@@ -324,7 +333,7 @@ function NewItemForm({ client, onDone }: { client: MatronJournalClient; onDone: 
         if (busy || !title.trim()) return;
         setBusy(true);
         setError(null);
-        const outcome = await client.createChatItem({ kind, title, body: details });
+        const outcome = await client.createChatItem({ kind, title, body: details }, draftKey.current);
         setBusy(false);
         if (outcome.ok) onDone();
         else setError(outcome.reason);
@@ -352,7 +361,7 @@ function NewItemForm({ client, onDone }: { client: MatronJournalClient; onDone: 
                         type="button"
                         aria-pressed={kind === option}
                         disabled={busy}
-                        onClick={() => setKind(option)}
+                        onClick={() => edit(setKind)(option)}
                     >
                         {kindLabel(option)}
                     </button>
@@ -370,7 +379,7 @@ function NewItemForm({ client, onDone }: { client: MatronJournalClient; onDone: 
                 value={title}
                 maxLength={200}
                 disabled={busy}
-                onChange={(event) => setTitle(event.target.value)}
+                onChange={(event) => edit(setTitle)(event.target.value)}
             />
             <label className="mj_SrOnly" htmlFor={detailsId}>
                 Details
@@ -382,7 +391,7 @@ function NewItemForm({ client, onDone }: { client: MatronJournalClient; onDone: 
                 value={details}
                 disabled={busy}
                 rows={3}
-                onChange={(event) => setDetails(event.target.value)}
+                onChange={(event) => edit(setDetails)(event.target.value)}
             />
             {error ? (
                 <p className="mj_TrackerMemoryForm_error" role="alert">

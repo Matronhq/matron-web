@@ -195,11 +195,10 @@ describe("ChatTasksPane", () => {
         expect(add.disabled).toBe(false);
         await act(async () => add.click());
 
-        expect(client.createChatItem).toHaveBeenCalledWith({
-            kind: "question",
-            title: "Which host?",
-            body: "Either is fine",
-        });
+        expect(client.createChatItem).toHaveBeenCalledWith(
+            { kind: "question", title: "Which host?", body: "Either is fine" },
+            expect.any(String),
+        );
         expect(container.querySelector('form[aria-label="New item"]')).toBeNull();
     });
 
@@ -213,9 +212,20 @@ describe("ChatTasksPane", () => {
         act(() => typeInto(form.querySelector("input")!, "Write tests"));
         await act(async () => form.requestSubmit());
 
-        expect(client.createChatItem).toHaveBeenCalledWith({ kind: "task", title: "Write tests", body: "" });
+        expect(client.createChatItem).toHaveBeenCalledWith(
+            { kind: "task", title: "Write tests", body: "" },
+            expect.any(String),
+        );
         expect(form.querySelector('[role="alert"]')?.textContent).toBe("Couldn't file the item: offline");
         expect(form.querySelector("input")!.value).toBe("Write tests");
+
+        // A retry of the same draft reuses its key; an edit makes a new one.
+        const firstKey = client.createChatItem.mock.calls[0][1];
+        await act(async () => form.requestSubmit());
+        expect(client.createChatItem.mock.calls[1][1]).toBe(firstKey);
+        act(() => typeInto(form.querySelector("input")!, "Write more tests"));
+        await act(async () => form.requestSubmit());
+        expect(client.createChatItem.mock.calls[2][1]).not.toBe(firstKey);
     });
 
     it("drags a task to a new place", async () => {

@@ -2347,10 +2347,11 @@ describe("MatronJournalClient chat Tasks & decisions pane", () => {
             reason: "Give the item a title (up to 200 characters).",
         });
         expect(state.api.createItem).not.toHaveBeenCalled();
-        expect(await client.createChatItem({ kind: "question", title: "Which one?", body: "" })).toEqual({
+        expect(await client.createChatItem({ kind: "question", title: "Which one?", body: "" }, "draft-1")).toEqual({
             ok: false,
             reason: "Couldn't file the item: offline",
         });
+        expect(state.api.createItem).toHaveBeenLastCalledWith(expect.anything(), "draft-1");
     });
 
     const tasks = (): TrackerItem[] => [

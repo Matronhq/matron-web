@@ -2998,12 +2998,17 @@ export class MatronJournalClient {
      * Files a new item from the user into the conversation on screen (whichever scope the pane
      * shows, the item belongs to this chat). It joins the list at once; the refetch then brings the
      * journal's order. A failure comes back with its reason, so the form keeps what was typed.
+     * `idempotencyKey`: the form passes the same key for every try of one draft, so a retry after a
+     * create that landed but whose answer was lost is deduped instead of filing the item twice.
      */
-    public async createChatItem(draft: {
-        kind: TrackerItemCreate["kind"];
-        title: string;
-        body: string;
-    }): Promise<{ ok: true } | { ok: false; reason: string }> {
+    public async createChatItem(
+        draft: {
+            kind: TrackerItemCreate["kind"];
+            title: string;
+            body: string;
+        },
+        idempotencyKey?: string,
+    ): Promise<{ ok: true } | { ok: false; reason: string }> {
         const api = this.api;
         const convoId = this.state.selectedConversationId;
         if (!api || !convoId) return { ok: false, reason: "Open a chat to file a new item." };
@@ -3013,7 +3018,7 @@ export class MatronJournalClient {
         try {
             ({ item: created } = await api.createItem(
                 { kind: draft.kind, title, body: draft.body, convo_id: convoId },
-                crypto.randomUUID(),
+                idempotencyKey ?? crypto.randomUUID(),
             ));
         } catch (error) {
             return { ok: false, reason: `Couldn't file the item: ${errorMessage(error)}` };
