@@ -7,6 +7,7 @@ Please see LICENSE files in the repository root for full details.
 
 import {
     cronWords,
+    normalizeRoutinePrompt,
     parseRoutine,
     parseRoutineList,
     type Routine,
@@ -143,6 +144,29 @@ describe("routine rules", () => {
         expect(error({ schedule: undefined, trigger: { kind: "context_over", threshold: 100 } })).not.toBeNull();
         expect(error({ schedule: undefined, trigger: { kind: "stalled", threshold: 20_000 } })).not.toBeNull();
         expect(error({ schedule: undefined, trigger: { kind: "stalled", threshold: 0 } })).toBeNull();
+    });
+
+    it("refuses fires under 15 minutes apart however the minute and hour fields spell them", () => {
+        expect(error({ schedule: "0,5 9 * * 1" })).not.toBeNull();
+        expect(error({ schedule: "0-59/10 9 * * *" })).not.toBeNull();
+        expect(error({ schedule: "0,50 9-10 * * *" })).not.toBeNull(); // 09:50 then 10:00
+        expect(error({ schedule: "5,55 0,23 * * *" })).not.toBeNull(); // 23:55 then 00:05
+        expect(error({ schedule: "0,30 * * * *" })).toBeNull();
+        expect(error({ schedule: "5-59/20 * * * *" })).toBeNull();
+        expect(error({ schedule: "0 */2 * * *" })).toBeNull();
+        expect(error({ schedule: "5,55 0,23 * * 1" })).toBeNull(); // Mondays only: 23:55 is never followed by 00:05
+        expect(error({ schedule: "0 9 L * *" })).toBeNull(); // the journal's call
+    });
+
+    it("counts and cleans the title and prompt as the journal does", () => {
+        expect(error({ title: "tab\there" })).not.toBeNull();
+        expect(error({ title: "line\u2028break" })).not.toBeNull();
+        // UTF-16 code units, not characters: 101 emoji are 202 units.
+        expect(error({ title: "\u{1F600}".repeat(100) })).toBeNull();
+        expect(error({ title: "\u{1F600}".repeat(101) })).not.toBeNull();
+        expect(error({ prompt: "\u0001\u0002 " })).not.toBeNull();
+        expect(error({ prompt: `${"x".repeat(2000)}\u0001` })).toBeNull();
+        expect(normalizeRoutinePrompt(" one\r\ntwo\rthree\u2028four\u0007 ")).toBe("one\ntwo\nthree\nfour");
     });
 
     it("previews the schedule, or why it can't be sent", () => {

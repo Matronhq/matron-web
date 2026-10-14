@@ -145,7 +145,7 @@ export function sortRoutines(routines: Routine[]): Routine[] {
 
 /** The request body. A triggered routine sends no zone on an edit: it has no clock. */
 export function routineRequestBody(draft: RoutineDraft): Record<string, unknown> {
-    const body: Record<string, unknown> = { title: draft.title.trim(), prompt: draft.prompt.trim() };
+    const body: Record<string, unknown> = { title: draft.title.trim(), prompt: normalizeRoutinePrompt(draft.prompt) };
     if (draft.schedule !== undefined) {
         body.schedule = draft.schedule.trim().split(/\s+/).join(" ");
         body.tz = draft.tz;
@@ -192,7 +192,7 @@ export function triggerThresholdLabel(trigger: RoutineTrigger): string {
 export function triggerThresholdRange(kind: RoutineTriggerKind): { min: number; max: number; step: number } {
     return kind === "stalled"
         ? { min: 0, max: RoutineRules.stalledMaxMinutes, step: 30 }
-        : { min: 1, max: 99, step: 5 };
+        : { min: 1, max: 99, step: 1 };
 }
 
 // ── Plain words for the five-field cron ───────────────────────────────────────────────────────
@@ -400,8 +400,54 @@ export function isValidZone(tz: string): boolean {
 }
 
 /**
- * Why this schedule can't be sent, or null. Checks the shape and the cases where every minute
- * fires too often; the journal checks the real spacing over the next five fires.
+ * A minute or hour field as the sorted values it matches: "5", "8,17", "1-3", "*", and steps on
+ * "*" or a range ("10-50/20"). Null for anything else (names, "?", "L"): the journal then has the last word.
+ */
+function cronValues(field: string, min: number, max: number): number[] | null {
+    const out = new Set<number>();
+    for (const part of field.split(",")) {
+        const [range, stepText, extra] = part.split("/");
+        if (extra !== undefined) return null;
+        const step = stepText === undefined ? 1 : intField(stepText);
+        if (step === null || step < 1) return null;
+        let from: number | null;
+        let to: number | null;
+        if (range === "*") {
+            from = min;
+            to = max;
+        } else {
+            const bounds = range.split("-");
+            if (bounds.length > 2) return null;
+            // croner refuses a step on a bare start ("5/20"): left to the journal's 400.
+            if (bounds.length === 1 && stepText !== undefined) return null;
+            from = intField(bounds[0]);
+            to = bounds.length === 2 ? intField(bounds[1]) : from;
+        }
+        if (from === null || to === null || from < min || to > max || from > to) return null;
+        for (let n = from; n <= to; n += step) out.add(n);
+    }
+    return out.size ? [...out].sort((a, b) => a - b) : null;
+}
+
+/**
+ * Whether two fires of this schedule can land under `minGapMinutes` apart within a day (and
+ * across midnight when it runs every day). Null when a field is beyond `cronValues`.
+ */
+function firesTooClose(fields: string[]): boolean | null {
+    const minutes = cronValues(fields[0], 0, 59);
+    const hours = cronValues(fields[1], 0, 23);
+    if (!minutes || !hours) return null;
+    const times = hours.flatMap((hour) => minutes.map((minute) => hour * 60 + minute));
+    const gap = RoutineRules.minGapMinutes;
+    for (let i = 1; i < times.length; i++) if (times[i] - times[i - 1] < gap) return true;
+    const everyDay = fields[2] === "*" && fields[4] === "*";
+    return everyDay && times.length > 1 && 1440 - times[times.length - 1] + times[0] < gap;
+}
+
+/**
+ * Why this schedule can't be sent, or null. The journal refuses a schedule whose consecutive
+ * fires come under 15 minutes apart: this checks the minute and hour fields for that, and the
+ * journal still has the last word (a date that never comes, a field it can't read).
  */
 export function routineScheduleError(schedule: string): string | null {
     const fields = schedule.trim().split(/\s+/);
@@ -410,10 +456,26 @@ export function routineScheduleError(schedule: string): string | null {
     }
     const minute = fields[0];
     const step = stepOf(minute);
-    if (minute === "*" || (step !== null && step < RoutineRules.minGapMinutes)) {
+    if (minute === "*" || (step !== null && step < RoutineRules.minGapMinutes) || firesTooClose(fields)) {
         return `A routine fires at most every ${RoutineRules.minGapMinutes} minutes.`;
     }
     return null;
+}
+
+// The journal's own normalising (src/routines.js): a title is one line with no control
+// characters; a prompt keeps its line breaks (CR, CRLF, NEL, U+2028/9 folded to \n) and loses
+// every other control character. Both count UTF-16 code units, as the journal does.
+// eslint-disable-next-line no-control-regex -- the control range is the point
+const TITLE_BAD = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
+// eslint-disable-next-line no-control-regex -- the control range is the point
+const PROMPT_BAD = /[\u0000-\u0009\u000b\u000c\u000e-\u001f\u007f-\u0084\u0086-\u009f]/g;
+
+/** The prompt as the journal stores it. */
+export function normalizeRoutinePrompt(prompt: string): string {
+    return prompt
+        .replace(/\r\n|\r|\u0085|\u2028|\u2029/g, "\n")
+        .replace(PROMPT_BAD, "")
+        .trim();
 }
 
 /** Why this form can't be saved, or null. */
@@ -423,13 +485,13 @@ export function routineFormError(name: string, draft: RoutineDraft): string | nu
     }
     const title = draft.title.trim();
     if (!title) return "Give the routine a title.";
-    if ([...title].length > RoutineRules.titleMaxLength) {
+    if (title.length > RoutineRules.titleMaxLength) {
         return `The title can be at most ${RoutineRules.titleMaxLength} characters.`;
     }
-    if (/[\n\r]/.test(title)) return "The title must be one line.";
-    const prompt = draft.prompt.trim();
+    if (TITLE_BAD.test(title)) return "The title must be one line, with no control characters.";
+    const prompt = normalizeRoutinePrompt(draft.prompt);
     if (!prompt) return "Write the prompt the Coordinator receives.";
-    if ([...prompt].length > RoutineRules.promptMaxLength) {
+    if (prompt.length > RoutineRules.promptMaxLength) {
         return `The prompt can be at most ${RoutineRules.promptMaxLength} characters.`;
     }
     if (draft.schedule !== undefined) {
