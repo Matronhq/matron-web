@@ -9,6 +9,7 @@ Please see LICENSE files in the repository root for full details.
 // the web page says them the way the Mac and iOS pages do: milestones, decisions and answered
 // questions, files, and the questions or notices posted for the user, in one newest-first list.
 
+import { dateTimeFormat } from "../date-format";
 import type {
     Milestone,
     MissionItemRef,
@@ -275,7 +276,7 @@ export function canOpen(event: ActivityEvent): boolean {
 
 /** "09:54": the row's time within its day. */
 export function timeOfDay(ms: number, locale?: string): string {
-    return new Date(ms).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+    return dateTimeFormat(locale, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(ms));
 }
 
 /** "Today", "Yesterday", else "26 Sep". */
@@ -288,7 +289,7 @@ export function dayLabel(ms: number, now: number = Date.now(), locale?: string):
     const yesterday = new Date(today);
     yesterday.setDate(today.getDate() - 1);
     if (sameDay(day, yesterday)) return "Yesterday";
-    return day.toLocaleDateString(locale, { day: "numeric", month: "short" });
+    return dateTimeFormat(locale, { day: "numeric", month: "short" }).format(day);
 }
 
 export interface ActivityDay {

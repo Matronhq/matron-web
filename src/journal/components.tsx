@@ -34,6 +34,7 @@ import { copyText } from "./clipboard";
 import { type DraftStore, makeDraftStore } from "./composer-drafts";
 import { effectiveUnread } from "./conversation-flags";
 import { type RowContextMenu, useRowContextMenu } from "./context-menu";
+import { dateTimeFormat } from "./date-format";
 import { GoToNumberDialog, goToNumberShortcutLabel, NumberSearchResult, useGoToNumberShortcut } from "./goto-number";
 import { PinDialog, type PinDialogTarget } from "./PinDialogs";
 import { pinGlyph, successorHintText } from "./pins";
@@ -293,7 +294,7 @@ export function ThemeToggle(): React.ReactElement {
 }
 
 function formatTime(timestamp: number): string {
-    return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(timestamp));
+    return dateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(timestamp));
 }
 
 // EXPORTED: the render callsite uses it, and unit tests import it directly to inject `now`.
@@ -308,11 +309,11 @@ export function formatRelativeDay(timestamp: number, now: number = Date.now()): 
     const daysAgo = Math.round((startOf(today) - startOf(then)) / dayMs);
     if (daysAgo === 0) return formatTime(timestamp); // Today (including same-day minor-future skew) → clock.
     if (daysAgo >= 1 && daysAgo <= 6) {
-        return new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(then);
+        return dateTimeFormat(undefined, { weekday: "short" }).format(then);
     }
     // Older than six days or a genuinely future calendar day falls through to a dated label.
     const sameYear = then.getFullYear() === today.getFullYear();
-    return new Intl.DateTimeFormat(
+    return dateTimeFormat(
         undefined,
         sameYear ? { month: "short", day: "numeric" } : { month: "short", day: "numeric", year: "numeric" },
     ).format(then);
@@ -340,14 +341,14 @@ export function formatDayDivider(timestamp: number, now: number = Date.now()): s
     const startOf = (d: Date): number => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
     const daysAgo = Math.round((startOf(today) - startOf(then)) / 86_400_000);
     const sameYear = then.getFullYear() === today.getFullYear();
-    const dateStr = new Intl.DateTimeFormat(
+    const dateStr = dateTimeFormat(
         undefined,
         sameYear ? { day: "numeric", month: "long" } : { day: "numeric", month: "long", year: "numeric" },
     ).format(then);
     let word: string | undefined;
     if (daysAgo === 0) word = "Today";
     else if (daysAgo === 1) word = "Yesterday";
-    else if (daysAgo >= 2 && daysAgo <= 6) word = new Intl.DateTimeFormat(undefined, { weekday: "long" }).format(then);
+    else if (daysAgo >= 2 && daysAgo <= 6) word = dateTimeFormat(undefined, { weekday: "long" }).format(then);
     return word ? `${word} · ${dateStr}` : dateStr;
 }
 

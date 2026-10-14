@@ -5,6 +5,7 @@ SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
 Please see LICENSE files in the repository root for full details.
 */
 
+import { dateTimeFormat } from "./date-format";
 import { type SessionStatus } from "./types";
 
 export function normalizePercent(p: number): number | null {
@@ -227,8 +228,8 @@ function renderReset(resetTime: number, now: number): string {
     }
 
     const date = new Date(resetTime);
-    const weekday = new Intl.DateTimeFormat("en-US", { weekday: "short" }).format(date);
-    const hour = new Intl.DateTimeFormat("en-US", { hour: "numeric", hour12: true })
+    const weekday = dateTimeFormat("en-US", { weekday: "short" }).format(date);
+    const hour = dateTimeFormat("en-US", { hour: "numeric", hour12: true })
         .format(date)
         .replaceAll(" ", "")
         .toLocaleLowerCase();
