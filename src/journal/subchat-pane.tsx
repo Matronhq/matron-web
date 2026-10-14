@@ -120,17 +120,16 @@ export function SubChatPane({
     const title = child ? displayTitle(child) : "Subagent";
     const running = child ? child.session_state === "running" : true;
 
-    const [events, setEvents] = useState<JournalEvent[]>();
+    // Tagged with the subagent they belong to, so switching never shows the previous one's rows.
+    const [loaded, setLoaded] = useState<{ childId: string; events: JournalEvent[] }>();
+    const events = loaded?.childId === childId ? loaded.events : undefined;
     const lastSeq = child?.last_seq;
-    useEffect(() => {
-        setEvents(undefined);
-    }, [childId]);
     // Reloaded whenever the subagent's newest event moves on (live rows land in the local store
     // before the conversation list hears of them).
     useEffect(() => {
         let cancelled = false;
-        void client.conversationEvents(childId).then((loaded) => {
-            if (!cancelled) setEvents(loaded);
+        void client.conversationEvents(childId).then((next) => {
+            if (!cancelled) setLoaded({ childId, events: next });
         });
         return () => {
             cancelled = true;
@@ -178,15 +177,30 @@ export function SubChatPane({
 
     const openSibling = useCallback((id: string) => client.openSubChat(id), [client]);
 
-    // Covering the chat, the pane takes focus like a page and hands it back when it closes.
+    // Beside the chat, opening the pane leaves focus where it was (the Subtask card or pill).
+    // Covering the chat, the pane takes focus like a page. Either way, closing it while focus is
+    // inside hands focus back to what opened it, or to the composer when that row is gone (the
+    // transcript only mounts the rows near the viewport).
+    const asideRef = useRef<HTMLElement>(null);
     const closeRef = useRef<HTMLButtonElement>(null);
-    useEffect(() => {
-        if (!covering) return undefined;
-        const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-        closeRef.current?.focus();
+    const openerRef = useRef<HTMLElement | null>(null);
+    useLayoutEffect(() => {
+        const active = document.activeElement;
+        openerRef.current = active instanceof HTMLElement && active !== document.body ? active : null;
+        const aside = asideRef.current;
         return () => {
-            if (opener?.isConnected) opener.focus();
+            const focused = document.activeElement;
+            if (!focused || !aside?.contains(focused)) return;
+            const opener = openerRef.current;
+            const target =
+                opener?.isConnected && !aside.contains(opener)
+                    ? opener
+                    : document.querySelector<HTMLElement>(".mj_Composer textarea");
+            target?.focus();
         };
+    }, []);
+    useEffect(() => {
+        if (covering) closeRef.current?.focus();
     }, [covering]);
 
     const [width, setWidth] = useState(SIDE_PANE_MIN_WIDTH);
@@ -194,6 +208,20 @@ export function SubChatPane({
     const shownWidth = areaWidth === undefined ? width : clampSidePaneWidth(width, areaWidth);
     const stopDragging = useRef<() => void>(() => undefined);
     useEffect(() => () => stopDragging.current(), []);
+    const maxWidth = areaWidth === undefined ? SIDE_PANE_MIN_WIDTH : clampSidePaneWidth(Infinity, areaWidth);
+    // The handle sits on the pane's left edge: left widens the pane, right narrows it.
+    const onResizeKey = (event: React.KeyboardEvent<HTMLDivElement>): void => {
+        if (areaWidth === undefined) return;
+        const step = event.shiftKey ? 64 : 16;
+        let next: number | undefined;
+        if (event.key === "ArrowLeft") next = shownWidth + step;
+        else if (event.key === "ArrowRight") next = shownWidth - step;
+        else if (event.key === "Home") next = SIDE_PANE_MIN_WIDTH;
+        else if (event.key === "End") next = maxWidth;
+        if (next === undefined) return;
+        event.preventDefault();
+        setWidth(clampSidePaneWidth(next, areaWidth));
+    };
     const onResizeStart = (event: React.PointerEvent<HTMLDivElement>): void => {
         if (event.button !== 0 || areaWidth === undefined) return;
         event.preventDefault();
@@ -221,14 +249,20 @@ export function SubChatPane({
                 <div
                     className="mj_ResizeHandle mj_ResizeHandle--horizontal mj_SubChatPane_resizer"
                     role="separator"
+                    tabIndex={0}
                     aria-orientation="vertical"
                     aria-label="Resize subagent pane"
+                    aria-valuenow={shownWidth}
+                    aria-valuemin={SIDE_PANE_MIN_WIDTH}
+                    aria-valuemax={maxWidth}
                     onPointerDown={onResizeStart}
+                    onKeyDown={onResizeKey}
                 >
                     <div />
                 </div>
             )}
             <aside
+                ref={asideRef}
                 className={`mj_SubChatPane${covering ? " mj_SubChatPane_covering" : ""}`}
                 style={style}
                 aria-label={`Subagent ${title}`}

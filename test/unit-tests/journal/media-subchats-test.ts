@@ -382,6 +382,95 @@ describe("the subagent pane", () => {
     });
 });
 
+describe("the subagent pane: focus, keyboard and switching", () => {
+    it("hands focus back to the composer when closed beside the chat and its opener is gone", async () => {
+        const client = signedInClient([PARENT, LINT], "parent");
+        jest.spyOn(client, "conversationEvents").mockResolvedValue([]);
+        layOut(1400, 300);
+        const container = await renderClient(client);
+        await act(async () => client.openSubChat(LINT.id));
+        const close = container.querySelector<HTMLButtonElement>('button[aria-label="Close subagent"]')!;
+        close.focus();
+        await act(async () => close.click());
+        expect(container.querySelector("aside.mj_SubChatPane")).toBeNull();
+        expect(document.activeElement).toBe(container.querySelector(".mj_Composer textarea"));
+    });
+
+    it("hands focus back to the Subtask card that opened it", async () => {
+        const client = signedInClient([PARENT, LINT], "parent", [text("parent", 1, "🔀 Subtask: lint the workspace")]);
+        jest.spyOn(client, "conversationEvents").mockResolvedValue([]);
+        layOut(1400, 300);
+        const container = await renderClient(client);
+        const card = container.querySelector<HTMLButtonElement>(".mj_ChatView_timeline .mj_SubtaskCard")!;
+        card.focus();
+        await act(async () => card.click());
+        expect(document.activeElement).toBe(card);
+        const close = container.querySelector<HTMLButtonElement>('button[aria-label="Close subagent"]')!;
+        close.focus();
+        await act(async () => close.click());
+        expect(document.activeElement).toBe(card);
+    });
+
+    it("keeps the covered chat out of reach", async () => {
+        const client = signedInClient([PARENT, LINT], "parent");
+        jest.spyOn(client, "conversationEvents").mockResolvedValue([]);
+        layOut(1000, 300);
+        const container = await renderClient(client);
+        const chat = container.querySelector<HTMLElement>(".mj_ChatView_wrapper")!;
+        expect(chat.hasAttribute("inert")).toBe(false);
+        await act(async () => client.openSubChat(LINT.id));
+        expect(chat.hasAttribute("inert")).toBe(true);
+        await act(async () => client.closeSubChat());
+        expect(chat.hasAttribute("inert")).toBe(false);
+    });
+
+    it("resizes from the keyboard within its limits", async () => {
+        const client = signedInClient([PARENT, LINT], "parent");
+        jest.spyOn(client, "conversationEvents").mockResolvedValue([]);
+        layOut(1400, 300); // a 1100px chat area: the pane can grow to 680px
+        const container = await renderClient(client);
+        await act(async () => client.openSubChat(LINT.id));
+        const handle = container.querySelector<HTMLElement>('[role="separator"][aria-label="Resize subagent pane"]')!;
+        const pane = container.querySelector<HTMLElement>("aside.mj_SubChatPane")!;
+        expect(handle.tabIndex).toBe(0);
+        expect(handle.getAttribute("aria-valuenow")).toBe("380");
+        expect(handle.getAttribute("aria-valuemax")).toBe("680");
+        const press = async (key: string): Promise<void> =>
+            act(async () => {
+                handle.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+            });
+        await press("ArrowLeft");
+        expect(pane.style.width).toBe("396px");
+        await press("ArrowRight");
+        await press("ArrowRight");
+        expect(pane.style.width).toBe("380px");
+        await press("End");
+        expect(handle.getAttribute("aria-valuenow")).toBe("680");
+    });
+
+    it("never shows the previous subagent's rows while the next one loads", async () => {
+        const client = signedInClient([PARENT, LINT, DOCS], "parent");
+        let resolveDocs: (events: JournalEvent[]) => void = () => undefined;
+        jest.spyOn(client, "conversationEvents").mockImplementation((id) =>
+            id === LINT.id
+                ? Promise.resolve([text(LINT.id, 1, "lint output")])
+                : new Promise((resolve) => {
+                      resolveDocs = resolve;
+                  }),
+        );
+        layOut(1400, 300);
+        const container = await renderClient(client);
+        await act(async () => client.openSubChat(LINT.id));
+        expect(container.querySelector("aside.mj_SubChatPane")?.textContent).toContain("lint output");
+        await act(async () => client.openSubChat(DOCS.id));
+        const pane = container.querySelector("aside.mj_SubChatPane")!;
+        expect(pane.textContent).not.toContain("lint output");
+        expect(pane.textContent).toContain("Loading");
+        await act(async () => resolveDocs([text(DOCS.id, 1, "docs output")]));
+        expect(pane.textContent).toContain("docs output");
+    });
+});
+
 describe("the media browser", () => {
     const EVENTS: JournalEvent[] = [
         text("parent", 1, "Report is up at https://example.com/report.\nDetails inside."),

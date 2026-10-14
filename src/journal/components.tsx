@@ -148,7 +148,7 @@ import {
 } from "./markdown-preview";
 import { TrackerPane } from "./tracker/TrackerPane";
 import { MediaBrowserSheet } from "./media-browser";
-import { SubChatPane, type SubChatRow, useChatArea } from "./subchat-pane";
+import { paneCoversChat, SubChatPane, type SubChatRow, useChatArea } from "./subchat-pane";
 import { chatSidePane, subtaskDescription } from "./subtask";
 import { SubtaskLine } from "./subtask-link";
 import {
@@ -7133,6 +7133,8 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                     </div>
                     <div
                         ref={chatAreaRef}
+                        // Covered by the subagent pane, the chat stays mounted but out of reach.
+                        inert={sidePane !== undefined && paneCoversChat(chatArea)}
                         className={`mj_ChatView_wrapper ${state.trackerView?.open || state.selectedConversationId ? "" : "mj_Chat_mobileHidden"}`}
                     >
                         {state.trackerView?.open ? (
