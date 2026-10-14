@@ -11,9 +11,9 @@ Please see LICENSE files in the repository root for full details.
  * real MatronApp fixture at 1280×860, 2×. Outputs /tmp/vf-tokens/<tag>-<theme>.png.
  *
  * Run:  node scripts/visual/shoot-pages.mjs <tag> [--screen=login] [--fixed] [--tracker=inbox|item|memories|memory]
- *       [--click=<css selector>] [--width=1280] [--height=860]
+ *       [--click=<css selector>] [--width=1280] [--height=860] [--query=<key=value&...>]
  *   --screen=login shoots the signed-out sign-in screen; --fixed adds a config-fixed server
- *   (hidden server field). Files are <tag>-<theme>.png for the chat, <tag>-<screen>[-fixed]-<theme>.png otherwise.
+ *   (hidden server field). --query adds fixture parameters (e.g. consent=waiting) to the page URL. Files are <tag>-<theme>.png for the chat, <tag>-<screen>[-fixed]-<theme>.png otherwise.
  */
 
 import http from "node:http";
@@ -30,11 +30,13 @@ const screen = flag("screen") || "chat";
 const fixed = args.includes("--fixed");
 const tracker = flag("tracker");
 const click = flag("click");
+const extraQuery = flag("query");
 const width = Number(flag("width") || 1280);
 const height = Number(flag("height") || 860);
 const suffix =
     (screen === "chat" ? "" : `-${screen}${fixed ? "-fixed" : ""}`) +
     (tracker ? `-tracker-${tracker}` : "") +
+    (extraQuery ? `-${extraQuery.replace(/[^a-z0-9]+/gi, "-")}` : "") +
     (click ? "-clicked" : "");
 fs.mkdirSync(OUT, { recursive: true });
 
@@ -103,6 +105,7 @@ for (const theme of ["light", "dark"]) {
     const query = new URLSearchParams({ theme, screen });
     if (fixed) query.set("fixed", "1");
     if (tracker) query.set("tracker", tracker);
+    for (const [key, value] of new URLSearchParams(extraQuery ?? "")) query.set(key, value);
     await page.goto(`http://127.0.0.1:${port}/?${query}`, { waitUntil: "load" });
     await page.evaluate((t) => {
         document.documentElement.dataset.theme = t;

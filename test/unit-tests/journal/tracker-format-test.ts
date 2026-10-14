@@ -19,6 +19,7 @@ import {
     closedStatusLabel,
     resolutionLabel,
     resolveActionLabel,
+    spawnConsentRequestId,
     statusRowText,
 } from "../../../src/journal/tracker/format";
 import type { StatusSnapshot, TrackerItemKind, TrackerResolution } from "../../../src/journal/types";
@@ -272,5 +273,45 @@ describe("isFromViewedConvo", () => {
     it("treats an unknown viewer as another session", () => {
         expect(isFromViewedConvo({ origin_convo_id: "c1" }, null)).toBe(false);
         expect(isFromViewedConvo({ origin_convo_id: "c1" }, undefined)).toBe(false);
+    });
+});
+
+describe("spawnConsentRequestId", () => {
+    const withLink = (url: string): { links: { url: string }[] } => ({ links: [{ url }] });
+
+    it("reads the request id from the journal's spawn consent link", () => {
+        expect(spawnConsentRequestId(withLink("matron://consent/spawn/sp_1"))).toBe("sp_1");
+    });
+    it("compares the scheme and host case-insensitively, the kind as written", () => {
+        expect(spawnConsentRequestId(withLink("MATRON://Consent/spawn/sp_1"))).toBe("sp_1");
+        expect(spawnConsentRequestId(withLink("matron://consent/Spawn/sp_1"))).toBeNull();
+    });
+    it("rejects anything but the exact shape", () => {
+        for (const url of [
+            "matron://consent/spawn/",
+            "matron://consent/spawn//sp_1",
+            "matron://consent/spawn/sp_1/",
+            "matron://consent/spawn/sp_1/extra",
+            "matron://consent/spawn/sp_1?x=1",
+            "matron://consent/spawn/sp_1#top",
+            "https://example.com/consent/spawn/sp_1",
+        ]) {
+            expect(spawnConsentRequestId(withLink(url))).toBeNull();
+        }
+    });
+    it("is null for an agent-chat consent item and for an ordinary one", () => {
+        expect(spawnConsentRequestId(withLink("matron://consent/chat/room_1/7"))).toBeNull();
+        expect(spawnConsentRequestId({ links: [] })).toBeNull();
+    });
+    it("takes the first well-formed link", () => {
+        expect(
+            spawnConsentRequestId({
+                links: [
+                    { url: "https://example.com/pull/1" },
+                    { url: "matron://consent/spawn/sp_2" },
+                    { url: "matron://consent/spawn/sp_3" },
+                ],
+            }),
+        ).toBe("sp_2");
     });
 });

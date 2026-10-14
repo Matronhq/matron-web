@@ -100,6 +100,24 @@ export function isConsentItem(item: Pick<TrackerItem, "links">): boolean {
 }
 
 /**
+ * The spawn request id a consent item stands for, from its `matron://consent/spawn/<id>` link;
+ * null for any other item (an agent-chat consent item included). Strict like the Apple client:
+ * only the exact form the journal writes counts, with scheme and host compared case-insensitively
+ * and the kind and id as written, so no query, fragment, trailing slash or extra segment. The
+ * first well-formed link wins; the journal writes one.
+ */
+export function spawnConsentRequestId(item: Pick<TrackerItem, "links">): string | null {
+    const prefix = "matron://consent/";
+    for (const link of item.links ?? []) {
+        const url = typeof link?.url === "string" ? link.url : "";
+        if (url.slice(0, prefix.length).toLowerCase() !== prefix) continue;
+        const match = /^spawn\/([^/?#]+)$/.exec(url.slice(prefix.length));
+        if (match) return match[1];
+    }
+    return null;
+}
+
+/**
  * Resolutions offered for an item, primary first (client convention; the server accepts any).
  * A question can only be "answered" once the user has actually replied.
  */

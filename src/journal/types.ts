@@ -1313,6 +1313,29 @@ export function spawnOutcomeKind(payload: EventPayload): SpawnOutcomeKind {
     return "unknown";
 }
 
+/** One agent-spawn ask as a conversation's events tell it: its card and its outcome, if any. */
+export interface SpawnConsentRows {
+    /** The `permission_request` (kind `agent_spawn`) that asked; null when it is not here. */
+    request: JournalEvent | null;
+    /** The ask's `spawn_outcome` payload; null while it has none. */
+    outcome: EventPayload | null;
+}
+
+/**
+ * Finds one agent-spawn ask in a conversation's events by its request id: the first card that
+ * names it, and the last outcome for it should there ever be two (the timeline's own rule).
+ */
+export function findSpawnConsentRows(events: readonly JournalEvent[], requestId: string): SpawnConsentRows {
+    let request: JournalEvent | null = null;
+    let outcome: EventPayload | null = null;
+    for (const event of events) {
+        if (event.payload.request_id !== requestId) continue;
+        if (event.type === "permission_request" && event.payload.kind === "agent_spawn") request ??= event;
+        else if (event.type === "spawn_outcome") outcome = event.payload;
+    }
+    return { request, outcome };
+}
+
 export function spawnOutcomeSnippet(payload: EventPayload): string {
     switch (spawnOutcomeKind(payload)) {
         case "started":

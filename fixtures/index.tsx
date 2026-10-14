@@ -342,7 +342,15 @@ const events: JournalEvent[] = [
         ts: T + 870,
         sender: "journal",
         type: "item",
-        payload: { item_id: "it_41", num: 41, kind: "question", title: "Which region should the staging bucket use?", action: "created", by: "agent", awaiting: "user" },
+        payload: {
+            item_id: "it_41",
+            num: 41,
+            kind: "question",
+            title: "Which region should the staging bucket use?",
+            action: "created",
+            by: "agent",
+            awaiting: "user",
+        },
     },
     {
         seq: 24,
@@ -350,7 +358,15 @@ const events: JournalEvent[] = [
         ts: T + 875,
         sender: "journal",
         type: "item",
-        payload: { item_id: "it_42", num: 42, kind: "task", title: "Rotate the staging deploy key", action: "created", by: "agent", awaiting: "agent" },
+        payload: {
+            item_id: "it_42",
+            num: 42,
+            kind: "task",
+            title: "Rotate the staging deploy key",
+            action: "created",
+            by: "agent",
+            awaiting: "agent",
+        },
     },
     {
         seq: 25,
@@ -358,7 +374,16 @@ const events: JournalEvent[] = [
         ts: T + 880,
         sender: "journal",
         type: "item",
-        payload: { item_id: "it_41", num: 41, kind: "question", title: "Which region should the staging bucket use?", action: "commented", by: "user", awaiting: "agent", comment: { id: "cm_1", body: "Same region as production." } },
+        payload: {
+            item_id: "it_41",
+            num: 41,
+            kind: "question",
+            title: "Which region should the staging bucket use?",
+            action: "commented",
+            by: "user",
+            awaiting: "agent",
+            comment: { id: "cm_1", body: "Same region as production." },
+        },
     },
     {
         seq: 26,
@@ -366,7 +391,16 @@ const events: JournalEvent[] = [
         ts: T + 890,
         sender: "journal",
         type: "item",
-        payload: { item_id: "it_41", num: 41, kind: "question", title: "Which region should the staging bucket use?", action: "closed", by: "agent", resolution: "answered", comment: { id: "cm_2", body: "Created the bucket in the production region." } },
+        payload: {
+            item_id: "it_41",
+            num: 41,
+            kind: "question",
+            title: "Which region should the staging bucket use?",
+            action: "closed",
+            by: "agent",
+            resolution: "answered",
+            comment: { id: "cm_2", body: "Created the bucket in the production region." },
+        },
     },
     {
         seq: 27,
@@ -374,7 +408,16 @@ const events: JournalEvent[] = [
         ts: T + 900,
         sender: "journal",
         type: "item",
-        payload: { item_id: "it_42", num: 42, kind: "task", title: "Rotate the staging deploy key", action: "commented", by: "agent", awaiting: "user", comment: { id: "cm_3", body: "Needs an admin to approve the new key." } },
+        payload: {
+            item_id: "it_42",
+            num: 42,
+            kind: "task",
+            title: "Rotate the staging deploy key",
+            action: "commented",
+            by: "agent",
+            awaiting: "user",
+            comment: { id: "cm_3", body: "Needs an admin to approve the new key." },
+        },
     },
 ];
 
@@ -803,6 +846,60 @@ if (trackerMode === "inbox" || trackerMode === "item") {
                 },
             ],
         };
+        // ?consent=waiting|missing|started|elsewhere: a spawn consent item with the ask's card
+        // answerable inside it, its card not synced yet, started (closed, with the outcome), or
+        // closed with no outcome here (answered on another device). Approve never settles, so a
+        // click shows the sending state.
+        const consentParam = fixtureParams.get("consent");
+        if (consentParam) {
+            const closed = consentParam === "started" || consentParam === "elsewhere";
+            const consentItem = {
+                ...baseItem,
+                id: "it_42",
+                num: 42,
+                kind: "question",
+                state: closed ? "closed" : "open",
+                resolution: closed ? "decided" : null,
+                awaiting: closed ? null : "user",
+                title: "Start a session on box-a to run the test suite?",
+                body: "box-b asks to start a session on **box-a** in `/srv/app`. Sessions in this folder follow the box rules.",
+                labels: ["consent"],
+                links: [{ url: "matron://consent/spawn/sp_42", title: "Spawn request" }],
+                origin_convo_id: "c2",
+                origin_device_id: 2,
+                created_at: now - 6 * 60_000,
+                updated_at: now - 5 * 60_000,
+                closed_at: closed ? now - 60_000 : null,
+            };
+            const request = {
+                seq: 900,
+                convo_id: "c2",
+                ts: now - 6 * 60_000,
+                sender: "agent:box-b",
+                type: "permission_request",
+                payload: {
+                    kind: "agent_spawn",
+                    request_id: "sp_42",
+                    from_name: "box-b",
+                    from_convo_title: "Fix the flaky tests",
+                    target_name: "box-a",
+                    workdir: "/srv/app",
+                    topic: "Run the suite and fix flakes",
+                    task: "Run the full test suite on box-a, find the three flaky tests in the sync module and fix them.\nOpen a pull request with the fixes.",
+                    agent: "claude",
+                    model: "opus",
+                    effort: "high",
+                    effort_source: "box_default",
+                },
+            };
+            const outcome =
+                consentParam === "started" ? { request_id: "sp_42", outcome: "started", room_id: "c1" } : null;
+            stub.spawnConsentRows = async () => ({ request: consentParam === "missing" ? null : request, outcome });
+            stub.answerAgentSpawn = () => new Promise(() => undefined);
+            tracker.inboxItems = [consentItem, ...items];
+            tracker.trackerView = { open: true, view: "inbox", selectedItemId: 42 };
+            tracker.trackerItem = { item: consentItem, comments: [] };
+        }
     }
 }
 

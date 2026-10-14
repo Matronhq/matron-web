@@ -57,6 +57,7 @@ import {
     type NumberLookupKind,
     type NumberLookupOutcome,
     type JournalEphemeralFrame,
+    findSpawnConsentRows,
     type JournalEvent,
     MESSAGE_EVENT_TYPES,
     normalizeServerUrl,
@@ -68,6 +69,7 @@ import {
     type ServerFrame,
     type Session,
     type SnapshotResponse,
+    type SpawnConsentRows,
     type TrackerAttachment,
     type JournalControlFrame,
     type TrackerCommentWrite,
@@ -373,6 +375,9 @@ export class MatronJournalClient {
     private database?: JournalDatabase;
     private connection?: JournalConnection;
     private readonly history = new Map<string, ConversationHistoryState>();
+    // Conversations whose latest history page a spawn consent item has already fetched, keyed
+    // `${sessionGen}:${convoId}`, so a card that is not in that page is not asked for again.
+    private readonly consentHistoryFetched = new Set<string>();
     private readonly activities = new Map<string, JournalEphemeralFrame["activity"]>();
     private readonly statuses = new Map<string, NonNullable<JournalEphemeralFrame["status"]>>();
     private readonly textStreams = new Map<string, Record<string, string>>();
@@ -1659,6 +1664,37 @@ export class MatronJournalClient {
     ): Promise<void> {
         if (!this.api) throw new Error("Not signed in.");
         await this.api.answerAgentSpawn(requestId, decision, signal);
+    }
+
+    /**
+     * The agent-spawn ask a consent item stands for, as the conversation that asked tells it: the
+     * card's own event and its outcome. Read from the local store. A conversation this device has
+     * not opened may not hold the card yet, so the first miss fetches that conversation's latest
+     * history page once (per conversation and session) and looks again. Never throws: a store or
+     * network failure reads as "not here", which the item shows as a card that has not arrived.
+     */
+    public async spawnConsentRows(convoId: string, requestId: string): Promise<SpawnConsentRows> {
+        const database = this.database;
+        const none: SpawnConsentRows = { request: null, outcome: null };
+        if (!database || !convoId || !requestId) return none;
+        let rows: SpawnConsentRows;
+        try {
+            rows = findSpawnConsentRows(await database.events(convoId), requestId);
+        } catch {
+            return none;
+        }
+        const fetchKey = `${this.sessionGen}:${convoId}`;
+        const api = this.api;
+        if (rows.request || !api || this.consentHistoryFetched.has(fetchKey)) return rows;
+        this.consentHistoryFetched.add(fetchKey);
+        try {
+            const response = await api.messages(convoId);
+            if (this.database !== database || this.api !== api) return rows;
+            await database.putHistory(response.events);
+            return findSpawnConsentRows(await database.events(convoId), requestId);
+        } catch {
+            return rows;
+        }
     }
 
     // Concurrent callers for the same id (the viewer body and its DownloadLink mount in the

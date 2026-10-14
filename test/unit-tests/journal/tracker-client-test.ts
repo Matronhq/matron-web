@@ -1885,3 +1885,101 @@ describe("commentFailureMessage", () => {
         expect(commentFailureMessage(new Error("offline"))).toBe("offline");
     });
 });
+
+describe("MatronJournalClient spawnConsentRows", () => {
+    const card = (requestId: string, seq = 10): JournalEvent => ({
+        seq,
+        convo_id: "c1",
+        ts: 1,
+        sender: "agent:box-a",
+        type: "permission_request",
+        payload: { kind: "agent_spawn", request_id: requestId, task: "Run the suite" },
+    });
+    const outcome = (requestId: string, value: string, seq: number): JournalEvent => ({
+        seq,
+        convo_id: "c1",
+        ts: 1,
+        sender: "journal",
+        type: "spawn_outcome",
+        payload: { request_id: requestId, outcome: value },
+    });
+
+    function withStore(
+        stored: JournalEvent[],
+        messages: jest.Mock = jest.fn(),
+    ): {
+        client: MatronJournalClient;
+        events: jest.Mock;
+        putHistory: jest.Mock;
+        messages: jest.Mock;
+    } {
+        const { client } = makeClient();
+        const rows = [...stored];
+        const events = jest.fn(async () => [...rows]);
+        const putHistory = jest.fn(async (incoming: JournalEvent[]) => {
+            rows.push(...incoming);
+        });
+        (client as unknown as { database: unknown }).database = { events, putHistory };
+        (client as unknown as { api: unknown }).api = { messages };
+        return { client, events, putHistory, messages };
+    }
+
+    it("finds the card and the latest outcome for the request in the asking conversation", async () => {
+        const { client, events, messages } = withStore([
+            card("sp_other", 9),
+            card("sp_1", 10),
+            outcome("sp_1", "failed", 11),
+            outcome("sp_1", "started", 12),
+        ]);
+
+        const rows = await client.spawnConsentRows("c1", "sp_1");
+
+        expect(events).toHaveBeenCalledWith("c1");
+        expect(rows.request?.seq).toBe(10);
+        expect(rows.outcome).toEqual({ request_id: "sp_1", outcome: "started" });
+        expect(messages).not.toHaveBeenCalled();
+    });
+
+    it("ignores a generic permission request that happens to carry the id", async () => {
+        const { client } = withStore([{ ...card("sp_1"), payload: { kind: "tool", request_id: "sp_1" } }]);
+
+        expect((await client.spawnConsentRows("c1", "sp_1")).request).toBeNull();
+    });
+
+    it("fetches the conversation's latest page once when the card is not stored", async () => {
+        const messages = jest.fn().mockResolvedValue({ events: [card("sp_1", 30)] });
+        const { client, putHistory } = withStore([], messages);
+
+        const rows = await client.spawnConsentRows("c1", "sp_1");
+
+        expect(messages).toHaveBeenCalledWith("c1");
+        expect(putHistory).toHaveBeenCalledWith([card("sp_1", 30)]);
+        expect(rows.request?.seq).toBe(30);
+    });
+
+    it("does not fetch the same conversation again after a miss", async () => {
+        const messages = jest.fn().mockResolvedValue({ events: [] });
+        const { client } = withStore([], messages);
+
+        await client.spawnConsentRows("c1", "sp_1");
+        const again = await client.spawnConsentRows("c1", "sp_1");
+
+        expect(messages).toHaveBeenCalledTimes(1);
+        expect(again).toEqual({ request: null, outcome: null });
+    });
+
+    it("keeps what the store had when the fetch fails", async () => {
+        const messages = jest.fn().mockRejectedValue(new JournalApiError("Not found", 404));
+        const { client } = withStore([outcome("sp_1", "expired", 5)], messages);
+
+        const rows = await client.spawnConsentRows("c1", "sp_1");
+
+        expect(rows).toEqual({ request: null, outcome: { request_id: "sp_1", outcome: "expired" } });
+    });
+
+    it("reads as not here when signed out", async () => {
+        const { client } = makeClient();
+
+        expect(await client.spawnConsentRows("c1", "sp_1")).toEqual({ request: null, outcome: null });
+    });
+});
