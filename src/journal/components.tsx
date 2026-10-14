@@ -1951,121 +1951,117 @@ function ConversationListView({
                     </button>
                 }
             />
-            <div className="mj_Sidebar_wrapper mj_Sidebar_list">
-                <div className="mj_Sidebar_wrapper--user">
-                    <div className="mj_Sidebar mj_Sidebar_list">
-                        <div className="mj_Sidebar_listContainer">
-                            <nav className="mj_ConversationListPanel" aria-label="Room list">
-                                <header
-                                    className="mj_ConversationListHeader"
-                                    aria-label="Room options"
-                                    data-testid="conversation-list-header"
-                                >
-                                    <h2 className="mj_ConversationListTitle">Conversations</h2>
-                                    <div className="mj_ConversationListHeaderActions">
-                                        {tab !== "archived" && hasActiveUnread && (
-                                            <button
-                                                className="mj_IconButton mj_MarkAllReadButton"
-                                                type="button"
-                                                aria-label="Mark all as read"
-                                                onClick={() => client.markAllRead()}
-                                            >
-                                                <MarkAllReadIcon />
-                                            </button>
-                                        )}
-                                        <button
-                                            className="mj_IconButton"
-                                            type="button"
-                                            aria-label="Go to number"
-                                            title={`Go to number (${goToNumberShortcutLabel()})`}
-                                            onClick={() => client.openGoToNumber()}
-                                        >
-                                            <NumberSignIcon />
-                                        </button>
-                                        {/* Mac: New Chat is the toolbar's square.and.pencil glyph, not a button row. */}
-                                        <button
-                                            className="mj_IconButton"
-                                            type="button"
-                                            aria-label="New session"
-                                            title="New session — runs /start"
-                                            onClick={() => {
-                                                setAccountOpen(false);
-                                                closeConversationMenu();
-                                                setNewSessionOpen(true);
-                                            }}
-                                        >
-                                            <ComposeIcon />
-                                        </button>
-                                    </div>
-                                </header>
-                                <div className="mj_ConversationListTabs" role="group" aria-label="Filter conversations">
-                                    {(
-                                        [
-                                            ["active", "Active"],
-                                            ["favorites", "Favorites"],
-                                            ["archived", "Archived"],
-                                        ] as const
-                                    ).map(([key, label]) => (
-                                        <button
-                                            key={key}
-                                            type="button"
-                                            data-tab={key}
-                                            className={`mj_ConversationListTab${tab === key ? " mj_ConversationListTab_active" : ""}`}
-                                            aria-pressed={tab === key}
-                                            aria-label={key === "favorites" ? "Favorites" : undefined}
-                                            onClick={(event) => {
-                                                setTab(key);
-                                                event.currentTarget.focus({ preventScroll: true });
-                                            }}
-                                        >
-                                            {label}
-                                        </button>
-                                    ))}
-                                </div>
-                                <div data-testid="conversation-search" className="mj_ConversationSearch" role="search">
-                                    <label
-                                        className="mj_ConversationSearch_inputWrapper mj_noTextInput"
-                                        htmlFor="conversation-search-input"
-                                    >
-                                        <SearchIcon aria-hidden />
-                                        <input
-                                            id="conversation-search-input"
-                                            className="mj_ConversationSearch_input"
-                                            type="search"
-                                            value={query}
-                                            onChange={(event) => setQuery(event.target.value)}
-                                            placeholder="Search"
-                                            aria-label="Search"
-                                            autoComplete="off"
-                                            // Server rejects message-search queries over 256 chars; cap the shared
-                                            // box so a giant paste can't produce a misleading "unavailable" state.
-                                            maxLength={256}
-                                        />
-                                    </label>
-                                </div>
-                                {state.preferencesUnavailable && (
-                                    <div className="mj_ConnectionError" role="status">
-                                        {PREFERENCES_UNAVAILABLE_ERROR}
-                                    </div>
-                                )}
-                                {state.controlError && (
-                                    <div className="mj_ConnectionError" role="status">
-                                        {state.controlError}
-                                    </div>
-                                )}
-                                {outcomeAnnouncement && (
-                                    <span
-                                        className="mj_ScreenReaderOnly mj_SubagentOutcomeStatus"
-                                        role="status"
-                                        aria-live="polite"
-                                        aria-atomic="true"
-                                    >
-                                        {outcomeAnnouncement}
-                                    </span>
-                                )}
-                                <div className="mj_ConversationList" data-testid="conversation-list">
-                                    <NumberSearchResult client={client} query={query} />
-                                    {/* Active/Favorites render each parent row, then splice
+            <nav className="mj_ConversationListPanel" aria-label="Room list">
+                <header
+                    className="mj_ConversationListHeader"
+                    aria-label="Room options"
+                    data-testid="conversation-list-header"
+                >
+                    <h2 className="mj_ConversationListTitle">Conversations</h2>
+                    <div className="mj_ConversationListHeaderActions">
+                        {tab !== "archived" && hasActiveUnread && (
+                            <button
+                                className="mj_IconButton mj_MarkAllReadButton"
+                                type="button"
+                                aria-label="Mark all as read"
+                                onClick={() => client.markAllRead()}
+                            >
+                                <MarkAllReadIcon />
+                            </button>
+                        )}
+                        <button
+                            className="mj_IconButton"
+                            type="button"
+                            aria-label="Go to number"
+                            title={`Go to number (${goToNumberShortcutLabel()})`}
+                            onClick={() => client.openGoToNumber()}
+                        >
+                            <NumberSignIcon />
+                        </button>
+                        {/* Mac: New Chat is the toolbar's square.and.pencil glyph, not a button row. */}
+                        <button
+                            className="mj_IconButton"
+                            type="button"
+                            aria-label="New session"
+                            title="New session — runs /start"
+                            onClick={() => {
+                                setAccountOpen(false);
+                                closeConversationMenu();
+                                setNewSessionOpen(true);
+                            }}
+                        >
+                            <ComposeIcon />
+                        </button>
+                    </div>
+                </header>
+                <div className="mj_ConversationListTabs" role="group" aria-label="Filter conversations">
+                    {(
+                        [
+                            ["active", "Active"],
+                            ["favorites", "Favorites"],
+                            ["archived", "Archived"],
+                        ] as const
+                    ).map(([key, label]) => (
+                        <button
+                            key={key}
+                            type="button"
+                            data-tab={key}
+                            className={`mj_ConversationListTab${tab === key ? " mj_ConversationListTab_active" : ""}`}
+                            aria-pressed={tab === key}
+                            aria-label={key === "favorites" ? "Favorites" : undefined}
+                            onClick={(event) => {
+                                setTab(key);
+                                event.currentTarget.focus({ preventScroll: true });
+                            }}
+                        >
+                            {label}
+                        </button>
+                    ))}
+                </div>
+                <div data-testid="conversation-search" className="mj_ConversationSearch" role="search">
+                    <label
+                        className="mj_ConversationSearch_inputWrapper mj_noTextInput"
+                        htmlFor="conversation-search-input"
+                    >
+                        <SearchIcon aria-hidden />
+                        <input
+                            id="conversation-search-input"
+                            className="mj_ConversationSearch_input"
+                            type="search"
+                            value={query}
+                            onChange={(event) => setQuery(event.target.value)}
+                            placeholder="Search"
+                            aria-label="Search"
+                            autoComplete="off"
+                            // Server rejects message-search queries over 256 chars; cap the shared
+                            // box so a giant paste can't produce a misleading "unavailable" state.
+                            maxLength={256}
+                        />
+                    </label>
+                </div>
+                {state.preferencesUnavailable && (
+                    <div className="mj_ConnectionError" role="status">
+                        {PREFERENCES_UNAVAILABLE_ERROR}
+                    </div>
+                )}
+                {state.controlError && (
+                    <div className="mj_ConnectionError" role="status">
+                        {state.controlError}
+                    </div>
+                )}
+                {outcomeAnnouncement && (
+                    <span
+                        className="mj_ScreenReaderOnly mj_SubagentOutcomeStatus"
+                        role="status"
+                        aria-live="polite"
+                        aria-atomic="true"
+                    >
+                        {outcomeAnnouncement}
+                    </span>
+                )}
+                <div className="mj_ConversationList" data-testid="conversation-list">
+                    <NumberSearchResult client={client} query={query} />
+                    {/* Active/Favorites render each parent row, then splice
                                         its NON-ARCHIVED subagent children in beneath (indented) —
                                         archiving a child removes it from these tabs. The Archived
                                         tab renders flat (archived parents + archived children as
@@ -2080,145 +2076,143 @@ function ConversationListView({
                                         nested path and the fallback path stay in lock-step (a done
                                         child of an ARCHIVED parent can't leak in via either). The
                                         Archived tab is unaffected. */}
-                                    {/* Mac sidebar: rows sit under day section headers ("Today",
+                    {/* Mac sidebar: rows sit under day section headers ("Today",
                                         "Yesterday", weekday, date); pinned rows keep their own
                                         section first. Each parent row is followed by its nested
                                         running children, as before. */}
-                                    {pinSection.length > 0 && (
-                                        <section className="mj_ConversationListGroup" aria-label="Pinned">
-                                            <div className="mj_ConversationListGroup_label" aria-hidden="true">
-                                                Pinned
-                                            </div>
-                                            <div role="list">
-                                                {pinSection.flatMap(({ pin, conversation }) =>
-                                                    conversation
-                                                        ? [
-                                                              renderConversation(conversation, false, pin),
-                                                              renderSuccessorHint(pin),
-                                                              ...nestedChildRows(conversation),
-                                                          ].filter((row): row is React.ReactElement => row !== null)
-                                                        : [renderMissingPin(pin), renderSuccessorHint(pin)].filter(
-                                                              (row): row is React.ReactElement => row !== null,
-                                                          ),
-                                                )}
-                                            </div>
-                                        </section>
-                                    )}
-                                    {rowGroups.map((group) => (
-                                        <section
-                                            className="mj_ConversationListGroup"
-                                            key={group.label}
-                                            aria-label={group.label}
-                                        >
-                                            <div className="mj_ConversationListGroup_label" aria-hidden="true">
-                                                {group.label}
-                                            </div>
-                                            <div role="list">
-                                                {group.rows.flatMap((conversation) => [
-                                                    renderConversation(conversation, false),
-                                                    ...nestedChildRows(conversation),
-                                                ])}
-                                            </div>
-                                        </section>
-                                    ))}
-                                    {tab === "active" && !hasAnyActive && archivedTotal === 0 && !pinSection.length && (
-                                        <p className="mj_ConversationListEmpty">
-                                            Your agent conversations will appear here.
-                                        </p>
-                                    )}
-                                    {tab === "active" && !hasAnyActive && archivedTotal > 0 && !pinSection.length && (
-                                        <p className="mj_ConversationListEmpty">No active conversations.</p>
-                                    )}
-                                    {tab === "active" && hasAnyActive && !visibleRows.length && !pinSection.length && (
-                                        <p className="mj_ConversationListEmpty">No conversations match your search.</p>
-                                    )}
-                                    {tab === "favorites" && !hasAnyFavorite && (
-                                        <p className="mj_ConversationListEmpty">No favorite conversations yet.</p>
-                                    )}
-                                    {tab === "favorites" && hasAnyFavorite && !visibleRows.length && (
-                                        <p className="mj_ConversationListEmpty">No favorites match your search.</p>
-                                    )}
-                                    {tab === "archived" && archivedTotal === 0 && (
-                                        <p className="mj_ConversationListEmpty">No archived conversations.</p>
-                                    )}
-                                    {tab === "archived" && archivedTotal > 0 && !visibleRows.length && (
-                                        <p className="mj_ConversationListEmpty">
-                                            No archived conversations match your search.
-                                        </p>
-                                    )}
-                                    {/* Inside the conversation list scroll container so the Messages section
+                    {pinSection.length > 0 && (
+                        <section className="mj_ConversationListGroup" aria-label="Pinned">
+                            <div className="mj_ConversationListGroup_label" aria-hidden="true">
+                                Pinned
+                            </div>
+                            <div role="list">
+                                {pinSection.flatMap(({ pin, conversation }) =>
+                                    conversation
+                                        ? [
+                                              renderConversation(conversation, false, pin),
+                                              renderSuccessorHint(pin),
+                                              ...nestedChildRows(conversation),
+                                          ].filter((row): row is React.ReactElement => row !== null)
+                                        : [renderMissingPin(pin), renderSuccessorHint(pin)].filter(
+                                              (row): row is React.ReactElement => row !== null,
+                                          ),
+                                )}
+                            </div>
+                        </section>
+                    )}
+                    {rowGroups.map((group) => (
+                        <section className="mj_ConversationListGroup" key={group.label} aria-label={group.label}>
+                            <div className="mj_ConversationListGroup_label" aria-hidden="true">
+                                {group.label}
+                            </div>
+                            <div role="list">
+                                {group.rows.flatMap((conversation) => [
+                                    renderConversation(conversation, false),
+                                    ...nestedChildRows(conversation),
+                                ])}
+                            </div>
+                        </section>
+                    ))}
+                    {tab === "active" && !hasAnyActive && archivedTotal === 0 && !pinSection.length && (
+                        <p className="mj_ConversationListEmpty">Your agent conversations will appear here.</p>
+                    )}
+                    {tab === "active" && !hasAnyActive && archivedTotal > 0 && !pinSection.length && (
+                        <p className="mj_ConversationListEmpty">No active conversations.</p>
+                    )}
+                    {tab === "active" && hasAnyActive && !visibleRows.length && !pinSection.length && (
+                        <p className="mj_ConversationListEmpty">No conversations match your search.</p>
+                    )}
+                    {tab === "favorites" && !hasAnyFavorite && (
+                        <p className="mj_ConversationListEmpty">No favorite conversations yet.</p>
+                    )}
+                    {tab === "favorites" && hasAnyFavorite && !visibleRows.length && (
+                        <p className="mj_ConversationListEmpty">No favorites match your search.</p>
+                    )}
+                    {tab === "archived" && archivedTotal === 0 && (
+                        <p className="mj_ConversationListEmpty">No archived conversations.</p>
+                    )}
+                    {tab === "archived" && archivedTotal > 0 && !visibleRows.length && (
+                        <p className="mj_ConversationListEmpty">No archived conversations match your search.</p>
+                    )}
+                    {/* Inside the conversation list scroll container so the Messages section
                                         scrolls with the chat list — a long hit list stays reachable. */}
-                                    <MessageSearchResults
-                                        query={query}
-                                        search={state.messageSearch}
-                                        now={renderNow}
-                                        onSelect={(conversationId) => void client.selectConversation(conversationId)}
-                                    />
-                                </div>
-                            </nav>
-                        </div>
-                    </div>
+                    <MessageSearchResults
+                        query={query}
+                        search={state.messageSearch}
+                        now={renderNow}
+                        onSelect={(conversationId) => void client.selectConversation(conversationId)}
+                    />
                 </div>
-                {accountOpen && (
-                    <SettingsSheet
-                        client={client}
-                        session={state.session}
-                        connection={state.connection}
-                        notices={state.userSettingsUnsupported ? undefined : state.userSettings?.notices}
-                        noticesError={state.userSettingsError}
-                        onLoadSettings={() => void client.loadSettings()}
-                        onNoticesChange={(value) => void client.setNoticesSetting(value)}
-                        onSignOut={() => {
-                            setAccountOpen(false);
-                            void client.logout();
-                        }}
-                        onClose={closeSettings}
-                    />
-                )}
-                {newSessionOpen && <NewSessionSheet client={client} onClose={() => setNewSessionOpen(false)} />}
-                {pinDialog && (
-                    <PinDialog
-                        client={client}
-                        state={state}
-                        target={pinDialog}
-                        onClose={() => setPinDialog(undefined)}
-                    />
-                )}
-                {conversationMenu && menuConversation && (
-                    <div
-                        className="mj_HeaderMenu mj_ConversationMenu"
-                        role="menu"
-                        ref={conversationMenuElementRef}
-                        style={{ position: "fixed", left: conversationMenu.left, top: conversationMenu.top }}
-                        onKeyDown={(event) => {
-                            const items = Array.from(
-                                event.currentTarget.querySelectorAll<HTMLElement>('[role="menuitem"]'),
-                            );
-                            const currentIndex = items.findIndex((item) => item === document.activeElement);
-                            if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-                                event.preventDefault();
-                                const direction = event.key === "ArrowDown" ? 1 : -1;
-                                const nextIndex =
-                                    currentIndex === -1
-                                        ? event.key === "ArrowDown"
-                                            ? 0
-                                            : items.length - 1
-                                        : (currentIndex + direction + items.length) % items.length;
-                                items[nextIndex]?.focus();
-                            } else if (event.key === "Enter" || event.key === " ") {
-                                const currentItem = items[currentIndex];
-                                if (!currentItem) return;
-                                event.preventDefault();
-                                currentItem.click();
-                            } else if (event.key === "Escape") {
-                                event.preventDefault();
-                                event.stopPropagation();
-                                closeConversationMenu(true);
-                            }
-                        }}
-                    >
-                        {journalPins ? (
-                            !(conversationMenu && journalPinnedIds.has(conversationMenu.conversationId)) ? (
+            </nav>
+            {accountOpen && (
+                <SettingsSheet
+                    client={client}
+                    session={state.session}
+                    connection={state.connection}
+                    notices={state.userSettingsUnsupported ? undefined : state.userSettings?.notices}
+                    noticesError={state.userSettingsError}
+                    onLoadSettings={() => void client.loadSettings()}
+                    onNoticesChange={(value) => void client.setNoticesSetting(value)}
+                    onSignOut={() => {
+                        setAccountOpen(false);
+                        void client.logout();
+                    }}
+                    onClose={closeSettings}
+                />
+            )}
+            {newSessionOpen && <NewSessionSheet client={client} onClose={() => setNewSessionOpen(false)} />}
+            {pinDialog && (
+                <PinDialog client={client} state={state} target={pinDialog} onClose={() => setPinDialog(undefined)} />
+            )}
+            {conversationMenu && menuConversation && (
+                <div
+                    className="mj_HeaderMenu mj_ConversationMenu"
+                    role="menu"
+                    ref={conversationMenuElementRef}
+                    style={{ position: "fixed", left: conversationMenu.left, top: conversationMenu.top }}
+                    onKeyDown={(event) => {
+                        const items = Array.from(
+                            event.currentTarget.querySelectorAll<HTMLElement>('[role="menuitem"]'),
+                        );
+                        const currentIndex = items.findIndex((item) => item === document.activeElement);
+                        if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                            event.preventDefault();
+                            const direction = event.key === "ArrowDown" ? 1 : -1;
+                            const nextIndex =
+                                currentIndex === -1
+                                    ? event.key === "ArrowDown"
+                                        ? 0
+                                        : items.length - 1
+                                    : (currentIndex + direction + items.length) % items.length;
+                            items[nextIndex]?.focus();
+                        } else if (event.key === "Enter" || event.key === " ") {
+                            const currentItem = items[currentIndex];
+                            if (!currentItem) return;
+                            event.preventDefault();
+                            currentItem.click();
+                        } else if (event.key === "Escape") {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            closeConversationMenu(true);
+                        }
+                    }}
+                >
+                    {journalPins ? (
+                        !(conversationMenu && journalPinnedIds.has(conversationMenu.conversationId)) ? (
+                            <button
+                                className="mj_ConversationMenu_item"
+                                type="button"
+                                role="menuitem"
+                                onClick={() => {
+                                    closeConversationMenu();
+                                    setPinDialog({ kind: "edit", convoId: menuConversation.id });
+                                }}
+                            >
+                                <PinIcon aria-hidden />
+                                Pin to sidebar…
+                            </button>
+                        ) : (
+                            <>
                                 <button
                                     className="mj_ConversationMenu_item"
                                     type="button"
@@ -2228,222 +2222,207 @@ function ConversationListView({
                                         setPinDialog({ kind: "edit", convoId: menuConversation.id });
                                     }}
                                 >
-                                    <PinIcon aria-hidden />
-                                    Pin to sidebar…
+                                    <FileEditIcon aria-hidden />
+                                    Edit pin…
                                 </button>
-                            ) : (
-                                <>
+                                {menuPinIndex > 0 && (
                                     <button
                                         className="mj_ConversationMenu_item"
                                         type="button"
                                         role="menuitem"
                                         onClick={() => {
                                             closeConversationMenu();
-                                            setPinDialog({ kind: "edit", convoId: menuConversation.id });
-                                        }}
-                                    >
-                                        <FileEditIcon aria-hidden />
-                                        Edit pin…
-                                    </button>
-                                    {menuPinIndex > 0 && (
-                                        <button
-                                            className="mj_ConversationMenu_item"
-                                            type="button"
-                                            role="menuitem"
-                                            onClick={() => {
-                                                closeConversationMenu();
-                                                void client.shiftPin(menuConversation.id, "up", shownPinIds);
-                                                restoreFocusAfterMenuAction();
-                                            }}
-                                        >
-                                            <ChevronUpIcon aria-hidden />
-                                            Move up
-                                        </button>
-                                    )}
-                                    {menuPinIndex >= 0 && menuPinIndex < shownPins.length - 1 && (
-                                        <button
-                                            className="mj_ConversationMenu_item"
-                                            type="button"
-                                            role="menuitem"
-                                            onClick={() => {
-                                                closeConversationMenu();
-                                                void client.shiftPin(menuConversation.id, "down", shownPinIds);
-                                                restoreFocusAfterMenuAction();
-                                            }}
-                                        >
-                                            <ChevronDownIcon aria-hidden />
-                                            Move down
-                                        </button>
-                                    )}
-                                    <button
-                                        className="mj_ConversationMenu_item"
-                                        type="button"
-                                        role="menuitem"
-                                        onClick={() => {
-                                            closeConversationMenu();
-                                            setPinDialog({ kind: "move", convoId: menuConversation.id });
-                                        }}
-                                    >
-                                        <PinIcon aria-hidden />
-                                        Move pin…
-                                    </button>
-                                    <button
-                                        className="mj_ConversationMenu_item"
-                                        type="button"
-                                        role="menuitem"
-                                        onClick={() => {
-                                            closeConversationMenu();
-                                            void client.removePin(menuConversation.id);
+                                            void client.shiftPin(menuConversation.id, "up", shownPinIds);
                                             restoreFocusAfterMenuAction();
                                         }}
                                     >
-                                        <PinIcon aria-hidden />
-                                        Unpin
+                                        <ChevronUpIcon aria-hidden />
+                                        Move up
                                     </button>
-                                </>
-                            )
-                        ) : state.pinnedIds.has(menuConversation.id) ? (
-                            <button
-                                className="mj_ConversationMenu_item"
-                                type="button"
-                                role="menuitem"
-                                onClick={() => {
-                                    closeConversationMenu();
-                                    client.unpinConversation(menuConversation.id);
-                                    restoreFocusAfterMenuAction();
-                                }}
-                            >
-                                <PinIcon aria-hidden />
-                                Unpin
-                            </button>
-                        ) : (
-                            <button
-                                className="mj_ConversationMenu_item"
-                                type="button"
-                                role="menuitem"
-                                onClick={() => {
-                                    closeConversationMenu();
-                                    client.pinConversation(menuConversation.id);
-                                    restoreFocusAfterMenuAction();
-                                }}
-                            >
-                                <PinIcon aria-hidden />
-                                Pin
-                            </button>
-                        )}
-                        {state.favoriteIds.has(menuConversation.id) ? (
-                            <button
-                                className="mj_ConversationMenu_item"
-                                type="button"
-                                role="menuitem"
-                                onClick={() => {
-                                    closeConversationMenu();
-                                    client.unfavoriteConversation(menuConversation.id);
-                                    restoreFocusAfterMenuAction();
-                                }}
-                            >
-                                <StarFilledIcon aria-hidden />
-                                Remove from Favorites
-                            </button>
-                        ) : (
-                            <button
-                                className="mj_ConversationMenu_item"
-                                type="button"
-                                role="menuitem"
-                                onClick={() => {
-                                    closeConversationMenu();
-                                    client.favoriteConversation(menuConversation.id);
-                                    restoreFocusAfterMenuAction();
-                                }}
-                            >
-                                <StarIcon aria-hidden />
-                                Add to Favorites
-                            </button>
-                        )}
-                        {!state.archivedIds.has(menuConversation.id) &&
-                            !effectiveUnread(menuConversation, state.unreadOverrideIds) && (
+                                )}
+                                {menuPinIndex >= 0 && menuPinIndex < shownPins.length - 1 && (
+                                    <button
+                                        className="mj_ConversationMenu_item"
+                                        type="button"
+                                        role="menuitem"
+                                        onClick={() => {
+                                            closeConversationMenu();
+                                            void client.shiftPin(menuConversation.id, "down", shownPinIds);
+                                            restoreFocusAfterMenuAction();
+                                        }}
+                                    >
+                                        <ChevronDownIcon aria-hidden />
+                                        Move down
+                                    </button>
+                                )}
                                 <button
                                     className="mj_ConversationMenu_item"
                                     type="button"
                                     role="menuitem"
                                     onClick={() => {
                                         closeConversationMenu();
-                                        client.markConversationUnread(menuConversation.id);
-                                        restoreFocusAfterMenuAction();
+                                        setPinDialog({ kind: "move", convoId: menuConversation.id });
                                     }}
                                 >
-                                    <MarkUnreadIcon aria-hidden />
-                                    Mark as unread
+                                    <PinIcon aria-hidden />
+                                    Move pin…
                                 </button>
-                            )}
-                        {!state.archivedIds.has(menuConversation.id) &&
-                            effectiveUnread(menuConversation, state.unreadOverrideIds) && (
                                 <button
                                     className="mj_ConversationMenu_item"
                                     type="button"
                                     role="menuitem"
                                     onClick={() => {
                                         closeConversationMenu();
-                                        client.markConversationRead(menuConversation.id);
+                                        void client.removePin(menuConversation.id);
                                         restoreFocusAfterMenuAction();
                                     }}
                                 >
-                                    <MarkReadIcon aria-hidden />
-                                    Mark as read
+                                    <PinIcon aria-hidden />
+                                    Unpin
                                 </button>
-                            )}
-                        {/* Manual collapse/expand of this conversation's subagent child rows —
+                            </>
+                        )
+                    ) : state.pinnedIds.has(menuConversation.id) ? (
+                        <button
+                            className="mj_ConversationMenu_item"
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                                closeConversationMenu();
+                                client.unpinConversation(menuConversation.id);
+                                restoreFocusAfterMenuAction();
+                            }}
+                        >
+                            <PinIcon aria-hidden />
+                            Unpin
+                        </button>
+                    ) : (
+                        <button
+                            className="mj_ConversationMenu_item"
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                                closeConversationMenu();
+                                client.pinConversation(menuConversation.id);
+                                restoreFocusAfterMenuAction();
+                            }}
+                        >
+                            <PinIcon aria-hidden />
+                            Pin
+                        </button>
+                    )}
+                    {state.favoriteIds.has(menuConversation.id) ? (
+                        <button
+                            className="mj_ConversationMenu_item"
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                                closeConversationMenu();
+                                client.unfavoriteConversation(menuConversation.id);
+                                restoreFocusAfterMenuAction();
+                            }}
+                        >
+                            <StarFilledIcon aria-hidden />
+                            Remove from Favorites
+                        </button>
+                    ) : (
+                        <button
+                            className="mj_ConversationMenu_item"
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                                closeConversationMenu();
+                                client.favoriteConversation(menuConversation.id);
+                                restoreFocusAfterMenuAction();
+                            }}
+                        >
+                            <StarIcon aria-hidden />
+                            Add to Favorites
+                        </button>
+                    )}
+                    {!state.archivedIds.has(menuConversation.id) &&
+                        !effectiveUnread(menuConversation, state.unreadOverrideIds) && (
+                            <button
+                                className="mj_ConversationMenu_item"
+                                type="button"
+                                role="menuitem"
+                                onClick={() => {
+                                    closeConversationMenu();
+                                    client.markConversationUnread(menuConversation.id);
+                                    restoreFocusAfterMenuAction();
+                                }}
+                            >
+                                <MarkUnreadIcon aria-hidden />
+                                Mark as unread
+                            </button>
+                        )}
+                    {!state.archivedIds.has(menuConversation.id) &&
+                        effectiveUnread(menuConversation, state.unreadOverrideIds) && (
+                            <button
+                                className="mj_ConversationMenu_item"
+                                type="button"
+                                role="menuitem"
+                                onClick={() => {
+                                    closeConversationMenu();
+                                    client.markConversationRead(menuConversation.id);
+                                    restoreFocusAfterMenuAction();
+                                }}
+                            >
+                                <MarkReadIcon aria-hidden />
+                                Mark as read
+                            </button>
+                        )}
+                    {/* Manual collapse/expand of this conversation's subagent child rows —
                             shown ONLY when it currently hosts child rows (hasSubagentChildRows
                             stays true while collapsed, so "Show subagents" remains reachable). */}
-                        {hasSubagentChildRows(menuConversation, sidebarIndex) && (
-                            <button
-                                className="mj_ConversationMenu_item"
-                                type="button"
-                                role="menuitem"
-                                onClick={() => {
-                                    closeConversationMenu();
-                                    client.toggleSubagentCollapse(menuConversation.id);
-                                    restoreFocusAfterMenuAction();
-                                }}
-                            >
-                                <ChevronDownIcon aria-hidden />
-                                {state.collapsedSubagentParentIds.has(menuConversation.id)
-                                    ? "Show subagents"
-                                    : "Collapse subagents"}
-                            </button>
-                        )}
-                        {state.archivedIds.has(menuConversation.id) ? (
-                            <button
-                                className="mj_ConversationMenu_item"
-                                type="button"
-                                role="menuitem"
-                                onClick={() => {
-                                    closeConversationMenu();
-                                    client.unarchiveConversation(menuConversation.id);
-                                    restoreFocusAfterMenuAction();
-                                }}
-                            >
-                                <UnarchiveIcon aria-hidden />
-                                Unarchive
-                            </button>
-                        ) : (
-                            <button
-                                className="mj_ConversationMenu_item"
-                                type="button"
-                                role="menuitem"
-                                onClick={() => {
-                                    closeConversationMenu();
-                                    client.archiveConversation(menuConversation.id);
-                                    restoreFocusAfterMenuAction();
-                                }}
-                            >
-                                <ArchiveIcon aria-hidden />
-                                Archive
-                            </button>
-                        )}
-                    </div>
-                )}
-            </div>
+                    {hasSubagentChildRows(menuConversation, sidebarIndex) && (
+                        <button
+                            className="mj_ConversationMenu_item"
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                                closeConversationMenu();
+                                client.toggleSubagentCollapse(menuConversation.id);
+                                restoreFocusAfterMenuAction();
+                            }}
+                        >
+                            <ChevronDownIcon aria-hidden />
+                            {state.collapsedSubagentParentIds.has(menuConversation.id)
+                                ? "Show subagents"
+                                : "Collapse subagents"}
+                        </button>
+                    )}
+                    {state.archivedIds.has(menuConversation.id) ? (
+                        <button
+                            className="mj_ConversationMenu_item"
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                                closeConversationMenu();
+                                client.unarchiveConversation(menuConversation.id);
+                                restoreFocusAfterMenuAction();
+                            }}
+                        >
+                            <UnarchiveIcon aria-hidden />
+                            Unarchive
+                        </button>
+                    ) : (
+                        <button
+                            className="mj_ConversationMenu_item"
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                                closeConversationMenu();
+                                client.archiveConversation(menuConversation.id);
+                                restoreFocusAfterMenuAction();
+                            }}
+                        >
+                            <ArchiveIcon aria-hidden />
+                            Archive
+                        </button>
+                    )}
+                </div>
+            )}
         </div>
     );
 }
@@ -5806,121 +5785,119 @@ function Timeline({
     const timelineMain = (
         <main className="mj_ChatView_timeline" data-testid="timeline">
             <div className="mj_ChatView_messagePanel mj_AutoHideScrollbar" ref={scrollRef} onScroll={onScroll}>
-                <div className="mj_ChatView_messageListWrapper">
-                    <ol className="mj_ChatView_messageList" aria-live="polite">
-                        {state.hasOlderHistory && (
-                            <li className="mj_HistoryRow">
-                                <button
-                                    className="mj_LoadHistory"
-                                    onClick={loadEarlierMessages}
-                                    disabled={state.loadingHistory}
-                                >
-                                    {state.loadingHistory ? "Loading…" : "Load earlier messages"}
-                                </button>
-                            </li>
-                        )}
-                        {timeline.map((item, index) => {
-                            const previous = timeline[index - 1];
-                            // A day divider precedes the first row of each new calendar day (§ upload-first
-                            // ref): a centred dated label flanked by hairline rules.
-                            const divider =
-                                !previous || !sameCalendarDay(item.timestamp, previous.timestamp) ? (
-                                    <li className="mj_DateDivider" role="separator">
-                                        <span className="mj_DateDivider_rule" aria-hidden="true" />
-                                        <span className="mj_DateDivider_label">{formatDayDivider(item.timestamp)}</span>
-                                        <span className="mj_DateDivider_rule" aria-hidden="true" />
-                                    </li>
-                                ) : null;
-                            if (item.kind === "event") {
-                                const next = timeline[index + 1];
-                                return (
-                                    <React.Fragment key={`e-${item.event.seq}`}>
-                                        {divider}
-                                        <MemoEventRow
-                                            client={client}
-                                            event={item.event}
-                                            answeredPromptReplies={answeredPromptReplies}
-                                            spawnOutcomes={spawnOutcomes}
-                                            agentChatResolutions={agentChatResolutions}
-                                            coordinatorDecisions={coordinatorDecisions}
-                                            itemCards={itemCards}
-                                            isReadOnly={isReadOnly}
-                                            resolvedAction={resolvedAction}
-                                            continuation={
-                                                previous?.kind === "event" &&
-                                                previous.event.sender === item.event.sender &&
-                                                !divider
-                                            }
-                                            lastInSection={
-                                                next?.kind !== "event" || next.event.sender !== item.event.sender
-                                            }
-                                            rowHandlers={menu.rowHandlers}
-                                        />
-                                    </React.Fragment>
-                                );
-                            }
-                            const message = item.message;
+                <ol className="mj_ChatView_messageList" aria-live="polite">
+                    {state.hasOlderHistory && (
+                        <li className="mj_HistoryRow">
+                            <button
+                                className="mj_LoadHistory"
+                                onClick={loadEarlierMessages}
+                                disabled={state.loadingHistory}
+                            >
+                                {state.loadingHistory ? "Loading…" : "Load earlier messages"}
+                            </button>
+                        </li>
+                    )}
+                    {timeline.map((item, index) => {
+                        const previous = timeline[index - 1];
+                        // A day divider precedes the first row of each new calendar day (§ upload-first
+                        // ref): a centred dated label flanked by hairline rules.
+                        const divider =
+                            !previous || !sameCalendarDay(item.timestamp, previous.timestamp) ? (
+                                <li className="mj_DateDivider" role="separator">
+                                    <span className="mj_DateDivider_rule" aria-hidden="true" />
+                                    <span className="mj_DateDivider_label">{formatDayDivider(item.timestamp)}</span>
+                                    <span className="mj_DateDivider_rule" aria-hidden="true" />
+                                </li>
+                            ) : null;
+                        if (item.kind === "event") {
+                            const next = timeline[index + 1];
                             return (
-                                <React.Fragment key={`m-${message.localId}`}>
+                                <React.Fragment key={`e-${item.event.seq}`}>
                                     {divider}
-                                    {message.kind === "image" || message.kind === "file" ? (
-                                        <PendingAttachment client={client} message={message} isReadOnly={isReadOnly} />
-                                    ) : (
-                                        <li
-                                            className="mj_EventTile mj_EventTile_sending mj_EventTile_lastInSection"
-                                            data-layout="bubble"
-                                            data-self="true"
-                                        >
-                                            <div className="mj_EventTile_line">
-                                                <div className="mj_TextBody mj_EventTile_content">
-                                                    <div className="mj_Markdown">
-                                                        <MarkdownBody text={message.body} label={message.localId} />
-                                                    </div>
-                                                </div>
-                                            </div>
-                                            <span className="mj_SendingLabel">Sending…</span>
-                                        </li>
-                                    )}
+                                    <MemoEventRow
+                                        client={client}
+                                        event={item.event}
+                                        answeredPromptReplies={answeredPromptReplies}
+                                        spawnOutcomes={spawnOutcomes}
+                                        agentChatResolutions={agentChatResolutions}
+                                        coordinatorDecisions={coordinatorDecisions}
+                                        itemCards={itemCards}
+                                        isReadOnly={isReadOnly}
+                                        resolvedAction={resolvedAction}
+                                        continuation={
+                                            previous?.kind === "event" &&
+                                            previous.event.sender === item.event.sender &&
+                                            !divider
+                                        }
+                                        lastInSection={
+                                            next?.kind !== "event" || next.event.sender !== item.event.sender
+                                        }
+                                        rowHandlers={menu.rowHandlers}
+                                    />
                                 </React.Fragment>
                             );
-                        })}
-                        {Object.values(state.textStreams).map((text, index) => (
-                            <li
-                                className="mj_EventTile mj_EventTile_lastInSection"
-                                key={`text-stream-${index}`}
-                                data-layout="bubble"
-                                data-self="false"
-                            >
-                                <span className="mj_SenderName">
-                                    <MsgAvatar />
-                                    <span className="mj_SenderName_displayName">agent</span>
-                                </span>
-                                <div className="mj_EventTile_line">
-                                    <div className="mj_TextBody mj_EventTile_content">
-                                        <div className="mj_Markdown mj_Markdown_streaming">
-                                            <MarkdownBody text={text} streaming label={`stream-${index}`} />
-                                            <span className="mj_Cursor" />
+                        }
+                        const message = item.message;
+                        return (
+                            <React.Fragment key={`m-${message.localId}`}>
+                                {divider}
+                                {message.kind === "image" || message.kind === "file" ? (
+                                    <PendingAttachment client={client} message={message} isReadOnly={isReadOnly} />
+                                ) : (
+                                    <li
+                                        className="mj_EventTile mj_EventTile_sending mj_EventTile_lastInSection"
+                                        data-layout="bubble"
+                                        data-self="true"
+                                    >
+                                        <div className="mj_EventTile_line">
+                                            <div className="mj_TextBody mj_EventTile_content">
+                                                <div className="mj_Markdown">
+                                                    <MarkdownBody text={message.body} label={message.localId} />
+                                                </div>
+                                            </div>
                                         </div>
+                                        <span className="mj_SendingLabel">Sending…</span>
+                                    </li>
+                                )}
+                            </React.Fragment>
+                        );
+                    })}
+                    {Object.values(state.textStreams).map((text, index) => (
+                        <li
+                            className="mj_EventTile mj_EventTile_lastInSection"
+                            key={`text-stream-${index}`}
+                            data-layout="bubble"
+                            data-self="false"
+                        >
+                            <span className="mj_SenderName">
+                                <MsgAvatar />
+                                <span className="mj_SenderName_displayName">agent</span>
+                            </span>
+                            <div className="mj_EventTile_line">
+                                <div className="mj_TextBody mj_EventTile_content">
+                                    <div className="mj_Markdown mj_Markdown_streaming">
+                                        <MarkdownBody text={text} streaming label={`stream-${index}`} />
+                                        <span className="mj_Cursor" />
                                     </div>
                                 </div>
-                            </li>
+                            </div>
+                        </li>
+                    ))}
+                    {sessionRunning &&
+                        Object.values(state.toolStreams).map((stream) => (
+                            <ToolStream key={stream.messageRef} stream={stream} />
                         ))}
-                        {sessionRunning &&
-                            Object.values(state.toolStreams).map((stream) => (
-                                <ToolStream key={stream.messageRef} stream={stream} />
-                            ))}
-                        {state.activity && state.activity.state !== "idle" && sessionRunning && (
-                            <li className="mj_TypingIndicator mj_Activity">
-                                <span />
-                                <span />
-                                <span />
-                                {state.activity.state === "thinking"
-                                    ? "Thinking"
-                                    : `Running ${state.activity.detail || "a tool"}`}
-                            </li>
-                        )}
-                    </ol>
-                </div>
+                    {state.activity && state.activity.state !== "idle" && sessionRunning && (
+                        <li className="mj_TypingIndicator mj_Activity">
+                            <span />
+                            <span />
+                            <span />
+                            {state.activity.state === "thinking"
+                                ? "Thinking"
+                                : `Running ${state.activity.detail || "a tool"}`}
+                        </li>
+                    )}
+                </ol>
             </div>
             {!isReadOnly && state.selectedConversationId && (
                 <StopTurnButton
@@ -7080,11 +7057,7 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                                         Drop files to attach
                                     </div>
                                 )}
-                                <div
-                                    ref={setBodyEl}
-                                    className="mj_ChatView_body mj_MainSplit_timeline"
-                                    data-layout="bubble"
-                                >
+                                <div ref={setBodyEl} className="mj_ChatView_body" data-layout="bubble">
                                     {childMode ? (
                                         <SubChatHeader client={client} state={state} collapse={collapse} />
                                     ) : (
