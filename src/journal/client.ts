@@ -2657,7 +2657,11 @@ export class MatronJournalClient {
             let cursor: string | undefined;
             let truncated = false;
             for (let page = 0; ; page += 1) {
-                const { items, next_cursor } = await api.items({ state: "open", ...(cursor ? { cursor } : {}) });
+                const { items, next_cursor } = await api.items({
+                    state: "open",
+                    limit: OPEN_ITEMS_PAGE,
+                    ...(cursor ? { cursor } : {}),
+                });
                 if (this.api !== api || this.trackerInboxGen !== gen) return;
                 for (const item of items) {
                     if (seen.has(item.id)) continue;
@@ -4383,6 +4387,10 @@ export function commentFailureMessage(error: unknown): string {
     }
     return knownErrorMessage(error.code) ?? `The server refused it (HTTP ${error.status}).`;
 }
+
+// The journal's largest page. The open-items walk is sequential, so on a real network each extra
+// page is another round trip before the inbox can show anything; the default 100 took a dozen.
+const OPEN_ITEMS_PAGE = 500;
 
 /** The Done tab's page: what the user answered, decided or read, most recently touched first. */
 const INBOX_DONE_FILTER = {

@@ -317,7 +317,7 @@ describe("MatronJournalClient tracker loaders", () => {
 
         await client.loadInbox();
 
-        expect(state.api.items).toHaveBeenCalledWith({ state: "open" });
+        expect(state.api.items).toHaveBeenCalledWith({ state: "open", limit: 500 });
         expect(client.getSnapshot().inboxItems).toEqual([item()]);
     });
 
@@ -497,8 +497,8 @@ describe("MatronJournalClient tracker loaders", () => {
         await client.loadInbox();
 
         expect(items).toHaveBeenCalledTimes(2);
-        expect(items).toHaveBeenNthCalledWith(1, { state: "open" });
-        expect(items).toHaveBeenNthCalledWith(2, { state: "open", cursor: "cursor-2" });
+        expect(items).toHaveBeenNthCalledWith(1, { state: "open", limit: 500 });
+        expect(items).toHaveBeenNthCalledWith(2, { state: "open", limit: 500, cursor: "cursor-2" });
         expect((client.getSnapshot().inboxItems ?? []).map((row) => row.id)).toEqual(["it_1", "it_2", "it_3"]);
         expect(client.getSnapshot().trackerError).toBeUndefined();
     });
@@ -768,7 +768,7 @@ describe("MatronJournalClient tracker mutations", () => {
             expect.any(String),
         );
         expect(state.api.item).toHaveBeenCalledWith(1);
-        expect(state.api.items).toHaveBeenCalledWith({ state: "open" });
+        expect(state.api.items).toHaveBeenCalledWith({ state: "open", limit: 500 });
     });
 
     it("commentItem posts with a fresh idempotency key and refetches the item", async () => {
@@ -1865,7 +1865,7 @@ describe("MatronJournalClient notices and user settings", () => {
         await flush();
 
         expect(client.getSnapshot().userSettings).toEqual({ notices: false });
-        expect(internal.api.items).toHaveBeenCalledWith({ state: "open" });
+        expect(internal.api.items).toHaveBeenCalledWith({ state: "open", limit: 500 });
         expect(client.getSnapshot().inboxItems).toHaveLength(1);
     });
 });
