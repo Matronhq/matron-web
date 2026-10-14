@@ -2314,6 +2314,63 @@ textarea {
     margin-right: 12px;
 }
 
+/* A recent folder: its path, then how long since a session last started there. */
+.mj_NewSessionSheet [role="listitem"].mj_NewSessionSheet_folder {
+    flex-direction: row;
+    align-items: baseline;
+    gap: 12px;
+}
+
+.mj_NewSessionSheet_folderPath {
+    min-width: 0;
+    flex: 1 1 auto;
+    overflow: hidden;
+    font-family: var(--cpd-font-family-mono);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_NewSessionSheet_folderUsed {
+    flex: 0 0 auto;
+    color: var(--cpd-color-text-secondary);
+    font-size: 12px;
+}
+
+/* Agent switch (Claude / Codex): the segmented control at its own width. */
+.mj_NewSessionSheet_agentSwitch {
+    align-self: flex-start;
+}
+
+/* Model and effort pickers side by side, each label above its select. */
+.mj_NewSessionSheet_picks {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+}
+
+.mj_NewSessionSheet_pick {
+    min-width: 0;
+    flex: 1 1 160px;
+}
+
+.mj_NewSessionSheet select {
+    display: block;
+    width: 100%;
+    min-height: 34px;
+    box-sizing: border-box;
+    border: 1px solid var(--cpd-color-border-interactive-secondary);
+    border-radius: var(--cpd-radius-field);
+    background: var(--cpd-color-bg-canvas-default);
+    color: var(--cpd-color-text-primary);
+    padding: 0 8px;
+    font: 400 13.5px/20px var(--cpd-font-family-ui);
+}
+
+.mj_NewSessionSheet select:focus-visible {
+    border-color: var(--cpd-color-border-interactive-primary);
+    outline: none;
+}
+
 /* Box usage under an agent (and above the folder list once one is chosen): the box's last
    capacity report — limits with reset times, live sessions, disk — and an "as of" caption
    saying how old the numbers are. Spans, not divs: it sits inside the agent's <button>. */

@@ -10,7 +10,15 @@ import { createRoot, type Root } from "react-dom/client";
 
 import { MatronJournalClient } from "../../../src/journal/client";
 import { MatronApp, NewSessionSheet } from "../../../src/journal/components";
-import type { BoxStatus, ClientState, DeviceDTO, ServerFrame, Session } from "../../../src/journal/types";
+import type {
+    BoxStatus,
+    ClientState,
+    DeviceDTO,
+    NewSessionOffer,
+    RecentFolder,
+    ServerFrame,
+    Session,
+} from "../../../src/journal/types";
 
 jest.mock("../../../res/matron-logo-simple.svg", () => "matron-logo.svg");
 
@@ -66,6 +74,27 @@ function textButton(container: HTMLElement, text: string): HTMLButtonElement {
     return match;
 }
 
+function folderButton(container: HTMLElement, path: string): HTMLButtonElement {
+    const match = [...container.querySelectorAll<HTMLButtonElement>(".mj_NewSessionSheet_folder")].find(
+        (candidate) => candidate.querySelector(".mj_NewSessionSheet_folderPath")?.textContent === path,
+    );
+    if (!match) throw new Error(`Missing folder: ${path}`);
+    return match;
+}
+
+function offer(folders: RecentFolder[], extra: Partial<NewSessionOffer> = {}): NewSessionOffer {
+    return {
+        folders,
+        agentOptions: [],
+        defaultAgent: null,
+        modelOptions: [],
+        defaultModel: null,
+        effortOptions: [],
+        defaultEffort: null,
+        ...extra,
+    };
+}
+
 async function render(element: React.ReactElement): Promise<{
     container: HTMLDivElement;
     root: Root;
@@ -96,7 +125,7 @@ describe("NewSessionSheet", () => {
     it("runs agent to folder to start and selects the created conversation", async () => {
         const client = new MatronJournalClient();
         jest.spyOn(client, "listAgents").mockResolvedValue([AGENT_A, AGENT_B]);
-        jest.spyOn(client, "recentFolders").mockResolvedValue([{ path: "/srv/project", last_used: 1 }]);
+        jest.spyOn(client, "newSessionOffer").mockResolvedValue(offer([{ path: "/srv/project", last_used: 1 }]));
         const start = jest.spyOn(client, "startSessionRpc").mockResolvedValue({
             kind: "created",
             convoId: "created-1",
@@ -106,17 +135,170 @@ describe("NewSessionSheet", () => {
 
         rendered = await render(React.createElement(NewSessionSheet, { client, onClose: close }));
         await act(async () => textButton(rendered!.container, "Box AConnected").click());
-        await act(async () => textButton(rendered!.container, "/srv/project").click());
+        await act(async () => folderButton(rendered!.container, "/srv/project").click());
 
-        expect(start).toHaveBeenCalledWith(AGENT_A.device_id, "/srv/project", false);
+        expect(start).toHaveBeenCalledWith(AGENT_A.device_id, "/srv/project", false, {});
         expect(close).toHaveBeenCalledTimes(1);
         expect(select).toHaveBeenCalledWith("created-1", { fromRpcCreate: true });
+    });
+
+    describe("agent, model and effort", () => {
+        const CLAUDE = { value: "claude", label: "Claude" };
+        const CODEX = { value: "codex", label: "Codex" };
+        const FULL_OFFER: Partial<NewSessionOffer> = {
+            agentOptions: [CLAUDE, CODEX],
+            defaultAgent: "claude",
+            modelOptions: [
+                { value: "opus", label: "Opus" },
+                { value: "sonnet", label: "Sonnet" },
+            ],
+            defaultModel: "opus",
+            effortOptions: [
+                { value: "medium", label: "Medium" },
+                { value: "high", label: "High" },
+            ],
+            defaultEffort: "high",
+        };
+
+        async function openOn(
+            extra: Partial<NewSessionOffer>,
+            folders: RecentFolder[] = [],
+        ): Promise<{ client: MatronJournalClient; start: jest.SpyInstance }> {
+            const client = new MatronJournalClient();
+            jest.spyOn(client, "listAgents").mockResolvedValue([AGENT_A]);
+            jest.spyOn(client, "newSessionOffer").mockResolvedValue(offer(folders, extra));
+            const start = jest.spyOn(client, "startSessionRpc").mockResolvedValue({ kind: "uncertain" });
+            rendered = await render(React.createElement(NewSessionSheet, { client, onClose: jest.fn() }));
+            return { client, start };
+        }
+
+        function select(id: string): HTMLSelectElement | null {
+            return rendered!.container.querySelector<HTMLSelectElement>(`#${id}`);
+        }
+
+        async function choose(id: string, value: string): Promise<void> {
+            const element = select(id)!;
+            await act(async () => {
+                element.value = value;
+                element.dispatchEvent(new Event("change", { bubbles: true }));
+            });
+        }
+
+        function agentButton(label: string): HTMLButtonElement {
+            const group = rendered!.container.querySelector('[role="group"][aria-label="Agent"]');
+            const match = [...(group?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find(
+                (candidate) => candidate.textContent === label,
+            );
+            if (!match) throw new Error(`Missing agent: ${label}`);
+            return match;
+        }
+
+        it("hides every picker for a box that offers none", async () => {
+            const { start } = await openOn({});
+
+            expect(rendered!.container.querySelector('[aria-label="Agent"]')).toBeNull();
+            expect(select("mj-new-session-model")).toBeNull();
+            expect(select("mj-new-session-effort")).toBeNull();
+            await act(async () => textButton(rendered!.container, "Start").click());
+            expect(start).toHaveBeenCalledWith(AGENT_A.device_id, "", false, {});
+        });
+
+        it("names the box defaults on the Default rows and sends only the agent when nothing is picked", async () => {
+            const { start } = await openOn(FULL_OFFER);
+
+            expect(agentButton("Claude").getAttribute("aria-pressed")).toBe("true");
+            expect(select("mj-new-session-model")!.options[0].textContent).toBe("Default (Opus)");
+            expect(select("mj-new-session-effort")!.options[0].textContent).toBe("Default (High)");
+            await act(async () => textButton(rendered!.container, "Start").click());
+            expect(start).toHaveBeenCalledWith(AGENT_A.device_id, "", false, { agent: "claude" });
+        });
+
+        it("sends the picked model and effort", async () => {
+            const { start } = await openOn(FULL_OFFER, [{ path: "/srv/project", last_used: null }]);
+
+            await choose("mj-new-session-model", "sonnet");
+            await choose("mj-new-session-effort", "medium");
+            await act(async () => folderButton(rendered!.container, "/srv/project").click());
+
+            expect(start).toHaveBeenCalledWith(AGENT_A.device_id, "/srv/project", false, {
+                agent: "claude",
+                model: "sonnet",
+                effort: "medium",
+            });
+        });
+
+        it("hides model and effort for Codex and leaves them off the start", async () => {
+            const { start } = await openOn(FULL_OFFER);
+
+            await choose("mj-new-session-model", "sonnet");
+            await choose("mj-new-session-effort", "medium");
+            await act(async () => agentButton("Codex").click());
+
+            expect(agentButton("Codex").getAttribute("aria-pressed")).toBe("true");
+            expect(select("mj-new-session-model")).toBeNull();
+            expect(select("mj-new-session-effort")).toBeNull();
+            await act(async () => textButton(rendered!.container, "Start").click());
+            expect(start).toHaveBeenCalledWith(AGENT_A.device_id, "", false, { agent: "codex" });
+        });
+
+        it("opens on a Codex-default box with Codex selected and no Claude pickers", async () => {
+            await openOn({ agentOptions: [CLAUDE, CODEX], defaultAgent: "codex" });
+
+            expect(agentButton("Codex").getAttribute("aria-pressed")).toBe("true");
+            expect(select("mj-new-session-model")).toBeNull();
+        });
+
+        it("shows no switch for a single agent but still names it", async () => {
+            const { start } = await openOn({ agentOptions: [CLAUDE], effortOptions: FULL_OFFER.effortOptions });
+
+            expect(rendered!.container.querySelector('[aria-label="Agent"]')).toBeNull();
+            expect(select("mj-new-session-effort")!.options[0].textContent).toBe("Default");
+            await act(async () => textButton(rendered!.container, "Start").click());
+            expect(start).toHaveBeenCalledWith(AGENT_A.device_id, "", false, { agent: "claude" });
+        });
+
+        it("drops a pick the next box does not offer", async () => {
+            const client = new MatronJournalClient();
+            jest.spyOn(client, "listAgents").mockResolvedValue([AGENT_A, AGENT_B]);
+            jest.spyOn(client, "newSessionOffer")
+                .mockResolvedValueOnce(offer([], FULL_OFFER))
+                .mockResolvedValueOnce(offer([], { modelOptions: [{ value: "haiku", label: "Haiku" }] }));
+            const start = jest.spyOn(client, "startSessionRpc").mockResolvedValue({ kind: "uncertain" });
+            rendered = await render(React.createElement(NewSessionSheet, { client, onClose: jest.fn() }));
+
+            await act(async () => textButton(rendered!.container, "Box AConnected").click());
+            await choose("mj-new-session-model", "sonnet");
+            await act(async () => textButton(rendered!.container, "Back").click());
+            await act(async () => textButton(rendered!.container, "Box BConnected").click());
+
+            expect(select("mj-new-session-model")!.value).toBe("");
+            await act(async () => textButton(rendered!.container, "Start").click());
+            expect(start).toHaveBeenCalledWith(AGENT_B.device_id, "", false, {});
+        });
+    });
+
+    it("captions each recent folder with when it was last used", async () => {
+        const client = new MatronJournalClient();
+        jest.spyOn(client, "listAgents").mockResolvedValue([AGENT_A]);
+        jest.spyOn(client, "newSessionOffer").mockResolvedValue(
+            offer([
+                { path: "/srv/recent", last_used: Date.now() - 2 * 60 * 60_000 },
+                { path: "/srv/fresh", last_used: null },
+            ]),
+        );
+
+        rendered = await render(React.createElement(NewSessionSheet, { client, onClose: jest.fn() }));
+
+        const caption = (path: string): string | null | undefined =>
+            folderButton(rendered!.container, path).querySelector(".mj_NewSessionSheet_folderUsed")?.textContent;
+        expect(caption("/srv/recent")).toBe("2h ago");
+        expect(caption("/srv/fresh")).toBe("Never used");
     });
 
     it("auto-skips a sole connected agent and hides Back", async () => {
         const client = new MatronJournalClient();
         jest.spyOn(client, "listAgents").mockResolvedValue([AGENT_A]);
-        jest.spyOn(client, "recentFolders").mockResolvedValue([]);
+        jest.spyOn(client, "newSessionOffer").mockResolvedValue(offer([]));
 
         rendered = await render(React.createElement(NewSessionSheet, { client, onClose: jest.fn() }));
 
@@ -144,17 +326,17 @@ describe("NewSessionSheet", () => {
 
     it("does not let a late recent-folders reply replace the starting state", async () => {
         const client = new MatronJournalClient();
-        const folders = deferred<[]>();
+        const folders = deferred<NewSessionOffer>();
         const starting = deferred<{ kind: "uncertain" }>();
         jest.spyOn(client, "listAgents").mockResolvedValue([AGENT_A]);
-        jest.spyOn(client, "recentFolders").mockReturnValue(folders.promise);
+        jest.spyOn(client, "newSessionOffer").mockReturnValue(folders.promise);
         jest.spyOn(client, "startSessionRpc").mockReturnValue(starting.promise);
 
         rendered = await render(React.createElement(NewSessionSheet, { client, onClose: jest.fn() }));
         await act(async () => textButton(rendered!.container, "Start").click());
         expect(rendered.container.textContent).toContain("Starting session…");
 
-        await act(async () => folders.resolve([]));
+        await act(async () => folders.resolve(offer([])));
 
         expect(rendered.container.textContent).toContain("Starting session…");
         expect(rendered.container.textContent).not.toContain("Folder path");
@@ -163,17 +345,17 @@ describe("NewSessionSheet", () => {
 
     it("ignores an out-of-order folder reply after re-entering the same agent", async () => {
         const client = new MatronJournalClient();
-        const first = deferred<Array<{ path: string; last_used: number | null }>>();
-        const second = deferred<Array<{ path: string; last_used: number | null }>>();
+        const first = deferred<NewSessionOffer>();
+        const second = deferred<NewSessionOffer>();
         jest.spyOn(client, "listAgents").mockResolvedValue([AGENT_A, AGENT_B]);
-        jest.spyOn(client, "recentFolders").mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+        jest.spyOn(client, "newSessionOffer").mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
 
         rendered = await render(React.createElement(NewSessionSheet, { client, onClose: jest.fn() }));
         await act(async () => textButton(rendered!.container, "Box AConnected").click());
         await act(async () => textButton(rendered!.container, "Back").click());
         await act(async () => textButton(rendered!.container, "Box AConnected").click());
-        await act(async () => second.resolve([{ path: "/new", last_used: 2 }]));
-        await act(async () => first.resolve([{ path: "/stale", last_used: 1 }]));
+        await act(async () => second.resolve(offer([{ path: "/new", last_used: 2 }])));
+        await act(async () => first.resolve(offer([{ path: "/stale", last_used: 1 }])));
 
         expect(rendered.container.textContent).toContain("/new");
         expect(rendered.container.textContent).not.toContain("/stale");
@@ -183,7 +365,7 @@ describe("NewSessionSheet", () => {
         const client = new MatronJournalClient();
         const start = deferred<{ kind: "created"; convoId: string }>();
         jest.spyOn(client, "listAgents").mockResolvedValue([AGENT_A]);
-        jest.spyOn(client, "recentFolders").mockResolvedValue([]);
+        jest.spyOn(client, "newSessionOffer").mockResolvedValue(offer([]));
         jest.spyOn(client, "startSessionRpc").mockReturnValue(start.promise);
         const select = jest.spyOn(client, "selectConversation").mockResolvedValue(undefined);
         const close = jest.fn();
@@ -246,7 +428,7 @@ describe("NewSessionSheet", () => {
                 .mockResolvedValueOnce("booting")
                 .mockResolvedValueOnce("booting")
                 .mockResolvedValueOnce("up");
-            jest.spyOn(client, "recentFolders").mockResolvedValue([]);
+            jest.spyOn(client, "newSessionOffer").mockResolvedValue(offer([]));
 
             rendered = await render(React.createElement(NewSessionSheet, { client, onClose: jest.fn() }));
             await act(async () => wakeButton(rendered!.container, "Box B")!.click());
@@ -331,7 +513,7 @@ describe("NewSessionSheet", () => {
             jest.spyOn(client, "listAgents").mockResolvedValue([AGENT_A, ASLEEP_B]);
             const answer = deferred<"up">();
             jest.spyOn(client, "probeAgent").mockReturnValue(answer.promise);
-            jest.spyOn(client, "recentFolders").mockResolvedValue([]);
+            jest.spyOn(client, "newSessionOffer").mockResolvedValue(offer([]));
 
             rendered = await render(React.createElement(NewSessionSheet, { client, onClose: jest.fn() }));
             await act(async () => wakeButton(rendered!.container, "Box B")!.click());
@@ -474,7 +656,7 @@ describe("NewSessionSheet", () => {
             const client = new MatronJournalClient();
             withStatuses(client, { [AGENT_A.device_id]: statusFor(Date.now()) });
             jest.spyOn(client, "listAgents").mockResolvedValue([AGENT_A]);
-            jest.spyOn(client, "recentFolders").mockResolvedValue([]);
+            jest.spyOn(client, "newSessionOffer").mockResolvedValue(offer([]));
 
             rendered = await render(React.createElement(NewSessionSheet, { client, onClose: jest.fn() }));
 

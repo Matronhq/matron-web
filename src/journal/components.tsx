@@ -159,7 +159,9 @@ import {
     parseMediaDims,
     type JournalEvent,
     type PendingMessage,
-    type RecentFolder,
+    type NewSessionOffer,
+    type StartOption,
+    type StartSessionPicks,
     rendersAsTopLevelRow,
     isSubChat,
     type SessionStatus,
@@ -481,12 +483,83 @@ type SheetState =
           step: "folders";
           agent: DeviceDTO;
           foldersRequestId: number;
-          folders?: RecentFolder[];
+          offer?: NewSessionOffer;
           foldersError?: string;
       }
     | { step: "starting"; agent: DeviceDTO }
     | { step: "uncertain" }
     | { step: "error"; agent: DeviceDTO; message: string };
+
+// The sheet's own agent, model and effort picks. null = no pick: the box's default applies.
+interface SheetPicks {
+    agent: string | null;
+    model: string | null;
+    effort: string | null;
+}
+
+const NO_PICKS: SheetPicks = { agent: null, model: null, effort: null };
+
+const EMPTY_OFFER: NewSessionOffer = {
+    folders: [],
+    agentOptions: [],
+    defaultAgent: null,
+    modelOptions: [],
+    defaultModel: null,
+    effortOptions: [],
+    defaultEffort: null,
+};
+
+const CLAUDE_AGENT = "claude";
+
+function offers(options: StartOption[], value: string | null): value is string {
+    return value !== null && options.some((option) => option.value === value);
+}
+
+// The agent `start` names: the pick when this box offers it, else the box's default, else its
+// first offer. Reads as Claude on a bridge that offers none, which is what such a bridge runs.
+function selectedAgent(offer: NewSessionOffer, picks: SheetPicks): string {
+    if (offers(offer.agentOptions, picks.agent)) return picks.agent;
+    if (offers(offer.agentOptions, offer.defaultAgent)) return offer.defaultAgent;
+    return offer.agentOptions[0]?.value ?? CLAUDE_AGENT;
+}
+
+// A pick this box doesn't list is dropped, not parked: carried to the next box it would be a
+// `bad_model` (or `bad_agent`, `bad_effort`) waiting to happen.
+function prunePicks(offer: NewSessionOffer, picks: SheetPicks): SheetPicks {
+    return {
+        agent: offers(offer.agentOptions, picks.agent) ? picks.agent : null,
+        model: offers(offer.modelOptions, picks.model) ? picks.model : null,
+        effort: offers(offer.effortOptions, picks.effort) ? picks.effort : null,
+    };
+}
+
+function startPicks(offer: NewSessionOffer | undefined, picks: SheetPicks): StartSessionPicks {
+    if (!offer) return {};
+    const result: StartSessionPicks = {};
+    const agent = selectedAgent(offer, picks);
+    // Named whenever the box offered agents, even its default: saying what was shown beats
+    // trusting the box default not to have moved since. A bridge that offered none isn't told.
+    if (offer.agentOptions.length > 0) result.agent = agent;
+    // Model and effort are Claude's: a Codex session takes neither, and the bridge refuses one.
+    // No pick omits the key, so the box's own default (the user's, else the box's) applies.
+    if (agent === CLAUDE_AGENT) {
+        if (offers(offer.modelOptions, picks.model)) result.model = picks.model;
+        if (offers(offer.effortOptions, picks.effort)) result.effort = picks.effort;
+    }
+    return result;
+}
+
+// The nil row's title: "Default (Opus)" on a box that names its default, plain "Default" else.
+function defaultRowTitle(options: StartOption[], value: string | null): string {
+    if (value === null) return "Default";
+    return `Default (${options.find((option) => option.value === value)?.label ?? value})`;
+}
+
+// A recent folder's caption: how long since a session last started there. last_used is epoch ms;
+// null is the bridge's default folder on a box that has never started one.
+function folderLastUsed(lastUsed: number | null, now: number): string {
+    return lastUsed === null ? "Never used" : formatSampleAge(Math.max(0, now - lastUsed));
+}
 
 // What an offline box's row says while its Wake button is at work. Absent = not being woken.
 type RowWake = "waking" | "failed";
@@ -567,6 +640,7 @@ export function NewSessionSheet({
     const now = useMinuteClock();
     const [workdir, setWorkdir] = useState("");
     const [browserTools, setBrowserTools] = useState(false);
+    const [picks, setPicks] = useState<SheetPicks>(NO_PICKS);
     const [showBack, setShowBack] = useState(false);
     const sheetStateRef = useRef(sheetState);
     const agentsRef = useRef<DeviceDTO[]>([]);
@@ -624,8 +698,8 @@ export function NewSessionSheet({
             const foldersRequestId = ++foldersRequestIdRef.current;
             setShowBack(backAvailable);
             transition({ step: "folders", agent, foldersRequestId });
-            void client.recentFolders(agent.device_id).then(
-                (folders) => {
+            void client.newSessionOffer(agent.device_id).then(
+                (offer) => {
                     const current = sheetStateRef.current;
                     if (
                         !mountedRef.current ||
@@ -636,7 +710,8 @@ export function NewSessionSheet({
                     ) {
                         return;
                     }
-                    transition({ ...current, folders });
+                    setPicks((current) => prunePicks(offer, current));
+                    transition({ ...current, offer });
                 },
                 () => {
                     const current = sheetStateRef.current;
@@ -649,7 +724,7 @@ export function NewSessionSheet({
                     ) {
                         return;
                     }
-                    transition({ ...current, folders: [], foldersError: "Couldn't load recent folders." });
+                    transition({ ...current, offer: EMPTY_OFFER, foldersError: "Couldn't load recent folders." });
                 },
             );
         },
@@ -697,9 +772,12 @@ export function NewSessionSheet({
 
     const start = async (agent: DeviceDTO, path = workdir, browser = browserTools): Promise<void> => {
         if (startingRef.current || dismissedRef.current) return;
+        const current = sheetStateRef.current;
+        const offer =
+            current.step === "folders" && current.agent.device_id === agent.device_id ? current.offer : undefined;
         startingRef.current = true;
         transition({ step: "starting", agent });
-        const outcome = await client.startSessionRpc(agent.device_id, path, browser);
+        const outcome = await client.startSessionRpc(agent.device_id, path, browser, startPicks(offer, picks));
         if (!mountedRef.current || dismissedRef.current) return;
         if (outcome.kind === "created") {
             dismissedRef.current = true;
@@ -716,6 +794,14 @@ export function NewSessionSheet({
     };
 
     const folderState = sheetState.step === "folders" ? sheetState : undefined;
+    const offer = folderState?.offer;
+    const agentPick = offer ? selectedAgent(offer, picks) : CLAUDE_AGENT;
+    // One choice is no choice: the switch shows only with a second agent to switch to. The model
+    // and effort pickers hide for a box that offers none (an older bridge, or one whose default
+    // agent is Codex) and while Codex is picked.
+    const agentSwitchVisible = (offer?.agentOptions.length ?? 0) > 1;
+    const modelPickerVisible = offer !== undefined && offer.modelOptions.length > 0 && agentPick === CLAUDE_AGENT;
+    const effortPickerVisible = offer !== undefined && offer.effortOptions.length > 0 && agentPick === CLAUDE_AGENT;
 
     return (
         <div className="mj_UploadConfirm_scrim" role="dialog" aria-modal="true" aria-labelledby="mj-new-session-title">
@@ -813,24 +899,28 @@ export function NewSessionSheet({
                     <>
                         <p>Start on {agentName(folderState.agent)}</p>
                         <BoxUsage status={boxStatuses[folderState.agent.device_id]} now={now} />
-                        {folderState.folders === undefined ? (
+                        {offer === undefined ? (
                             <div role="status">
                                 <span className="mj_Spinner" aria-hidden="true" /> Loading recent folders…
                             </div>
                         ) : (
-                            folderState.folders.length > 0 && (
+                            offer.folders.length > 0 && (
                                 <div role="list" aria-label="Recent folders">
-                                    {folderState.folders.map((folder) => (
+                                    {offer.folders.map((folder) => (
                                         <button
                                             key={folder.path}
                                             type="button"
                                             role="listitem"
+                                            className="mj_NewSessionSheet_folder"
                                             onClick={() => {
                                                 setWorkdir(folder.path);
                                                 void start(folderState.agent, folder.path, browserTools);
                                             }}
                                         >
-                                            {folder.path}
+                                            <span className="mj_NewSessionSheet_folderPath">{folder.path}</span>
+                                            <span className="mj_NewSessionSheet_folderUsed">
+                                                {folderLastUsed(folder.last_used, now)}
+                                            </span>
                                         </button>
                                     ))}
                                 </div>
@@ -847,6 +937,76 @@ export function NewSessionSheet({
                             onChange={(event) => setWorkdir(event.target.value)}
                             placeholder="Agent default"
                         />
+                        {offer && agentSwitchVisible && (
+                            <div
+                                className="mj_TrackerSegment mj_NewSessionSheet_agentSwitch"
+                                role="group"
+                                aria-label="Agent"
+                            >
+                                {offer.agentOptions.map((option) => (
+                                    <button
+                                        key={option.value}
+                                        type="button"
+                                        aria-pressed={agentPick === option.value}
+                                        onClick={() => setPicks((current) => ({ ...current, agent: option.value }))}
+                                    >
+                                        {option.label}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                        {offer && (modelPickerVisible || effortPickerVisible) && (
+                            <div className="mj_NewSessionSheet_picks">
+                                {modelPickerVisible && (
+                                    <div className="mj_NewSessionSheet_pick">
+                                        <label htmlFor="mj-new-session-model">Model</label>
+                                        <select
+                                            id="mj-new-session-model"
+                                            value={picks.model ?? ""}
+                                            onChange={(event) =>
+                                                setPicks((current) => ({
+                                                    ...current,
+                                                    model: event.target.value || null,
+                                                }))
+                                            }
+                                        >
+                                            <option value="">
+                                                {defaultRowTitle(offer.modelOptions, offer.defaultModel)}
+                                            </option>
+                                            {offer.modelOptions.map((option) => (
+                                                <option key={option.value} value={option.value}>
+                                                    {option.label}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                )}
+                                {effortPickerVisible && (
+                                    <div className="mj_NewSessionSheet_pick">
+                                        <label htmlFor="mj-new-session-effort">Effort</label>
+                                        <select
+                                            id="mj-new-session-effort"
+                                            value={picks.effort ?? ""}
+                                            onChange={(event) =>
+                                                setPicks((current) => ({
+                                                    ...current,
+                                                    effort: event.target.value || null,
+                                                }))
+                                            }
+                                        >
+                                            <option value="">
+                                                {defaultRowTitle(offer.effortOptions, offer.defaultEffort)}
+                                            </option>
+                                            {offer.effortOptions.map((option) => (
+                                                <option key={option.value} value={option.value}>
+                                                    {option.label}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                )}
+                            </div>
+                        )}
                         <label>
                             <input
                                 type="checkbox"
