@@ -619,6 +619,41 @@ export class JournalApi {
         return this.json<unknown>("/coordinator", { method: "PUT", body: { consent } });
     }
 
+    /**
+     * PUT /coordinator {convo_id} — make a conversation the Coordinator, or clear it with null.
+     * 404 for a conversation the user does not own. Unvalidated `{convo_id, consent}`.
+     */
+    public async putCoordinator(convoId: string | null): Promise<unknown> {
+        return this.json<unknown>("/coordinator", { method: "PUT", body: { convo_id: convoId } });
+    }
+
+    // ── Coordinator routines (journal /routines; 404 on the collection = a journal without them) ──
+
+    /** GET /routines — `{routines}` by name. Unvalidated (routines.ts parses it). */
+    public routines(): Promise<unknown> {
+        return this.json<unknown>("/routines");
+    }
+
+    /** POST /routines — 201 `{routine}`; 409 `{blocked_by: 'name' | 'cap'}`, 400 for a bad field. */
+    public createRoutine(body: Record<string, unknown>): Promise<unknown> {
+        return this.json<unknown>("/routines", { method: "POST", body });
+    }
+
+    /** PATCH /routines/:key — any subset of the fields (never `name`); 200 `{routine}`. */
+    public patchRoutine(key: string, body: Record<string, unknown>): Promise<unknown> {
+        return this.json<unknown>(`/routines/${encodeURIComponent(key)}`, { method: "PATCH", body });
+    }
+
+    /** DELETE /routines/:key — 200 `{ok: true}`; 404 when it is already gone. */
+    public deleteRoutine(key: string): Promise<unknown> {
+        return this.json<unknown>(`/routines/${encodeURIComponent(key)}`, { method: "DELETE", body: {} });
+    }
+
+    /** POST /routines/:key/run — 202 `{accepted: true}` or `{delivered: false, reason}`. */
+    public runRoutine(key: string): Promise<unknown> {
+        return this.json<unknown>(`/routines/${encodeURIComponent(key)}/run`, { method: "POST", body: {} });
+    }
+
     // ── New-chat defaults (journal /defaults; Bearer-auth, per user) ──
 
     /** GET /defaults — the user's default model and effort for new chats (null = box default). */

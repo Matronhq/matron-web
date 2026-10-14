@@ -358,7 +358,7 @@ describe("Settings sheet: Coordinator consent approval", () => {
         await openSettings(withApi({ coordinator: jest.fn().mockResolvedValue({ convo_id: "c9" }) }));
 
         expect(toggle()).toBeNull();
-        expect(document.querySelector(".mj_SettingsSheet")?.textContent).not.toContain("Coordinator");
+        expect(document.querySelector(".mj_SettingsSheet")?.textContent).not.toContain("Let the Coordinator approve");
     });
 
     it("hides the switch when GET /coordinator fails", async () => {

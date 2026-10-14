@@ -26,10 +26,12 @@ import "@fontsource/inter/latin-600.css";
 import { JournalApiError } from "../src/journal/api";
 import { archiveStore, favoriteStore, MatronJournalClient, pinnedStore, unreadStore } from "../src/journal/client";
 import { MatronApp } from "../src/journal/components";
+import type { Routine } from "../src/journal/routines";
 import type { ClientState, Conversation, JournalEvent, Session } from "../src/journal/types";
 import "../src/journal/shell.pcss";
 import "../src/journal/journal.pcss";
 import "../src/journal/tracker.pcss";
+import "../src/journal/coordinator.pcss";
 
 const SESSION: Session = {
     serverUrl: "https://journal.example",
@@ -1260,6 +1262,110 @@ if (trackerMode === "inbox" || trackerMode === "item") {
     stub.setCoordinatorConsent = async (enabled: boolean) => patch({ coordinatorConsent: { enabled } });
     const stopFails = fixtureParams.get("stop") === "fail";
     stub.sendMessage = async () => !stopFails;
+}
+
+// The Coordinator is c2 (its unread count badges the rail entry); ?coordinator=none leaves it
+// unset, so the rail entry and Settings offer the chooser. The Routines sheet lists the starter
+// set: a pause flips the row, Run now is accepted, and saves and deletes land in the list.
+{
+    const stub = client as unknown as Record<string, unknown>;
+    const patch = (update: Partial<ClientState>): void =>
+        (client as unknown as { patch: (update: Partial<ClientState>) => void }).patch(update);
+    const now = Date.now();
+    const day = new Date(now);
+    const at = (offsetDays: number, hour: number, minute: number): number =>
+        new Date(day.getFullYear(), day.getMonth(), day.getDate() + offsetDays, hour, minute).getTime();
+    const base = { tz: "Europe/London", origin: "seed", created_at: now - 9 * 86_400_000, updated_at: now };
+    const routines: Routine[] = [
+        {
+            ...base,
+            id: "rt_1",
+            name: "daily-sweep",
+            title: "Daily sweep",
+            schedule: "5 7 * * *",
+            trigger: null,
+            prompt: "Follow the daily-sweep section of the playbook.",
+            enabled: true,
+            next_at: at(1, 7, 5),
+            last_fired_at: now - 5 * 3_600_000,
+            last_outcome: "applied now",
+        },
+        {
+            ...base,
+            id: "rt_2",
+            name: "deploy-window",
+            title: "Deploy window",
+            schedule: "30 18 * * 1-5",
+            trigger: null,
+            prompt: "Follow the deploy-window section of the playbook.",
+            enabled: false,
+            next_at: null,
+            last_fired_at: now - 2 * 86_400_000,
+            last_outcome: "applied deferred",
+        },
+        {
+            ...base,
+            id: "rt_3",
+            name: "disk-low",
+            title: "Disk low",
+            schedule: null,
+            trigger: { kind: "disk_under", threshold: 20 },
+            prompt: "Follow the disk-low section of the playbook.",
+            enabled: true,
+            next_at: null,
+            last_fired_at: now - 40 * 60_000,
+            last_outcome: "failed agent_unreachable",
+        },
+        {
+            ...base,
+            id: "rt_4",
+            name: "project-status",
+            title: "Project status",
+            schedule: "0 8,17 * * *",
+            trigger: null,
+            prompt: "Follow the project-status section of the playbook.",
+            enabled: true,
+            next_at: at(0, 17, 0) > now ? at(0, 17, 0) : at(1, 8, 0),
+            last_fired_at: null,
+            last_outcome: null,
+        },
+        {
+            ...base,
+            id: "rt_5",
+            name: "stalled-session",
+            title: "Stalled session",
+            schedule: null,
+            trigger: { kind: "stalled", threshold: 120 },
+            prompt: "Follow the stalled-session section of the playbook.",
+            enabled: true,
+            next_at: null,
+            last_fired_at: null,
+            last_outcome: null,
+        },
+    ];
+    state.coordinatorConvoId = fixtureParams.get("coordinator") === "none" ? null : "c2";
+    const current = (): Routine[] => client.getSnapshot().routines?.list ?? routines;
+    const setList = (list: Routine[]): void =>
+        patch({ routines: { list: [...list].sort((a, b) => a.name.localeCompare(b.name)), unsupported: false } });
+    stub.coordinatorConversationId = async () => client.getSnapshot().coordinatorConvoId ?? null;
+    stub.setCoordinator = async (convoId: string | null) => {
+        patch({ coordinatorConvoId: convoId });
+        return undefined;
+    };
+    stub.loadRoutines = async () => setList(current());
+    stub.watchRoutines = () => {
+        setList(current());
+        return () => undefined;
+    };
+    stub.setRoutineEnabled = async (id: string, enabled: boolean) => {
+        setList(current().map((row) => (row.id === id ? { ...row, enabled, next_at: enabled ? row.next_at : null } : row)));
+        return undefined;
+    };
+    stub.runRoutine = async () => null;
+    stub.deleteRoutine = async (id: string) => {
+        setList(current().filter((row) => row.id !== id));
+        return undefined;
+    };
 }
 
 // Media stubs: a short generated tone for the voice note, a 404 for the reaped blob.

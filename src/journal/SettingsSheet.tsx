@@ -19,8 +19,9 @@ Please see LICENSE files in the repository root for full details.
  * Seen button instead of leaving them in chat). The sheet asks the client to load it on open; the
  * switch is hidden until the value is known and on a journal without settings (GET /settings 404).
  *
- * Coordinator: the journal's consent-approval switch (`consent` on GET/PUT /coordinator), hidden
- * on a journal that does not return it.
+ * Coordinator: the Coordinator conversation (`convo_id` on GET/PUT /coordinator) with Change…
+ * and Clear, the journal's consent-approval switch (`consent`, hidden on a journal that does not
+ * return it), and Routines…, as on the Mac.
  *
  * Notifications: desktop notifications in this browser while a tab is open (notifications.ts).
  * Turning them on asks the browser for permission, so it must happen on the click itself.
@@ -30,6 +31,7 @@ import React, { useEffect, useRef, useState, useSyncExternalStore } from "react"
 
 import type { MatronJournalClient } from "./client";
 import { type DesktopNotificationsState, notificationsFor } from "./notifications";
+import { displayTitle } from "./SessionTag";
 import { getSnapshot, setTheme, subscribe, type ThemePref } from "./theme";
 import type { BoxDefaults, BoxDefaultsState, DefaultsState, Session, UserDefaultKey } from "./types";
 
@@ -316,44 +318,129 @@ function BoxesDefaults({ client }: { client: MatronJournalClient }): React.React
     );
 }
 
-// Coordinator: the journal's consent-approval switch. On, the Coordinator may answer chat and spawn
-// asks for the user (each card then says so, with its reason). Hidden until the journal answers,
-// and on a journal without the switch.
-function CoordinatorConsent({ client }: { client: MatronJournalClient }): React.ReactElement | null {
+// Coordinator, as on the Mac: the Coordinator conversation with Change… and Clear (or Choose…
+// when none is set), the journal's consent-approval switch, and Routines…. The conversation row
+// shows once GET /coordinator answers; the switch is hidden on a journal without it. The chooser
+// and the Routines sheet are the parent's to open: they replace this sheet while they show.
+function CoordinatorSettings({
+    client,
+    onChooseCoordinator,
+    onOpenRoutines,
+}: {
+    client: MatronJournalClient;
+    onChooseCoordinator?: () => void;
+    onOpenRoutines?: () => void;
+}): React.ReactElement | null {
     const state = useSyncExternalStore(client.subscribe, () => client.getSnapshot().coordinatorConsent);
+    const convoId = useSyncExternalStore(client.subscribe, () => client.getSnapshot().coordinatorConvoId);
+    const conversations = useSyncExternalStore(client.subscribe, () => client.getSnapshot().conversations);
+    const [saveError, setSaveError] = useState<string>();
 
     useEffect(() => void client.loadCoordinatorConsent(), [client]);
 
-    if (state?.enabled === undefined) return null;
-    const enabled = state.enabled;
+    const enabled = state?.enabled;
+    const known = convoId !== undefined;
+    if (enabled === undefined && !known) return null;
+    const conversation = convoId ? conversations.find((candidate) => candidate.id === convoId) : undefined;
+    const title = convoId ? (conversation ? displayTitle(conversation) : convoId) : undefined;
+    const clear = async (): Promise<void> => {
+        setSaveError(await client.setCoordinator(null));
+    };
     return (
         <section className="mj_SettingsSheet_group" aria-labelledby="mj-settings-coordinator">
             <h3 id="mj-settings-coordinator" className="mj_SettingsSheet_groupTitle">
                 Coordinator
             </h3>
             <div className="mj_SettingsSheet_rows">
-                <div className="mj_SettingsSheet_row mj_SettingsSheet_switchRow">
-                    <span className="mj_SettingsSheet_switchText">
-                        <span id="mj-settings-coordinator-consent">Let the Coordinator approve chats and spawns</span>
-                        <span id="mj-settings-coordinator-consent-help" className="mj_SettingsSheet_help">
-                            Each request it answers says so on its card, with the reason.
+                {known && (
+                    <div className="mj_SettingsSheet_row mj_SettingsSheet_coordinatorRow" data-setting="coordinator">
+                        {title ? (
+                            <>
+                                <span className="mj_SettingsSheet_switchText">
+                                    <span>Conversation</span>
+                                    <span className="mj_SettingsSheet_help mj_SettingsSheet_coordinatorTitle">
+                                        {title}
+                                    </span>
+                                </span>
+                                <span className="mj_SettingsSheet_rowActions">
+                                    {onChooseCoordinator && (
+                                        <button
+                                            type="button"
+                                            className="mj_SettingsSheet_rowButton"
+                                            onClick={onChooseCoordinator}
+                                        >
+                                            Change…
+                                        </button>
+                                    )}
+                                    <button
+                                        type="button"
+                                        className="mj_SettingsSheet_rowButton mj_SettingsSheet_rowButton_critical"
+                                        onClick={() => void clear()}
+                                    >
+                                        Clear
+                                    </button>
+                                </span>
+                            </>
+                        ) : (
+                            <>
+                                <span className="mj_SettingsSheet_help">No coordinator conversation yet.</span>
+                                {onChooseCoordinator && (
+                                    <button
+                                        type="button"
+                                        className="mj_SettingsSheet_rowButton"
+                                        onClick={onChooseCoordinator}
+                                    >
+                                        Choose…
+                                    </button>
+                                )}
+                            </>
+                        )}
+                    </div>
+                )}
+                {enabled !== undefined && (
+                    <div className="mj_SettingsSheet_row mj_SettingsSheet_switchRow">
+                        <span className="mj_SettingsSheet_switchText">
+                            <span id="mj-settings-coordinator-consent">
+                                Let the Coordinator approve chats and spawns
+                            </span>
+                            <span id="mj-settings-coordinator-consent-help" className="mj_SettingsSheet_help">
+                                Each request it answers says so on its card, with the reason.
+                            </span>
                         </span>
-                    </span>
-                    <button
-                        type="button"
-                        role="switch"
-                        className="mj_SettingsSheet_switch"
-                        data-setting="coordinator-consent"
-                        aria-checked={enabled}
-                        aria-labelledby="mj-settings-coordinator-consent"
-                        aria-describedby="mj-settings-coordinator-consent-help"
-                        onClick={() => void client.setCoordinatorConsent(!enabled)}
-                    />
-                </div>
+                        <button
+                            type="button"
+                            role="switch"
+                            className="mj_SettingsSheet_switch"
+                            data-setting="coordinator-consent"
+                            aria-checked={enabled}
+                            aria-labelledby="mj-settings-coordinator-consent"
+                            aria-describedby="mj-settings-coordinator-consent-help"
+                            onClick={() => void client.setCoordinatorConsent(!enabled)}
+                        />
+                    </div>
+                )}
+                {onOpenRoutines && (
+                    <div className="mj_SettingsSheet_row">
+                        <span>Routines</span>
+                        <button
+                            type="button"
+                            className="mj_SettingsSheet_rowButton"
+                            data-setting="routines"
+                            onClick={onOpenRoutines}
+                        >
+                            Routines…
+                        </button>
+                    </div>
+                )}
             </div>
-            {state.error ? (
+            {state?.error ? (
                 <p className="mj_SettingsSheet_error" role="alert">
                     Couldn't save: {state.error}
+                </p>
+            ) : null}
+            {saveError ? (
+                <p className="mj_SettingsSheet_error" role="alert">
+                    {saveError}
                 </p>
             ) : null}
         </section>
@@ -432,6 +519,8 @@ export function SettingsSheet({
     noticesError,
     onLoadSettings,
     onNoticesChange,
+    onChooseCoordinator,
+    onOpenRoutines,
     onSignOut,
     onClose,
 }: {
@@ -445,6 +534,10 @@ export function SettingsSheet({
     /** Fetch the settings (on open). */
     onLoadSettings?: () => void;
     onNoticesChange?: (notices: boolean) => void;
+    /** Settings → Coordinator → Change… / Choose…: the parent opens the chooser in this sheet's place. */
+    onChooseCoordinator?: () => void;
+    /** Settings → Coordinator → Routines…: the parent opens the Routines sheet in this sheet's place. */
+    onOpenRoutines?: () => void;
     onSignOut: () => void;
     onClose: () => void;
 }): React.ReactElement {
@@ -571,7 +664,11 @@ export function SettingsSheet({
                 <DesktopNotifications client={client} />
                 <NewChatDefaults client={client} />
                 <BoxesDefaults client={client} />
-                <CoordinatorConsent client={client} />
+                <CoordinatorSettings
+                    client={client}
+                    onChooseCoordinator={onChooseCoordinator}
+                    onOpenRoutines={onOpenRoutines}
+                />
                 {notices !== undefined && onNoticesChange ? (
                     <section className="mj_SettingsSheet_group" aria-labelledby="mj-settings-foryou">
                         <h3 id="mj-settings-foryou" className="mj_SettingsSheet_groupTitle">
