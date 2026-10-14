@@ -32,8 +32,10 @@ export function CompactNudge({
     const [sending, setSending] = useState(false);
     if (!context || !shouldNudgeCompact(context)) return null;
 
-    const compact = (): void => {
-        if (sendingRef.current) return;
+    const compact = (event: React.MouseEvent): void => {
+        // The latch only spans the outbox write, which finishes long before a double-click's
+        // second click lands, so that click is dropped here: a double-click sends one /compact.
+        if (event.detail > 1 || sendingRef.current) return;
         sendingRef.current = true;
         setSending(true);
         void send("/compact")

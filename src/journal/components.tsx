@@ -7041,7 +7041,9 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                                         <CompactNudge
                                             key={state.selectedConversationId}
                                             context={state.sessionStatus?.context}
-                                            send={(command) => client.sendMessage(command)}
+                                            send={(command) =>
+                                                client.sendMessage(command, state.selectedConversationId)
+                                            }
                                         />
                                     )}
                                     <SubagentStrip

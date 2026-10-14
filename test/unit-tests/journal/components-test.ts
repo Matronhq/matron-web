@@ -253,10 +253,46 @@ describe("usage limit accessibility", () => {
         // A second click while the first is still sending does not queue another /compact.
         await act(async () => nudge.click());
         expect(sendMessage).toHaveBeenCalledTimes(1);
-        expect(sendMessage).toHaveBeenCalledWith("/compact");
+        expect(sendMessage).toHaveBeenCalledWith("/compact", client.getSnapshot().selectedConversationId);
         await act(async () => release(true));
         await act(async () => nudge.click());
         expect(sendMessage).toHaveBeenCalledTimes(2);
+    });
+
+    it("sends one /compact for a double-click, even once the first send has been queued", async () => {
+        const client = signedInClient();
+        internals(client).state = {
+            ...client.getSnapshot(),
+            sessionStatus: { context: { tokens: 512_300, window: 1_000_000, pct: 51 } },
+        };
+        const sendMessage = jest.spyOn(client, "sendMessage").mockResolvedValue(true);
+
+        rendered = await renderClient(client);
+
+        const nudge = rendered.container.querySelector<HTMLButtonElement>(".mj_CompactNudge")!;
+        await act(async () => nudge.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 })));
+        await act(async () => nudge.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 2 })));
+        expect(sendMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not nudge in a read-only subagent transcript", async () => {
+        const result = await renderComposerAppWithChild("p1", "k1");
+        rendered = result;
+        const large = { context: { tokens: 512_300, window: 1_000_000, pct: 51 } };
+        act(() =>
+            (result.client as unknown as { patch(update: Partial<ClientState>): void }).patch({
+                sessionStatus: large,
+            }),
+        );
+        expect(result.container.querySelector(".mj_CompactNudge")).not.toBeNull();
+        act(() =>
+            (result.client as unknown as { patch(update: Partial<ClientState>): void }).patch({
+                selectedConversationId: "k1",
+                sessionStatus: large,
+            }),
+        );
+        expect(result.container.querySelector(".mj_ReadOnlyHint")).not.toBeNull();
+        expect(result.container.querySelector(".mj_CompactNudge")).toBeNull();
     });
 
     it("does not nudge at or below the context threshold", async () => {
