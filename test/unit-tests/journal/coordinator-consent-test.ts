@@ -12,6 +12,7 @@ import {
     readCoordinatorDecisions,
     resetSessionStops,
     sessionStopState,
+    spawnConsentRowsIn,
     stopSpawnedSession,
 } from "../../../src/journal/coordinator-consent";
 import type { JournalEvent } from "../../../src/journal/types";
@@ -90,6 +91,54 @@ describe("parseConsentDecision", () => {
         ["a spawn with no request id", { request_id: "" }],
     ])("rejects %s", (_label, extra) => {
         expect(parseConsentDecision(spawnDecision(1, "approve", extra).payload)).toBeNull();
+    });
+});
+
+describe("spawnConsentRowsIn", () => {
+    const outcome = (seq: number, extra: Record<string, unknown> = {}): JournalEvent =>
+        event(seq, "spawn_outcome", { request_id: "spawn-1", outcome: "started", child_convo_id: "child-1", ...extra });
+
+    it("carries the Coordinator's answer to the card it finds, beside the card and its outcome", () => {
+        const rows = spawnConsentRowsIn([spawnCard(10), spawnDecision(11), outcome(12)], "spawn-1");
+        expect(rows.request?.seq).toBe(10);
+        expect(rows.outcome).toMatchObject({ outcome: "started", child_convo_id: "child-1" });
+        expect(rows.coordinatorDecision).toEqual({
+            kind: "spawn",
+            approved: true,
+            reason: "Test triage follows the box rules",
+            askId: "spawn-1",
+        });
+    });
+
+    it("has no decision when the Coordinator did not answer, or answered another ask", () => {
+        expect(spawnConsentRowsIn([spawnCard(10)], "spawn-1")).toEqual({ request: spawnCard(10), outcome: null });
+        const rows = spawnConsentRowsIn(
+            [spawnCard(10), spawnCard(11, "spawn-2"), spawnDecision(12, "approve", { request_id: "spawn-2" })],
+            "spawn-1",
+        );
+        expect(rows.request?.seq).toBe(10);
+        expect(rows.coordinatorDecision).toBeUndefined();
+    });
+
+    it("reads only journal-shaped consent_decision events: not a decision before its card, nor a chat one", () => {
+        const rows = spawnConsentRowsIn(
+            [
+                spawnDecision(5),
+                spawnCard(10),
+                chatDecision(11, "approve", { room_id: "spawn-1" }),
+                event(12, "text", { kind: "spawn", request_id: "spawn-1", decision: "approve" }),
+            ],
+            "spawn-1",
+        );
+        expect(rows.request?.seq).toBe(10);
+        expect(rows.coordinatorDecision).toBeUndefined();
+    });
+
+    it("has no decision without the card, even when the decision is here", () => {
+        expect(spawnConsentRowsIn([spawnDecision(11), outcome(12)], "spawn-1")).toEqual({
+            request: null,
+            outcome: expect.objectContaining({ outcome: "started" }),
+        });
     });
 });
 
