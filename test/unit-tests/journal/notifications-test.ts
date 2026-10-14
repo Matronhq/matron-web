@@ -571,15 +571,50 @@ describe("DesktopNotifier", () => {
     });
 
     it("closes its notifications and clears the app badge on sign-out", async () => {
-        const { client, notifier, notification, clearAppBadge } = setup();
+        const { client, notifier, notification } = setup();
         const stop = notifier.start();
         await flush();
         deliver(client, event({ type: "prompt" }));
         expect(notification.shown).toHaveLength(1);
-        clearAppBadge.mockClear();
         stop();
         expect(notification.shown[0].close).toHaveBeenCalled();
+    });
+
+    it("clears the app badge when the session signs out", async () => {
+        const { client, notifier, clearAppBadge } = setup();
+        notifier.start();
+        clearAppBadge.mockClear();
+        signedIn(client, { phase: "signed-out", session: undefined });
         expect(clearAppBadge).toHaveBeenCalled();
+    });
+
+    it("keeps the frames' session state across a reconnect, but takes a newer list over it", async () => {
+        const api: Api = {
+            notifySettings: jest
+                .fn()
+                .mockResolvedValue({ mode: "all", events: { other_done: true }, has_coordinator: false }),
+            coordinator: jest.fn().mockResolvedValue({ convo_id: null }),
+        };
+        const { client, notifier, notification } = setup({ api });
+        signedIn(client, { conversations: [conversation("c2", { session_state: "waiting", last_seq: 1 })] });
+        notifier.start();
+        await flush();
+        frame(client, event({ type: "session_status", payload: { state: "running" } }));
+        signedIn(client, { connection: "connecting", conversations: [conversation("c2", { last_seq: 1 })] });
+        signedIn(client, { connection: "online", conversations: [conversation("c2", { last_seq: 1 })] });
+        await flush();
+        const ended = event({ type: "session_status", payload: { state: "waiting" } });
+        frame(client, ended);
+        deliver(client, ended);
+        expect(notification.shown).toHaveLength(1);
+
+        // A snapshot says the session is already waiting (its list is newer than the frames).
+        frame(client, event({ type: "session_status", payload: { state: "running" } }));
+        signedIn(client, { conversations: [conversation("c2", { session_state: "waiting", last_seq: 10_000 })] });
+        const again = event({ type: "session_status", payload: { state: "waiting" } });
+        frame(client, again);
+        deliver(client, again);
+        expect(notification.shown).toHaveLength(1);
     });
 
     it("forgets a focused tab that went away without saying so once another tab takes focus", async () => {

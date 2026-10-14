@@ -505,7 +505,6 @@ export class DesktopNotifier {
         }
         this.open.clear();
         if (this.env.document && this.baseTitle !== undefined) this.env.document.title = this.baseTitle;
-        if (this.lastBadge > 0) this.env.clearAppBadge?.()?.catch(() => undefined);
         this.lastBadge = -1;
     }
 
@@ -530,8 +529,6 @@ export class DesktopNotifier {
         // The `notify` frame is never replayed, so each (re)connect reads the settings again.
         if (session && state.connection !== this.lastConnection) {
             this.lastConnection = state.connection;
-            // A snapshot after a reconnect may move session states without frames.
-            this.sessionStates.clear();
             if (state.connection === "online" && this.snapshot.enabled) void this.loadSettings();
         }
     }
@@ -609,9 +606,10 @@ export class DesktopNotifier {
         if (typeof event.convo_id !== "string" || typeof event.seq !== "number") return;
         const known = this.sessionStates.get(event.convo_id);
         if (known && known.seq >= event.seq) return;
-        const before = known
-            ? known.state
-            : this.client.getSnapshot().conversations.find((row) => row.id === event.convo_id)?.session_state;
+        // Whichever is newer: the frames this tab saw, or its list (a snapshot can move a state
+        // without a frame).
+        const row = this.client.getSnapshot().conversations.find((candidate) => candidate.id === event.convo_id);
+        const before = row && (!known || row.last_seq > known.seq) ? row.session_state : known?.state;
         this.sessionStates.set(event.convo_id, { seq: event.seq, state: event.payload.state, before });
     }
 
