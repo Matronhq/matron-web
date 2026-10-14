@@ -10,8 +10,8 @@ Please see LICENSE files in the repository root for full details.
  * mission and the conversation that owns it — the one that filed it — each a jump), the item body,
  * its comment thread (status rows rendered as centered muted lines from the structured
  * transition, with any closing/reopening note beneath as an ordinary comment card; a comment that
- * asks a follow-up question carries its own one-tap answer buttons; an open notice carries its
- * item-level Seen button under the body), a pinned reply
+ * asks a follow-up question carries its own one-tap answer buttons; an open item carries its own
+ * item-level buttons under the body, such as a notice's Seen), a pinned reply
  * composer, and a resolve/reopen menu. All mutations go through the client; the store refetch keeps
  * the thread live.
  */
@@ -36,7 +36,6 @@ import type {
 } from "../types";
 import { useVoiceRecorder, VoiceErrorBanner, VoiceMicButton, VoiceRecordingBar } from "../voice-recorder";
 import {
-    awaitsSeen,
     availableResolutions,
     formatRelativeTime,
     humanizeSize,
@@ -44,6 +43,7 @@ import {
     itemStatusText,
     kindLabel,
     needsUser,
+    offeredItemActions,
     resolveActionLabel,
     statusRowText,
 } from "./format";
@@ -86,6 +86,45 @@ function CommentActions({
                         aria-pressed={chosen}
                         disabled={disabled}
                         onClick={() => void onTap(comment, label)}
+                    >
+                        {label}
+                    </button>
+                );
+            })}
+        </div>
+    );
+}
+
+/**
+ * The one-tap answers an agent filed with the item itself, under its body. Tapping one answers
+ * exactly as typing its label would. The chosen one is filled and does nothing when tapped again;
+ * the others stay tappable so the user can change their mind. Every button is disabled while the
+ * item has a write in flight, since a tap racing a close would reopen the item it closes.
+ */
+function ItemActions({
+    actions,
+    chosen,
+    disabled,
+    onTap,
+}: {
+    actions: string[];
+    chosen: string | null;
+    disabled: boolean;
+    onTap: (label: string) => void;
+}): React.ReactElement | null {
+    if (actions.length === 0) return null;
+    return (
+        <div className="mj_TrackerActions mj_TrackerItemActions" role="group" aria-label="Quick replies">
+            {actions.map((label) => {
+                const isChosen = label === chosen;
+                return (
+                    <button
+                        key={label}
+                        type="button"
+                        className={`mj_TrackerAction${isChosen ? " mj_TrackerAction_chosen" : ""}`}
+                        aria-pressed={isChosen}
+                        disabled={disabled}
+                        onClick={isChosen ? undefined : () => onTap(label)}
                     >
                         {label}
                     </button>
@@ -740,15 +779,32 @@ export function ItemDetail({
         }
     };
 
-    // The notice's Seen button: an item-level tap (no reply_to), which the journal answers by closing
-    // the notice. One-shot like the menu actions: a repeat after a lost response is harmless, since
-    // the notice is closed either way.
-    const seen = async (): Promise<void> => {
-        if (busy) return;
+    // A tap on one of the item's own buttons: a comment whose body is the label, with no reply_to
+    // (the journal records it as the item's `chosen_action`, and closes a notice answered Seen).
+    // The tap shows as chosen while it is on its way. Same retry rule as a comment's buttons: one
+    // slot holding the last attempted label, so a failed tap retried keeps its key and a different
+    // label gets a fresh one.
+    const offeredActions = offeredItemActions(item);
+    const [sendingAction, setSendingAction] = useState<string | null>(null);
+    const itemTapKeyRef = useRef<{ label: string; key: string } | null>(null);
+    const chosenAction =
+        [sendingAction, item.chosen_action].find(
+            (label): label is string => !!label && offeredActions.includes(label),
+        ) ?? null;
+    const tapItemAction = async (label: string): Promise<void> => {
+        if (busy || !offeredActions.includes(label) || label === chosenAction) return;
+        let slot = itemTapKeyRef.current;
+        if (!slot || slot.label !== label) {
+            slot = { label, key: crypto.randomUUID() };
+            itemTapKeyRef.current = slot;
+        }
         setBusy(true);
+        setSendingAction(label);
         try {
-            await client.markItemSeen(item.num);
+            const ok = await client.commentItem(item.num, { action: label, body: label }, slot.key);
+            if (ok) itemTapKeyRef.current = null;
         } finally {
+            setSendingAction(null);
             setBusy(false);
         }
     };
@@ -957,19 +1013,12 @@ export function ItemDetail({
                     proseClassName="mj_TrackerProse mj_TrackerItemBody"
                 />
 
-                {awaitsSeen(item) ? (
-                    <div className="mj_TrackerActions" role="group" aria-label="Quick replies">
-                        <button
-                            type="button"
-                            className="mj_TrackerAction"
-                            data-action="seen"
-                            disabled={busy}
-                            onClick={() => void seen()}
-                        >
-                            Seen
-                        </button>
-                    </div>
-                ) : null}
+                <ItemActions
+                    actions={offeredActions}
+                    chosen={chosenAction}
+                    disabled={busy}
+                    onTap={(label) => void tapItemAction(label)}
+                />
 
                 {comments.length > 0 ? (
                     <div className="mj_TrackerThread">
