@@ -2358,6 +2358,8 @@ describe("attachment composer", () => {
 
         await act(async () => button(rendered!.container, "Remove screenshot.png").click());
         expect(client.getSnapshot().composerAttachments.c1.map((item) => item.file.name)).toEqual(["notes.txt"]);
+        // The button left with its chip; focus stays in the composer rather than falling to the page.
+        expect(document.activeElement).toBe(textarea);
     });
 
     it("sends the tray with the typed text as one turn, clearing the field", async () => {
@@ -2427,8 +2429,49 @@ describe("attachment composer", () => {
         expect(rendered.container.querySelector(".mj_StagedAttachment_failed")?.textContent).toContain(
             "File too large.",
         );
+        expect(rendered.container.querySelector('.mj_AttachmentTray_status[role="status"]')?.textContent).toBe(
+            "a.txt was not sent: File too large.",
+        );
         await act(async () => button(rendered!.container, "Retry sending a.txt").click());
         expect(sendStagedFiles).toHaveBeenCalledWith("c1", "");
+    });
+
+    it("shows a failed image as a named chip with its reason instead of a bare thumbnail", async () => {
+        const client = signedInClient();
+        const createObjectURL = jest.fn(() => "blob:preview");
+        const revokeObjectURL = jest.fn();
+        Object.assign(URL, { createObjectURL, revokeObjectURL });
+        const image = new File(["image"], "photo.png", { type: "image/png" });
+        internals(client).state = {
+            ...client.getSnapshot(),
+            composerAttachments: { c1: [{ id: "a", file: image, state: "staged" }] },
+        };
+        try {
+            rendered = await renderClient(client);
+            expect(rendered.container.querySelector(".mj_StagedAttachment_thumb")?.getAttribute("src")).toBe(
+                "blob:preview",
+            );
+
+            await act(async () =>
+                internals(client).patch({
+                    composerAttachments: { c1: [{ id: "a", file: image, state: "failed", error: "Server busy." }] },
+                }),
+            );
+            const chip = rendered.container.querySelector(".mj_StagedAttachment_failed")!;
+            expect(chip.querySelector(".mj_StagedAttachment_thumb")).toBeNull();
+            expect(chip.textContent).toContain("photo.png");
+            expect(chip.textContent).toContain("Server busy.");
+            expect(chip.getAttribute("aria-label")).toContain("Image attachment, photo.png");
+
+            const { root, container } = rendered;
+            await act(async () => root.unmount());
+            container.remove();
+            rendered = undefined;
+            expect(revokeObjectURL).toHaveBeenCalledWith("blob:preview");
+        } finally {
+            delete (URL as { createObjectURL?: unknown }).createObjectURL;
+            delete (URL as { revokeObjectURL?: unknown }).revokeObjectURL;
+        }
     });
 
     it("holds the send while the tray has a file that can never upload", async () => {

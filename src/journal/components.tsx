@@ -6334,7 +6334,11 @@ function Composer({
                 {convoId && tray.length > 0 && (
                     <AttachmentTray
                         attachments={tray}
-                        onRemove={(id) => client.removeStagedFile(convoId, id)}
+                        onRemove={(id) => {
+                            client.removeStagedFile(convoId, id);
+                            // The pressed button goes with its chip; keep keyboard focus in the composer.
+                            textarea.current?.focus();
+                        }}
                         onRetry={() => void send()}
                     />
                 )}
@@ -6507,17 +6511,24 @@ function AttachmentTray({
     onRemove: (id: string) => void;
     onRetry: () => void;
 }): React.ReactElement {
+    // A failed send says so out loud too: the chip's label changes, but a label change isn't announced.
+    const failure = attachments.find((item) => item.state === "failed" && !item.unsendable);
     return (
-        <div className="mj_AttachmentTray" role="list" aria-label="Attachments">
-            {attachments.map((attachment) => (
-                <StagedAttachmentChip
-                    key={attachment.id}
-                    attachment={attachment}
-                    onRemove={() => onRemove(attachment.id)}
-                    onRetry={onRetry}
-                />
-            ))}
-        </div>
+        <>
+            <div className="mj_AttachmentTray" role="list" aria-label="Attachments">
+                {attachments.map((attachment) => (
+                    <StagedAttachmentChip
+                        key={attachment.id}
+                        attachment={attachment}
+                        onRemove={() => onRemove(attachment.id)}
+                        onRetry={onRetry}
+                    />
+                ))}
+            </div>
+            <span className="mj_AttachmentTray_status" role="status">
+                {failure ? `${failure.file.name} was not sent: ${failure.error ?? "upload failed"}` : ""}
+            </span>
+        </>
     );
 }
 
@@ -6540,6 +6551,8 @@ function StagedAttachmentChip({
         return () => URL.revokeObjectURL(url);
     }, [file, isImage]);
     const busy = state === "queued" || state === "uploading";
+    // A failed image shows as a named chip, so the reason it failed is on screen, not only in a tooltip.
+    const thumbnail = isImage && state !== "failed" ? previewUrl : undefined;
     const percent = Math.round(Math.min(Math.max(attachment.progress ?? 0, 0), 1) * 100);
     const size = formatBytes(file.size) ?? "";
     const status =
@@ -6556,7 +6569,7 @@ function StagedAttachmentChip({
             role="listitem"
             className={[
                 "mj_StagedAttachment",
-                isImage && previewUrl ? "mj_StagedAttachment_image" : "mj_StagedAttachment_file",
+                thumbnail ? "mj_StagedAttachment_image" : "mj_StagedAttachment_file",
                 `mj_StagedAttachment_${state}`,
             ].join(" ")}
             aria-label={[`${isImage ? "Image" : "File"} attachment, ${file.name}, ${size}`, status]
@@ -6564,8 +6577,8 @@ function StagedAttachmentChip({
                 .join(", ")}
             title={attachment.error ? `${file.name}: ${attachment.error}` : file.name}
         >
-            {isImage && previewUrl ? (
-                <img className="mj_StagedAttachment_thumb" src={previewUrl} alt="" />
+            {thumbnail ? (
+                <img className="mj_StagedAttachment_thumb" src={thumbnail} alt="" />
             ) : (
                 <>
                     <KindIcon className="mj_StagedAttachment_icon" aria-hidden />
