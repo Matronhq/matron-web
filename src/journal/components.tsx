@@ -2908,6 +2908,59 @@ function HeaderOverflowMenu({
     );
 }
 
+/** The least of a mission name worth drawing in the chip; with less room it reads "#12 S…", so the
+ *  chip shows "#12 +2" instead (the Mac's minimumNameWidth). */
+const CHIP_MIN_NAME_PX = 40;
+const CHIP_MAX_PX = 240;
+const CHIP_TITLE_STUB_REM = 6;
+
+/**
+ * How the chip fits beside the conversation title: the title comes first and the chip takes what it
+ * leaves. The name shows while there is room for at least CHIP_MIN_NAME_PX of it, else the chip
+ * reads "#12 +2" rather than "#12 S…"; and the chip keeps that number-only width (`minWidth`) unless
+ * even that would push the title below its stub, when the chip is hidden (`minWidth` null). Measured from the
+ * title row (the chip's parent), since which of the two gives way depends on both their lengths.
+ */
+function useChipFit(
+    triggerRef: React.RefObject<HTMLButtonElement | null>,
+    name: string | null,
+): { nameFits: boolean; minWidth: number | null } {
+    const [fit, setFit] = useState<{ nameFits: boolean; minWidth: number | null }>({ nameFits: true, minWidth: null });
+    useLayoutEffect(() => {
+        const trigger = triggerRef.current;
+        const row = trigger?.parentElement?.parentElement;
+        const nameEl = trigger?.querySelector<HTMLElement>(".mj_MissionChip_name");
+        if (!trigger || !row || !nameEl) return;
+        const measure = (): void => {
+            const title = row.firstElementChild as HTMLElement | null;
+            const heading = title?.querySelector<HTMLElement>(".mx_RoomHeader_heading");
+            const meta = title?.querySelector<HTMLElement>(".mj_HeaderMeta, .mj_HeaderTitleDisclosure");
+            const titleWant = Math.max(heading?.scrollWidth ?? 0, meta?.scrollWidth ?? 0);
+            // The title's stub: `min-width: min(6rem, 100%)` on the title cluster in the CSS.
+            const rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+            const titleStub = Math.min(titleWant, CHIP_TITLE_STUB_REM * rem);
+            const gap = parseFloat(getComputedStyle(row).columnGap) || 0;
+            // The chip without its name ("#12 +2"), and with all of it, capped like the CSS.
+            const numberOnly = Math.ceil(trigger.scrollWidth - nameEl.getBoundingClientRect().width);
+            const full = Math.min(CHIP_MAX_PX, numberOnly + (name ? nameEl.scrollWidth + 4 : 0));
+            const room = row.clientWidth - titleWant - gap;
+            const nameFits = !!name && (room >= full || room >= numberOnly + CHIP_MIN_NAME_PX);
+            const minWidth = row.clientWidth - titleStub - gap >= numberOnly ? numberOnly : null;
+            setFit((prev) =>
+                prev.nameFits === nameFits && prev.minWidth === minWidth ? prev : { nameFits, minWidth },
+            );
+        };
+        measure();
+        if (typeof ResizeObserver === "undefined") return;
+        const observer = new ResizeObserver(measure);
+        observer.observe(row);
+        const heading = row.firstElementChild?.querySelector(".mx_RoomHeader_heading");
+        if (heading) observer.observe(heading);
+        return () => observer.disconnect();
+    }, [triggerRef, name]);
+    return fit;
+}
+
 // The chat header's mission chip, after the Mac's: "⚑ #12 Ship the docs +2 ▾" names the
 // conversation's current mission (else its newest), and opens every mission the conversation
 // touched as Current / Also on / Earlier. Picking one opens its mission page. Hidden while the
@@ -2931,6 +2984,7 @@ export function MissionChip({
     }, [open]);
 
     const label = chipLabel(links, conversation.title);
+    const fit = useChipFit(openerRef, label?.name ?? null);
     if (!label) return null;
     const sections = missionSections(links);
     const headline = chipHeadline(sections)!;
@@ -2950,7 +3004,8 @@ export function MissionChip({
 
     return (
         <div
-            className="mj_MissionChip"
+            className={`mj_MissionChip${fit.minWidth == null ? " mj_MissionChip_hidden" : ""}`}
+            style={fit.minWidth != null ? { minWidth: fit.minWidth } : undefined}
             onBlur={(event) => {
                 if (!event.currentTarget.contains(event.relatedTarget as Node | null)) close();
             }}
@@ -2968,7 +3023,9 @@ export function MissionChip({
                 <ProjectsIcon className="mj_MissionChip_flag" aria-hidden="true" />
                 <span className="mj_MissionChip_num">{label.number}</span>
                 {/* Always rendered, empty when unused: the chip's grid has a fixed column for each. */}
-                <span className="mj_MissionChip_name">{label.name ?? ""}</span>
+                <span className={`mj_MissionChip_name${fit.nameFits ? "" : " mj_MissionChip_name_hidden"}`}>
+                    {label.name ?? ""}
+                </span>
                 <span className="mj_MissionChip_more">{label.others > 0 ? `+${label.others}` : ""}</span>
                 <ChevronDownIcon className="mj_MissionChip_chevron" aria-hidden="true" />
             </button>
