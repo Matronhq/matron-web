@@ -9,6 +9,7 @@ Please see LICENSE files in the repository root for full details.
 // Status text ALWAYS derives from the structured item/comment fields (never a raw comment body),
 // so a privacy-elided body never leaks and the labels stay consistent across surfaces.
 
+import { dateTimeFormat } from "../date-format";
 import type {
     Mission,
     TrackerActor,
@@ -218,7 +219,7 @@ export function formatRelativeTime(ms: number | null | undefined, now: number = 
     if (hr < 24) return `${hr}h ago`;
     const day = Math.round(hr / 24);
     if (day < 7) return `${day}d ago`;
-    return new Date(ms).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+    return dateTimeFormat(undefined, { year: "numeric", month: "short", day: "numeric" }).format(new Date(ms));
 }
 
 /** Collapse newlines to spaces for a single-line row preview. */
