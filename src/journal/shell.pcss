@@ -223,11 +223,7 @@ button {
 .mj_App,
 .mj_ChatView_wrapper,
 .mj_ChatView,
-.mj_ChatView_body,
-.mj_Sidebar_wrapper,
-.mj_Sidebar_wrapper--user,
-.mj_Sidebar,
-.mj_Sidebar_listContainer {
+.mj_ChatView_body {
     min-width: 0;
     min-height: 0;
 }
@@ -244,10 +240,6 @@ button {
 }
 
 .mj_Sidebar_outerWrapper,
-.mj_Sidebar_wrapper,
-.mj_Sidebar_wrapper--user,
-.mj_Sidebar,
-.mj_Sidebar_listContainer,
 .mj_ConversationListPanel {
     display: flex;
     height: 100%;
@@ -259,11 +251,8 @@ button {
     background: var(--mj-color-bg-sidebar);
 }
 
-.mj_Sidebar_wrapper,
-.mj_Sidebar_wrapper--user,
-.mj_Sidebar,
-.mj_Sidebar_listContainer,
 .mj_ConversationListPanel {
+    min-width: 0;
     flex: 1 1 auto;
 }
 
@@ -868,23 +857,15 @@ button {
     overscroll-behavior: contain;
 }
 
-.mj_ChatView_messageListWrapper {
+.mj_ChatView_messageList {
     display: flex;
-    /* v5 (operator override): fluid — fill the chat pane with equal 20px L/R gutters,
-       no centred max-width cap. Content grows with the window. */
+    /* Fluid: fills the chat pane with equal 20px gutters, no centred max-width cap. */
     width: 100%;
     box-sizing: border-box;
     flex-direction: column;
     justify-content: flex-end;
-    padding: 0 20px;
-}
-
-.mj_ChatView_messageList {
-    display: flex;
-    flex-direction: column;
-    justify-content: flex-end;
     margin: 0;
-    padding: 0;
+    padding: 0 20px;
     list-style: none;
 }
 
