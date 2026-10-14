@@ -1110,6 +1110,26 @@ export function childrenOf(conversations: Conversation[], parentId: string | nul
         .sort((a, b) => a.created_at - b.created_at || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 }
 
+/**
+ * Every parent's children in one pass, each list ordered as `childrenOf` orders it. The sidebar
+ * looks up a row's children once per row; scanning the whole list each time made a render
+ * quadratic in the number of conversations.
+ */
+export function childrenByParent(conversations: Conversation[]): Map<string, Conversation[]> {
+    const index = new Map<string, Conversation[]>();
+    for (const conversation of conversations) {
+        const parentId = conversation.parent_convo_id;
+        if (!parentId) continue;
+        const list = index.get(parentId);
+        if (list) list.push(conversation);
+        else index.set(parentId, [conversation]);
+    }
+    for (const list of index.values()) {
+        list.sort((a, b) => a.created_at - b.created_at || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    }
+    return index;
+}
+
 export function runningChildrenOf(conversations: Conversation[], parentId: string | null | undefined): Conversation[] {
     return childrenOf(conversations, parentId).filter((c) => c.session_state === "running");
 }

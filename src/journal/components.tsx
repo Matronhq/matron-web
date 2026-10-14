@@ -174,6 +174,7 @@ import {
     asString,
     type BoxStatus,
     buildSidebarIndex,
+    childrenByParent,
     childrenOf,
     childSidebarPlacement,
     type ClientState,
@@ -1264,7 +1265,7 @@ export function MessageSearchResults({
     );
 }
 
-function ConversationList({
+function ConversationListView({
     client,
     state,
     width,
@@ -1466,7 +1467,12 @@ function ConversationList({
     // "selectable/counted" can never diverge. rendersAsTopLevelRow: a non-child always
     // renders top-level; a child renders top-level only when childSidebarPlacement says so
     // (orphan → always; parent exists → running-only, and then only when it can't nest).
-    const sidebarIndex = buildSidebarIndex(state.conversations, state.archivedIds, state.collapsedSubagentParentIds);
+    const sidebarIndex = useMemo(
+        () => buildSidebarIndex(state.conversations, state.archivedIds, state.collapsedSubagentParentIds),
+        [state.conversations, state.archivedIds, state.collapsedSubagentParentIds],
+    );
+    const childIndex = useMemo(() => childrenByParent(state.conversations), [state.conversations]);
+    const childRowsOf = (parentId: string): Conversation[] => childIndex.get(parentId) ?? [];
     const isTopLevelRow = (conversation: Conversation): boolean => rendersAsTopLevelRow(conversation, sidebarIndex);
     const conversations = useMemo(() => {
         const normalized = query.trim().toLocaleLowerCase();
@@ -1597,7 +1603,7 @@ function ConversationList({
     const nestedChildRows = (conversation: Conversation): React.ReactElement[] =>
         tab === "archived"
             ? []
-            : childrenOf(state.conversations, conversation.id)
+            : childRowsOf(conversation.id)
                   .filter(
                       (child) =>
                           !state.archivedIds.has(child.id) &&
@@ -1629,7 +1635,7 @@ function ConversationList({
             !isSubagent &&
             state.collapsedSubagentParentIds.has(conversation.id) &&
             hasSubagentChildRows(conversation, sidebarIndex)
-                ? childrenOf(state.conversations, conversation.id).filter(
+                ? childRowsOf(conversation.id).filter(
                       (child) =>
                           !state.archivedIds.has(child.id) &&
                           // A pinned sub-chat stays in the Pinned section; collapse never hides it.
@@ -2403,6 +2409,43 @@ function ConversationList({
         </div>
     );
 }
+
+// State the conversation list never reads. The open conversation's streams, activity, header
+// and events change many times a second while an agent works; re-rendering every sidebar row for
+// each of those frames kept the main thread busy with nothing on the list changing.
+const CONVERSATION_LIST_IGNORED_STATE = new Set<keyof ClientState>([
+    "textStreams",
+    "toolStreams",
+    "activity",
+    "sessionStatus",
+    "events",
+    "pendingMessages",
+    "loadingHistory",
+    "hasOlderHistory",
+    "sendTick",
+    "dragActive",
+]);
+
+export function sameStateExcept(
+    previous: ClientState,
+    next: ClientState,
+    ignored: ReadonlySet<keyof ClientState>,
+): boolean {
+    if (previous === next) return true;
+    const keys = new Set([...Object.keys(previous), ...Object.keys(next)] as (keyof ClientState)[]);
+    for (const key of keys) {
+        if (!ignored.has(key) && previous[key] !== next[key]) return false;
+    }
+    return true;
+}
+
+const ConversationList = React.memo(
+    ConversationListView,
+    (previous, next) =>
+        previous.client === next.client &&
+        previous.width === next.width &&
+        sameStateExcept(previous.state, next.state, CONVERSATION_LIST_IGNORED_STATE),
+);
 
 export function useDismissablePopover(
     open: boolean,
