@@ -267,10 +267,57 @@ const events: JournalEvent[] = [
         type: "spawn_outcome",
         payload: { request_id: "spawn-fixture-1", outcome: "started", room_id: "s1", child_convo_id: "s1" },
     },
+    // Coordinator notices: one quiet line each, never the raw-JSON fallback. The rolling
+    // `summary` event is bookkeeping and never occupies a row.
+    {
+        seq: 16,
+        convo_id: "c1",
+        ts: T + 800,
+        sender: "journal",
+        type: "coordinator",
+        payload: { role: "assigned" },
+    },
+    {
+        seq: 17,
+        convo_id: "c1",
+        ts: T + 810,
+        sender: "journal",
+        type: "consent_decision",
+        payload: {
+            kind: "spawn",
+            decision: "approve",
+            request_id: "spawn-fixture-1",
+            reason: "Test triage on box-a follows the box rules",
+        },
+    },
+    {
+        seq: 18,
+        convo_id: "c1",
+        ts: T + 820,
+        sender: "journal",
+        type: "routine",
+        payload: { routine_id: "r-1", name: "morning-sweep", action: "fired", outcome: "applied now" },
+    },
+    {
+        seq: 19,
+        convo_id: "c1",
+        ts: T + 830,
+        sender: "journal",
+        type: "routine",
+        payload: { routine_id: "r-2", name: "evening-sweep", action: "fired", outcome: "failed agent_unreachable" },
+    },
+    {
+        seq: 20,
+        convo_id: "c1",
+        ts: T + 835,
+        sender: "journal",
+        type: "summary",
+        payload: { text: "Rolling summary of this conversation" },
+    },
     {
         // File events as the bridge and the native apps send them: the name rides in `name`
         // (the media-send key), not the older `filename`.
-        seq: 16,
+        seq: 21,
         convo_id: "c1",
         ts: T + 840,
         sender: "agent:claude",
@@ -278,7 +325,7 @@ const events: JournalEvent[] = [
         payload: { blob_ref: "fixture-log", name: "deploy-2026-07-25.log", content_type: "text/plain", size: 18_432 },
     },
     {
-        seq: 17,
+        seq: 22,
         convo_id: "c1",
         ts: T + 860,
         sender: "agent:claude",

@@ -34,6 +34,7 @@ import { copyText } from "./clipboard";
 import { type DraftStore, makeDraftStore } from "./composer-drafts";
 import { effectiveUnread } from "./conversation-flags";
 import { type RowContextMenu, useRowContextMenu } from "./context-menu";
+import { CoordinatorEventNotice, isUnrenderableNoticeEvent } from "./coordinator-notices";
 import { GoToNumberDialog, goToNumberShortcutLabel, NumberSearchResult, useGoToNumberShortcut } from "./goto-number";
 import { PinDialog, type PinDialogTarget } from "./PinDialogs";
 import { pinGlyph, successorHintText } from "./pins";
@@ -4262,6 +4263,10 @@ export function EventContent({
             return <MissionNotice client={client} event={event} />;
         case "memory":
             return <MemoryNotice client={client} event={event} />;
+        case "coordinator":
+        case "routine":
+        case "consent_decision":
+            return <CoordinatorEventNotice event={event} />;
         case "prompt":
             if (asString(event.payload.kind) === "queued_release") {
                 return (
@@ -4731,7 +4736,8 @@ function Timeline({
         () =>
             state.events.filter(
                 (event) =>
-                    !["read_marker", "edit", "session_status", "convo_meta"].includes(event.type) &&
+                    !["read_marker", "edit", "session_status", "convo_meta", "summary"].includes(event.type) &&
+                    !isUnrenderableNoticeEvent(event) &&
                     !isQueuedReleaseReply(event, queuedReleasePromptSeqs, legacyQueuePromptSeqs) &&
                     !isSuppressedTrackerEvent(event) &&
                     !isPermissionDecisionReply(event, permissionRequestSeqs),
