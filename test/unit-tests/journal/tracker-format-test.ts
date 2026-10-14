@@ -18,7 +18,9 @@ import {
     closedStatusLabel,
     resolutionLabel,
     resolveActionLabel,
+    statusByline,
     statusRowText,
+    missionItemGroups,
 } from "../../../src/journal/tracker/format";
 import type { StatusSnapshot, TrackerItemKind, TrackerResolution } from "../../../src/journal/types";
 
@@ -250,5 +252,39 @@ describe("isFromViewedConvo", () => {
     it("treats an unknown viewer as another session", () => {
         expect(isFromViewedConvo({ origin_convo_id: "c1" }, null)).toBe(false);
         expect(isFromViewedConvo({ origin_convo_id: "c1" }, undefined)).toBe(false);
+    });
+});
+
+describe("statusByline", () => {
+    const now = Date.UTC(2026, 5, 15, 12, 0, 0);
+    it("says when and who, in a sentence", () => {
+        expect(statusByline(now - 12 * 60_000, "agent", now)).toBe("Updated 12m ago by an agent");
+        expect(statusByline(now - 3 * 3_600_000, "user", now)).toBe("Updated 3h ago by you");
+        expect(statusByline(now - 10_000, "agent", now)).toBe("Updated just now by an agent");
+    });
+    it("drops the author when unknown", () => {
+        expect(statusByline(now - 2 * 86_400_000, null, now)).toBe("Updated 2d ago");
+    });
+    it("names the date a week or more back", () => {
+        expect(statusByline(now - 30 * 86_400_000, "agent", now)).toMatch(/^Updated on .+ by an agent$/);
+    });
+    it("is null without a time", () => {
+        expect(statusByline(null, "agent", now)).toBeNull();
+        expect(statusByline(undefined, undefined, now)).toBeNull();
+    });
+});
+
+describe("missionItemGroups", () => {
+    it("splits open items into needs-you and the rest, keeping the journal's order", () => {
+        const items = [
+            { id: "a", state: "open" as const, awaiting: "user" as const },
+            { id: "b", state: "open" as const, awaiting: "agent" as const },
+            { id: "c", state: "open" as const, awaiting: null },
+            { id: "d", state: "open" as const, awaiting: "user" as const },
+            { id: "e", state: "closed" as const, awaiting: null },
+        ];
+        const groups = missionItemGroups(items);
+        expect(groups.needsYou.map((item) => item.id)).toEqual(["a", "d"]);
+        expect(groups.others.map((item) => item.id)).toEqual(["b", "c"]);
     });
 });

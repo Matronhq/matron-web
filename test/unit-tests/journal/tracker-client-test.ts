@@ -1885,3 +1885,58 @@ describe("commentFailureMessage", () => {
         expect(commentFailureMessage(new Error("offline"))).toBe("offline");
     });
 });
+
+describe("MatronJournalClient.fetchMissionClosedItems", () => {
+    it("walks closed items newest first and keeps only the mission's own", async () => {
+        const { client, state } = makeClient();
+        const items = jest
+            .fn()
+            .mockResolvedValueOnce({
+                items: [item({ id: "a", state: "closed", mission_id: "ms_1" }), item({ id: "b", state: "closed" })],
+                next_cursor: "k1",
+            })
+            .mockResolvedValueOnce({
+                items: [item({ id: "c", state: "closed", mission_id: "ms_1" })],
+                next_cursor: null,
+            });
+        state.api = { items };
+
+        const page = await client.fetchMissionClosedItems("ms_1");
+
+        expect(page.items.map((row) => row.id)).toEqual(["a", "c"]);
+        expect(page.cursor).toBeNull();
+        expect(items).toHaveBeenNthCalledWith(1, { state: "closed", sort: "updated", limit: 500, cursor: undefined });
+        expect(items).toHaveBeenNthCalledWith(2, { state: "closed", sort: "updated", limit: 500, cursor: "k1" });
+    });
+
+    it("stops once it has enough and hands back where it stopped", async () => {
+        const { client, state } = makeClient();
+        const items = jest.fn().mockResolvedValue({
+            items: [item({ id: "a", state: "closed", mission_id: "ms_1" })],
+            next_cursor: "k2",
+        });
+        state.api = { items };
+
+        const page = await client.fetchMissionClosedItems("ms_1", "k1", 1);
+
+        expect(items).toHaveBeenCalledTimes(1);
+        expect(items).toHaveBeenCalledWith({ state: "closed", sort: "updated", limit: 500, cursor: "k1" });
+        expect(page).toEqual({ items: [expect.objectContaining({ id: "a" })], cursor: "k2" });
+    });
+
+    it("walks a bounded number of pages per call", async () => {
+        const { client, state } = makeClient();
+        const items = jest.fn().mockResolvedValue({ items: [item({ state: "closed" })], next_cursor: "more" });
+        state.api = { items };
+
+        const page = await client.fetchMissionClosedItems("ms_1");
+
+        expect(items).toHaveBeenCalledTimes(4);
+        expect(page).toEqual({ items: [], cursor: "more" });
+    });
+
+    it("resolves empty when signed out", async () => {
+        const { client } = makeClient();
+        await expect(client.fetchMissionClosedItems("ms_1")).resolves.toEqual({ items: [], cursor: null });
+    });
+});

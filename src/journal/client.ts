@@ -96,6 +96,10 @@ const MESSAGE_SEARCH_MAX_QUERY_LEN = 256;
 const MESSAGE_SEARCH_TIMEOUT_MS = 15_000;
 /** How long "go to number" waits for the journal before reporting a failed lookup. */
 export const NUMBER_LOOKUP_TIMEOUT_MS = 15_000;
+/** A mission page's closed items come in pages of this many (the Mac's closed-items page). */
+export const MISSION_CLOSED_PAGE = 50;
+/** How many `GET /items` pages of closed items one `fetchMissionClosedItems` call walks at most. */
+const MISSION_CLOSED_SCAN_PAGES = 4;
 
 const NUMBER_LOOKUP_KINDS: readonly NumberLookupKind[] = ["item", "mission", "milestone", "project"];
 const isTrackerNumber = (value: unknown): value is number =>
@@ -2629,6 +2633,32 @@ export class MatronJournalClient {
                 trackerLoading: false,
             });
         }
+    }
+
+    /**
+     * One page of a mission's closed items, most recently updated first. `GET /items` has no
+     * mission filter, so this walks the user's closed items newest first (at most
+     * MISSION_CLOSED_SCAN_PAGES requests of 500) and keeps the mission's own, stopping once `want`
+     * are found. `cursor` is where the walk stopped, null once every closed item has been seen —
+     * pass it back to continue. Not store state: the mission page holds the pages it asked for.
+     * Rejects on a failed request, and resolves empty when signed out.
+     */
+    public async fetchMissionClosedItems(
+        missionId: string,
+        cursor: string | null = null,
+        want: number = MISSION_CLOSED_PAGE,
+    ): Promise<{ items: TrackerItem[]; cursor: string | null }> {
+        const api = this.api;
+        if (!api) return { items: [], cursor: null };
+        const items: TrackerItem[] = [];
+        let next = cursor;
+        for (let page = 0; page < MISSION_CLOSED_SCAN_PAGES; page++) {
+            const res = await api.items({ state: "closed", sort: "updated", limit: 500, cursor: next ?? undefined });
+            for (const item of res.items) if (item.mission_id === missionId) items.push(item);
+            next = res.next_cursor;
+            if (!next || items.length >= want) break;
+        }
+        return { items, cursor: next };
     }
 
     // ── Tracker mutations (fresh Idempotency-Key per call → refetch the affected row + patch).
