@@ -5151,8 +5151,9 @@ function Composer({
                 ? bodyRef.current.trim()
                 : "";
         if (caption) {
-            // The field clears as the note goes, so a sent-message walk it was showing ends too.
-            sentHistory.endRecall();
+            // The caption leaves the field now, so it joins sent history now (ending any walk) rather
+            // than after the upload: a failed note puts it back in the field anyway.
+            sentHistory.record(caption, capturedConvo);
             clearSentDraftRef.current(capturedConvo, draftRevisions.current.get(capturedConvo) ?? 0);
         }
         const failed = (): void => {
@@ -5163,8 +5164,6 @@ function Composer({
             .sendVoiceNote(blob, capturedConvo, sessionGen, caption || undefined)
             .then((outcome) => {
                 if (outcome !== "sent" && outcome !== "persisted-terminal") failed();
-                // A caption that went out with the note is a sent line, as on the desktop app.
-                else if (caption) sentHistory.record(caption, capturedConvo);
             })
             .catch(failed);
     };

@@ -455,9 +455,10 @@ describe("Composer voice recording", () => {
         expect(stored.join("\n")).not.toContain("example.com");
     });
 
-    it("records a sent caption for Up recall, and a note sent mid-walk ends the walk", async () => {
+    it("records a sent caption for Up recall as it goes, and a note sent mid-walk ends the walk", async () => {
         const client = makeClient();
-        jest.spyOn(client, "sendVoiceNote").mockResolvedValue("sent");
+        const upload = deferred<"sent">();
+        jest.spyOn(client, "sendVoiceNote").mockReturnValue(upload.promise);
         jest.spyOn(client, "sendMessage").mockResolvedValue(true);
         const { container } = await renderComposer(false, client);
         const up = async (): Promise<void> => {
@@ -489,9 +490,12 @@ describe("Composer voice recording", () => {
         await advance(0);
         expect(composerTextarea(container).value).toBe("");
 
-        // The walk is over, so Up starts afresh from the newest line: the caption.
+        // The walk is over, so Up starts afresh from the newest line: the caption, recallable
+        // while the upload is still running.
         await up();
         expect(composerTextarea(container).value).toBe("older");
+        // The upload finishing doesn't disturb a walk under way.
+        await act(async () => upload.resolve("sent"));
         await up();
         expect(composerTextarea(container).value).toBe("newer");
     });
