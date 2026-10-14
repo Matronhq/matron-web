@@ -4838,6 +4838,35 @@ describe("New marker on sessions that arrive unasked", () => {
         expect(client.getSnapshot().newConversationIds.size).toBe(0);
     });
 
+    it("never marks a New session start whose status frame beat the start's reply", async () => {
+        const { client, state } = liveClient({ ...BORN, title: "", agent_device_id: null });
+        // The reply lands after the session's first frame, before its titled meta.
+        state.connection!.agentRequest = jest.fn().mockImplementation(async () => {
+            await state.handleJournal({ ...firstFrame(), type: "session_status", payload: { state: "running" } });
+            return { ok: true, origin: "agent", result: { convo_id: BORN.id } };
+        });
+        await client.startSessionRpc(5, "~/code", false);
+        (state.database!.conversations as jest.Mock).mockResolvedValue([...CONVERSATIONS, BORN]);
+        await state.handleJournal({
+            ...firstFrame(),
+            seq: 31,
+            type: "convo_meta",
+            payload: { title: BORN.title, parent_convo_id: null, agent_device_id: 4 },
+        });
+        expect(client.getSnapshot().newConversationIds.size).toBe(0);
+    });
+
+    it("undoes the mark when a New session start's reply names a session already judged", async () => {
+        const { client, state } = liveClient();
+        state.connection!.agentRequest = jest.fn().mockImplementation(async () => {
+            await state.handleJournal(firstFrame());
+            return { ok: true, origin: "agent", result: { convo_id: BORN.id } };
+        });
+        // Box 5 asked, but the session says box 4: judged unasked until the reply names it.
+        await client.startSessionRpc(5, "~/code", false);
+        expect(client.getSnapshot().newConversationIds.size).toBe(0);
+    });
+
     it("never marks a room whose title lands after its first frame", async () => {
         const { client, state } = liveClient({ ...BORN, title: "", agent_device_id: null });
         await state.handleJournal({ ...firstFrame(), type: "session_status", payload: { state: "running" } });

@@ -842,10 +842,14 @@ export class MatronJournalClient {
             }
             const convoId = (reply.result as Record<string, unknown>).convo_id;
             if (typeof convoId === "string" && convoId.length > 0) {
-                // Its first frames may have beaten this reply. Then it has had its verdict (opening
-                // it, as the caller does next, clears any mark) and only the box's ask is left.
-                if (this.state.conversations.some((candidate) => candidate.id === convoId)) {
+                // Its first frames may have beaten this reply. If they already settled its verdict,
+                // only the box's ask is left, and any mark it got is undone: it is the user's own
+                // even when the sheet was dismissed and it is not opened. Otherwise (not seen yet,
+                // or its verdict still waits for the titled meta) it is claimed by id.
+                const seen = this.state.conversations.some((candidate) => candidate.id === convoId);
+                if (seen && !this.newVerdictPending.has(convoId)) {
                     this.startIntents.forgetBox(agentDeviceId);
+                    this.clearNewMark(convoId);
                 } else {
                     this.startIntents.noteConversation(convoId, agentDeviceId);
                 }
@@ -954,11 +958,7 @@ export class MatronJournalClient {
         if (opts?.fromRpcCreate) this.armRpcCreateWatchdog(conversationId);
         if (opts?.clearUnread ?? true) this.clearUnreadOverride(conversationId);
         // Opening a conversation, by any route, ends its "New" marker.
-        if (this.state.newConversationIds.has(conversationId)) {
-            const newConversationIds = new Set(this.state.newConversationIds);
-            newConversationIds.delete(conversationId);
-            this.patch({ newConversationIds });
-        }
+        this.clearNewMark(conversationId);
         storeSelectedConversation(this.state.session, conversationId);
         // Selecting a conversation closes the Tracker pane, so it drops the cached item detail the
         // same way closeTrackerView does.
@@ -4168,6 +4168,13 @@ export class MatronJournalClient {
         );
         const kept = [...this.state.newConversationIds].filter((candidate) => visible.has(candidate));
         this.patch({ newConversationIds: new Set([...kept, id]) });
+    }
+
+    private clearNewMark(id: string): void {
+        if (!this.state.newConversationIds.has(id)) return;
+        const newConversationIds = new Set(this.state.newConversationIds);
+        newConversationIds.delete(id);
+        this.patch({ newConversationIds });
     }
 
     private parkNewVerdict(id: string, now: number): void {
