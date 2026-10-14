@@ -221,13 +221,13 @@ describe("Notice items", () => {
         const unsubscribe = client.subscribe(() => render(root));
 
         expect(container.querySelector(".mj_TrackerItemHead_kind")?.textContent).toContain("To read");
-        const seen = container.querySelector<HTMLButtonElement>('button[data-action="seen"]')!;
+        const seen = container.querySelector<HTMLButtonElement>(".mj_TrackerItemActions .mj_TrackerAction")!;
         expect(seen.textContent).toBe("Seen");
         await act(async () => seen.click());
 
         expect(postItemComment).toHaveBeenCalledWith(9, { action: "Seen", body: "Seen" }, expect.any(String));
         expect(container.querySelector(".mj_TrackerStatusPill")?.textContent).toBe("Closed · Done");
-        expect(container.querySelector('button[data-action="seen"]')).toBeNull();
+        expect(container.querySelector(".mj_TrackerItemActions")).toBeNull();
         unsubscribe();
     });
 });

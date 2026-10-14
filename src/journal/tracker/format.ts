@@ -12,6 +12,7 @@ Please see LICENSE files in the repository root for full details.
 import { dateTimeFormat } from "../date-format";
 import type {
     Mission,
+    TrackerActor,
     TrackerComment,
     TrackerItem,
     TrackerItemKind,
@@ -27,6 +28,16 @@ export function needsUser(item: Pick<TrackerItem, "state" | "awaiting">): boolea
 /** A notice the user has not marked seen yet: it offers the one-tap Seen button. */
 export function awaitsSeen(item: Pick<TrackerItem, "kind" | "state">): boolean {
     return item.kind === "notice" && item.state === "open";
+}
+
+/**
+ * The item's own one-tap answers to draw under its body: all of them while the item is open, none
+ * once it is closed (a closed item takes a reply, not a button press). A journal that predates item
+ * actions sends no `actions`; an open notice from one still offers its Seen button.
+ */
+export function offeredItemActions(item: Pick<TrackerItem, "kind" | "state" | "actions">): string[] {
+    if (item.state !== "open") return [];
+    return item.actions ?? (item.kind === "notice" ? ["Seen"] : []);
 }
 
 /** The origin conversation's title as carried on the item, or null when the journal did not send
@@ -207,4 +218,37 @@ export function humanizeSize(bytes: number): string {
     }
     const rounded = unit === 0 ? Math.round(value) : Math.round(value * 10) / 10;
     return `${rounded} ${SIZE_UNITS[unit]}`;
+}
+
+/**
+ * A status line's byline: "Updated 12m ago by an agent" / "… by you", a week or more back
+ * "Updated on <date> …". Null when the status carries no time; no "by" clause when the author is
+ * unknown.
+ */
+export function statusByline(
+    updatedAt: number | null | undefined,
+    by: TrackerActor | null | undefined,
+    now: number = Date.now(),
+): string | null {
+    const when = formatRelativeTime(updatedAt, now);
+    if (!when) return null;
+    const phrase = when === "just now" || when.endsWith(" ago") ? when : `on ${when}`;
+    const who = by === "user" ? " by you" : by === "agent" ? " by an agent" : "";
+    return `Updated ${phrase}${who}`;
+}
+
+/**
+ * A mission's open items in the two groups its page shows: what waits on the user ("Needs you")
+ * and everything else open ("Open tasks & decisions"), each in the journal's order.
+ */
+export function missionItemGroups<T extends Pick<TrackerItem, "state" | "awaiting">>(
+    items: readonly T[],
+): { needsYou: T[]; others: T[] } {
+    const needsYou: T[] = [];
+    const others: T[] = [];
+    for (const item of items) {
+        if (item.state !== "open") continue;
+        (needsUser(item) ? needsYou : others).push(item);
+    }
+    return { needsYou, others };
 }
