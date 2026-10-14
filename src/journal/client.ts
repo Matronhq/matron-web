@@ -18,6 +18,7 @@ import {
 import { JournalConnection } from "./connection";
 import { effectiveUnread, makeIdSetStore, type IdSetStore } from "./conversation-flags";
 import { JournalDatabase } from "./database";
+import { parseTrackerLinkPath, type TrackerLinkPath } from "./link-path";
 import {
     DEFAULT_PIN_LIMIT,
     markPinImportDone,
@@ -359,6 +360,8 @@ export function voiceNoteFile(blob: Blob): File {
 
 export class MatronJournalClient {
     private state = blankState();
+    // The `/u/<name>/<n>` link the page was opened at, until the first sign-in opens it.
+    private pathLink: TrackerLinkPath | null = parseTrackerLinkPath(window.location.pathname);
     private readonly listeners = new Set<() => void>();
     private api?: JournalApi;
     // Monotonic guard so only the latest message-search request writes its results — an earlier
@@ -3281,6 +3284,29 @@ export class MatronJournalClient {
             onState: (connection, error) => this.patch({ connection, connectionError: error }),
         });
         this.connection.start();
+        void this.openPathLink();
+    }
+
+    /**
+     * Opens the `/u/<name>/<n>` link the page was loaded at, once, after the first sign-in. Only
+     * the signed-in user's own numbers open: the tracker shows that user's rows, so another user's
+     * number would open the wrong row. A number that names nothing says so.
+     */
+    public async openPathLink(): Promise<void> {
+        const link = this.pathLink;
+        const user = this.state.session?.username;
+        if (!link || !user) return;
+        this.pathLink = null;
+        if (link.user.toLowerCase() !== user.toLowerCase()) return;
+        const outcome = await this.lookupNumber(link.num);
+        if (this.state.session?.username !== user) return;
+        if (outcome.status === "found" && this.openNumberHit(outcome.hit, link.num)) return;
+        this.patch({
+            controlError:
+                outcome.status === "none"
+                    ? `Nothing numbered #${link.num} is visible to you.`
+                    : `Couldn't open #${link.num}.`,
+        });
     }
 
     private setArchived(conversationId: string, archived: boolean): void {
