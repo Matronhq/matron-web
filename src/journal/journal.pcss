@@ -271,11 +271,15 @@ textarea {
     flex: 0 1 auto;
 }
 
-/* Workdir and account email give way first on a narrow pane; the short model (· effort)
-   and run-state truncate only once those are down to an ellipsis. */
+/* Workdir and account email give way first on a narrow pane; the model (· effort) and
+   run-state truncate only once those are gone. They take no room of their own (zero basis)
+   and grow into whatever the model and run-state leave, up to their own width. A shrink
+   factor would not do: shrinking is shared out by width, so the model always lost a
+   fraction of a pixel, enough to clip its effort to an ellipsis. */
 .mj_HeaderMeta .mj_HeaderWorkdir,
 .mj_HeaderMeta .mj_HeaderEmail {
-    flex-shrink: 6;
+    max-width: max-content;
+    flex: 1 1 0;
 }
 
 /* RIGHT zone: usage bars + Compact pill. */
@@ -675,8 +679,10 @@ textarea {
     grid-template-columns: 24px 72px 32px;
 }
 
-.mj_UsageCluster_collapsed .mj_UsageRow:has(.mj_UsageReset) {
-    grid-template-columns: 24px 72px 32px auto;
+/* The collapsed ctx+5h stack is what a narrow pane and a phone get: a reset time there
+   would come out of the title's width. Its popover lists every reset. */
+.mj_UsageCluster_collapsed .mj_UsageReset {
+    display: none;
 }
 
 .mj_UsageCluster_collapsed:hover {
@@ -752,9 +758,11 @@ textarea {
     flex-wrap: wrap;
 }
 
-.mj_TitlePopover .mj_HeaderMeta > * {
-    flex-shrink: 0;
+.mj_TitlePopover .mj_HeaderMeta > *,
+.mj_TitlePopover .mj_HeaderMeta .mj_HeaderWorkdir,
+.mj_TitlePopover .mj_HeaderMeta .mj_HeaderEmail {
     max-width: 100%;
+    flex: 0 0 auto;
 }
 
 .mj_TitlePopoverTitle {
