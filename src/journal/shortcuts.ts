@@ -158,14 +158,19 @@ export function useAppShortcuts(client: MatronJournalClient, handlers: AppShortc
     useEffect(() => {
         if (!enabled) return undefined;
         const onKeyDown = (event: KeyboardEvent): void => {
-            // A held key repeats: one press, one action (⌘K would otherwise flicker open and shut).
-            if (event.defaultPrevented || event.isComposing || event.repeat) return;
+            if (event.defaultPrevented || event.isComposing) return;
             const mac = isMacPlatform();
             const command = matchShortcut(event, mac);
             if (!command) return;
             if (command.kind === "jumpToLastOwnMessage" && !mac && isTextField(event.target)) return;
             // Another sheet or dialog is up: it owns the keyboard. The palette closes itself on ⌘K.
             if (document.querySelector('[aria-modal="true"]')) return;
+            // A held key repeats: one press, one action (⌘K would otherwise flicker open and shut),
+            // but the repeats are still ours, not the browser's (tab switching, its search bar).
+            if (event.repeat) {
+                if (command.kind !== "commandPalette" || handlersRef.current.onCommandPalette) event.preventDefault();
+                return;
+            }
             switch (command.kind) {
                 case "commandPalette": {
                     const open = handlersRef.current.onCommandPalette;

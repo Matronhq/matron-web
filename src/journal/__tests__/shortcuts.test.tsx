@@ -285,6 +285,16 @@ describe("app shortcuts", () => {
         expect(palette()).toBeNull();
     });
 
+    it("keeps a held shortcut's repeats from the browser without acting again", async () => {
+        const client = signedInClient();
+        await render(client);
+        await press("2");
+        await act(async () => client.closeTrackerView());
+        const repeat = await press("2", { repeat: true });
+        expect(repeat.defaultPrevented).toBe(true);
+        expect(client.getSnapshot().trackerView?.open).toBeFalsy();
+    });
+
     it("⌘N opens the new-session sheet", async () => {
         const client = signedInClient();
         await render(client);
