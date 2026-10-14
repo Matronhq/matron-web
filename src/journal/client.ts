@@ -4131,11 +4131,11 @@ export function commentFailureMessage(error: unknown): string {
     return knownErrorMessage(error.code) ?? `The server refused it (HTTP ${error.status}).`;
 }
 
-/** The Done tab's page: what the user answered, decided or read, most recently touched first. */
 // The journal's largest page. The open-items walk is sequential, so on a real network each extra
 // page is another round trip before the inbox can show anything; the default 100 took a dozen.
 const OPEN_ITEMS_PAGE = 500;
 
+/** The Done tab's page: what the user answered, decided or read, most recently touched first. */
 const INBOX_DONE_FILTER = {
     state: "closed",
     kind: ["question", "decision", "notice"],
