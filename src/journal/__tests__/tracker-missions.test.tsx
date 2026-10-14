@@ -465,13 +465,13 @@ describe("MissionDetail page (Mac parity)", () => {
         expect(button()?.textContent).toBe("Show closed items");
 
         await act(async () => button()!.click());
-        expect(fetchMissionClosedItems).toHaveBeenLastCalledWith("ms_1", null, 50);
+        expect(fetchMissionClosedItems).toHaveBeenLastCalledWith(expect.objectContaining({ id: "ms_1" }), null, 50);
         expect(closed.querySelectorAll(".mj_TrackerMiniItem_closed")).toHaveLength(1);
         expect(closed.querySelector(".mj_TrackerMiniItem_status")?.textContent).toBe("Done");
         expect(button()?.textContent).toBe("Show more");
 
         await act(async () => button()!.click());
-        expect(fetchMissionClosedItems).toHaveBeenLastCalledWith("ms_1", "k1", 50);
+        expect(fetchMissionClosedItems).toHaveBeenLastCalledWith(expect.objectContaining({ id: "ms_1" }), "k1", 50);
         const rows = closed.querySelectorAll<HTMLButtonElement>(".mj_TrackerMiniItem_closed");
         expect(rows).toHaveLength(2);
         expect(rows[1].querySelector(".mj_TrackerMiniItem_status")?.textContent).toBe("Answered");
@@ -499,8 +499,24 @@ describe("MissionDetail page (Mac parity)", () => {
         expect(closed.textContent).toContain("Couldn't load closed items.");
         expect(closed.querySelector(".mj_TrackerShowMore")?.textContent).toBe("Try again");
         await act(async () => closed.querySelector<HTMLButtonElement>(".mj_TrackerShowMore")!.click());
-        expect(fetchMissionClosedItems).toHaveBeenLastCalledWith("ms_1", null, 50);
+        expect(fetchMissionClosedItems).toHaveBeenLastCalledWith(expect.objectContaining({ id: "ms_1" }), null, 50);
         expect(closed.textContent).toContain("No closed items.");
         expect(closed.querySelector(".mj_TrackerShowMore")).toBeNull();
+    });
+
+    it("keeps Show more when a bounded walk found nothing yet", async () => {
+        const fetchMissionClosedItems = jest.fn().mockResolvedValue({ items: [], cursor: "more" });
+        const { container } = await mount(
+            <MissionDetail
+                detail={trackerMissionDetail()}
+                client={fakeClient({ fetchMissionClosedItems })}
+                onOpenItem={jest.fn()}
+                onBack={jest.fn()}
+            />,
+        );
+        const closed = container.querySelector('[aria-label="Closed items"]')!;
+        await act(async () => closed.querySelector<HTMLButtonElement>(".mj_TrackerShowMore")!.click());
+        expect(closed.textContent).toContain("None found yet.");
+        expect(closed.querySelector(".mj_TrackerShowMore")?.textContent).toBe("Show more");
     });
 });

@@ -53,6 +53,7 @@ import {
     type JournalBoxStatusFrame,
     isSubChat,
     type MatronLinkKind,
+    type Mission,
     type NumberLookup,
     type NumberLookupKind,
     type NumberLookupOutcome,
@@ -2639,22 +2640,31 @@ export class MatronJournalClient {
      * One page of a mission's closed items, most recently updated first. `GET /items` has no
      * mission filter, so this walks the user's closed items newest first (at most
      * MISSION_CLOSED_SCAN_PAGES requests of 500) and keeps the mission's own, stopping once `want`
-     * are found. `cursor` is where the walk stopped, null once every closed item has been seen —
-     * pass it back to continue. Not store state: the mission page holds the pages it asked for.
-     * Rejects on a failed request, and resolves empty when signed out.
+     * are found. The walk starts no further back than the mission's creation (`since`): the journal
+     * bumps an item's `updated_at` whenever it is put on a mission, so none of the mission's items
+     * is older than the mission. `cursor` is where the walk stopped, null once every candidate has
+     * been seen — pass it back to continue. Not store state: the mission page holds the pages it
+     * asked for. Rejects on a failed request, and resolves empty when signed out.
      */
     public async fetchMissionClosedItems(
-        missionId: string,
+        mission: Pick<Mission, "id" | "created_at">,
         cursor: string | null = null,
         want: number = MISSION_CLOSED_PAGE,
     ): Promise<{ items: TrackerItem[]; cursor: string | null }> {
         const api = this.api;
         if (!api) return { items: [], cursor: null };
+        const since = Number.isInteger(mission.created_at) && mission.created_at > 0 ? mission.created_at : undefined;
         const items: TrackerItem[] = [];
         let next = cursor;
         for (let page = 0; page < MISSION_CLOSED_SCAN_PAGES; page++) {
-            const res = await api.items({ state: "closed", sort: "updated", limit: 500, cursor: next ?? undefined });
-            for (const item of res.items) if (item.mission_id === missionId) items.push(item);
+            const res = await api.items({
+                state: "closed",
+                sort: "updated",
+                limit: 500,
+                ...(since !== undefined ? { since } : {}),
+                cursor: next ?? undefined,
+            });
+            for (const item of res.items) if (item.mission_id === mission.id) items.push(item);
             next = res.next_cursor;
             if (!next || items.length >= want) break;
         }

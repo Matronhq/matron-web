@@ -1887,6 +1887,8 @@ describe("commentFailureMessage", () => {
 });
 
 describe("MatronJournalClient.fetchMissionClosedItems", () => {
+    const MS_1 = { id: "ms_1", created_at: 1000 };
+
     it("walks closed items newest first and keeps only the mission's own", async () => {
         const { client, state } = makeClient();
         const items = jest
@@ -1901,12 +1903,24 @@ describe("MatronJournalClient.fetchMissionClosedItems", () => {
             });
         state.api = { items };
 
-        const page = await client.fetchMissionClosedItems("ms_1");
+        const page = await client.fetchMissionClosedItems(MS_1);
 
         expect(page.items.map((row) => row.id)).toEqual(["a", "c"]);
         expect(page.cursor).toBeNull();
-        expect(items).toHaveBeenNthCalledWith(1, { state: "closed", sort: "updated", limit: 500, cursor: undefined });
-        expect(items).toHaveBeenNthCalledWith(2, { state: "closed", sort: "updated", limit: 500, cursor: "k1" });
+        expect(items).toHaveBeenNthCalledWith(1, {
+            state: "closed",
+            sort: "updated",
+            limit: 500,
+            since: 1000,
+            cursor: undefined,
+        });
+        expect(items).toHaveBeenNthCalledWith(2, {
+            state: "closed",
+            sort: "updated",
+            limit: 500,
+            since: 1000,
+            cursor: "k1",
+        });
     });
 
     it("stops once it has enough and hands back where it stopped", async () => {
@@ -1917,10 +1931,10 @@ describe("MatronJournalClient.fetchMissionClosedItems", () => {
         });
         state.api = { items };
 
-        const page = await client.fetchMissionClosedItems("ms_1", "k1", 1);
+        const page = await client.fetchMissionClosedItems(MS_1, "k1", 1);
 
         expect(items).toHaveBeenCalledTimes(1);
-        expect(items).toHaveBeenCalledWith({ state: "closed", sort: "updated", limit: 500, cursor: "k1" });
+        expect(items).toHaveBeenCalledWith({ state: "closed", sort: "updated", limit: 500, since: 1000, cursor: "k1" });
         expect(page).toEqual({ items: [expect.objectContaining({ id: "a" })], cursor: "k2" });
     });
 
@@ -1929,14 +1943,24 @@ describe("MatronJournalClient.fetchMissionClosedItems", () => {
         const items = jest.fn().mockResolvedValue({ items: [item({ state: "closed" })], next_cursor: "more" });
         state.api = { items };
 
-        const page = await client.fetchMissionClosedItems("ms_1");
+        const page = await client.fetchMissionClosedItems(MS_1);
 
         expect(items).toHaveBeenCalledTimes(4);
         expect(page).toEqual({ items: [], cursor: "more" });
     });
 
+    it("leaves since out when the mission carries no creation time", async () => {
+        const { client, state } = makeClient();
+        const items = jest.fn().mockResolvedValue({ items: [], next_cursor: null });
+        state.api = { items };
+
+        await client.fetchMissionClosedItems({ id: "ms_1", created_at: undefined as unknown as number });
+
+        expect(items).toHaveBeenCalledWith({ state: "closed", sort: "updated", limit: 500, cursor: undefined });
+    });
+
     it("resolves empty when signed out", async () => {
         const { client } = makeClient();
-        await expect(client.fetchMissionClosedItems("ms_1")).resolves.toEqual({ items: [], cursor: null });
+        await expect(client.fetchMissionClosedItems(MS_1)).resolves.toEqual({ items: [], cursor: null });
     });
 });

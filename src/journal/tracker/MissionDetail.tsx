@@ -23,6 +23,7 @@ import { MarkdownBody } from "../markdown";
 import { displayRawTitle, SessionTagMark } from "../SessionTag";
 import type {
     AgentRosterEntry,
+    Mission,
     MissionConversation,
     MissionDetail as MissionDetailData,
     MissionItemRef,
@@ -124,15 +125,16 @@ export const MILESTONE_PAGE = 20;
 
 /**
  * The mission's closed items, most recently updated first, fetched only when asked for: the
- * journal can only list them by walking every closed item, so a page open never pays for it.
+ * journal can only list them by walking the closed items updated since the mission began, so a
+ * page open never pays for it.
  * Keyed by mission, so another mission starts over.
  */
 function ClosedItems({
-    missionId,
+    mission,
     client,
     onOpen,
 }: {
-    missionId: string;
+    mission: Pick<Mission, "id" | "created_at">;
     client: MatronJournalClient;
     onOpen: (num: number) => void;
 }): React.ReactElement {
@@ -146,7 +148,7 @@ function ClosedItems({
         setLoading(true);
         setFailed(false);
         try {
-            const page = await client.fetchMissionClosedItems(missionId, from, MISSION_CLOSED_PAGE);
+            const page = await client.fetchMissionClosedItems(mission, from, MISSION_CLOSED_PAGE);
             setItems((current) => [...(from ? (current ?? []) : []), ...page.items]);
             setCursor(page.cursor);
         } catch {
@@ -162,7 +164,9 @@ function ClosedItems({
             {items?.map((item) => (
                 <ClosedItemRow key={item.id} item={item} onOpen={onOpen} />
             ))}
-            {items && items.length === 0 && !cursor ? <p className="mj_TrackerCaption">No closed items.</p> : null}
+            {items && items.length === 0 ? (
+                <p className="mj_TrackerCaption">{cursor ? "None found yet." : "No closed items."}</p>
+            ) : null}
             {failed ? <p className="mj_TrackerCaption">Couldn't load closed items.</p> : null}
             {items === null || cursor ? (
                 <button
@@ -465,7 +469,7 @@ export function MissionDetail({
                     )}
                 </section>
 
-                <ClosedItems key={mission.id} missionId={mission.id} client={client} onOpen={onOpenItem} />
+                <ClosedItems key={mission.id} mission={mission} client={client} onOpen={onOpenItem} />
 
                 {detail.conversations.length > 0 ? (
                     <section className="mj_TrackerSection">
