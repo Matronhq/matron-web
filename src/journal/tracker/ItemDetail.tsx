@@ -26,15 +26,18 @@ import { ChevronLeftIcon, CloseIcon, KebabIcon, PlusCircleIcon, SendIcon } from 
 import { parseOwnTrackerUrl } from "../link-path";
 import { parseTrackerHref } from "../markdown";
 import { MediaViewer, MediaViewerContext, type MediaViewerContextValue } from "../media-viewer";
-import type {
-    SpawnConsentRows,
-    TrackerAttachment,
-    TrackerComment,
-    TrackerCommentWrite,
-    TrackerItem,
-    TrackerLink,
-    TrackerLinkHandler,
-    TrackerResolution,
+import {
+    asString,
+    type SpawnConsentRows,
+    spawnOutcomeKind,
+    spawnOutcomeSnippet,
+    type TrackerAttachment,
+    type TrackerComment,
+    type TrackerCommentWrite,
+    type TrackerItem,
+    type TrackerLink,
+    type TrackerLinkHandler,
+    type TrackerResolution,
 } from "../types";
 import { useVoiceRecorder, VoiceErrorBanner, VoiceMicButton, VoiceRecordingBar } from "../voice-recorder";
 import {
@@ -168,8 +171,10 @@ function useSpawnConsentRows(
  * sits near the top. The full card when its own event is in this browser's store: what the user
  * approves is then exactly what the timeline card shows, through the same answer call. Without it
  * there is nothing to approve: the id in the item's link is agent-written and could name an ask the
- * user has never seen, so the placeholder says the card has not arrived and offers no buttons. A
- * closed item settles the card: the journal closes it the moment the ask is answered.
+ * user has never seen, so the placeholder offers no buttons. It says the card has not arrived while
+ * the ask may still be waiting, or how the ask ended when its outcome is here (the latest history
+ * page can hold the outcome but not the older card) or the item is closed. A closed item settles the
+ * card: the journal closes it the moment the ask is answered.
  */
 function SpawnConsentCard({
     rows,
@@ -198,6 +203,7 @@ function SpawnConsentCard({
             </div>
         );
     }
+    const roomId = outcome && spawnOutcomeKind(outcome) === "started" ? asString(outcome.room_id) : "";
     return (
         <div className="mj_TrackerConsent">
             <div className="mj_PromptCard mj_PromptCard_spawn mj_TrackerConsent_waiting">
@@ -205,9 +211,19 @@ function SpawnConsentCard({
                     <span className="mj_PromptLabel">Agent spawn request</span>
                 </div>
                 <p className="mj_TrackerConsent_note">
-                    The request card hasn&apos;t reached this browser yet. It can be approved once it arrives, or from
-                    the conversation it was asked in.
+                    {outcome
+                        ? spawnOutcomeSnippet(outcome)
+                        : closed
+                          ? "This request is no longer waiting for an answer."
+                          : "The request card hasn't reached this browser yet. It can be approved once it arrives, or from the conversation it was asked in."}
                 </p>
+                {roomId ? (
+                    <div className="mj_PromptResolved">
+                        <button type="button" className="mj_SpawnOpenButton" onClick={() => onOpenRoom(roomId)}>
+                            Open
+                        </button>
+                    </div>
+                ) : null}
             </div>
         </div>
     );

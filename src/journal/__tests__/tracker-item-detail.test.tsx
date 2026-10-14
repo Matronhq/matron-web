@@ -1453,6 +1453,29 @@ describe("ItemDetail spawn consent", () => {
         expect(container.querySelectorAll(".mj_TrackerConsent button")).toHaveLength(0);
     });
 
+    it("shows how the ask ended when only its outcome is here, with Open for a started session", async () => {
+        const client = fakeClient();
+        client.spawnConsentRows.mockResolvedValue(
+            rows({ request: null, outcome: { request_id: "sp_1", outcome: "started", room_id: "room_9" } }),
+        );
+        const { container } = await render(client, consentItem({ state: "closed", awaiting: null }));
+
+        expect(container.querySelector(".mj_TrackerConsent_note")?.textContent).toBe("🚀 Spawned session started");
+        await act(async () => button(container, "Open")!.click());
+        expect(client.selectConversation).toHaveBeenCalledWith("room_9", { suppressNotFound: true });
+        expect(button(container, "Approve")).toBeUndefined();
+    });
+
+    it("says a closed item's ask is no longer waiting when neither card nor outcome is here", async () => {
+        const client = fakeClient();
+        const { container } = await render(client, consentItem({ state: "closed", awaiting: null }));
+
+        expect(container.querySelector(".mj_TrackerConsent_note")?.textContent).toBe(
+            "This request is no longer waiting for an answer.",
+        );
+        expect(container.querySelectorAll(".mj_TrackerConsent button")).toHaveLength(0);
+    });
+
     it("reads the ask again when the asking conversation moves", async () => {
         const client = fakeClient();
         const conversation = { id: "c1", title: "Fix the flaky tests", last_seq: 40 };

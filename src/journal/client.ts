@@ -4314,6 +4314,7 @@ export class MatronJournalClient {
         this.pendingAck = 0;
         this.historyError = undefined;
         this.history.clear();
+        this.consentHistoryFetches.clear();
         this.activities.clear();
         this.statuses.clear();
         this.textStreams.clear();
