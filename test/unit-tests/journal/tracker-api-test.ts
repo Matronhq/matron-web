@@ -94,6 +94,28 @@ describe("JournalApi tracker routes", () => {
         expect(url()).toBe("https://journal.example/items?since=0");
     });
 
+    it("GET /items?convo= lists one conversation's items", async () => {
+        await api().items({ convo: "c-1", state: "open", sort: "rank", limit: 500 });
+        expect(url()).toBe("https://journal.example/items?convo=c-1&state=open&sort=rank&limit=500");
+    });
+
+    it("POST /items files a new item with an Idempotency-Key", async () => {
+        await api().createItem({ kind: "task", title: "Write tests", body: "", convo_id: "c-1" }, "key-1");
+        expect(url()).toBe("https://journal.example/items");
+        expect(init().method).toBe("POST");
+        expect(JSON.parse(init().body!)).toEqual({ kind: "task", title: "Write tests", body: "", convo_id: "c-1" });
+        expect(init().headers["Idempotency-Key"]).toBe("key-1");
+    });
+
+    it("POST /items/:id/rank sends a position or the new neighbours", async () => {
+        await api().rankItem("it_a", { position: "top" });
+        expect(url()).toBe("https://journal.example/items/it_a/rank");
+        expect(init().method).toBe("POST");
+        expect(JSON.parse(init().body!)).toEqual({ position: "top" });
+        await api().rankItem("it_a", { after: "it_b", before: "it_c" });
+        expect(JSON.parse(init(1).body!)).toEqual({ after: "it_b", before: "it_c" });
+    });
+
     it("GET /items/:id for an item detail", async () => {
         await api().item(7);
         expect(url()).toBe("https://journal.example/items/7");

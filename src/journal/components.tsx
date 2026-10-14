@@ -83,6 +83,7 @@ import {
     ChevronDownIcon,
     ChevronLeftIcon,
     ChevronUpIcon,
+    ChecklistIcon,
     ClipboardIcon,
     CloseIcon,
     CodeBracketsIcon,
@@ -143,6 +144,7 @@ import {
     MissionNotice,
     renderItemMarker,
 } from "./tracker/cards";
+import { ChatTasksPane } from "./tracker/ChatTasksPane";
 import { needsUser } from "./tracker/format";
 import { NeedsYouBadge } from "./tracker/glyphs";
 import {
@@ -2491,6 +2493,7 @@ const CONVERSATION_LIST_IGNORED_STATE = new Set<keyof ClientState>([
     "hasOlderHistory",
     "sendTick",
     "dragActive",
+    "chatTasks",
     "focusTarget",
     "chatSearch",
 ]);
@@ -3482,18 +3485,52 @@ function ChatHeader({
                 // Keyed by conversation id so a selection change while the menu is open
                 // remounts (and closes) it, instead of silently retargeting the actions.
                 conversation && (
-                    <HeaderOverflowMenu
-                        key={conversation.id}
-                        client={client}
-                        conversation={conversation}
-                        state={state}
-                    />
+                    <>
+                        <ChatTasksButton client={client} state={state} convoId={conversation.id} />
+                        <HeaderOverflowMenu
+                            key={conversation.id}
+                            client={client}
+                            conversation={conversation}
+                            state={state}
+                        />
+                    </>
                 )
             }
             hideControlsWhenCompact
             limits={meters}
             collapse={collapse}
         />
+    );
+}
+
+// Opens the Tasks & decisions pane beside the chat. Its badge counts this chat's open items that
+// wait on the user, from the app-wide open items that already feed the For you badge.
+function ChatTasksButton({
+    client,
+    state,
+    convoId,
+}: {
+    client: MatronJournalClient;
+    state: ClientState;
+    convoId: string;
+}): React.ReactElement {
+    const needsYou = useMemo(
+        () => (state.inboxItems ?? []).filter((item) => item.origin_convo_id === convoId && needsUser(item)).length,
+        [state.inboxItems, convoId],
+    );
+    const open = state.chatTasks?.open === true;
+    return (
+        <button
+            type="button"
+            className={`mj_IconButton mj_ChatTasksToggle${open ? " mj_ChatTasksToggle_open" : ""}`}
+            aria-label={`Tasks and decisions${needsYou > 0 ? `, ${needsYou} need you` : ""}`}
+            aria-pressed={open}
+            title="Tasks & decisions"
+            onClick={() => client.toggleChatTasks()}
+        >
+            <ChecklistIcon aria-hidden />
+            <NeedsYouBadge count={needsYou} />
+        </button>
     );
 }
 
@@ -7249,6 +7286,14 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                             </main>
                         )}
                     </div>
+                    {state.chatTasks?.open && state.selectedConversationId && !childMode && !state.trackerView?.open ? (
+                        <ChatTasksPane
+                            client={client}
+                            pane={state.chatTasks}
+                            convoId={state.selectedConversationId}
+                            conversations={state.conversations}
+                        />
+                    ) : null}
                     {markdownPreview.target ? (
                         <MarkdownPreviewPanel
                             client={client}
