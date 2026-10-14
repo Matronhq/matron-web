@@ -7,7 +7,7 @@ Please see LICENSE files in the repository root for full details.
 
 import { JournalApiError } from "../../../src/journal/api";
 import { MatronJournalClient } from "../../../src/journal/client";
-import { parseTrackerLinkPath } from "../../../src/journal/link-path";
+import { parseOwnTrackerUrl, parseTrackerLinkPath } from "../../../src/journal/link-path";
 import type { ClientState } from "../../../src/journal/types";
 
 interface Internals {
@@ -116,5 +116,50 @@ describe("MatronJournalClient.openPathLink", () => {
         jest.spyOn(client, "openNumberHit").mockReturnValue(true);
         await client.openPathLink();
         expect(lookup).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe("parseOwnTrackerUrl", () => {
+    const origin = "https://journal.example";
+
+    it("reads a /u/<name>/<n> link on the given origin, ignoring a query or fragment", () => {
+        expect(parseOwnTrackerUrl(`${origin}/u/alice/412`, origin)).toEqual({ user: "alice", num: 412 });
+        expect(parseOwnTrackerUrl(`${origin}/u/alice/412?x=1#y`, origin)).toEqual({ user: "alice", num: 412 });
+    });
+
+    it("refuses another origin, a relative URL or another path", () => {
+        expect(parseOwnTrackerUrl("https://elsewhere.example/u/alice/412", origin)).toBeNull();
+        expect(parseOwnTrackerUrl("http://journal.example/u/alice/412", origin)).toBeNull();
+        expect(parseOwnTrackerUrl("/u/alice/412", origin)).toBeNull();
+        expect(parseOwnTrackerUrl(`${origin}/app/`, origin)).toBeNull();
+        expect(parseOwnTrackerUrl("matron://item/412", origin)).toBeNull();
+    });
+});
+
+describe("MatronJournalClient.openTrackerLink with an https link", () => {
+    it("opens the signed-in user's own number in-app", async () => {
+        const hit = { kind: "item", id: "it_1", num: 412 };
+        const lookup = jest.fn().mockResolvedValue(hit);
+        const client = clientAt("/", lookup);
+        const open = jest.spyOn(client, "openNumberHit").mockReturnValue(true);
+
+        client.openTrackerLink("link", `${window.location.origin}/u/alice/412`);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(lookup).toHaveBeenCalledWith("alice", 412, undefined);
+        expect(open).toHaveBeenCalledWith(hit, 412);
+    });
+
+    it("opens another user's link as a web page", () => {
+        const lookup = jest.fn();
+        const client = clientAt("/", lookup);
+        const windowOpen = jest.spyOn(window, "open").mockReturnValue(null);
+        const url = `${window.location.origin}/u/bob/412`;
+
+        client.openTrackerLink("link", url);
+
+        expect(lookup).not.toHaveBeenCalled();
+        expect(windowOpen).toHaveBeenCalledWith(url, "_blank", "noopener,noreferrer");
+        windowOpen.mockRestore();
     });
 });

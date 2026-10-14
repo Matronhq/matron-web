@@ -31,3 +31,19 @@ export function parseTrackerLinkPath(pathname: string): TrackerLinkPath | null {
     if (!user || !Number.isSafeInteger(num) || num <= 0) return null;
     return { user, num };
 }
+
+/**
+ * An absolute http(s) link to a `/u/<name>/<n>` page on the origin this app is served from (so a
+ * link to this deployment's own tracker), or null for any other URL. A query or fragment is
+ * allowed and ignored.
+ */
+export function parseOwnTrackerUrl(href: string, origin: string = window.location.origin): TrackerLinkPath | null {
+    if (!/^https?:\/\//i.test(href)) return null;
+    let url: URL;
+    try {
+        url = new URL(href);
+    } catch {
+        return null;
+    }
+    return url.origin === origin ? parseTrackerLinkPath(url.pathname) : null;
+}

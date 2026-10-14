@@ -18,7 +18,7 @@ import {
 import { JournalConnection } from "./connection";
 import { effectiveUnread, makeIdSetStore, type IdSetStore } from "./conversation-flags";
 import { JournalDatabase } from "./database";
-import { parseTrackerLinkPath, type TrackerLinkPath } from "./link-path";
+import { parseOwnTrackerUrl, parseTrackerLinkPath, type TrackerLinkPath } from "./link-path";
 import {
     DEFAULT_PIN_LIMIT,
     markPinImportDone,
@@ -1818,6 +1818,15 @@ export class MatronJournalClient {
     // call site so a valid link is always activatable (F6) — never rendered inert or stripped.
     // A project link opens that project's page (openTrackerProject).
     public openTrackerLink(kind: MatronLinkKind, target: number | string): void {
+        if (kind === "link") {
+            if (typeof target !== "string") return;
+            const link = parseOwnTrackerUrl(target);
+            const user = this.state.session?.username;
+            // Another user's number would open the wrong row here, so it opens as a web page.
+            if (link && user && link.user.toLowerCase() === user.toLowerCase()) void this.openLinkedNumber(link.num);
+            else window.open(target, "_blank", "noopener,noreferrer");
+            return;
+        }
         if (kind === "convo") {
             if (typeof target === "string" && target) void this.selectConversation(target, { suppressNotFound: true });
             return;
@@ -3298,14 +3307,18 @@ export class MatronJournalClient {
         if (!link || !user) return;
         this.pathLink = null;
         if (link.user.toLowerCase() !== user.toLowerCase()) return;
-        const outcome = await this.lookupNumber(link.num);
+        await this.openLinkedNumber(link.num);
+    }
+
+    /** Looks the signed-in user's number up and opens it; a number that names nothing says so. */
+    private async openLinkedNumber(num: number): Promise<void> {
+        const user = this.state.session?.username;
+        const outcome = await this.lookupNumber(num);
         if (this.state.session?.username !== user) return;
-        if (outcome.status === "found" && this.openNumberHit(outcome.hit, link.num)) return;
+        if (outcome.status === "found" && this.openNumberHit(outcome.hit, num)) return;
         this.patch({
             controlError:
-                outcome.status === "none"
-                    ? `Nothing numbered #${link.num} is visible to you.`
-                    : `Couldn't open #${link.num}.`,
+                outcome.status === "none" ? `Nothing numbered #${num} is visible to you.` : `Couldn't open #${num}.`,
         });
     }
 
