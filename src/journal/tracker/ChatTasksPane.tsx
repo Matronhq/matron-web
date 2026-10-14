@@ -318,9 +318,11 @@ function NewItemForm({ client, onDone }: { client: MatronJournalClient; onDone: 
     // One key per draft: a retry of the same draft reuses it, so the journal dedupes a create that
     // landed but whose answer was lost. Any edit makes it a new draft with a new key.
     const draftKey = useRef<string>(crypto.randomUUID());
+    // Only a real change does: re-tapping the selected kind keeps the draft (and its key).
     const edit =
-        <T,>(set: (value: T) => void) =>
+        <T,>(current: T, set: (value: T) => void) =>
         (value: T): void => {
+            if (value === current) return;
             draftKey.current = crypto.randomUUID();
             set(value);
         };
@@ -361,7 +363,7 @@ function NewItemForm({ client, onDone }: { client: MatronJournalClient; onDone: 
                         type="button"
                         aria-pressed={kind === option}
                         disabled={busy}
-                        onClick={() => edit(setKind)(option)}
+                        onClick={() => edit(kind, setKind)(option)}
                     >
                         {kindLabel(option)}
                     </button>
@@ -379,7 +381,7 @@ function NewItemForm({ client, onDone }: { client: MatronJournalClient; onDone: 
                 value={title}
                 maxLength={200}
                 disabled={busy}
-                onChange={(event) => edit(setTitle)(event.target.value)}
+                onChange={(event) => edit(title, setTitle)(event.target.value)}
             />
             <label className="mj_SrOnly" htmlFor={detailsId}>
                 Details
@@ -391,7 +393,7 @@ function NewItemForm({ client, onDone }: { client: MatronJournalClient; onDone: 
                 value={details}
                 disabled={busy}
                 rows={3}
-                onChange={(event) => edit(setDetails)(event.target.value)}
+                onChange={(event) => edit(details, setDetails)(event.target.value)}
             />
             {error ? (
                 <p className="mj_TrackerMemoryForm_error" role="alert">

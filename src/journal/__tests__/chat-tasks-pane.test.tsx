@@ -221,6 +221,8 @@ describe("ChatTasksPane", () => {
 
         // A retry of the same draft reuses its key; an edit makes a new one.
         const firstKey = client.createChatItem.mock.calls[0][1];
+        const task = Array.from(form.querySelectorAll("button")).find((b) => b.textContent === "Task")!;
+        act(() => task.click()); // already selected: not an edit
         await act(async () => form.requestSubmit());
         expect(client.createChatItem.mock.calls[1][1]).toBe(firstKey);
         act(() => typeInto(form.querySelector("input")!, "Write more tests"));
