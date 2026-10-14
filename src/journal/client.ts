@@ -1012,6 +1012,9 @@ export class MatronJournalClient {
     }
 
     public clearSelection(): void {
+        // Find in chat belongs to the conversation being left: a search still in flight must not
+        // reopen it, nor answer a bar opened there later.
+        this.endChatSearch();
         this.connection?.send({ op: "viewing", convo_id: null });
         if (this.state.session) storeSelectedConversation(this.state.session, undefined);
         this.patch({ selectedConversationId: undefined, events: [], pendingMessages: [] });
@@ -1405,6 +1408,8 @@ export class MatronJournalClient {
             this.closeTrackerView();
         }
         this.chatSearchAbort?.abort();
+        // The previous query's jump, if still paging, must not land while this one searches.
+        this.cancelChatSearchFocus();
         const seq = ++this.chatSearchSeq;
         const controller = new AbortController();
         this.chatSearchAbort = controller;
@@ -1424,7 +1429,9 @@ export class MatronJournalClient {
             }, MESSAGE_SEARCH_TIMEOUT_MS);
         });
         const stale = (): boolean =>
-            seq !== this.chatSearchSeq || this.state.chatSearch?.conversationId !== conversationId;
+            seq !== this.chatSearchSeq ||
+            this.state.chatSearch?.conversationId !== conversationId ||
+            this.state.selectedConversationId !== conversationId;
         let matchSeqs: number[];
         let failed = false;
         try {
@@ -1481,8 +1488,11 @@ export class MatronJournalClient {
 
     private cancelChatSearchFocus(): void {
         if (this.focusOwner !== "search") return;
+        const token = this.focusToken;
         this.focusToken += 1;
         this.focusOwner = undefined;
+        // A target already handed over but not yet landed goes too.
+        if (this.state.focusTarget?.token === token) this.patch({ focusTarget: undefined });
     }
 
     /**

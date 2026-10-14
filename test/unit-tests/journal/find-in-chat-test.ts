@@ -285,6 +285,61 @@ describe("client find in chat", () => {
         expect(focus).toHaveBeenCalledWith("c2", 42, "search");
     });
 
+    it("leaving the conversation drops a search still in flight, which then reopens nothing", async () => {
+        let answer!: (value: unknown) => void;
+        const search = jest.fn().mockImplementationOnce(() => new Promise((resolve) => (answer = resolve)));
+        const { client } = searchClient(range(1, 50), search);
+        await client.selectConversation("c1");
+        const focus = jest.spyOn(client, "focusMessage");
+        const searching = client.beginChatSearch("deploy");
+        client.clearSelection();
+        answer(hits(20));
+        await searching;
+        expect(client.getSnapshot().selectedConversationId).toBeUndefined();
+        expect(client.getSnapshot().chatSearch).toBeUndefined();
+        expect(focus).not.toHaveBeenCalled();
+    });
+
+    it("a bar opened later on the same conversation ignores an abandoned search's answer", async () => {
+        let answer!: (value: unknown) => void;
+        const search = jest.fn().mockImplementationOnce(() => new Promise((resolve) => (answer = resolve)));
+        const { client } = searchClient(range(1, 50), search);
+        await client.selectConversation("c1");
+        const searching = client.beginChatSearch("deploy");
+        client.clearSelection();
+        await client.selectConversation("c1");
+        client.openChatSearch();
+        answer(hits(20));
+        await searching;
+        expect(client.getSnapshot().chatSearch).toEqual(expect.objectContaining({ query: "", matchSeqs: [] }));
+        expect(client.getSnapshot().focusTarget).toBeUndefined();
+    });
+
+    it("a new query cancels the previous query's jump still paging history", async () => {
+        let answerSecond!: (value: unknown) => void;
+        const search = jest
+            .fn()
+            .mockResolvedValueOnce(hits(5))
+            .mockImplementationOnce(() => new Promise((resolve) => (answerSecond = resolve)));
+        const { client } = searchClient(range(1, 2000), search);
+        await client.selectConversation("c1");
+        // A new query is typed while the jump to the first query's deep match is on its third page.
+        const load = client.loadOlderHistory.bind(client);
+        let pages = 0;
+        let second: Promise<void> | undefined;
+        jest.spyOn(client, "loadOlderHistory").mockImplementation(async (opts) => {
+            if (++pages === 3) second = client.beginChatSearch("rollback");
+            await load(opts);
+        });
+        await client.beginChatSearch("deploy");
+        expect(pages).toBe(3);
+        expect(client.getSnapshot().focusTarget).toBeUndefined();
+        expect(client.getSnapshot().chatSearch).toEqual(expect.objectContaining({ query: "rollback", loading: true }));
+        answerSecond({ hits: [] });
+        await second;
+        expect(client.getSnapshot().focusTarget).toBeUndefined();
+    });
+
     it("closes the bar when another conversation is opened", async () => {
         const { client } = searchClient();
         client.openChatSearch();
