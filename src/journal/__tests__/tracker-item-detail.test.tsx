@@ -9,7 +9,7 @@ import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
 import type { MatronJournalClient } from "../client";
-import type { StatusSnapshot, TrackerHandover } from "../types";
+import type { StatusSnapshot, TrackerComment, TrackerHandover, TrackerItem } from "../types";
 import { ItemDetail } from "../tracker/ItemDetail";
 import { trackerComment, trackerItem, trackerMission } from "./tracker-fixtures";
 
@@ -852,6 +852,178 @@ describe("ItemDetail origin line", () => {
             });
             expect(client.commentItem).not.toHaveBeenCalled();
         });
+    });
+});
+
+describe("ItemDetail buttons on the item itself", () => {
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    const question = (over: Partial<TrackerItem> = {}): TrackerItem =>
+        trackerItem({
+            num: 12,
+            kind: "question",
+            state: "open",
+            awaiting: "user",
+            body: "Which layout?",
+            actions: ["Option A", "Option B"],
+            chosen_action: null,
+            ...over,
+        });
+    const itemButtons = (container: HTMLElement): HTMLButtonElement[] =>
+        Array.from(container.querySelectorAll<HTMLButtonElement>(".mj_TrackerItemActions .mj_TrackerAction"));
+    const detail = (client: FakeClient, item: TrackerItem, comments: TrackerComment[] = []): React.ReactElement => (
+        <ItemDetail
+            item={item}
+            comments={comments}
+            client={client as unknown as MatronJournalClient}
+            onBack={jest.fn()}
+        />
+    );
+
+    it("draws the item's buttons under the body, before the thread", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            detail(client, question(), [trackerComment({ id: "ic_1", author: "agent", body: "More context" })]),
+        );
+
+        expect(itemButtons(container).map((b) => b.textContent)).toEqual(["Option A", "Option B"]);
+        expect(itemButtons(container).every((b) => b.getAttribute("aria-pressed") === "false" && !b.disabled)).toBe(
+            true,
+        );
+        const group = container.querySelector(".mj_TrackerItemActions")!;
+        const body = container.querySelector(".mj_TrackerItemBody")!;
+        const thread = container.querySelector(".mj_TrackerThread")!;
+        expect(body.compareDocumentPosition(group) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+        expect(group.compareDocumentPosition(thread) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
+    it("draws them while the item is with the agent too, so the answer can be changed", async () => {
+        const client = fakeClient();
+        const { container } = await mount(detail(client, question({ awaiting: "agent", chosen_action: "Option A" })));
+        expect(itemButtons(container).map((b) => [b.textContent, b.getAttribute("aria-pressed")])).toEqual([
+            ["Option A", "true"],
+            ["Option B", "false"],
+        ]);
+        expect(itemButtons(container).every((b) => !b.disabled)).toBe(true);
+    });
+
+    it("draws none on an item that offers none, or on a journal that predates item actions", async () => {
+        const client = fakeClient();
+        const { container, root } = await mount(detail(client, question({ actions: [] })));
+        expect(container.querySelector(".mj_TrackerItemActions")).toBeNull();
+        await act(async () => root.render(detail(client, question({ actions: undefined }))));
+        expect(container.querySelector(".mj_TrackerItemActions")).toBeNull();
+    });
+
+    it("hides them once the item is closed", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            detail(
+                client,
+                question({ state: "closed", resolution: "answered", awaiting: null, chosen_action: "Option B" }),
+            ),
+        );
+        expect(container.querySelector(".mj_TrackerItemActions")).toBeNull();
+    });
+
+    it("a tap posts the label as the item's answer, with no reply_to", async () => {
+        const client = fakeClient();
+        const { container } = await mount(detail(client, question()));
+
+        await act(async () => {
+            itemButtons(container)[1].click();
+        });
+
+        expect(client.commentItem).toHaveBeenCalledTimes(1);
+        const [num, body, key] = client.commentItem.mock.calls[0];
+        expect(num).toBe(12);
+        expect(body).toEqual({ action: "Option B", body: "Option B" });
+        expect(typeof key).toBe("string");
+    });
+
+    it("marks the tap as chosen and disables every button while it is on its way", async () => {
+        const client = fakeClient();
+        let settle!: (ok: boolean) => void;
+        client.commentItem.mockReturnValueOnce(new Promise<boolean>((resolve) => (settle = resolve)));
+        const { container } = await mount(detail(client, question()));
+
+        await act(async () => {
+            itemButtons(container)[0].click();
+        });
+        expect(itemButtons(container).map((b) => b.getAttribute("aria-pressed"))).toEqual(["true", "false"]);
+        expect(itemButtons(container).every((b) => b.disabled)).toBe(true);
+
+        await act(async () => settle(true));
+        expect(itemButtons(container).every((b) => !b.disabled)).toBe(true);
+    });
+
+    it("does nothing when the chosen button is tapped again", async () => {
+        const client = fakeClient();
+        const { container } = await mount(detail(client, question({ awaiting: "agent", chosen_action: "Option A" })));
+        await act(async () => {
+            itemButtons(container)[0].click();
+        });
+        expect(client.commentItem).not.toHaveBeenCalled();
+    });
+
+    it("never marks a label the item no longer offers", async () => {
+        const client = fakeClient();
+        const { container } = await mount(detail(client, question({ chosen_action: "Withdrawn" })));
+        expect(container.querySelector(".mj_TrackerItemActions .mj_TrackerAction_chosen")).toBeNull();
+    });
+
+    it("a failed tap reuses its key on the retry; a different label gets a new one", async () => {
+        const client = fakeClient();
+        client.commentItem.mockResolvedValueOnce(false).mockResolvedValueOnce(false);
+        const { container } = await mount(detail(client, question()));
+
+        for (const index of [0, 0, 1]) {
+            await act(async () => {
+                itemButtons(container)[index].click();
+            });
+        }
+
+        const keys = client.commentItem.mock.calls.map((call) => call[2]);
+        expect(keys[1]).toBe(keys[0]);
+        expect(keys[2]).not.toBe(keys[1]);
+    });
+
+    it("never reuses one item's failed-tap key for the same label on another item", async () => {
+        const client = fakeClient();
+        client.commentItem.mockResolvedValueOnce(false);
+        const { container, root } = await mount(detail(client, question({ id: "it_12", num: 12 })));
+        await act(async () => {
+            itemButtons(container)[0].click();
+        });
+        await act(async () => root.render(detail(client, question({ id: "it_13", num: 13 }))));
+        await act(async () => {
+            itemButtons(container)[0].click();
+        });
+
+        expect(client.commentItem.mock.calls.map((call) => call[0])).toEqual([12, 13]);
+        expect(client.commentItem.mock.calls[1][2]).not.toBe(client.commentItem.mock.calls[0][2]);
+    });
+
+    it("keeps the item's buttons apart from a comment offering the same label", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            detail(client, question({ chosen_action: "Option A" }), [
+                trackerComment({
+                    id: "ic_q",
+                    author: "agent",
+                    body: "Sure?",
+                    actions: ["Option A"],
+                    chosen_action: null,
+                }),
+            ]),
+        );
+        expect(container.querySelectorAll(".mj_TrackerAction_chosen")).toHaveLength(1);
+        await act(async () => {
+            container.querySelector<HTMLButtonElement>(".mj_TrackerComment .mj_TrackerAction")!.click();
+        });
+        expect(client.commentItem.mock.calls[0][1]).toEqual({ action: "Option A", reply_to: "ic_q" });
     });
 });
 
