@@ -51,6 +51,7 @@ import { copyText } from "./clipboard";
 import { type DraftStore, makeDraftStore } from "./composer-drafts";
 import { effectiveUnread } from "./conversation-flags";
 import { type RowContextMenu, useRowContextMenu } from "./context-menu";
+import { CoordinatorEventNotice, isUnrenderableNoticeEvent } from "./coordinator-notices";
 import { GoToNumberDialog, goToNumberShortcutLabel, NumberSearchResult, useGoToNumberShortcut } from "./goto-number";
 import { PinDialog, type PinDialogTarget } from "./PinDialogs";
 import { pinGlyph, successorHintText } from "./pins";
@@ -94,6 +95,7 @@ import {
     DarkThemeIcon,
     StarFilledIcon,
     StarIcon,
+    StopIcon,
     UnarchiveIcon,
     UploadTrayIcon,
     CheckCircleIcon,
@@ -107,7 +109,16 @@ import { displayTitle, TaggedTitle } from "./SessionTag";
 import { groupByDay } from "./sidebar-groups";
 import { createLongPressController, type LongPressController } from "./longPress";
 import { MarkdownBody, markdownToPlainText } from "./markdown";
-import { isRenderableItemMarker, MemoryNotice, MilestoneCard, MissionNotice, renderItemMarker } from "./tracker/cards";
+import {
+    EMPTY_ITEM_CARD_FOLD,
+    foldItemCards,
+    isRenderableItemMarker,
+    type ItemCardFold,
+    MemoryNotice,
+    MilestoneCard,
+    MissionNotice,
+    renderItemMarker,
+} from "./tracker/cards";
 import { needsUser } from "./tracker/format";
 import {
     isPreviewableMarkdown,
@@ -173,6 +184,7 @@ import {
     imageFrameStyle,
     isNearBottom,
     type MediaDims,
+    mediaFileName,
     parseMediaDims,
     type JournalEvent,
     type PendingMessage,
@@ -4453,6 +4465,7 @@ export function EventContent({
     answeredPromptReplies,
     spawnOutcomes = EMPTY_SPAWN_OUTCOMES,
     agentChatResolutions = EMPTY_AGENT_CHAT_RESOLUTIONS,
+    itemCards = EMPTY_ITEM_CARD_FOLD,
     isReadOnly = false,
     resolvedAction,
 }: {
@@ -4461,6 +4474,7 @@ export function EventContent({
     answeredPromptReplies: ReadonlyMap<string, { choice?: string }>;
     spawnOutcomes?: ReadonlyMap<string, EventPayload>;
     agentChatResolutions?: ReadonlyMap<string, AgentChatResolution>;
+    itemCards?: ItemCardFold;
     isReadOnly?: boolean;
     resolvedAction?: (itemId: string) => "send" | "cancel" | undefined;
 }): React.ReactElement | null {
@@ -4483,15 +4497,22 @@ export function EventContent({
                     />
                 </div>
             );
-        case "item":
-            // Quiet invalidation-only markers (reordered/updated) and unknown actions render null.
-            return renderItemMarker(event, client);
+        case "item": {
+            // Quiet invalidation-only markers (reordered/updated) and unknown actions render null. An
+            // item card shows its item's latest state (foldItemCards), not this marker's frozen one.
+            const restated = itemCards.restated.get(event.seq);
+            return renderItemMarker(restated ? { ...event, payload: restated } : event, client);
+        }
         case "milestone":
             return <MilestoneCard client={client} event={event} />;
         case "mission":
             return <MissionNotice client={client} event={event} />;
         case "memory":
             return <MemoryNotice client={client} event={event} />;
+        case "coordinator":
+        case "routine":
+        case "consent_decision":
+            return <CoordinatorEventNotice event={event} />;
         case "prompt":
             if (asString(event.payload.kind) === "queued_release") {
                 return (
@@ -4604,7 +4625,7 @@ export function EventContent({
                             client={client}
                             mediaId={mediaId}
                             image={false}
-                            filename={asString(event.payload.filename, "attachment")}
+                            filename={mediaFileName(event.payload) || "attachment"}
                             contentType={asString(event.payload.content_type) || undefined}
                             size={
                                 typeof event.payload.size === "number" && Number.isFinite(event.payload.size)
@@ -4640,6 +4661,7 @@ function EventRow({
     answeredPromptReplies,
     spawnOutcomes,
     agentChatResolutions,
+    itemCards,
     isReadOnly = false,
     resolvedAction,
     continuation = false,
@@ -4651,6 +4673,7 @@ function EventRow({
     answeredPromptReplies: ReadonlyMap<string, { choice?: string }>;
     spawnOutcomes?: ReadonlyMap<string, EventPayload>;
     agentChatResolutions?: ReadonlyMap<string, AgentChatResolution>;
+    itemCards?: ItemCardFold;
     isReadOnly?: boolean;
     resolvedAction: (itemId: string) => "send" | "cancel" | undefined;
     continuation?: boolean;
@@ -4710,6 +4733,7 @@ function EventRow({
                             answeredPromptReplies={answeredPromptReplies}
                             spawnOutcomes={spawnOutcomes}
                             agentChatResolutions={agentChatResolutions}
+                            itemCards={itemCards}
                             isReadOnly={isReadOnly}
                             resolvedAction={resolvedAction}
                         />
@@ -4860,6 +4884,68 @@ function PendingAttachment({
     );
 }
 
+/**
+ * The floating "stop the current turn" control, top-trailing over the timeline. Shown while
+ * the durable run-state says a turn is running; a tap sends the bridge's `!esc` interrupt —
+ * exactly what typing `!esc` in the composer sends — without touching the draft. The send
+ * lands in the timeline as an ordinary own-message, so that echo is the feedback; a second
+ * tap while the first is still being queued is dropped rather than sending `!esc` twice.
+ * Mounted keyed by conversation, so the linger after a turn and the in-flight latch both
+ * belong to one conversation and never carry over to another.
+ */
+function StopTurnButton({
+    client,
+    conversationId,
+    running,
+}: {
+    client: MatronJournalClient;
+    conversationId: string;
+    running: boolean;
+}): React.ReactElement | null {
+    const visible = useMinDisplayDuration(running);
+    const sending = useRef(false);
+    if (!visible) return null;
+    return (
+        <button
+            className="mj_StopTurn"
+            type="button"
+            aria-label="Stop the current turn"
+            title="Stop the current turn — sends !esc"
+            onClick={() => {
+                if (sending.current) return;
+                sending.current = true;
+                void client
+                    .sendMessage("!esc", conversationId)
+                    .catch((error) => console.warn("Stop command failed to send:", error))
+                    .finally(() => {
+                        sending.current = false;
+                    });
+            }}
+        >
+            <StopIcon />
+        </button>
+    );
+}
+
+const MIN_DISPLAY_MS = 500;
+
+/**
+ * Holds a brief `active` flag true for MIN_DISPLAY_MS after it last was, so a short turn
+ * doesn't flash the control on and off.
+ */
+function useMinDisplayDuration(active: boolean): boolean {
+    const [held, setHeld] = useState(active);
+    useEffect(() => {
+        if (active) {
+            setHeld(true);
+            return;
+        }
+        const timer = setTimeout(() => setHeld(false), MIN_DISPLAY_MS);
+        return () => clearTimeout(timer);
+    }, [active]);
+    return active || held;
+}
+
 function Timeline({
     client,
     state,
@@ -4919,16 +5005,20 @@ function Timeline({
         }
         return { queuedReleasePromptSeqs, legacyQueuePromptSeqs, permissionRequestSeqs };
     }, [state.events]);
+    // One card per tracker item, at its latest card marker, in its latest state (foldItemCards).
+    const itemCards = useMemo(() => foldItemCards(state.events), [state.events]);
     const visibleEvents = useMemo(
         () =>
             state.events.filter(
                 (event) =>
-                    !["read_marker", "edit", "session_status", "convo_meta"].includes(event.type) &&
+                    !["read_marker", "edit", "session_status", "convo_meta", "summary"].includes(event.type) &&
+                    !isUnrenderableNoticeEvent(event) &&
                     !isQueuedReleaseReply(event, queuedReleasePromptSeqs, legacyQueuePromptSeqs) &&
                     !isSuppressedTrackerEvent(event) &&
+                    !(event.type === "item" && itemCards.hidden.has(event.seq)) &&
                     !isPermissionDecisionReply(event, permissionRequestSeqs),
             ),
-        [state.events, queuedReleasePromptSeqs, legacyQueuePromptSeqs, permissionRequestSeqs],
+        [state.events, queuedReleasePromptSeqs, legacyQueuePromptSeqs, permissionRequestSeqs, itemCards],
     );
     const timeline = useMemo(
         () =>
@@ -5127,6 +5217,7 @@ function Timeline({
                                             answeredPromptReplies={answeredPromptReplies}
                                             spawnOutcomes={spawnOutcomes}
                                             agentChatResolutions={agentChatResolutions}
+                                            itemCards={itemCards}
                                             isReadOnly={isReadOnly}
                                             resolvedAction={resolvedAction}
                                             continuation={
@@ -5205,6 +5296,14 @@ function Timeline({
                     </ol>
                 </div>
             </div>
+            {!isReadOnly && state.selectedConversationId && (
+                <StopTurnButton
+                    key={state.selectedConversationId}
+                    client={client}
+                    conversationId={state.selectedConversationId}
+                    running={sessionRunning}
+                />
+            )}
             {!isFollowingTail && (
                 <button
                     className="mj_JumpToBottom"

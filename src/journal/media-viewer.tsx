@@ -36,7 +36,15 @@ import {
     ZoomOutIcon,
 } from "./icons";
 import type { LoadedPdf } from "./pdf-render";
-import { asString, type FileKind, fileKindFromMime, type JournalEvent, type MediaDims, parseMediaDims } from "./types";
+import {
+    asString,
+    type FileKind,
+    fileKindFromMime,
+    type JournalEvent,
+    type MediaDims,
+    mediaFileName,
+    parseMediaDims,
+} from "./types";
 
 // ---------------------------------------------------------------------------------------
 // Pure helpers (exported for unit tests — no React, no DOM).
@@ -99,7 +107,7 @@ export function buildMediaCorpus(events: readonly JournalEvent[]): MediaItem[] {
         if (!mediaId) continue;
         const isImageEvent = event.type === "image";
         const contentType = asString(event.payload.content_type) || undefined;
-        const filename = asString(event.payload.filename) || undefined;
+        const filename = mediaFileName(event.payload) || undefined;
         const size =
             typeof event.payload.size === "number" && Number.isFinite(event.payload.size)
                 ? event.payload.size

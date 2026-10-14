@@ -159,10 +159,6 @@ textarea {
     background: transparent;
 }
 
-.mj_HeaderCluster_empty {
-    visibility: hidden;
-}
-
 /* LEFT zone: title flush-left (bold) stacked over the model·context subtitle. */
 .mj_HeaderTitleCluster {
     display: flex;
@@ -258,7 +254,6 @@ textarea {
 }
 
 .mj_HeaderModel,
-.mj_HeaderContext,
 .mj_HeaderWorkdir {
     display: block;
     overflow: hidden;
@@ -352,68 +347,6 @@ textarea {
 
 .mx_LeftPanel_wrapper--user {
     flex-direction: column;
-}
-
-.mj_SubChatState {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--cpd-space-1x);
-    color: var(--cpd-color-text-secondary);
-    font: var(--cpd-font-body-xs-regular);
-}
-
-.mj_SubagentSwitcher {
-    position: relative;
-    display: flex;
-    justify-content: center;
-}
-
-.mj_SubagentSwitcherButton {
-    overflow: hidden;
-    max-width: 100%;
-    padding: 0;
-    border: 0;
-    background: transparent;
-    color: var(--cpd-color-text-action-accent);
-    cursor: pointer;
-    font: var(--cpd-font-body-xs-regular);
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.mj_SubagentSwitcherButton:focus-visible {
-    border-radius: 4px;
-    outline: 2px solid var(--cpd-color-icon-accent-primary);
-    outline-offset: 2px;
-}
-
-.mj_SubagentSwitcherMenu {
-    top: calc(100% + var(--cpd-space-2x));
-    left: 50%;
-    transform: translateX(-50%);
-    /* Bound to the viewport so a parent with many finished children stays fully reachable
-       (root overflow is hidden, so an unbounded menu would clip lower items). Phase-6 review. */
-    max-height: min(60vh, 420px);
-    overflow-y: auto;
-    overscroll-behavior: contain;
-}
-
-.mj_SubagentSwitcherMenu button {
-    overflow: hidden;
-    padding-inline: var(--cpd-space-3x);
-    text-align: left;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.mj_SubagentSwitcherMenu button:disabled {
-    color: var(--cpd-color-text-secondary);
-    cursor: default;
-}
-
-.mj_SubagentSwitcherMenu button:focus-visible {
-    outline: 2px solid var(--cpd-color-icon-accent-primary);
-    outline-offset: 1px;
 }
 
 .mj_UsageCluster {
@@ -944,12 +877,6 @@ textarea {
     animation: mj-spin 0.8s linear infinite;
 }
 
-.mj_AccountMenu {
-    top: auto;
-    bottom: 8px;
-    left: 80px;
-}
-
 .mj_RoomListItem_wrapper {
     position: relative;
 }
@@ -1264,6 +1191,41 @@ textarea {
 }
 
 .mj_JumpToBottom:focus-visible {
+    outline: 2px solid var(--cpd-color-icon-accent-primary);
+    outline-offset: 2px;
+}
+
+/* Floating Stop control: the Jump-to-bottom pill's shape and tint, on the opposite
+   end of the same trailing edge. */
+.mj_StopTurn {
+    position: absolute;
+    z-index: 2;
+    top: var(--cpd-space-2x);
+    right: var(--cpd-space-4x);
+    display: inline-flex;
+    width: 36px;
+    height: 36px;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: var(--cpd-color-bg-canvas-default);
+    box-shadow: var(--cpd-shadow-float);
+    color: var(--cpd-color-text-primary);
+    cursor: pointer;
+}
+
+.mj_StopTurn svg {
+    width: 18px;
+    height: 18px;
+}
+
+.mj_StopTurn:hover {
+    background: var(--cpd-color-bg-subtle-primary);
+}
+
+.mj_StopTurn:focus-visible {
     outline: 2px solid var(--cpd-color-icon-accent-primary);
     outline-offset: 2px;
 }
@@ -3510,8 +3472,7 @@ button.mj_File {
         --RoomView_MessageList-padding: 2px;
     }
 
-    .mx_EventTile[data-layout="bubble"],
-    .mx_GenericEventListSummary[data-layout="bubble"] {
+    .mx_EventTile[data-layout="bubble"] {
         --EventTile_bubble-margin-inline-start: var(--cpd-space-3x);
         --EventTile_bubble-margin-inline-end: var(--cpd-space-3x);
     }

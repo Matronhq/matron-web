@@ -1217,6 +1217,15 @@ export function asString(value: unknown, fallback = ""): string {
     return typeof value === "string" ? value : fallback;
 }
 
+/**
+ * The display name of a `file` / `image` event. `name` is the key the media-send contract defines
+ * and what the bridge and the native apps emit; `filename` is the older spelling, still read so
+ * events written before the switch keep their names.
+ */
+export function mediaFileName(payload: EventPayload): string {
+    return asString(payload.name) || asString(payload.filename);
+}
+
 export function asNumber(value: unknown, fallback = 0): number {
     return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
@@ -1323,8 +1332,8 @@ export function spawnOutcomeSnippet(payload: EventPayload): string {
 
 export function eventSnippet(type: string, payload: EventPayload): string {
     if (type === "text") return asString(payload.body).slice(0, 120);
-    if (type === "file") return `📎 ${asString(payload.caption) || asString(payload.filename, "File")}`.slice(0, 120);
-    if (type === "image") return `🖼 ${asString(payload.caption) || asString(payload.filename, "Image")}`.slice(0, 120);
+    if (type === "file") return `📎 ${asString(payload.caption) || mediaFileName(payload) || "File"}`.slice(0, 120);
+    if (type === "image") return `🖼 ${asString(payload.caption) || mediaFileName(payload) || "Image"}`.slice(0, 120);
     if (type === "prompt") return `? ${asString(payload.question).slice(0, 110)}`;
     if (type === "permission_request") {
         // agent_spawn payloads carry no `description` (that's a generic-permission field) — the
