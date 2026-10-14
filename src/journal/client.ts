@@ -32,6 +32,7 @@ import {
     readCachedPins,
     writeCachedPins,
 } from "./pins";
+import { SeenTracker } from "./seen-tracker";
 import { mergeSessionStatus } from "./status";
 import { appendFeedPage, kindsWithMore } from "./tracker/projectActivity";
 import {
@@ -372,6 +373,9 @@ export class MatronJournalClient {
     private searchAbort?: AbortController;
     private database?: JournalDatabase;
     private connection?: JournalConnection;
+    // Read state: which timeline rows and tracker items were actually on screen, reported as
+    // `seen` / `item_seen` over the socket. Separate from read_marker and the unread badge.
+    public readonly seen = new SeenTracker({ send: (op) => this.connection?.send(op) ?? false });
     private readonly history = new Map<string, ConversationHistoryState>();
     private readonly activities = new Map<string, JournalEphemeralFrame["activity"]>();
     private readonly statuses = new Map<string, NonNullable<JournalEphemeralFrame["status"]>>();
@@ -574,6 +578,7 @@ export class MatronJournalClient {
         this.dismissedAttachments.clear();
         this.pendingFiles.clear();
         this.transientAttachmentErrors.clear();
+        this.seen.reset();
         this.connection?.stop();
         this.connection = undefined;
         if (this.storageListener) {

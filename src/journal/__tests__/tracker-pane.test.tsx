@@ -11,9 +11,17 @@ import { createRoot, type Root } from "react-dom/client";
 import type { MatronJournalClient } from "../client";
 import type { ClientState } from "../types";
 import { TrackerPane } from "../tracker/TrackerPane";
-import { trackerItem, trackerMissionDetail, trackerProject, trackerProjectDetail } from "./tracker-fixtures";
+import {
+    fakeSeen,
+    type FakeSeen,
+    trackerItem,
+    trackerMissionDetail,
+    trackerProject,
+    trackerProjectDetail,
+} from "./tracker-fixtures";
 
 interface FakeClient {
+    seen: FakeSeen;
     loadMissions: jest.Mock;
     loadInbox: jest.Mock;
     loadItem: jest.Mock;
@@ -31,6 +39,7 @@ interface FakeClient {
 
 function fakeClient(): FakeClient {
     return {
+        seen: fakeSeen(),
         loadMissions: jest.fn().mockResolvedValue(undefined),
         loadInbox: jest.fn().mockResolvedValue(undefined),
         loadItem: jest.fn().mockResolvedValue(undefined),

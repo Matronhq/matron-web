@@ -12,12 +12,13 @@ import type { MatronJournalClient } from "../client";
 import type { TrackerWorking } from "../types";
 import { ItemDetail } from "../tracker/ItemDetail";
 import { workingLabel } from "../tracker/working";
-import { trackerComment, trackerItem } from "./tracker-fixtures";
+import { fakeSeen, trackerComment, trackerItem } from "./tracker-fixtures";
 
 const NOW = 1_700_000_000_000;
 
 function fakeClient(): MatronJournalClient {
     return {
+        seen: fakeSeen(),
         getSnapshot: jest.fn().mockReturnValue({ selectedConversationId: "c1", conversations: [] }),
         commentItem: jest.fn().mockResolvedValue(true),
         closeTrackerItem: jest.fn().mockResolvedValue(true),
