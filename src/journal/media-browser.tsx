@@ -194,10 +194,14 @@ export function MediaBrowserSheet({
     );
 
     const onTabKey = (event: React.KeyboardEvent): void => {
-        if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-        event.preventDefault();
         const index = TABS.findIndex((candidate) => candidate.id === tab);
-        const next = TABS[(index + (event.key === "ArrowRight" ? 1 : TABS.length - 1)) % TABS.length].id;
+        let next: MediaBrowserTab;
+        if (event.key === "ArrowRight") next = TABS[(index + 1) % TABS.length].id;
+        else if (event.key === "ArrowLeft") next = TABS[(index + TABS.length - 1) % TABS.length].id;
+        else if (event.key === "Home") next = TABS[0].id;
+        else if (event.key === "End") next = TABS[TABS.length - 1].id;
+        else return;
+        event.preventDefault();
         setTab(next);
         tabRefs.current[next]?.focus();
     };
@@ -321,6 +325,7 @@ export function MediaBrowserSheet({
                         {TABS.map((candidate) => (
                             <button
                                 key={candidate.id}
+                                id={`${panelId}-${candidate.id}`}
                                 ref={(node) => {
                                     tabRefs.current[candidate.id] = node;
                                 }}
@@ -344,7 +349,7 @@ export function MediaBrowserSheet({
                     id={panelId}
                     className="mj_MediaBrowser_body"
                     role="tabpanel"
-                    aria-label={TABS.find((candidate) => candidate.id === tab)?.label}
+                    aria-labelledby={`${panelId}-${tab}`}
                 >
                     {body}
                 </div>

@@ -3483,7 +3483,7 @@ function MediaBrowserButton({ client, convoId }: { client: MatronJournalClient; 
             <button
                 type="button"
                 className="mj_IconButton mj_MediaBrowserToggle"
-                aria-label="Media browser"
+                aria-label="Media, files and links"
                 aria-haspopup="dialog"
                 title="Media, files & links"
                 onClick={() => setOpen(true)}

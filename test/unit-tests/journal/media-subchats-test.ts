@@ -487,7 +487,7 @@ describe("the media browser", () => {
     async function openBrowser(client: MatronJournalClient): Promise<HTMLElement> {
         const container = await renderClient(client);
         await act(async () =>
-            container.querySelector<HTMLButtonElement>('button[aria-label="Media browser"]')?.click(),
+            container.querySelector<HTMLButtonElement>('button[aria-label="Media, files and links"]')?.click(),
         );
         const dialog = document.querySelector<HTMLElement>('[role="dialog"].mj_MediaBrowser');
         if (!dialog) throw new Error("Media browser did not open");
@@ -542,7 +542,9 @@ describe("the media browser", () => {
         expect(document.querySelector(".mj_MediaBrowser")).toBeNull();
 
         await act(async () =>
-            rendered?.container.querySelector<HTMLButtonElement>('button[aria-label="Media browser"]')?.click(),
+            rendered?.container
+                .querySelector<HTMLButtonElement>('button[aria-label="Media, files and links"]')
+                ?.click(),
         );
         dialog = document.querySelector<HTMLElement>(".mj_MediaBrowser")!;
         const done = [...dialog.querySelectorAll("button")].find((b) => b.textContent === "Done");
