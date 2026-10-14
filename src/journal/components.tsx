@@ -3195,6 +3195,7 @@ function PromptCard({
     const [freeText, setFreeText] = useState("");
     // Indexes of the options ticked on a pick_many question; nothing is sent until Send.
     const [picked, setPicked] = useState<ReadonlySet<number>>(() => new Set());
+    const questionId = useId();
     const [locallyAnswered, setLocallyAnswered] = useState(false);
     const [confirmationTimedOut, setConfirmationTimedOut] = useState(false);
     const [nowMs, setNowMs] = useState(() => Date.now());
@@ -3296,11 +3297,17 @@ function PromptCard({
                 <span className="mj_PromptGlyph" aria-hidden="true">
                     {permission ? <PromptTerminalGlyph /> : <PromptMailGlyph />}
                 </span>
-                <span className="mj_PromptQuestion">{question}</span>
+                <span className="mj_PromptQuestion" id={questionId}>
+                    {question}
+                </span>
             </div>
             {!isReadOnly && !resolved && pickMany && (
                 <>
-                    <div className="mj_PromptOptions mj_PromptOptions_pickMany" role="group">
+                    <div
+                        className="mj_PromptOptions mj_PromptOptions_pickMany"
+                        role="group"
+                        aria-labelledby={questionId}
+                    >
                         {options.map((option, index) => (
                             <button
                                 key={`${option.label}:${option.value}`}

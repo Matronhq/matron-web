@@ -630,6 +630,10 @@ describe("multi-select question cards", () => {
         expect(send.classList.contains("mj_PromptOption_affirmative")).toBe(true);
         expect(send.disabled).toBe(true);
         expect(card.querySelectorAll(".mj_PromptOption_affirmative")).toHaveLength(1);
+        const group = card.querySelector('[role="group"]')!;
+        expect(document.getElementById(group.getAttribute("aria-labelledby")!)?.textContent).toBe(
+            "Which checks should run?",
+        );
 
         await act(async () => byLabel(card, "Screenshots").click());
         await act(async () => byLabel(card, "Lint").click());
