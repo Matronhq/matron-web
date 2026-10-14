@@ -28,8 +28,8 @@ import React, {
     type ComponentPropsWithoutRef,
     type ReactNode,
 } from "react";
+import { createLowlight } from "lowlight";
 import ReactMarkdown, { defaultUrlTransform, type Components, type ExtraProps } from "react-markdown";
-import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 import { unified } from "unified";
@@ -67,7 +67,8 @@ const ALIASES = {
     markdown: ["md"],
 };
 
-const HIGHLIGHT_OPTIONS = { languages: CURATED, aliases: ALIASES };
+const lowlight = createLowlight(CURATED);
+lowlight.registerAlias(ALIASES);
 
 /**
  * Shared resource guard: above this size/line budget the parser is skipped and the raw text
@@ -217,6 +218,52 @@ function capCodeBlockHighlighting() {
             if (current.children) pending.push(...current.children);
         }
     };
+}
+
+/** A fenced block's language from its `language-x` / `lang-x` class; false when marked `no-highlight`. */
+function codeLanguage(className: unknown): string | false | undefined {
+    if (!Array.isArray(className)) return undefined;
+    let name: string | undefined;
+    for (const entry of className) {
+        const value = String(entry);
+        if (value === "no-highlight" || value === "nohighlight") return false;
+        if (!name && value.startsWith("lang-")) name = value.slice(5);
+        if (!name && value.startsWith("language-")) name = value.slice(9);
+    }
+    return name;
+}
+
+/**
+ * Highlights fenced code that names a language, as rehype-highlight did, against the curated
+ * grammars only. rehype-highlight imports lowlight's whole `common` set even when it is handed
+ * its own list, which kept about 35 unused grammars in the first download. Blocks that name no
+ * language, or one that isn't curated, stay plain.
+ */
+function highlightCodeBlocks() {
+    return (tree: HighlightNode): void => {
+        const pending = [tree];
+        while (pending.length > 0) {
+            const current = pending.pop()!;
+            if (current.tagName === "pre") {
+                for (const child of current.children ?? []) {
+                    if (child.tagName === "code") highlightCodeBlock(child);
+                }
+            }
+            if (current.children) pending.push(...current.children);
+        }
+    };
+}
+
+function highlightCodeBlock(code: HighlightNode): void {
+    code.properties ??= {};
+    const lang = codeLanguage(code.properties.className);
+    if (!lang) return;
+    const classes = Array.isArray(code.properties.className) ? code.properties.className : [];
+    if (!classes.includes("hljs")) classes.unshift("hljs");
+    code.properties.className = classes;
+    if (!lowlight.registered(lang)) return;
+    const result = lowlight.highlight(lang, toString(code as Parameters<typeof toString>[0]));
+    if (result.children.length > 0) code.children = result.children as HighlightNode[];
 }
 
 interface MarkdownBodyProps {
@@ -594,7 +641,7 @@ function MarkdownBodyComponent({
         <MarkdownErrorBoundary text={text} streaming={streaming} label={label}>
             <ReactMarkdown
                 remarkPlugins={onTrackerLink && !isDocument ? [remarkGfm, remarkBareItemLinks] : [remarkGfm]}
-                rehypePlugins={streaming ? [] : [capCodeBlockHighlighting, [rehypeHighlight, HIGHLIGHT_OPTIONS]]}
+                rehypePlugins={streaming ? [] : [capCodeBlockHighlighting, highlightCodeBlocks]}
                 urlTransform={onTrackerLink && !isDocument ? trackerUrlTransform : defaultUrlTransform}
                 components={isDocument ? documentComponentsFor(text) : componentsFor(text, onTrackerLink)}
             >
