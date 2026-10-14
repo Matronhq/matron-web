@@ -23,7 +23,6 @@ Please see LICENSE files in the repository root for full details.
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import qrcode from "qrcode-generator";
 
 import { JournalApiError } from "./api";
 import type { MatronJournalClient } from "./client";
@@ -85,6 +84,8 @@ function DeviceSheet({
     id,
     title,
     className,
+    role = "dialog",
+    describedBy,
     onClose,
     onSubmit,
     children,
@@ -92,6 +93,10 @@ function DeviceSheet({
     id: string;
     title: string;
     className?: string;
+    /** "alertdialog" for a confirmation that interrupts (revoke / sign out). */
+    role?: "dialog" | "alertdialog";
+    /** The id of the text a screen reader should read with the title. */
+    describedBy?: string;
     onClose: () => void;
     onSubmit?: () => void;
     children: React.ReactNode;
@@ -141,9 +146,10 @@ function DeviceSheet({
     return createPortal(
         <div
             className="mj_UploadConfirm_scrim mj_DeviceSheet_scrim"
-            role="dialog"
+            role={role}
             aria-modal="true"
             aria-labelledby={id}
+            aria-describedby={describedBy}
         >
             <form
                 ref={formRef}
@@ -341,15 +347,19 @@ function RevokeSheet({
             id="mj-device-revoke-title"
             title={self ? "Sign out this device?" : `Revoke “${deviceLabel(device)}”?`}
             className="mj_DeviceSheet_revoke"
+            role="alertdialog"
+            describedBy="mj-device-revoke-body"
             onClose={onClose}
         >
             {self ? (
-                <p className="mj_DeviceSheet_warning" data-self-warning>
+                <p id="mj-device-revoke-body" className="mj_DeviceSheet_warning" data-self-warning>
                     This is the device you are using now. It loses access immediately and you&apos;ll be returned to
                     sign-in.
                 </p>
             ) : (
-                <p>The device loses access immediately. There&apos;s no undo — re-enroll it to restore access.</p>
+                <p id="mj-device-revoke-body">
+                    The device loses access immediately. There&apos;s no undo — re-enroll it to restore access.
+                </p>
             )}
             {error && (
                 <p className="mj_UploadConfirm_error" role="alert">
@@ -399,7 +409,8 @@ export function AddAgentSheet({
     onClose,
 }: {
     client: MatronJournalClient;
-    serverUrl?: string;
+    /** The signed-in server: a pasted pairing link must name the same one. */
+    serverUrl: string;
     existing: readonly DeviceDTO[];
     onClose: () => void;
 }): React.ReactElement {
@@ -409,6 +420,8 @@ export function AddAgentSheet({
     const [name, setName] = useState("");
     const [tag, setTag] = useState("");
     const [approving, setApproving] = useState(false);
+    // Bumped when the same code is pasted again, so a preview that failed before is retried.
+    const [previewAttempt, setPreviewAttempt] = useState(0);
     const mounted = useMounted();
     const previewSeq = useRef(0);
     const claimTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -446,7 +459,7 @@ export function AddAgentSheet({
             );
         }, PAIR_PREVIEW_DEBOUNCE_MS);
         return () => clearTimeout(timer);
-    }, [client, code, mounted]);
+    }, [client, code, mounted, previewAttempt]);
 
     const reject = (message: string): void => {
         setCode("");
@@ -467,12 +480,23 @@ export function AddAgentSheet({
                 return;
             }
             // A code minted by another journal means nothing to this one: never send it here.
-            const own = serverUrl ? new URL(serverUrl) : undefined;
-            if (own && !sameOrigin(parsed.server, own)) {
-                reject(`This link is for ${displayHost(parsed.server)}, you're signed in to ${displayHost(own)}.`);
+            // Fail closed: if the signed-in address can't be read, no link is trusted.
+            let own: URL | undefined;
+            try {
+                own = new URL(serverUrl);
+            } catch {
+                own = undefined;
+            }
+            if (!own || !sameOrigin(parsed.server, own)) {
+                reject(
+                    own
+                        ? `This link is for ${displayHost(parsed.server)}, you're signed in to ${displayHost(own)}.`
+                        : "That pairing link can't be checked against this server. Type the code shown on the box instead.",
+                );
                 return;
             }
             raw = parsed.code;
+            if (displayPairingCode(raw) === code) setPreviewAttempt((attempt) => attempt + 1);
         }
         setError(undefined);
         setPhase({ kind: "enter" });
@@ -685,9 +709,34 @@ export function AddAgentSheet({
 
 // ── Link a Device ────────────────────────────────────────────────────────────────────────────
 
+type QrFactory = typeof import("qrcode-generator").default;
+let qrFactory: Promise<QrFactory> | undefined;
+/** The QR encoder is only needed by this sheet, so it stays out of the app's first download. */
+function loadQrFactory(): Promise<QrFactory> {
+    qrFactory ??= import("qrcode-generator").then((module) => module.default);
+    return qrFactory;
+}
+
 /** A QR code as an SVG of dark modules on a light quiet zone (readable in either theme). */
 export function QrCode({ value, size = 200 }: { value: string; size?: number }): React.ReactElement {
-    const qr = qrcode(0, "M");
+    const [factory, setFactory] = useState<QrFactory>();
+    useEffect(() => {
+        let live = true;
+        loadQrFactory().then(
+            (loaded) => {
+                if (live) setFactory(() => loaded);
+            },
+            () => {
+                // Offline mid-load: the code is shown as text under the QR, which is enough.
+                qrFactory = undefined;
+            },
+        );
+        return () => {
+            live = false;
+        };
+    }, []);
+    if (!factory) return <span className="mj_QrCode mj_QrCode_pending" style={{ width: size, height: size }} />;
+    const qr = factory(0, "M");
     qr.addData(value);
     qr.make();
     const count = qr.getModuleCount();
@@ -810,11 +859,16 @@ export function LinkDeviceSheet({
         if (phase.kind !== "claimed" || submittingRef.current) return;
         submittingRef.current = true;
         setSubmitting(true);
+        // A stop() while the request is out (the sheet closing) bumps this: then nothing below
+        // may mint a fresh code or start polling again behind a closed sheet.
+        const gen = generation.current;
         try {
             await (decision === "approve" ? client.linkApprove(phase.code) : client.linkDeny(phase.code));
+            if (gen !== generation.current) return;
             stop();
             setPhase({ kind: decision === "approve" ? "approved" : "denied" });
         } catch (failure) {
+            if (gen !== generation.current) return;
             if (is(failure, 404) || (decision === "approve" && is(failure, 409))) {
                 // Nothing left to decide (expired, or replaced): show a fresh code.
                 if (decision === "approve") setNotice("Code expired — showing a fresh one");
@@ -841,8 +895,12 @@ export function LinkDeviceSheet({
                             {phase.code}
                         </p>
                         <p>
-                            On your new device, open Matron and choose “Scan QR code” — or type the code under “Have a
-                            link code?”.
+                            On your phone, tablet or other computer, open the Matron app and choose “Scan QR code” — or
+                            type the code under “Have a link code?” on its sign-in screen. Codes refresh automatically.
+                        </p>
+                        <p className="mj_DeviceSheet_muted">
+                            Signing in to Matron in a web browser? Use your username and password there; the web app
+                            doesn&apos;t take link codes.
                         </p>
                     </>
                 )}

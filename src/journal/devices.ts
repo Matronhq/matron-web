@@ -72,9 +72,13 @@ export const PAIRING_CODE_LENGTH = 8;
 /** Every character the journal mints a code from: Crockford base32 without its vowels. */
 const PAIRING_ALPHABET = /^[0-9BCDFGHJKMNPQRSTVWXYZ]+$/;
 
-/** The journal's own normalisation: upper-cased, everything but letters and digits dropped. */
+/**
+ * The journal's own normalisation: upper-cased, then everything but ASCII letters and digits
+ * dropped. Matching it exactly matters: a look-alike letter from another script must count as
+ * dropped here too, or the sheet would preview a different code from the one it shows.
+ */
 export function normalizePairingCode(raw: string): string {
-    return raw.toUpperCase().replace(/[^\p{L}\p{N}]/gu, "");
+    return raw.toUpperCase().replace(/[^0-9A-Z]/g, "");
 }
 
 /** As typed: `KTNM-3VQ8`, the hyphen appearing once a fifth character exists. */
@@ -105,7 +109,9 @@ function allowedServer(url: URL): boolean {
  */
 export function parsePairUri(raw: string): PairUriResult {
     if (!isPairUri(raw)) return { ok: false, reason: "not_pair_uri" };
-    const query = raw.trim().split("?")[1]?.split("#")[0] ?? "";
+    const trimmed = raw.trim();
+    const queryStart = trimmed.indexOf("?");
+    const query = queryStart < 0 ? "" : trimmed.slice(queryStart + 1).split("#")[0];
     const params = new URLSearchParams(query);
     const version = params.get("v");
     if (version === null) return { ok: false, reason: "malformed" };

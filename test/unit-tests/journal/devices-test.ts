@@ -59,6 +59,9 @@ describe("tag characters", () => {
 describe("pairing codes", () => {
     it("normalises and formats sloppy input as the journal does", () => {
         expect(normalizePairingCode(" ktnm 3vq8 ")).toBe("KTNM3VQ8");
+        // As the journal does it: only ASCII letters and digits survive, so a look-alike letter
+        // from another script is dropped rather than sent.
+        expect(normalizePairingCode("\u041aTNM-3VQ8")).toBe("TNM3VQ8");
         expect(displayPairingCode("ktnm3vq8")).toBe("KTNM-3VQ8");
         expect(displayPairingCode("ktn")).toBe("KTN");
         expect(displayPairingCode("ktnm-")).toBe("KTNM");

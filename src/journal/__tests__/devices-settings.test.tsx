@@ -267,6 +267,10 @@ describe("Settings → Devices", () => {
         );
         // Focus starts on Cancel, so Enter does not sign out by accident.
         expect(document.activeElement).toBe(button("Cancel"));
+        // Announced as an interrupting confirmation, with the warning read alongside the title.
+        const dialog = sheet.closest<HTMLElement>('[role="alertdialog"]')!;
+        expect(dialog.getAttribute("aria-describedby")).toBe("mj-device-revoke-body");
+        expect(document.getElementById("mj-device-revoke-body")).toBe(sheet.querySelector("[data-self-warning]"));
         await act(async () => button("Sign Out").click());
         expect(api.revokeDevice).toHaveBeenCalledWith(1);
         expect(logout).toHaveBeenCalledWith("This device was revoked. Sign in again to continue.");
@@ -361,6 +365,27 @@ describe("Settings → Devices", () => {
             expect(code.value).toBe("KTNM-3VQ8");
             await advance(PAIR_PREVIEW_DEBOUNCE_MS);
             expect(api.pairPreview).toHaveBeenCalledWith("KTNM3VQ8");
+        });
+
+        it("previews again when the same pairing link is pasted after a failed check", async () => {
+            jest.useFakeTimers();
+            const { client, api } = signedInClient([THIS_BROWSER]);
+            api.pairPreview
+                .mockRejectedValueOnce(new JournalApiError("offline", 0))
+                .mockResolvedValue({ requester_ip: "box-c.example.com", expires_in: 540 });
+            await openSettings(client);
+            await act(async () => document.querySelector<HTMLButtonElement>('[data-action="add-agent"]')!.click());
+            const code = deviceSheet()!.querySelector<HTMLInputElement>("#mj-add-agent-code")!;
+            const link = "matron://pair?v=1&server=https%3A%2F%2Fchat.example.com&code=KTNM3VQ8";
+            await type(code, link);
+            await advance(PAIR_PREVIEW_DEBOUNCE_MS);
+            expect(deviceSheet()!.querySelector('[role="alert"]')!.textContent).toBe(
+                "Couldn't check that code — try again.",
+            );
+            await type(code, link);
+            await advance(PAIR_PREVIEW_DEBOUNCE_MS);
+            expect(api.pairPreview).toHaveBeenCalledTimes(2);
+            expect(deviceSheet()!.querySelector("[data-pair-preview]")).not.toBeNull();
         });
 
         it("says why a code longer than eight characters is not checked", async () => {
@@ -460,6 +485,39 @@ describe("Settings → Devices", () => {
             const polls = api.linkStatus.mock.calls.length;
             await advance(LINK_POLL_MS * 3);
             expect(api.linkStatus).toHaveBeenCalledTimes(polls);
+        });
+
+        it("mints no new code once closed while an approve is still out", async () => {
+            jest.useFakeTimers();
+            const { client, api } = signedInClient([THIS_BROWSER]);
+            api.linkStart.mockResolvedValue({ link_code: "KTNM-3VQ8", expires_in: 300 });
+            api.linkStatus.mockResolvedValue({
+                status: "claimed",
+                device_name: "bob's laptop",
+                requester_ip: "box-d.example.com",
+                expires_in: 280,
+            });
+            let answer!: (error: unknown) => void;
+            api.linkApprove.mockImplementation(() => new Promise<void>((_resolve, reject) => (answer = reject)));
+            await openLink(client);
+            await advance(LINK_POLL_MS);
+            await act(async () => button("Approve").click());
+            await act(async () => deviceSheet()!.querySelector<HTMLButtonElement>('[aria-label="Close"]')!.click());
+            expect(deviceSheet()).toBeNull();
+            // The code expired meanwhile: with the sheet open this would show a fresh one.
+            await act(async () => answer(new JournalApiError("gone", 404, "not_found")));
+            const polls = api.linkStatus.mock.calls.length;
+            await advance(LINK_POLL_MS * 3);
+            expect(api.linkStart).toHaveBeenCalledTimes(1);
+            expect(api.linkStatus).toHaveBeenCalledTimes(polls);
+        });
+
+        it("tells a web user that link codes are for the apps", async () => {
+            const { client, api } = signedInClient([THIS_BROWSER]);
+            api.linkStart.mockResolvedValue({ link_code: "KTNM-3VQ8", expires_in: 300 });
+            api.linkStatus.mockReturnValue(new Promise(() => undefined));
+            await openLink(client);
+            expect(deviceSheet()!.textContent).toContain("the web app doesn't take link codes");
         });
 
         it("denies a device that claims the code", async () => {
