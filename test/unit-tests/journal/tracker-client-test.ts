@@ -417,6 +417,51 @@ describe("MatronJournalClient tracker loaders", () => {
         expect(done.nextCursor).toBe("c9");
     });
 
+    it("an item the user just answered goes to the top of Done at once, still open", async () => {
+        const { client, state } = makeClient();
+        const done = (num: number, at: number): ReturnType<typeof item> =>
+            item({ id: `it_${num}`, num, state: "closed", awaiting: null, closed_at: at, updated_at: at });
+        // Answered just now: still open, waiting on its agent.
+        const answered = item({ id: "it_7", num: 7, awaiting: "agent", last_user_input_at: 100, updated_at: 100 });
+        let refetch: (page: { items: ReturnType<typeof item>[]; next_cursor: null }) => void = () => {};
+        state.api = {
+            items: jest
+                .fn()
+                .mockResolvedValueOnce({ items: [done(5, 50), done(4, 40)], next_cursor: null })
+                .mockImplementation(() => new Promise((resolve) => (refetch = resolve))),
+            postItemComment: jest.fn().mockResolvedValue({ item: answered }),
+        };
+        await client.loadInboxDone();
+
+        const tap = client.commentItem(7, { body: "Go", action: "Go" });
+        await Promise.resolve();
+        await Promise.resolve();
+        // Before the refetch lands.
+        expect(client.getSnapshot().inboxDone?.items.map((row) => row.num)).toEqual([7, 5, 4]);
+
+        refetch({ items: [answered, done(5, 50), done(4, 40)], next_cursor: null });
+        await tap;
+        expect(client.getSnapshot().inboxDone?.items.map((row) => row.num)).toEqual([7, 5, 4]);
+    });
+
+    it("an answered open item stays in Done when the open list loads; one waiting on the user leaves", async () => {
+        const { client, state } = makeClient();
+        const answered = item({ id: "it_7", num: 7, awaiting: "agent", last_user_input_at: 100 });
+        const asking = item({ id: "it_6", num: 6, awaiting: "user", last_user_input_at: 90 });
+        state.api = {
+            items: jest.fn(async (filter: { state?: string }) =>
+                filter.state === "open"
+                    ? { items: [answered, { ...asking }], next_cursor: null }
+                    : { items: [answered, { ...asking, awaiting: "agent" as const }], next_cursor: null },
+            ),
+        };
+        await client.loadInboxDone();
+        expect(client.getSnapshot().inboxDone?.items.map((row) => row.num)).toEqual([7, 6]);
+
+        await client.loadInbox();
+        expect(client.getSnapshot().inboxDone?.items.map((row) => row.num)).toEqual([7]);
+    });
+
     it("a failed Done load keeps the rows it had and reports the error", async () => {
         const { client, state } = makeClient();
         state.api = {
