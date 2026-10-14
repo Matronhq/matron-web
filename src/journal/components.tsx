@@ -5461,6 +5461,11 @@ function EventRow({
     );
 }
 
+// Every prop is stable while an agent streams (the event objects, the memoised reply and outcome
+// maps, the menu handlers), so a streamed token re-renders only the streaming bubble instead of
+// every row in a long transcript.
+const MemoEventRow = React.memo(EventRow);
+
 function MsgAvatar(): React.ReactElement {
     const mask = `url("${matronLogo}")`;
 
@@ -6011,7 +6016,7 @@ function Timeline({
                                 return (
                                     <React.Fragment key={`e-${item.event.seq}`}>
                                         {divider}
-                                        <EventRow
+                                        <MemoEventRow
                                             client={client}
                                             event={item.event}
                                             answeredPromptReplies={answeredPromptReplies}
