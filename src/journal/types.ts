@@ -252,6 +252,22 @@ export interface MessageSearchState {
     failed: boolean;
 }
 
+/**
+ * Find in chat: one search within the open conversation. `matchSeqs` holds the matching messages'
+ * seqs newest first and `index` the one in view (0 = newest). An empty `query` is a bar opened with
+ * nothing searched yet.
+ */
+export interface ChatSearchState {
+    conversationId: string;
+    query: string;
+    matchSeqs: number[];
+    index: number;
+    loading: boolean;
+    failed: boolean;
+    /** Bumped each time the bar should take keyboard focus (Ctrl/⌘F while it is already open). */
+    focusTick: number;
+}
+
 export interface JournalControlFrame {
     kind: "control";
     op: string;
@@ -504,6 +520,31 @@ export interface InboxDone {
     error?: string;
 }
 
+/**
+ * The chat's Tasks & decisions pane, beside the conversation. It stays open across conversation
+ * switches; `allFor` names the conversation whose pane shows "All" (any other shows "This chat",
+ * so moving to another conversation starts on its own items). `items` is the list last loaded for
+ * `scope` (the conversation id, or "all"): the open items, then the latest closed ones for Done.
+ * `error` is the last load's failure (the rows it could not replace stay); `actionError` the last
+ * failed move, until dismissed. `unsupported`: GET /items answered 404, a journal without items.
+ */
+export interface ChatTasksState {
+    open: boolean;
+    allFor?: string;
+    scope?: string;
+    items?: TrackerItem[];
+    loading?: boolean;
+    error?: string;
+    actionError?: string;
+    unsupported?: boolean;
+}
+
+export interface FocusTarget {
+    conversationId: string;
+    seq: number;
+    token: number;
+}
+
 export interface ClientState {
     phase: "loading" | "signed-out" | "signed-in";
     config: MatronConfig;
@@ -524,6 +565,12 @@ export interface ClientState {
      * expanded. Threaded into every buildSidebarIndex call so render/selection/unread/mark-all agree.
      */
     collapsedSubagentParentIds: Set<string>;
+    /**
+     * Sessions that arrived while this tab was live without this device asking for them (an
+     * agent, the Coordinator or a routine started them) and that the user has not opened since.
+     * Their rows carry a "New" marker. In memory only: a reload starts clean.
+     */
+    newConversationIds: Set<string>;
     controlError?: string;
     preferencesUnavailable?: boolean;
     selectedConversationId?: string;
@@ -546,9 +593,15 @@ export interface ClientState {
     dragActive: boolean;
     stagedUploads?: StagedUploads;
     sendTick: number;
+    // A row the open timeline should scroll to and flash once it renders (a search hit, a
+    // milestone, "jump to my last message"). Set by client.focusMessage after the history holding
+    // `seq` has loaded; the timeline clears it by `token` once it has landed.
+    focusTarget?: FocusTarget;
     // Message-content search hits (Apple-parity "Messages" section). Undefined until the first
     // search of a session; cleared back to undefined when the search box empties.
     messageSearch?: MessageSearchState;
+    // Find in chat: the search bar over the open conversation, while it is up.
+    chatSearch?: ChatSearchState;
     // Tracker pane (Missions / Milestones / Decisions-Inbox). `trackerView` is the main-region
     // discriminant (checked ahead of selectedConversationId — one surface at a time). The rest are
     // store-resident so sidebar badges stay live off WS invalidation:
@@ -582,6 +635,8 @@ export interface ClientState {
     /** The selected conversation's missions, for the chat header's mission chip. Absent until
      *  fetched; a fetch for another conversation is never shown against this one. */
     conversationMissions?: ConversationMissions;
+    /** The chat's Tasks & decisions pane; absent until it is first opened. */
+    chatTasks?: ChatTasksState;
     /** True while ANY tracker fetch is in flight (v1: one detail/list open at a time). */
     trackerLoading?: boolean;
     /** Last tracker fetch/mutation error; cleared on the next successful load. */
@@ -920,6 +975,18 @@ export interface TrackerCommentWrite {
     action?: string;
     reply_to?: string;
 }
+
+/** `POST /items` body: a new item filed into the conversation `convo_id`. */
+export interface TrackerItemCreate {
+    kind: "task" | "question" | "decision";
+    title: string;
+    body: string;
+    convo_id: string;
+}
+
+/** `POST /items/:id/rank` body: to the top or bottom of the open tasks, or between two of them
+ *  (their item ids). */
+export type TrackerRankChange = { position: "top" | "bottom" } | { after: string; before: string };
 
 /** The `{num,title,kind,created_at}` digest a mission list-row carries for its newest milestone. */
 export interface MissionLastMilestone {

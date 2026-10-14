@@ -15,12 +15,12 @@ Please see LICENSE files in the repository root for full details.
  * the bridge on either side (the line's description at 80 units, the watcher's title at 37 and
  * "…"). Duplicate titles (the same agent run again) prefer a running child, then the newest.
  *
- * The side pane shares one slot beside the chat with the other per-chat panes. A subagent wins
- * the slot, as on the Mac; opening it closes the others.
+ * The side pane shares one slot beside the chat with the Tasks & decisions pane (chatSidePane). A
+ * subagent wins the slot, as on the Mac; opening either closes the other.
  */
 
 import { splitTitle } from "./boxes";
-import { childrenOf, type ClientState, type Conversation, conversationTitle } from "./types";
+import { childrenOf, type ClientState, type Conversation, conversationTitle, isSubChat } from "./types";
 
 const SUBTASK_PREFIX = "🔀 Subtask: ";
 
@@ -113,18 +113,29 @@ export function clampSidePaneWidth(width: number, areaWidth: number): number {
     return Math.round(Math.min(max, Math.max(SIDE_PANE_MIN_WIDTH, width)));
 }
 
-export type ChatSidePane = { kind: "subchat"; parentId: string; childId: string };
+export type ChatSidePane = { kind: "subchat"; parentId: string; childId: string } | { kind: "tasks"; convoId: string };
 
 /**
- * What the slot beside the chat shows, if anything. The pane belongs to the chat it was opened
- * from: another chat never inherits it, and coming back to that chat brings it back. Nothing
- * shows beside the tracker or beside a subagent opened on its own.
+ * What the one slot beside the chat shows, if anything. Only one pane is ever there; a subagent
+ * wins, as on the Mac (the client also closes the other when either opens, so this precedence only
+ * settles a state that slipped through).
+ *
+ * - The subagent pane belongs to the chat it was opened from: another chat never inherits it, and
+ *   coming back to that chat brings it back.
+ * - The Tasks pane follows the chat on screen, but not a subagent opened on its own.
+ * - Nothing shows beside the tracker.
  */
 export function chatSidePane(
-    state: Pick<ClientState, "subChatPane" | "selectedConversationId" | "trackerView">,
+    state: Pick<ClientState, "subChatPane" | "selectedConversationId" | "trackerView"> &
+        Partial<Pick<ClientState, "chatTasks" | "conversations">>,
 ): ChatSidePane | undefined {
-    if (state.trackerView?.open || !state.selectedConversationId) return undefined;
+    const selectedId = state.selectedConversationId;
+    if (state.trackerView?.open || !selectedId) return undefined;
     const subChat = state.subChatPane;
-    if (subChat && subChat.parentId === state.selectedConversationId) return { kind: "subchat", ...subChat };
+    if (subChat && subChat.parentId === selectedId) return { kind: "subchat", ...subChat };
+    if (state.chatTasks?.open) {
+        const selected = state.conversations?.find((conversation) => conversation.id === selectedId);
+        if (!selected || !isSubChat(selected)) return { kind: "tasks", convoId: selectedId };
+    }
     return undefined;
 }

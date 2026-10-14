@@ -627,6 +627,14 @@ export function ItemDetail({
         if (ids.length > 0) attemptedRef.current = [...attemptedRef.current, { body, ids }];
     };
 
+    // Read state: an open item counts as seen, with its comments up to the newest one rendered, and
+    // is reported again whenever a newer comment renders.
+    const newestCommentAt = comments.reduce((newest, comment) => Math.max(newest, comment.created_at), 0);
+    useEffect(() => {
+        client.seen.setItemOnScreen(item.id, newestCommentAt);
+    }, [client, item.id, newestCommentAt]);
+    useEffect(() => () => client.seen.removeItem(item.id), [client, item.id]);
+
     // The tray's thumbnails are object URLs; let them go with the box.
     useEffect(
         () => () => {

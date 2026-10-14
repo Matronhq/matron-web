@@ -471,6 +471,62 @@ describe("the subagent pane: focus, keyboard and switching", () => {
     });
 });
 
+describe("the slot beside the chat, shared with the Tasks pane", () => {
+    const panes = (container: HTMLElement): { subchat: number; tasks: number } => ({
+        subchat: container.querySelectorAll("aside.mj_SubChatPane").length,
+        tasks: container.querySelectorAll("aside.mj_ChatTasks").length,
+    });
+
+    function tasksClient(): MatronJournalClient {
+        const client = signedInClient([PARENT, LINT, DOCS], "parent");
+        jest.spyOn(client, "conversationEvents").mockResolvedValue([]);
+        jest.spyOn(client, "loadChatTasks").mockResolvedValue();
+        return client;
+    }
+
+    it("opening a subagent closes the Tasks pane", async () => {
+        const client = tasksClient();
+        layOut(1400, 300);
+        const container = await renderClient(client);
+        await act(async () => client.toggleChatTasks(true));
+        expect(panes(container)).toEqual({ subchat: 0, tasks: 1 });
+        await act(async () => client.openSubChat(LINT.id));
+        expect(panes(container)).toEqual({ subchat: 1, tasks: 0 });
+        expect(client.getSnapshot().chatTasks?.open).toBe(false);
+        expect(container.querySelector('button[aria-label^="Tasks and decisions"]')?.getAttribute("aria-pressed")).toBe(
+            "false",
+        );
+    });
+
+    it("opening Tasks from the header closes the subagent pane", async () => {
+        const client = tasksClient();
+        layOut(1400, 300);
+        const container = await renderClient(client);
+        await act(async () => client.openSubChat(LINT.id));
+        const toggle = container.querySelector<HTMLButtonElement>('button[aria-label^="Tasks and decisions"]')!;
+        expect(toggle.getAttribute("aria-pressed")).toBe("false");
+        await act(async () => toggle.click());
+        expect(panes(container)).toEqual({ subchat: 0, tasks: 1 });
+        expect(client.getSnapshot().subChatPane).toBeUndefined();
+        expect(toggle.getAttribute("aria-pressed")).toBe("true");
+        await act(async () => toggle.click());
+        expect(panes(container)).toEqual({ subchat: 0, tasks: 0 });
+    });
+
+    it("never mounts both, even from a state that has both open", async () => {
+        const client = tasksClient();
+        layOut(1400, 300);
+        const container = await renderClient(client);
+        await act(async () =>
+            patchState(client, {
+                subChatPane: { parentId: "parent", childId: LINT.id },
+                chatTasks: { open: true } as ClientState["chatTasks"],
+            }),
+        );
+        expect(panes(container)).toEqual({ subchat: 1, tasks: 0 });
+    });
+});
+
 describe("the media browser", () => {
     const EVENTS: JournalEvent[] = [
         text("parent", 1, "Report is up at https://example.com/report.\nDetails inside."),

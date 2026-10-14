@@ -174,6 +174,52 @@ describe("chatSidePane", () => {
     });
 });
 
+describe("chatSidePane with the Tasks pane", () => {
+    const conversations = [convo("parent", "Parent"), convo("child", "lint", "running", "parent")];
+    const chatTasks = { open: true } as never;
+
+    it("shows the Tasks pane beside the chat on screen", () => {
+        expect(chatSidePane({ chatTasks, conversations, selectedConversationId: "parent" })).toEqual({
+            kind: "tasks",
+            convoId: "parent",
+        });
+    });
+
+    it("lets a subagent win the slot, so both never show at once", () => {
+        expect(
+            chatSidePane({
+                chatTasks,
+                conversations,
+                subChatPane: { parentId: "parent", childId: "child" },
+                selectedConversationId: "parent",
+            }),
+        ).toEqual({ kind: "subchat", parentId: "parent", childId: "child" });
+    });
+
+    it("shows Tasks in another chat when the subagent pane belongs elsewhere", () => {
+        expect(
+            chatSidePane({
+                chatTasks,
+                conversations: [...conversations, convo("other", "Other")],
+                subChatPane: { parentId: "parent", childId: "child" },
+                selectedConversationId: "other",
+            }),
+        ).toEqual({ kind: "tasks", convoId: "other" });
+    });
+
+    it("shows nothing beside a subagent opened on its own, or beside the tracker", () => {
+        expect(chatSidePane({ chatTasks, conversations, selectedConversationId: "child" })).toBeUndefined();
+        expect(
+            chatSidePane({
+                chatTasks,
+                conversations,
+                selectedConversationId: "parent",
+                trackerView: { open: true, view: "missions" } as never,
+            }),
+        ).toBeUndefined();
+    });
+});
+
 describe("clampSidePaneWidth", () => {
     it("keeps the pane at least 380px and the chat at least 420px", () => {
         expect(clampSidePaneWidth(200, 1200)).toBe(380);

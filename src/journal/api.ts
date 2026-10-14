@@ -27,8 +27,10 @@ import {
     type TrackerComment,
     type TrackerCommentWrite,
     type TrackerItem,
+    type TrackerItemCreate,
     type TrackerItemKind,
     type TrackerItemState,
+    type TrackerRankChange,
     type TrackerLink,
     type TrackerResolution,
     type Memory,
@@ -72,6 +74,8 @@ type TrackerMissionListState = "open" | "closed";
 
 /** `GET /items` query params (all optional; server clamps `limit` to ≤500). */
 interface ItemsFilter {
+    /** Only the items filed from this conversation. */
+    convo?: string;
     /** `done` is For you's Done view: closed, or answered and no longer waiting on the user. */
     state?: TrackerItemState | "done";
     /** One kind, or several: any of them (a journal that predates the list form answers 400). */
@@ -516,6 +520,7 @@ export class JournalApi {
     /** GET /items — the filtered/sorted item list (`next_cursor` paginates; server clamps limit ≤500). */
     public items(filter: ItemsFilter = {}): Promise<{ items: TrackerItem[]; next_cursor: string | null }> {
         const query = new URLSearchParams();
+        if (filter.convo) query.set("convo", filter.convo);
         if (filter.state) query.set("state", filter.state);
         if (filter.kind) query.set("kind", typeof filter.kind === "string" ? filter.kind : filter.kind.join(","));
         if (filter.awaiting) query.set("awaiting", filter.awaiting);
@@ -531,6 +536,16 @@ export class JournalApi {
     /** GET /items/:id — the item plus its comment thread (status rows carry `meta.from`/`meta.to`). */
     public item(id: string | number): Promise<{ item: TrackerItem; comments: TrackerComment[] }> {
         return this.json<{ item: TrackerItem; comments: TrackerComment[] }>(`/items/${encodeTrackerId(id)}`);
+    }
+
+    /** POST /items — file a new item from the user into a conversation. */
+    public createItem(body: TrackerItemCreate, idemKey?: string): Promise<{ item: TrackerItem }> {
+        return this.json<{ item: TrackerItem }>("/items", { method: "POST", body, ...idempotencyHeader(idemKey) });
+    }
+
+    /** POST /items/:id/rank — move an open task in the ordered list. */
+    public rankItem(id: string | number, change: TrackerRankChange): Promise<{ item: TrackerItem }> {
+        return this.json<{ item: TrackerItem }>(`/items/${encodeTrackerId(id)}/rank`, { method: "POST", body: change });
     }
 
     /** PATCH /items/:id — edit title/body/labels/links/awaiting or move the item to a mission. */
@@ -765,6 +780,27 @@ export class JournalApi {
     public search(query: string, limit = 20, signal?: AbortSignal): Promise<SearchResponse> {
         const params = new URLSearchParams({ q: query, limit: String(limit) });
         return this.json<SearchResponse>(`/search?${params.toString()}`, { signal });
+    }
+
+    /**
+     * Find in chat: every message in one conversation matching `query`, newest first
+     * (`GET /search?mode=recent&convo_id=…`). Hits carry only convo_id/seq/ts/sender. A journal
+     * scoped to one conversation returns up to 500; one that predates the mode ignores it and
+     * answers its ranked list (up to 50, best match first), so callers order by seq themselves.
+     */
+    public searchConversation(
+        conversationId: string,
+        query: string,
+        limit = 500,
+        signal?: AbortSignal,
+    ): Promise<{ hits?: unknown }> {
+        const params = new URLSearchParams({
+            q: query,
+            limit: String(limit),
+            mode: "recent",
+            convo_id: conversationId,
+        });
+        return this.json<{ hits?: unknown }>(`/search?${params.toString()}`, { signal });
     }
 
     /**

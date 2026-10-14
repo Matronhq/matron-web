@@ -12,6 +12,8 @@ import type { MatronJournalClient } from "../client";
 import type { ClientState } from "../types";
 import { TrackerPane } from "../tracker/TrackerPane";
 import {
+    fakeSeen,
+    type FakeSeen,
     trackerItem,
     trackerMission,
     trackerMissionDetail,
@@ -20,6 +22,7 @@ import {
 } from "./tracker-fixtures";
 
 interface FakeClient {
+    seen: FakeSeen;
     loadMissions: jest.Mock;
     loadInbox: jest.Mock;
     loadItem: jest.Mock;
@@ -37,6 +40,7 @@ interface FakeClient {
 
 function fakeClient(): FakeClient {
     return {
+        seen: fakeSeen(),
         loadMissions: jest.fn().mockResolvedValue(undefined),
         loadInbox: jest.fn().mockResolvedValue(undefined),
         loadItem: jest.fn().mockResolvedValue(undefined),
