@@ -332,6 +332,50 @@ const events: JournalEvent[] = [
         type: "file",
         payload: { blob_ref: "fixture-pdf", name: "rollback-runbook.pdf", size: 96_256 },
     },
+    // Tracker item markers. Each item shows ONE card, at its latest created/closed marker, in its
+    // latest state: #41 was asked, answered and closed, so only the closing "Closed · Answered"
+    // card shows (no stale "Needs you" card above it); #42 was filed for the agent and then handed
+    // to the user in a reply, so its one card now reads "Needs you".
+    {
+        seq: 23,
+        convo_id: "c1",
+        ts: T + 870,
+        sender: "journal",
+        type: "item",
+        payload: { item_id: "it_41", num: 41, kind: "question", title: "Which region should the staging bucket use?", action: "created", by: "agent", awaiting: "user" },
+    },
+    {
+        seq: 24,
+        convo_id: "c1",
+        ts: T + 875,
+        sender: "journal",
+        type: "item",
+        payload: { item_id: "it_42", num: 42, kind: "task", title: "Rotate the staging deploy key", action: "created", by: "agent", awaiting: "agent" },
+    },
+    {
+        seq: 25,
+        convo_id: "c1",
+        ts: T + 880,
+        sender: "journal",
+        type: "item",
+        payload: { item_id: "it_41", num: 41, kind: "question", title: "Which region should the staging bucket use?", action: "commented", by: "user", awaiting: "agent", comment: { id: "cm_1", body: "Same region as production." } },
+    },
+    {
+        seq: 26,
+        convo_id: "c1",
+        ts: T + 890,
+        sender: "journal",
+        type: "item",
+        payload: { item_id: "it_41", num: 41, kind: "question", title: "Which region should the staging bucket use?", action: "closed", by: "agent", resolution: "answered", comment: { id: "cm_2", body: "Created the bucket in the production region." } },
+    },
+    {
+        seq: 27,
+        convo_id: "c1",
+        ts: T + 900,
+        sender: "journal",
+        type: "item",
+        payload: { item_id: "it_42", num: 42, kind: "task", title: "Rotate the staging deploy key", action: "commented", by: "agent", awaiting: "user", comment: { id: "cm_3", body: "Needs an admin to approve the new key." } },
+    },
 ];
 
 const client = new MatronJournalClient();
