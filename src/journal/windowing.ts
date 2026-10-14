@@ -102,6 +102,16 @@ interface WindowedList {
     onScroll: () => void;
     /** Scroll row `index` into the upper third of the viewport and mount it. */
     reveal: (index: number) => void;
+    /** Where the reader is, to come back to later; null at the tail. */
+    place: () => ListPlace | null;
+    /** Go back to a place from `place()`. False when its row is not in the list. */
+    restorePlace: (place: ListPlace) => boolean;
+}
+
+/** A reading position: a row, and how far below the viewport's top its top edge sits. */
+export interface ListPlace {
+    key: string;
+    offset: number;
 }
 
 /**
@@ -367,5 +377,29 @@ export function useWindowedList({
         [scrollRef, estimate, settle, rerender],
     );
 
-    return { range, beforeRef, afterRef, onScroll, reveal };
+    const place = useCallback((): ListPlace | null => {
+        if (followTailRef.current || !anchor.current) return null;
+        return { key: anchor.current.key, offset: anchor.current.offset };
+    }, []);
+
+    const restorePlace = useCallback(
+        ({ key, offset }: ListPlace): boolean => {
+            const scroller = scrollRef.current;
+            const before = beforeRef.current;
+            const index = renderedKeys.current.indexOf(key);
+            if (!scroller || !before || index < 0) return false;
+            // Placed from the recorded heights; once the row is mounted, the anchor puts it exactly.
+            const rowOffsetsNow = rowOffsets(renderedKeys.current, (row) => heights.current.get(row) ?? estimate(row));
+            const { start } = rendered.current;
+            const rowTop = before.offsetTop + before.offsetHeight + rowOffsetsNow[index] - rowOffsetsNow[start];
+            scroller.scrollTop = Math.max(0, rowTop - offset);
+            anchor.current = { key, offset, scrollTop: scroller.scrollTop };
+            if (settle()) rerender();
+            else restoreAnchor(scroller.scrollTop);
+            return true;
+        },
+        [scrollRef, estimate, settle, rerender, restoreAnchor],
+    );
+
+    return { range, beforeRef, afterRef, onScroll, reveal, place, restorePlace };
 }
