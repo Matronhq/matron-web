@@ -167,6 +167,9 @@ function sanitizeSearchHits(response: { hits?: unknown } | null | undefined): Se
 }
 const RPC_CREATE_WATCHDOG_MS = 10_000;
 const BACKFILL_SNAPSHOT_TIMEOUT_MS = 10_000;
+// How long after start-up the one-off room-membership backfill reads its snapshot, so it never
+// competes with the first paint and the first history read.
+const MEMBERSHIP_BACKFILL_DELAY_MS = 5_000;
 const TOOL_STREAM_DISPLAY_BYTES = 65_536;
 const MARK_ALL_READ_ERROR = "Some conversations couldn't be updated — device storage is full or unavailable.";
 export const PREFERENCES_UNAVAILABLE_ERROR = "Couldn't load saved preferences — device storage unavailable.";
@@ -3673,6 +3676,31 @@ export class MatronJournalClient {
         });
         this.connection.start();
         void this.openPathLink();
+        void this.backfillRoomMembership();
+    }
+
+    /**
+     * Once per browser: a store that synced before room membership was kept reads one snapshot,
+     * a few seconds after start-up, and copies each room's membership onto its rows, so the
+     * chat header's Rooms control works without waiting for the next full snapshot. Leaves the
+     * live sync alone; a failure just tries again on the next start.
+     */
+    private async backfillRoomMembership(): Promise<void> {
+        const database = this.database;
+        const api = this.api;
+        if (!database || !api || typeof database.roomMembershipBackfillDue !== "function") return;
+        try {
+            if (!(await database.roomMembershipBackfillDue())) return;
+            await new Promise((resolve) => window.setTimeout(resolve, MEMBERSHIP_BACKFILL_DELAY_MS));
+            // A full snapshot meanwhile (a resync) already brought the membership.
+            if (this.database !== database || !(await database.roomMembershipBackfillDue())) return;
+            const snapshot = await api.snapshot();
+            if (this.database !== database) return;
+            await database.backfillRoomMembership(snapshot);
+            if (this.database === database) await this.refreshConversations();
+        } catch (error) {
+            console.warn("matron: room membership backfill deferred", error);
+        }
     }
 
     /**

@@ -98,6 +98,53 @@ describe("JournalDatabase", () => {
         database.close();
     });
 
+    it("fills in room membership once for a store that synced before it was kept", async () => {
+        const database = await JournalDatabase.open("https://journal.example", 12, "alice");
+        const row = (id: string, lastSeq: number, extra: Record<string, unknown> = {}) => ({
+            id,
+            title: id,
+            session_state: "waiting",
+            last_seq: lastSeq,
+            unread_count: 0,
+            snippet: "",
+            created_at: 1,
+            ...extra,
+        });
+        // An old store: rows without membership, and no record of the backfill.
+        await database.replaceWithSnapshot({ seq: 5, conversations: [row("room", 5), row("solo", 5), row("live", 5)] });
+        expect(await database.roomMembershipBackfillDue()).toBe(false);
+        const idb = (database as unknown as { database: IDBDatabase }).database;
+        await new Promise<void>((resolve, reject) => {
+            const transaction = idb.transaction("meta", "readwrite");
+            transaction.objectStore("meta").delete("room_membership_backfill_v1");
+            transaction.oncomplete = () => resolve();
+            transaction.onerror = () => reject(transaction.error);
+        });
+        expect(await database.roomMembershipBackfillDue()).toBe(true);
+        // "live" got newer membership from a frame after the snapshot below was taken.
+        await database.applyJournal({
+            ...event(6, "journal", "convo_meta", { participants: [1, 2], participant_convos: ["x", "y"] }),
+            convo_id: "live",
+        });
+
+        await database.backfillRoomMembership({
+            seq: 5,
+            conversations: [
+                row("room", 5, { participants: [1, 2], participant_convos: ["a", "b"] }),
+                row("solo", 5),
+                row("live", 5, { participants: [1], participant_convos: [] }),
+                row("unknown", 5, { participants: [1], participant_convos: ["a"] }),
+            ],
+        });
+        const byId = new Map((await database.conversations()).map((c) => [c.id, c]));
+        expect(byId.get("room")).toMatchObject({ participants: [1, 2], participant_convos: ["a", "b"], last_seq: 5 });
+        expect(byId.get("solo")?.participant_convos).toBeUndefined();
+        expect(byId.get("live")?.participant_convos).toEqual(["x", "y"]);
+        expect(byId.has("unknown")).toBe(false);
+        expect(await database.roomMembershipBackfillDue()).toBe(false);
+        database.close();
+    });
+
     it("counts a journaled spawn_outcome as a message event — bumps unread and sets the snippet", async () => {
         const database = await JournalDatabase.open("https://journal.example", 10, "alice");
         await database.replaceWithSnapshot({
