@@ -236,7 +236,9 @@ const NAV_KEY_FOR_VIEW: Record<"missions" | "inbox" | "memories", NavKey> = {
     inbox: "decisions",
     memories: "memories",
 };
-const LEFT_PANEL_SIZE_KEY = "mx_lhs_size";
+const LEFT_PANEL_SIZE_KEY = "matron_sidebar_width";
+// The key earlier versions stored the width under; moved to the current key on first read.
+const LEGACY_LEFT_PANEL_SIZE_KEY = "mx_lhs_size";
 const LEFT_PANEL_DEFAULT_WIDTH = 350;
 const LEFT_PANEL_MIN_WIDTH = 224;
 
@@ -247,6 +249,13 @@ function clampLeftPanelWidth(width: number, containerWidth: number): number {
 function initialLeftPanelWidth(): number {
     let storedWidth = Number.NaN;
     try {
+        const legacy = window.localStorage.getItem(LEGACY_LEFT_PANEL_SIZE_KEY);
+        if (legacy !== null) {
+            if (window.localStorage.getItem(LEFT_PANEL_SIZE_KEY) === null) {
+                window.localStorage.setItem(LEFT_PANEL_SIZE_KEY, legacy);
+            }
+            window.localStorage.removeItem(LEGACY_LEFT_PANEL_SIZE_KEY);
+        }
         storedWidth = Number.parseInt(window.localStorage.getItem(LEFT_PANEL_SIZE_KEY) ?? "", 10);
     } catch {
         // Storage can be unavailable; the default width remains usable.

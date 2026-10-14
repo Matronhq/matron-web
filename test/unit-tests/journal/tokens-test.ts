@@ -39,7 +39,7 @@ export function block(source: string, selector: string): string {
 export function readTokenBlock(theme: "light" | "dark", source: string = SHELL): Map<string, string> {
     const body = block(source, theme === "light" ? ":root" : '[data-theme="dark"]');
     const tokens = new Map<string, string>();
-    for (const match of body.matchAll(/(--(?:cpd|mj)-[\w-]+):\s*([^;]+);/g)) {
+    for (const match of body.matchAll(/(--mj-[\w-]+):\s*([^;]+);/g)) {
         tokens.set(match[1], match[2].replace(/\s+/g, " ").trim());
     }
     return tokens;
@@ -61,7 +61,7 @@ function contrast(a: string, b: string): number {
     return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
 }
 
-const THEME_INDEPENDENT = /^--(cpd-(radius|space|icon|font|dur|ease|focus)|mj-content)/;
+const THEME_INDEPENDENT = /^--mj-(radius|space|icon|font|dur|ease|focus|content)/;
 
 describe("token layer", () => {
     const light = readTokenBlock("light");
@@ -253,9 +253,13 @@ describe("sign-in styles", () => {
         expect(rule('[data-theme="dark"] .mj_Login_logo')).toMatch(/filter: brightness\(0\) invert\(1\)/);
     });
 
-    it("removes the Element-era auth rules", () => {
-        expect(shell).not.toMatch(/\.mx_AuthPage|\.mx_Field\b|\.mx_Login_submit/);
-        expect(SHEETS[1][1]).not.toMatch(/\.mx_Login_submit/);
+    it("uses no Element-era class names or tokens", () => {
+        for (const [, sheet] of SHEETS) {
+            expect(sheet).not.toMatch(/\.mx_[A-Za-z]|-{2}cpd-/);
+        }
+        const components = readFileSync("src/journal/components.tsx", "utf8");
+        // The one remaining mx_ string is the earlier sidebar-width storage key, read for migration.
+        expect(components.replace('"mx_lhs_size"', "")).not.toMatch(/\bmx_[A-Za-z]/);
     });
 });
 
@@ -444,7 +448,10 @@ describe("memory styles", () => {
     };
 
     it("uses only tokens that exist (the memory rules referenced undefined size/weight tokens)", () => {
-        const defined = new Set(readTokenBlock("light").keys());
+        const defined = new Set([
+            ...readTokenBlock("light").keys(),
+            ...[...tracker.matchAll(/(--mj-[\w-]+):/g)].map((match) => match[1]),
+        ]);
         const used = [...tracker.matchAll(/var\((--mj-[\w-]+)/g)].map((match) => match[1]);
         expect([...new Set(used.filter((name) => !defined.has(name)))]).toEqual([]);
     });

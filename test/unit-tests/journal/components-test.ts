@@ -1697,8 +1697,6 @@ describe("composer sends", () => {
         const sendButton = () => result.container.querySelector<HTMLButtonElement>(".mj_ComposerSend");
         // Absent while the composer is empty (the Mac shows nothing to press).
         expect(sendButton()).toBeNull();
-        // The dead emoji button was removed in v4 (attach · mic · send only).
-        expect(result.container.querySelector(".mx_EmojiButton")).toBeNull();
 
         await typeInComposer(result.container, "hi");
         expect(sendButton()).not.toBeNull();
