@@ -30,8 +30,10 @@ import {
     type TrackerComment,
     type TrackerCommentWrite,
     type TrackerItem,
+    type TrackerItemCreate,
     type TrackerItemKind,
     type TrackerItemState,
+    type TrackerRankChange,
     type TrackerLink,
     type TrackerResolution,
     type Memory,
@@ -75,6 +77,8 @@ type TrackerMissionListState = "open" | "closed";
 
 /** `GET /items` query params (all optional; server clamps `limit` to ≤500). */
 interface ItemsFilter {
+    /** Only the items filed from this conversation. */
+    convo?: string;
     /** `done` is For you's Done view: closed, or answered and no longer waiting on the user. */
     state?: TrackerItemState | "done";
     /** One kind, or several: any of them (a journal that predates the list form answers 400). */
@@ -117,6 +121,65 @@ export class JournalApiError extends Error {
  */
 export function isMediaExpiredError(error: unknown): boolean {
     return error instanceof JournalApiError && error.status === 404;
+}
+
+/**
+ * One request over XMLHttpRequest, for its upload progress events, answered as a fetch Response so
+ * the caller's status and error handling stay the same. Rejects like fetch: an AbortError when
+ * `signal` aborts, a TypeError when the network fails.
+ */
+function xhrRequest(
+    url: URL,
+    options: {
+        method: string;
+        headers: Record<string, string>;
+        body: ArrayBuffer;
+        signal?: AbortSignal;
+        onUploadProgress: (fraction: number) => void;
+    },
+): Promise<Response> {
+    return new Promise((resolve, reject) => {
+        const { signal } = options;
+        if (signal?.aborted) {
+            reject(new DOMException("The upload was aborted.", "AbortError"));
+            return;
+        }
+        const xhr = new XMLHttpRequest();
+        const onAbort = (): void => xhr.abort();
+        xhr.open(options.method, url.toString());
+        xhr.responseType = "arraybuffer";
+        for (const [name, value] of Object.entries(options.headers)) xhr.setRequestHeader(name, value);
+        xhr.upload.onprogress = (event) => {
+            if (event.lengthComputable && event.total > 0) options.onUploadProgress(event.loaded / event.total);
+        };
+        xhr.onload = () => {
+            signal?.removeEventListener("abort", onAbort);
+            const headers = new Headers();
+            for (const line of xhr
+                .getAllResponseHeaders()
+                .trim()
+                .split(/[\r\n]+/)) {
+                const colon = line.indexOf(":");
+                if (colon > 0) headers.append(line.slice(0, colon).trim(), line.slice(colon + 1).trim());
+            }
+            const status = xhr.status;
+            resolve({
+                status,
+                headers,
+                arrayBuffer: async () => (xhr.response as ArrayBuffer | null) ?? new ArrayBuffer(0),
+            } as Response);
+        };
+        xhr.onerror = () => {
+            signal?.removeEventListener("abort", onAbort);
+            reject(new TypeError("Could not reach the journal server."));
+        };
+        xhr.onabort = () => {
+            signal?.removeEventListener("abort", onAbort);
+            reject(new DOMException("The upload was aborted.", "AbortError"));
+        };
+        signal?.addEventListener("abort", onAbort);
+        xhr.send(options.body);
+    });
 }
 
 function electronBridge(): JournalElectron | undefined {
@@ -523,6 +586,7 @@ export class JournalApi {
     /** GET /items — the filtered/sorted item list (`next_cursor` paginates; server clamps limit ≤500). */
     public items(filter: ItemsFilter = {}): Promise<{ items: TrackerItem[]; next_cursor: string | null }> {
         const query = new URLSearchParams();
+        if (filter.convo) query.set("convo", filter.convo);
         if (filter.state) query.set("state", filter.state);
         if (filter.kind) query.set("kind", typeof filter.kind === "string" ? filter.kind : filter.kind.join(","));
         if (filter.awaiting) query.set("awaiting", filter.awaiting);
@@ -538,6 +602,16 @@ export class JournalApi {
     /** GET /items/:id — the item plus its comment thread (status rows carry `meta.from`/`meta.to`). */
     public item(id: string | number): Promise<{ item: TrackerItem; comments: TrackerComment[] }> {
         return this.json<{ item: TrackerItem; comments: TrackerComment[] }>(`/items/${encodeTrackerId(id)}`);
+    }
+
+    /** POST /items — file a new item from the user into a conversation. */
+    public createItem(body: TrackerItemCreate, idemKey?: string): Promise<{ item: TrackerItem }> {
+        return this.json<{ item: TrackerItem }>("/items", { method: "POST", body, ...idempotencyHeader(idemKey) });
+    }
+
+    /** POST /items/:id/rank — move an open task in the ordered list. */
+    public rankItem(id: string | number, change: TrackerRankChange): Promise<{ item: TrackerItem }> {
+        return this.json<{ item: TrackerItem }>(`/items/${encodeTrackerId(id)}/rank`, { method: "POST", body: change });
     }
 
     /** PATCH /items/:id — edit title/body/labels/links/awaiting or move the item to a mission. */
@@ -856,6 +930,27 @@ export class JournalApi {
     }
 
     /**
+     * Find in chat: every message in one conversation matching `query`, newest first
+     * (`GET /search?mode=recent&convo_id=…`). Hits carry only convo_id/seq/ts/sender. A journal
+     * scoped to one conversation returns up to 500; one that predates the mode ignores it and
+     * answers its ranked list (up to 50, best match first), so callers order by seq themselves.
+     */
+    public searchConversation(
+        conversationId: string,
+        query: string,
+        limit = 500,
+        signal?: AbortSignal,
+    ): Promise<{ hits?: unknown }> {
+        const params = new URLSearchParams({
+            q: query,
+            limit: String(limit),
+            mode: "recent",
+            convo_id: conversationId,
+        });
+        return this.json<{ hits?: unknown }>(`/search?${params.toString()}`, { signal });
+    }
+
+    /**
      * GET /lookup — which of `user`'s tracker rows carries number `num` (item, mission, milestone
      * or project). 404 when there is none, or the caller may not see it.
      */
@@ -874,12 +969,16 @@ export class JournalApi {
         bytes: ArrayBuffer,
         contentType: string,
         signal?: AbortSignal,
+        /** Uploaded fraction (0…1) as the bytes leave. Only reported where the browser can see
+         *  upload progress; without it the upload still completes, just silently. */
+        onProgress?: (fraction: number) => void,
     ): Promise<UploadMediaResponse> {
         const response = await this.request("/media", {
             method: "POST",
             rawBody: bytes,
             contentType,
             signal,
+            onUploadProgress: onProgress,
         });
         const text = new TextDecoder().decode(response.body);
         let parsed: unknown;
@@ -939,6 +1038,7 @@ export class JournalApi {
             contentType?: string;
             signal?: AbortSignal;
             headers?: Record<string, string>;
+            onUploadProgress?: (fraction: number) => void;
         } = {},
     ): Promise<{ status: number; headers: Headers; body: ArrayBuffer }> {
         const method = options.method ?? "GET";
@@ -973,24 +1073,36 @@ export class JournalApi {
             headers = new Headers(response.headers);
             responseBody = response.body;
         } else {
+            const requestHeaders: Record<string, string> = {
+                ...(options.rawBody !== undefined
+                    ? options.contentType
+                        ? { "Content-Type": options.contentType }
+                        : {}
+                    : jsonBody
+                      ? { "Content-Type": "application/json" }
+                      : {}),
+                ...(authenticated ? { Authorization: `Bearer ${this.token}` } : {}),
+                ...(extraHeaders ?? {}),
+            };
             let response: Response;
             try {
-                response = await fetch(endpointUrl(this.serverUrl, path), {
-                    method,
-                    headers: {
-                        ...(options.rawBody !== undefined
-                            ? options.contentType
-                                ? { "Content-Type": options.contentType }
-                                : {}
-                            : jsonBody
-                              ? { "Content-Type": "application/json" }
-                              : {}),
-                        ...(authenticated ? { Authorization: `Bearer ${this.token}` } : {}),
-                        ...(extraHeaders ?? {}),
-                    },
-                    body,
-                    signal: options.signal,
-                });
+                // fetch() cannot report upload progress, so a binary body whose caller wants it goes
+                // over XMLHttpRequest instead; everything after the response is shared.
+                response =
+                    options.rawBody !== undefined && options.onUploadProgress && typeof XMLHttpRequest === "function"
+                        ? await xhrRequest(endpointUrl(this.serverUrl, path), {
+                              method,
+                              headers: requestHeaders,
+                              body: options.rawBody,
+                              signal: options.signal,
+                              onUploadProgress: options.onUploadProgress,
+                          })
+                        : await fetch(endpointUrl(this.serverUrl, path), {
+                              method,
+                              headers: requestHeaders,
+                              body,
+                              signal: options.signal,
+                          });
             } catch (error) {
                 throw new JournalApiError(
                     error instanceof Error ? error.message : "Could not reach the journal server.",
