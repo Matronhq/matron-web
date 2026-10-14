@@ -13,7 +13,7 @@ Please see LICENSE files in the repository root for full details.
  * via webpack.fixtures.mjs) — in every state, both themes, without a login or live server.
  *
  * Playwright reaches the client via window.__matron to drive states (stage a file →
- * upload modal, etc.). Theme comes from ?theme=dark on <html data-theme>.
+ * attachment tray, etc.). Theme comes from ?theme=dark on <html data-theme>.
  */
 
 import React from "react";
@@ -1316,25 +1316,45 @@ const PNG_8X8 =
 const imageFile = (name: string): File =>
     new File([Uint8Array.from(atob(PNG_8X8), (c) => c.charCodeAt(0))], name, { type: "image/png" });
 
-// Expose hooks so the Playwright driver can drive states (stage files → upload modal, etc.).
+// Patch the fixture client's state directly (it has no database), as the client's own patch() does.
+const patchState = (update: Partial<ClientState>): void =>
+    (client as unknown as { patch: (update: Partial<ClientState>) => void }).patch(update);
+const runbook = (): File => new File([new Uint8Array(1024)], "deploy-runbook.pdf", { type: "application/pdf" });
+const errorLog = (): File => new File([new Uint8Array(512)], "error-log.txt", { type: "text/plain" });
+
+// Expose hooks so the Playwright driver can drive states (stage files → attachment tray, etc.).
 (window as unknown as { __matron: unknown }).__matron = {
     client,
     stageImage: (name = "screenshot.png") => client.stageFiles([imageFile(name)]),
-    // Single NON-image file → hatched "image preview" placeholder + the single-file case
-    // (no thumbnail strip, no "n of N" pill).
-    stageDoc: () =>
-        client.stageFiles([new File([new Uint8Array(1024)], "deploy-runbook.pdf", { type: "application/pdf" })]),
-    stageTwo: () =>
-        client.stageFiles([
-            imageFile("Screenshot 2026-07-25 at 10.12.05.png"),
-            new File([new Uint8Array(512)], "error-log.txt", { type: "text/plain" }),
-        ]),
+    stageDoc: () => client.stageFiles([runbook()]),
+    stageTwo: () => client.stageFiles([imageFile("Screenshot 2026-07-25 at 10.12.05.png"), errorLog()]),
+    // A send in flight: the first file uploading, the rest waiting their turn.
+    trayUploading: () =>
+        patchState({
+            composerAttachments: {
+                c1: [
+                    { id: "t1", file: imageFile("screenshot.png"), state: "uploading", progress: 0.62 },
+                    { id: "t2", file: runbook(), state: "queued" },
+                    { id: "t3", file: errorLog(), state: "queued" },
+                ],
+            },
+        }),
+    // A send that stopped at a failed upload: the reason on the chip, a retry beside remove.
+    trayFailed: () =>
+        patchState({
+            composerAttachments: {
+                c1: [
+                    { id: "t2", file: runbook(), state: "failed", error: "File too large." },
+                    { id: "t3", file: errorLog(), state: "staged" },
+                ],
+            },
+        }),
     setTheme: (t: string) => document.documentElement.setAttribute("data-theme", t),
     // Drive the child (subagent) view: select the running child s1 of parent c1 → back chip +
     // ↳ header + ringed current pill. The fixture client has no database, so selectConversation
     // no-ops; patch the state directly (mirrors the client's own patch()).
     selectChild: () =>
-        (client as unknown as { patch: (update: Partial<ClientState>) => void }).patch({
+        patchState({
             selectedConversationId: "s1",
             events: [],
             pendingMessages: [],

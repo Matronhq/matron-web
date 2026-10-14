@@ -116,6 +116,65 @@ export function isMediaExpiredError(error: unknown): boolean {
     return error instanceof JournalApiError && error.status === 404;
 }
 
+/**
+ * One request over XMLHttpRequest, for its upload progress events, answered as a fetch Response so
+ * the caller's status and error handling stay the same. Rejects like fetch: an AbortError when
+ * `signal` aborts, a TypeError when the network fails.
+ */
+function xhrRequest(
+    url: URL,
+    options: {
+        method: string;
+        headers: Record<string, string>;
+        body: ArrayBuffer;
+        signal?: AbortSignal;
+        onUploadProgress: (fraction: number) => void;
+    },
+): Promise<Response> {
+    return new Promise((resolve, reject) => {
+        const { signal } = options;
+        if (signal?.aborted) {
+            reject(new DOMException("The upload was aborted.", "AbortError"));
+            return;
+        }
+        const xhr = new XMLHttpRequest();
+        const onAbort = (): void => xhr.abort();
+        xhr.open(options.method, url.toString());
+        xhr.responseType = "arraybuffer";
+        for (const [name, value] of Object.entries(options.headers)) xhr.setRequestHeader(name, value);
+        xhr.upload.onprogress = (event) => {
+            if (event.lengthComputable && event.total > 0) options.onUploadProgress(event.loaded / event.total);
+        };
+        xhr.onload = () => {
+            signal?.removeEventListener("abort", onAbort);
+            const headers = new Headers();
+            for (const line of xhr
+                .getAllResponseHeaders()
+                .trim()
+                .split(/[\r\n]+/)) {
+                const colon = line.indexOf(":");
+                if (colon > 0) headers.append(line.slice(0, colon).trim(), line.slice(colon + 1).trim());
+            }
+            const status = xhr.status;
+            resolve({
+                status,
+                headers,
+                arrayBuffer: async () => (xhr.response as ArrayBuffer | null) ?? new ArrayBuffer(0),
+            } as Response);
+        };
+        xhr.onerror = () => {
+            signal?.removeEventListener("abort", onAbort);
+            reject(new TypeError("Could not reach the journal server."));
+        };
+        xhr.onabort = () => {
+            signal?.removeEventListener("abort", onAbort);
+            reject(new DOMException("The upload was aborted.", "AbortError"));
+        };
+        signal?.addEventListener("abort", onAbort);
+        xhr.send(options.body);
+    });
+}
+
 function electronBridge(): JournalElectron | undefined {
     return (window as Window & { electron?: JournalElectron }).electron;
 }
@@ -786,12 +845,16 @@ export class JournalApi {
         bytes: ArrayBuffer,
         contentType: string,
         signal?: AbortSignal,
+        /** Uploaded fraction (0…1) as the bytes leave. Only reported where the browser can see
+         *  upload progress; without it the upload still completes, just silently. */
+        onProgress?: (fraction: number) => void,
     ): Promise<UploadMediaResponse> {
         const response = await this.request("/media", {
             method: "POST",
             rawBody: bytes,
             contentType,
             signal,
+            onUploadProgress: onProgress,
         });
         const text = new TextDecoder().decode(response.body);
         let parsed: unknown;
@@ -851,6 +914,7 @@ export class JournalApi {
             contentType?: string;
             signal?: AbortSignal;
             headers?: Record<string, string>;
+            onUploadProgress?: (fraction: number) => void;
         } = {},
     ): Promise<{ status: number; headers: Headers; body: ArrayBuffer }> {
         const method = options.method ?? "GET";
@@ -885,24 +949,36 @@ export class JournalApi {
             headers = new Headers(response.headers);
             responseBody = response.body;
         } else {
+            const requestHeaders: Record<string, string> = {
+                ...(options.rawBody !== undefined
+                    ? options.contentType
+                        ? { "Content-Type": options.contentType }
+                        : {}
+                    : jsonBody
+                      ? { "Content-Type": "application/json" }
+                      : {}),
+                ...(authenticated ? { Authorization: `Bearer ${this.token}` } : {}),
+                ...(extraHeaders ?? {}),
+            };
             let response: Response;
             try {
-                response = await fetch(endpointUrl(this.serverUrl, path), {
-                    method,
-                    headers: {
-                        ...(options.rawBody !== undefined
-                            ? options.contentType
-                                ? { "Content-Type": options.contentType }
-                                : {}
-                            : jsonBody
-                              ? { "Content-Type": "application/json" }
-                              : {}),
-                        ...(authenticated ? { Authorization: `Bearer ${this.token}` } : {}),
-                        ...(extraHeaders ?? {}),
-                    },
-                    body,
-                    signal: options.signal,
-                });
+                // fetch() cannot report upload progress, so a binary body whose caller wants it goes
+                // over XMLHttpRequest instead; everything after the response is shared.
+                response =
+                    options.rawBody !== undefined && options.onUploadProgress && typeof XMLHttpRequest === "function"
+                        ? await xhrRequest(endpointUrl(this.serverUrl, path), {
+                              method,
+                              headers: requestHeaders,
+                              body: options.rawBody,
+                              signal: options.signal,
+                              onUploadProgress: options.onUploadProgress,
+                          })
+                        : await fetch(endpointUrl(this.serverUrl, path), {
+                              method,
+                              headers: requestHeaders,
+                              body,
+                              signal: options.signal,
+                          });
             } catch (error) {
                 throw new JournalApiError(
                     error instanceof Error ? error.message : "Could not reach the journal server.",
