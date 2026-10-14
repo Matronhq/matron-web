@@ -43,11 +43,21 @@ export function CommandPalette({
         highlightedRow.current?.scrollIntoView?.({ block: "nearest" });
     }, [active]);
 
-    const onKeyDown = (event: React.KeyboardEvent<HTMLInputElement>): void => {
-        if (matchShortcut(event, isMacPlatform())?.kind === "commandPalette") {
+    // ⌘K closes it wherever focus has gone (the app's own handler stands aside while a dialog is up).
+    const onCloseRef = useRef(onClose);
+    onCloseRef.current = onClose;
+    useEffect(() => {
+        const onKey = (event: KeyboardEvent): void => {
+            if (event.defaultPrevented || matchShortcut(event, isMacPlatform())?.kind !== "commandPalette") return;
             event.preventDefault();
-            onClose();
-        } else if (event.key === "ArrowDown") {
+            onCloseRef.current();
+        };
+        document.addEventListener("keydown", onKey);
+        return () => document.removeEventListener("keydown", onKey);
+    }, []);
+
+    const onKeyDown = (event: React.KeyboardEvent<HTMLInputElement>): void => {
+        if (event.key === "ArrowDown") {
             event.preventDefault();
             if (active !== null) setHighlighted(Math.min(active + 1, rows.length - 1));
         } else if (event.key === "ArrowUp") {

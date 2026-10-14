@@ -187,6 +187,15 @@ describe("app shortcuts", () => {
         expect(palette()).toBeNull();
     });
 
+    it("⌘K closes the palette after focus has left its field", async () => {
+        await render(signedInClient());
+        await press("k");
+        (document.activeElement as HTMLElement).blur();
+        const event = await press("k");
+        expect(event.defaultPrevented).toBe(true);
+        expect(palette()).toBeNull();
+    });
+
     it("filters as you type and puts the picked command in the composer, ready for arguments", async () => {
         jest.useFakeTimers();
         try {
