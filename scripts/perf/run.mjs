@@ -683,8 +683,8 @@ async function main() {
         if (!manifest) {
             const t0 = Date.now();
             log(`seeding a ${SCALE} dataset…`);
+            signIns.push(Date.now()); // the seeder signs in once, as it starts
             manifest = await seed(journal, { scale: SCALE, log });
-            signIns.push(Date.now()); // the seeder signs in once
             log(`seeded in ${round((Date.now() - t0) / 1000)}s`);
             if (manifestFile) fs.writeFileSync(manifestFile, JSON.stringify(manifest, null, 2));
         }

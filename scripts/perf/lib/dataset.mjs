@@ -178,7 +178,7 @@ export function conversationEvents(r, count) {
 }
 
 /** Bump when the generated data changes shape, so a kept --data directory is re-seeded. */
-export const DATASET_VERSION = 2;
+export const DATASET_VERSION = 3;
 
 /** Dataset sizes. "full" is shaped on a heavy account; "ci" is small enough for a CI runner. */
 export const SCALES = {

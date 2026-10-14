@@ -145,7 +145,8 @@ export async function seed(journal, { scale = "full", seed: seedValue = 1, log =
             title,
             session_state: r.pick(["running", "waiting", "done", "done", "done"]),
         });
-        for (const [n, event] of conversationEvents(r, entry.count).entries()) {
+        const events = conversationEvents(r, entry.count);
+        for (const [n, event] of events.entries()) {
             const key = `${id}:${n}`;
             if (event.by === "user") {
                 // Wait for the user's message to land so the transcript keeps its order.
@@ -155,6 +156,16 @@ export async function seed(journal, { scale = "full", seed: seedValue = 1, log =
                     type: "text",
                     payload: { ...event.payload, __perf_key: key },
                     local_id: key,
+                });
+            } else if (events[n + 1]?.by === "user") {
+                // The user's next message goes over another socket: wait for the agent's turn to
+                // land first. Earlier frames on this socket are handled before this one.
+                await agent.expect(key, {
+                    op: "publish",
+                    convo_id: id,
+                    type: event.type,
+                    payload: { ...event.payload, __perf_key: key },
+                    idem_key: key,
                 });
             } else {
                 agent.send({ op: "publish", convo_id: id, type: event.type, payload: event.payload, idem_key: key });
