@@ -887,10 +887,37 @@ if (trackerMode === "inbox" || trackerMode === "item") {
 (client as unknown as { listAgents: () => Promise<unknown[]> }).listAgents = async () => [
     { device_id: "dev-local", connected: true, label: "workstation", hostname: "workstation", name: "workstation" },
 ];
-(client as unknown as { recentFolders: () => Promise<unknown[]> }).recentFolders = async () => [
-    { path: "/srv/app/web" },
-    { path: "/srv/app/api" },
-];
+// The offer carries the agent switch and the model / effort pickers; `?newSessionAgents=1`
+// offers Claude only (no switch), as a box without Codex does.
+(client as unknown as { newSessionOffer: () => Promise<unknown> }).newSessionOffer = async () => ({
+    folders: [
+        { path: "/srv/app/web", last_used: Date.now() - 150 * 60_000 },
+        { path: "/srv/app/api", last_used: Date.now() - 3 * 24 * 60 * 60_000 },
+        { path: "/srv/app", last_used: null },
+    ],
+    agentOptions:
+        new URLSearchParams(window.location.search).get("newSessionAgents") === "1"
+            ? [{ value: "claude", label: "Claude" }]
+            : [
+                  { value: "claude", label: "Claude" },
+                  { value: "codex", label: "Codex" },
+              ],
+    defaultAgent: "claude",
+    modelOptions: [
+        { value: "opus", label: "Opus" },
+        { value: "sonnet", label: "Sonnet" },
+        { value: "haiku", label: "Haiku" },
+    ],
+    defaultModel: "opus",
+    effortOptions: [
+        { value: "low", label: "Low" },
+        { value: "medium", label: "Medium" },
+        { value: "high", label: "High" },
+        { value: "xhigh", label: "X-High" },
+        { value: "max", label: "Max" },
+    ],
+    defaultEffort: "high",
+});
 
 const params = new URLSearchParams(window.location.search);
 document.documentElement.setAttribute("data-theme", params.get("theme") === "dark" ? "dark" : "light");

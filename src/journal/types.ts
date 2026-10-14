@@ -93,6 +93,40 @@ export interface RecentFolder {
     last_used: number | null;
 }
 
+/** One choice a box offers on its `recent_folders` reply (`agent_options`, `model_options`,
+ *  `effort_options`): `value` is what the `start` RPC takes, `label` what the picker shows
+ *  (never empty — the parser falls back to `value`). */
+export interface StartOption {
+    value: string;
+    label: string;
+}
+
+/** Everything a box's `recent_folders` reply offers the New session sheet. Every block beside
+ *  `folders` is optional on the wire: an older bridge omits it, which parses to an empty offer
+ *  (the picker hides) rather than failing the folders it rides with. */
+export interface NewSessionOffer {
+    folders: RecentFolder[];
+    /** Coding agents a `start` there may name. Empty = the bridge predates the switch. */
+    agentOptions: StartOption[];
+    /** What a start with no `agent` runs as. */
+    defaultAgent: string | null;
+    /** Claude models, without the bridge's own `default` alias (the picker's Default row). */
+    modelOptions: StartOption[];
+    /** What a start with no `model` runs on, when the box says. Display only. */
+    defaultModel: string | null;
+    /** Claude effort levels a `start` may name. */
+    effortOptions: StartOption[];
+    /** What a start with no `effort` runs at, when the box says. Display only. */
+    defaultEffort: string | null;
+}
+
+/** The New session sheet's picks for `start`. An absent key leaves the choice to the box. */
+export interface StartSessionPicks {
+    agent?: string;
+    model?: string;
+    effort?: string;
+}
+
 export interface Conversation {
     id: string;
     title: string;

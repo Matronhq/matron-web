@@ -60,6 +60,7 @@ import {
     type JournalEvent,
     MESSAGE_EVENT_TYPES,
     normalizeServerUrl,
+    type NewSessionOffer,
     type PendingMessage,
     type RecentFolder,
     rendersAsTopLevelRow,
@@ -68,6 +69,8 @@ import {
     type ServerFrame,
     type Session,
     type SnapshotResponse,
+    type StartOption,
+    type StartSessionPicks,
     type TrackerAttachment,
     type JournalControlFrame,
     type TrackerCommentWrite,
@@ -221,6 +224,39 @@ export type WorkerKind = "claude" | "codex";
 /** How one item comment went: written, or not — with why, unless the session ended meanwhile
  *  (signed out, or another account signed in), when there is nothing left to report it to. */
 export type TrackerCommentOutcome = { ok: true } | { ok: false; reason?: string };
+
+function parseRecentFolders(raw: unknown): RecentFolder[] {
+    if (!Array.isArray(raw)) return [];
+    return raw.flatMap((entry): RecentFolder[] => {
+        if (typeof entry !== "object" || entry === null || Array.isArray(entry)) return [];
+        const folder = entry as Record<string, unknown>;
+        if (
+            typeof folder.path !== "string" ||
+            folder.path.length === 0 ||
+            (folder.last_used !== null && (typeof folder.last_used !== "number" || !Number.isFinite(folder.last_used)))
+        ) {
+            return [];
+        }
+        return [{ path: folder.path, last_used: folder.last_used }];
+    });
+}
+
+// Bridge order is kept. A repeated value is dropped: the value is the option's identity.
+function parseStartOptions(raw: unknown): StartOption[] {
+    if (!Array.isArray(raw)) return [];
+    const seen = new Set<string>();
+    return raw.flatMap((entry): StartOption[] => {
+        if (typeof entry !== "object" || entry === null || Array.isArray(entry)) return [];
+        const { value, label } = entry as Record<string, unknown>;
+        if (typeof value !== "string" || value.length === 0 || seen.has(value)) return [];
+        seen.add(value);
+        return [{ value, label: typeof label === "string" && label.length > 0 ? label : value }];
+    });
+}
+
+function parseOfferDefault(raw: unknown): string | null {
+    return typeof raw === "string" && raw.length > 0 ? raw : null;
+}
 
 export function workerKind(conversation: Conversation): WorkerKind | null {
     if (!isSubChat(conversation)) return null;
@@ -654,25 +690,28 @@ export class MatronJournalClient {
     }
 
     public async recentFolders(agentDeviceId: number): Promise<RecentFolder[]> {
+        return (await this.newSessionOffer(agentDeviceId)).folders;
+    }
+
+    // A box's `recent_folders` reply: its folders, plus the agent, model and effort choices a
+    // `start` there may name. A failed or malformed reply is an empty offer, never a throw.
+    public async newSessionOffer(agentDeviceId: number): Promise<NewSessionOffer> {
         const reply = await this.agentRpc(agentDeviceId, "recent_folders", {});
-        if (!reply.ok || typeof reply.result !== "object" || reply.result === null || Array.isArray(reply.result)) {
-            return [];
-        }
-        const folders = (reply.result as Record<string, unknown>).folders;
-        if (!Array.isArray(folders)) return [];
-        return folders.flatMap((raw): RecentFolder[] => {
-            if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return [];
-            const folder = raw as Record<string, unknown>;
-            if (
-                typeof folder.path !== "string" ||
-                folder.path.length === 0 ||
-                (folder.last_used !== null &&
-                    (typeof folder.last_used !== "number" || !Number.isFinite(folder.last_used)))
-            ) {
-                return [];
-            }
-            return [{ path: folder.path, last_used: folder.last_used }];
-        });
+        const result =
+            reply.ok && typeof reply.result === "object" && reply.result !== null && !Array.isArray(reply.result)
+                ? (reply.result as Record<string, unknown>)
+                : {};
+        return {
+            folders: parseRecentFolders(result.folders),
+            agentOptions: parseStartOptions(result.agent_options),
+            defaultAgent: parseOfferDefault(result.default_agent),
+            // The bridge's model list mirrors its /model buttons, which lead with the `default`
+            // alias; the sheet's own Default row already stands for that, so drop the duplicate.
+            modelOptions: parseStartOptions(result.model_options).filter((option) => option.value !== "default"),
+            defaultModel: parseOfferDefault(result.default_model),
+            effortOptions: parseStartOptions(result.effort_options).filter((option) => option.value !== "default"),
+            defaultEffort: parseOfferDefault(result.default_effort),
+        };
     }
 
     // One ask of a box that may be asleep. The journal boots an idle-stopped box whenever a
@@ -686,12 +725,17 @@ export class MatronJournalClient {
         return "failed";
     }
 
-    public startSessionRpc(agentDeviceId: number, workdir: string, browser: boolean): Promise<StartOutcome> {
+    public startSessionRpc(
+        agentDeviceId: number,
+        workdir: string,
+        browser: boolean,
+        picks: StartSessionPicks = {},
+    ): Promise<StartOutcome> {
         if (this.startSessionRequest) {
             return Promise.resolve({ kind: "error", message: "A session is already starting — please wait." });
         }
 
-        const request = this.performStartSessionRpc(agentDeviceId, workdir, browser);
+        const request = this.performStartSessionRpc(agentDeviceId, workdir, browser, picks);
         this.startSessionRequest = request;
         const clear = (): void => {
             if (this.startSessionRequest === request) this.startSessionRequest = undefined;
@@ -704,11 +748,15 @@ export class MatronJournalClient {
         agentDeviceId: number,
         workdir: string,
         browser: boolean,
+        picks: StartSessionPicks,
     ): Promise<StartOutcome> {
-        const params: { workdir?: string; browser?: true } = {};
+        const params: { workdir?: string; browser?: true } & StartSessionPicks = {};
         const normalizedWorkdir = workdir.trim();
         if (normalizedWorkdir) params.workdir = normalizedWorkdir;
         if (browser) params.browser = true;
+        if (picks.agent) params.agent = picks.agent;
+        if (picks.model) params.model = picks.model;
+        if (picks.effort) params.effort = picks.effort;
 
         const reply = await this.agentRpc(agentDeviceId, "start", params);
         if (reply.ok) {
@@ -731,6 +779,22 @@ export class MatronJournalClient {
         }
         if (reply.origin === "agent" && reply.code === "bad_workdir") {
             return { kind: "error", message: "That folder doesn't exist on the box." };
+        }
+        // The pickers only ever show what this box's own reply offered, so these mean the box
+        // has changed since; the Default rows always work.
+        if (reply.origin === "agent" && reply.code === "bad_model") {
+            return { kind: "error", message: "That box doesn't offer that model — pick another." };
+        }
+        if (reply.origin === "agent" && reply.code === "bad_effort") {
+            return { kind: "error", message: "That box doesn't offer that effort — pick another." };
+        }
+        if (reply.origin === "agent" && reply.code === "bad_agent") {
+            return { kind: "error", message: "That box can't start that agent — pick another." };
+        }
+        // A bridge without Codex's app-server transport refuses browser tools on an explicit Codex
+        // start: a definite refusal, so no session is coming — not "may have started".
+        if (reply.origin === "agent" && reply.code === "bad_request" && picks.agent === "codex" && browser) {
+            return { kind: "error", message: "That box can't give Codex browser tools — untick Browser tools." };
         }
         return { kind: "uncertain" };
     }
