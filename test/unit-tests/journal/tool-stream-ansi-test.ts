@@ -129,6 +129,14 @@ describe("collapsedToolStreamSlice", () => {
         expect(sliced.text.length).toBe(TOOL_STREAM_COLLAPSED_CAP_CHARS);
     });
 
+    it("keeps a real line that starts with SGR-like text after a line-boundary cut", () => {
+        // The cut lands in the first line; the next line begins with literal "[42m".
+        const text = `${"a".repeat(10)}\n[42m line\n${"b".repeat(TOOL_STREAM_COLLAPSED_CAP_CHARS - 15)}`;
+        const sliced = collapsedToolStreamSlice(text);
+        expect(sliced.cut).toBe(true);
+        expect(sliced.text.startsWith("[42m line\n")).toBe(true);
+    });
+
     it("drops a leading SGR fragment left by the cut", () => {
         // The cut lands just after ESC, leaving "[32m" at the start of the tail.
         const sliced = collapsedToolStreamSlice(`a\x1b[32m${"z".repeat(TOOL_STREAM_COLLAPSED_CAP_CHARS - 4)}`);

@@ -4480,7 +4480,8 @@ export function collapsedToolStreamSlice(text: string): { text: string; cut: boo
     if (text.length <= TOOL_STREAM_COLLAPSED_CAP_CHARS) return { text, cut: false };
     const tail = text.slice(text.length - TOOL_STREAM_COLLAPSED_CAP_CHARS);
     const newline = tail.slice(0, 512).indexOf("\n");
-    return { text: stripLeadingSgrFragment(newline >= 0 ? tail.slice(newline + 1) : tail), cut: true };
+    // A line boundary is a clean start; only a mid-line cut can leave half an escape behind.
+    return { text: newline >= 0 ? tail.slice(newline + 1) : stripLeadingSgrFragment(tail), cut: true };
 }
 
 export function ToolStream({ stream }: { stream: ToolStreamState }): React.ReactElement {
