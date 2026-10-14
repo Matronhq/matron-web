@@ -1000,6 +1000,32 @@ describe("ItemDetail context block", () => {
         await act(async () => root.unmount());
     });
 
+    it("clears an offer that expires between render and the timer effect", async () => {
+        jest.useFakeTimers();
+        try {
+            const client = fakeClient();
+            const expiresAt = Date.now() + 1_000;
+            const item = trackerItem({
+                handover: {
+                    state: "offered",
+                    to_convo_id: "c-target",
+                    to_convo_title: "Review changes",
+                    expires_at: expiresAt,
+                },
+            });
+            function ExpiringDetail(): React.ReactElement {
+                React.useLayoutEffect(() => jest.setSystemTime(expiresAt), []);
+                return detail(client, item);
+            }
+            const { container, root } = await mount(<ExpiringDetail />);
+            await act(async () => jest.runOnlyPendingTimers());
+            expect(container.querySelector(".mj_TrackerHandover")).toBeNull();
+            await act(async () => root.unmount());
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
     it("removes an expired offer while the detail stays open", async () => {
         jest.useFakeTimers();
         try {

@@ -13,15 +13,16 @@ import type { TrackerHandover } from "../types";
 export function useHandoverCaption(handover: TrackerHandover | null | undefined): string | null {
     const [tick, setTick] = useState(0);
     const expiresAt = handover?.expires_at;
+    const expired = expiresAt == null || !Number.isFinite(expiresAt) || expiresAt <= Date.now();
     useEffect(() => {
-        if (expiresAt == null || !Number.isFinite(expiresAt)) return;
-        const wait = expiresAt - Date.now();
-        if (wait <= 0) return;
-        const timer = window.setTimeout(() => setTick((n) => n + 1), Math.min(wait, 2 ** 31 - 1));
+        if (expiresAt == null || expired) return;
+        // If expiry passed since render, schedule a refresh now instead of leaving the caption up.
+        const wait = Math.max(0, Math.min(expiresAt - Date.now(), 2 ** 31 - 1));
+        const timer = window.setTimeout(() => setTick((n) => n + 1), wait);
         return () => window.clearTimeout(timer);
-    }, [expiresAt, tick]);
+    }, [expiresAt, expired, tick]);
 
-    if (!handover || !Number.isFinite(handover.expires_at) || handover.expires_at <= Date.now()) return null;
+    if (!handover || expired) return null;
     const target = handover.to_convo_title?.trim() || "Conversation";
     if (handover.state === "offered") return `Offered to ${target} · waiting for them to accept`;
     if (handover.state === "awaiting_user") return `Offered to ${target} · waiting for your OK`;
