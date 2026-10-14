@@ -156,6 +156,7 @@ import {
     imageFrameStyle,
     isNearBottom,
     type MediaDims,
+    mediaFileName,
     parseMediaDims,
     type JournalEvent,
     type PendingMessage,
@@ -4351,7 +4352,7 @@ export function EventContent({
                             client={client}
                             mediaId={mediaId}
                             image={false}
-                            filename={asString(event.payload.filename, "attachment")}
+                            filename={mediaFileName(event.payload) || "attachment"}
                             contentType={asString(event.payload.content_type) || undefined}
                             size={
                                 typeof event.payload.size === "number" && Number.isFinite(event.payload.size)

@@ -2023,6 +2023,39 @@ describe("attachment composer", () => {
         expect(rendered.container.querySelector(".mj_AttachmentChip")).toBeNull();
     });
 
+    it("shows the file name from the `name` key that bridge and app senders emit", async () => {
+        const client = signedInClient({
+            events: [
+                {
+                    seq: 1,
+                    convo_id: "c1",
+                    ts: 1,
+                    sender: "agent:1",
+                    type: "file",
+                    payload: { blob_ref: "bin-n", name: "build.log", content_type: "application/octet-stream" },
+                },
+                {
+                    seq: 2,
+                    convo_id: "c1",
+                    ts: 2,
+                    sender: "agent:1",
+                    type: "file",
+                    // No content type: the viewer kind must come from the `name` extension.
+                    payload: { blob_ref: "pdf-n", name: "runbook.pdf" },
+                },
+            ],
+        });
+        rendered = await renderClient(client);
+
+        const tiles = [...rendered.container.querySelectorAll("[data-event-id] .mj_File")];
+        expect(tiles.map((tile) => tile.textContent)).toEqual([
+            expect.stringContaining("build.log"),
+            expect.stringContaining("runbook.pdf"),
+        ]);
+        expect(tiles[0].classList.contains("mj_File_preview")).toBe(false);
+        expect(tiles[1].classList.contains("mj_File_preview")).toBe(true);
+    });
+
     it("opens the media viewer when an inline image is clicked, and closes on Escape", async () => {
         const client = signedInClient({
             events: [
