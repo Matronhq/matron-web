@@ -2472,6 +2472,7 @@ const CONVERSATION_LIST_IGNORED_STATE = new Set<keyof ClientState>([
     "sendTick",
     "dragActive",
     "focusTarget",
+    "chatSearch",
 ]);
 
 export function sameStateExcept(
