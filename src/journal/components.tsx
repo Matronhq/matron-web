@@ -49,6 +49,7 @@ import {
 } from "./client";
 import { copyText } from "./clipboard";
 import { type DraftStore, makeDraftStore } from "./composer-drafts";
+import { SentMessageHistory } from "./sent-history";
 import { effectiveUnread } from "./conversation-flags";
 import { type RowContextMenu, useRowContextMenu } from "./context-menu";
 import { CoordinatorEventNotice, isUnrenderableNoticeEvent } from "./coordinator-notices";
@@ -5949,6 +5950,7 @@ function Composer({
     reloadDraft,
     sendingConvos,
     draftRevisions,
+    sentHistory,
 }: {
     client: MatronJournalClient;
     state: ClientState;
@@ -5957,6 +5959,7 @@ function Composer({
     reloadDraft: (conversationId: string) => void;
     sendingConvos: React.RefObject<Set<string>>;
     draftRevisions: React.RefObject<Map<string, number>>;
+    sentHistory: SentMessageHistory;
 }): React.ReactElement {
     const [body, setBody] = useState("");
     // The voice-note path reads the draft from a callback that outlives renders.
@@ -5989,6 +5992,9 @@ function Composer({
                 ? bodyRef.current.trim()
                 : "";
         if (caption) {
+            // The caption leaves the field now, so it joins sent history now (ending any walk) rather
+            // than after the upload: a failed note puts it back in the field anyway.
+            sentHistory.record(caption, capturedConvo);
             clearSentDraftRef.current(capturedConvo, draftRevisions.current.get(capturedConvo) ?? 0);
         }
         const failed = (): void => {
@@ -6047,6 +6053,8 @@ function Composer({
 
     const setBodyDraft = useCallback(
         (next: string) => {
+            // Any edit — typing, a palette pick, a restored draft — ends a sent-message walk.
+            sentHistory.endRecall();
             setBody(next);
             const cid = convoIdRef.current;
             if (!cid) return;
@@ -6061,7 +6069,7 @@ function Composer({
                 draftTimerConvoRef.current = undefined;
             }, 250);
         },
-        [draftRevisions, drafts, syncDurability],
+        [draftRevisions, drafts, syncDurability, sentHistory],
     );
 
     useEffect(() => {
@@ -6084,6 +6092,9 @@ function Composer({
         setBody(ok ? text : "");
         setDismissed(null);
         setHighlighted(null);
+        // A recalled sent line is shown but never written to the draft store, so the real draft
+        // is what loads here; just drop the walk.
+        sentHistory.endRecall();
         // Sync the badge FROM the store for the newly-selected convo — never a blind reset, so a
         // still-non-durable convo keeps its warning across switch-away/back (and a clear-failure flag surfaces).
         setNonDurable(convoId ? drafts.durability(convoId) === "non-durable" : false);
@@ -6137,6 +6148,25 @@ function Composer({
     };
     const restoreDraftRef = useRef(restoreDraft);
     restoreDraftRef.current = restoreDraft;
+    // Terminal-style recall of this conversation's sent messages. A recalled line is only
+    // shown — not written to the draft store — so the stored draft stays the real one, and
+    // leaving mid-walk can't save a recalled line as the draft. Editing it makes it the draft.
+    const showRecalled = (text: string | undefined): void => {
+        if (text === undefined) return;
+        setBody(text);
+        setHighlighted(null);
+        setDismissed(null);
+        resizeAfterRecall.current = true;
+    };
+    const resizeAfterRecall = useRef(false);
+    useLayoutEffect(() => {
+        if (!resizeAfterRecall.current || !textarea.current) return;
+        resizeAfterRecall.current = false;
+        const node = textarea.current;
+        node.style.height = "auto";
+        node.style.height = `${Math.min(node.scrollHeight, 144)}px`;
+        node.setSelectionRange(node.value.length, node.value.length);
+    }, [body]);
     const send = async (): Promise<void> => {
         const cid = convoIdRef.current;
         const submitted = body;
@@ -6145,6 +6175,7 @@ function Composer({
         sendingConvos.current.add(cid);
         try {
             if (await client.sendMessage(submitted, cid)) {
+                sentHistory.record(submitted.trim(), cid);
                 const folder = recentFolderArgument(submitted);
                 if (folder) store.record(folder);
                 clearSentDraft(cid, submittedRevision);
@@ -6230,6 +6261,32 @@ function Composer({
                                     }}
                                     onKeyDown={(event) => {
                                         if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+                                        // An active walk owns Up/Down outright: a recalled one-word
+                                        // command opens the palette, and letting it take the arrows
+                                        // would trap the walk there. Otherwise the palette's arrows
+                                        // come first, and Up starts a walk only from an empty field
+                                        // (in a draft it moves the caret).
+                                        // Plain arrows only: with a modifier they keep their usual
+                                        // caret and selection meaning (the desktop app's moveUp:/moveDown:).
+                                        const plainArrow =
+                                            (event.key === "ArrowUp" || event.key === "ArrowDown") &&
+                                            !event.shiftKey &&
+                                            !event.altKey &&
+                                            !event.metaKey &&
+                                            !event.ctrlKey;
+                                        if (convoId && plainArrow) {
+                                            const walking = sentHistory.isNavigating;
+                                            if (event.key === "ArrowUp" && (walking || (!open && body === ""))) {
+                                                event.preventDefault();
+                                                showRecalled(sentHistory.recallOlder(convoId, body));
+                                                return;
+                                            }
+                                            if (event.key === "ArrowDown" && walking) {
+                                                event.preventDefault();
+                                                showRecalled(sentHistory.recallNewer(convoId));
+                                                return;
+                                            }
+                                        }
                                         if (open) {
                                             const count = folders.length || commands.length;
                                             if (event.key === "ArrowDown") {
@@ -6771,6 +6828,8 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
     const drafts = useMemo(() => makeDraftStore(state.session), [state.session]);
     const sendingConvos = useRef<Set<string>>(new Set());
     const draftRevisions = useRef<Map<string, number>>(new Map());
+    // Sent-message recall is per account, like the drafts; it lives for the page session only.
+    const sentHistory = useMemo(() => new SentMessageHistory(), [state.session]); // eslint-disable-line react-hooks/exhaustive-deps
 
     useEffect(() => {
         if (uploadDialogWasOpen.current && !state.stagedUploads) {
@@ -6908,6 +6967,7 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                                             }
                                             sendingConvos={sendingConvos}
                                             draftRevisions={draftRevisions}
+                                            sentHistory={sentHistory}
                                         />
                                     )}
                                 </div>
