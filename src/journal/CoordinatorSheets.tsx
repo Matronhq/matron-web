@@ -21,7 +21,7 @@ Please see LICENSE files in the repository root for full details.
  * editor replaces the list inside the Routines sheet rather than stacking a second modal.
  */
 
-import React, { useEffect, useState, useSyncExternalStore } from "react";
+import React, { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 
 import type { MatronJournalClient } from "./client";
@@ -31,6 +31,7 @@ import { pinChooserView } from "./pins";
 import {
     type Routine,
     ROUTINE_TRIGGER_KINDS,
+    normalizeRoutinePrompt,
     type RoutineDraft,
     routineLastFireFailed,
     routineOutcomeWords,
@@ -51,6 +52,45 @@ import type { ClientState, Conversation } from "./types";
 
 /** "New coordinator chat…" starts the session on this model, as on the Mac. */
 export const COORDINATOR_NEW_CHAT_MODEL = "opus[1m]";
+
+const FOCUSABLE = "button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled])";
+
+/**
+ * A modal's focus, as in the Settings sheet: focus moves into the sheet on open (unless a field
+ * already took it), Tab cycles inside it, and the opener gets focus back on close. `view` names
+ * what the sheet shows; when it changes and focus fell out (the clicked control went away), the
+ * sheet itself takes focus again.
+ */
+function useModalFocus(sheetRef: React.RefObject<HTMLElement | null>, view: string): void {
+    useEffect(() => {
+        const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+        const onKey = (event: KeyboardEvent): void => {
+            const sheet = sheetRef.current;
+            if (event.key !== "Tab" || !sheet) return;
+            const focusable = [...sheet.querySelectorAll<HTMLElement>(FOCUSABLE)];
+            if (focusable.length === 0) return;
+            const first = focusable[0];
+            const last = focusable[focusable.length - 1];
+            const inside = focusable.includes(document.activeElement as HTMLElement);
+            if (event.shiftKey && (document.activeElement === first || !inside)) {
+                event.preventDefault();
+                last.focus();
+            } else if (!event.shiftKey && (document.activeElement === last || !inside)) {
+                event.preventDefault();
+                first.focus();
+            }
+        };
+        document.addEventListener("keydown", onKey);
+        return () => {
+            document.removeEventListener("keydown", onKey);
+            if (opener?.isConnected) opener.focus();
+        };
+    }, [sheetRef]);
+    useEffect(() => {
+        const sheet = sheetRef.current;
+        if (sheet && !sheet.contains(document.activeElement)) sheet.focus();
+    }, [sheetRef, view]);
+}
 
 // ── Chooser ───────────────────────────────────────────────────────────────────────────────────
 
@@ -74,6 +114,8 @@ export function CoordinatorChooserSheet({
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | undefined>(initialError);
     const mountedRef = useSheetLifecycle(onClose);
+    const sheetRef = useRef<HTMLDivElement>(null);
+    useModalFocus(sheetRef, "chooser");
     const current = state.coordinatorConvoId ?? null;
     // Top-level and unarchived: the conversations the Mac's chat list offers.
     const eligible = state.conversations.filter(
@@ -100,7 +142,12 @@ export function CoordinatorChooserSheet({
             aria-modal="true"
             aria-labelledby="mj-coordinator-chooser-title"
         >
-            <div className="mj_UploadConfirm mj_NewSessionSheet mj_PinSheet" data-testid="coordinator-chooser">
+            <div
+                ref={sheetRef}
+                tabIndex={-1}
+                className="mj_UploadConfirm mj_NewSessionSheet mj_PinSheet"
+                data-testid="coordinator-chooser"
+            >
                 <SheetHead
                     id="mj-coordinator-chooser-title"
                     title="Choose the coordinator conversation"
@@ -203,8 +250,21 @@ export function RoutinesSheet({
     const [editing, setEditing] = useState<EditorTarget | null>(null);
     const [message, setMessage] = useState<string>();
     const [now, setNow] = useState(() => Date.now());
+    // The row an editor was opened from gets focus back when the editor closes.
+    const [returnTo, setReturnTo] = useState<string>();
+    const sheetRef = useRef<HTMLDivElement>(null);
     // Escape steps back out of the editor before it closes the sheet.
     useSheetLifecycle(() => (editing ? setEditing(null) : onClose()));
+    useModalFocus(sheetRef, editing ? `edit:${editing.kind === "new" ? "" : editing.id}` : "list");
+    useEffect(() => {
+        if (editing || !returnTo) return;
+        const rows = sheetRef.current?.querySelectorAll<HTMLElement>("[data-routine-id]") ?? [];
+        [...rows]
+            .find((row) => row.dataset.routineId === returnTo)
+            ?.querySelector<HTMLElement>(".mj_RoutineRow_main")
+            ?.focus();
+        setReturnTo(undefined);
+    }, [editing, returnTo]);
 
     useEffect(() => client.watchRoutines(), [client]);
     // "Next: today at 18:30" and "Last: 5m ago" move on while the sheet is open.
@@ -266,6 +326,7 @@ export function RoutinesSheet({
                             now={now}
                             onEdit={() => {
                                 setMessage(undefined);
+                                setReturnTo(routine.id);
                                 setEditing({ kind: "existing", id: routine.id });
                             }}
                             onSetEnabled={(enabled) => void setEnabled(routine, enabled)}
@@ -296,7 +357,12 @@ export function RoutinesSheet({
 
     return createPortal(
         <div className="mj_UploadConfirm_scrim" role="dialog" aria-modal="true" aria-labelledby="mj-routines-title">
-            <div className="mj_UploadConfirm mj_NewSessionSheet mj_RoutinesSheet" data-testid="routines-sheet">
+            <div
+                ref={sheetRef}
+                tabIndex={-1}
+                className="mj_UploadConfirm mj_NewSessionSheet mj_RoutinesSheet"
+                data-testid="routines-sheet"
+            >
                 <div className="mj_NewSessionSheet_head">
                     <h2 className="mj_UploadConfirm_title" id="mj-routines-title">
                         Routines
@@ -372,8 +438,14 @@ function RoutineRow({
     const failed = routineLastFireFailed(routine.last_outcome);
     const outcome = routineOutcomeWords(routine.last_outcome);
     return (
-        <li className="mj_RoutineRow" data-routine={routine.name} data-paused={!routine.enabled || undefined}>
-            <button type="button" className="mj_RoutineRow_main" onClick={onEdit} aria-label={`Edit ${routine.title}`}>
+        <li
+            className="mj_RoutineRow"
+            data-routine={routine.name}
+            data-routine-id={routine.id}
+            data-paused={!routine.enabled || undefined}
+        >
+            {/* No aria-label: the row's words (when, next, last, a failed fire) are the button's name. */}
+            <button type="button" className="mj_RoutineRow_main" onClick={onEdit} title={`Edit ${routine.title}`}>
                 <span className="mj_RoutineRow_title">
                     {routine.title}
                     {!routine.enabled && <span className="mj_RoutineRow_paused">Paused</span>}
@@ -514,6 +586,9 @@ function RoutineEditor({
     return (
         <form
             className="mj_RoutineEditor"
+            // The journal's rules run on save with a reason; the browser's own number checks would
+            // silently block a threshold off the arrows' step (40 with min 1, step 5).
+            noValidate
             aria-label={routine ? `Edit ${routine.title}` : "New routine"}
             onSubmit={(event) => {
                 event.preventDefault();
@@ -564,7 +639,7 @@ function RoutineEditor({
                         onChange={(event) => update({ prompt: event.target.value })}
                     />
                     <p className="mj_RoutineEditor_help mj_RoutineEditor_count">
-                        {[...draft.prompt.trim()].length}/{RoutineRules.promptMaxLength}
+                        {normalizeRoutinePrompt(draft.prompt).length}/{RoutineRules.promptMaxLength}
                     </p>
                 </div>
                 {isNew && (

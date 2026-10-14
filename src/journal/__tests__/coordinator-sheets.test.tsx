@@ -314,4 +314,92 @@ describe("Coordinator rail entry, chooser and Routines sheet", () => {
         });
         expect(routinesSheet()!.querySelector('[data-routine="weekly"]')).not.toBeNull();
     });
+    it("deletes only after the confirmation, and hands focus back to the row the editor came from", async () => {
+        const deleteRoutine = jest.fn().mockResolvedValue({ ok: true });
+        const client = signedInClient({
+            coordinator: jest.fn().mockResolvedValue({ convo_id: "c_coord", consent: true }),
+            routines: jest.fn().mockResolvedValue({
+                routines: [routineRow(), routineRow({ id: "rt_2", name: "unseen-digest", title: "Unseen digest" })],
+            }),
+            deleteRoutine,
+        });
+        await render(client);
+        await act(async () => container.querySelector<HTMLButtonElement>(".mj_NavRail_settings")!.click());
+        await act(async () =>
+            settingsSheet()!.querySelector<HTMLButtonElement>('button[data-setting="routines"]')!.click(),
+        );
+        const sheet = routinesSheet()!;
+        expect(sheet.contains(document.activeElement)).toBe(true);
+        const main = (name: string): HTMLButtonElement =>
+            sheet.querySelector<HTMLButtonElement>(`[data-routine="${name}"] .mj_RoutineRow_main`)!;
+        // The row's words are its accessible name, not just "Edit …".
+        expect(main("daily-sweep").getAttribute("aria-label")).toBeNull();
+
+        await act(async () => main("unseen-digest").click());
+        expect(sheet.contains(document.activeElement)).toBe(true);
+        await act(async () => button(sheet, "Cancel").click());
+        expect(document.activeElement).toBe(main("unseen-digest"));
+
+        await act(async () => main("daily-sweep").click());
+        await act(async () => sheet.querySelector<HTMLButtonElement>('button[data-action="delete-routine"]')!.click());
+        expect(deleteRoutine).not.toHaveBeenCalled();
+        expect(sheet.textContent).toContain("Delete this routine?");
+        await act(async () => button(sheet, "Cancel").click());
+        expect(deleteRoutine).not.toHaveBeenCalled();
+        await act(async () => sheet.querySelector<HTMLButtonElement>('button[data-action="delete-routine"]')!.click());
+        await act(async () => sheet.querySelector<HTMLButtonElement>('button[data-action="confirm-delete"]')!.click());
+        expect(deleteRoutine).toHaveBeenCalledWith("rt_1");
+        expect([...sheet.querySelectorAll<HTMLElement>(".mj_RoutineRow")].map((row) => row.dataset.routine)).toEqual([
+            "unseen-digest",
+        ]);
+    });
+
+    it("creates a triggered routine with a threshold off the arrows' step", async () => {
+        const createRoutine = jest.fn().mockResolvedValue({
+            routine: routineRow({
+                id: "rt_9",
+                name: "ctx",
+                schedule: null,
+                trigger: { kind: "context_over", pct: 42 },
+            }),
+        });
+        const client = signedInClient({
+            coordinator: jest.fn().mockResolvedValue({ convo_id: "c_coord", consent: true }),
+            routines: jest.fn().mockResolvedValue({ routines: [] }),
+            createRoutine,
+        });
+        await render(client);
+        await act(async () => container.querySelector<HTMLButtonElement>(".mj_NavRail_settings")!.click());
+        await act(async () =>
+            settingsSheet()!.querySelector<HTMLButtonElement>('button[data-setting="routines"]')!.click(),
+        );
+        await act(async () =>
+            routinesSheet()!.querySelector<HTMLButtonElement>('button[data-action="new-routine"]')!.click(),
+        );
+        const sheet = routinesSheet()!;
+        const type = async (element: HTMLInputElement | HTMLTextAreaElement, value: string): Promise<void> => {
+            const proto = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement : HTMLInputElement;
+            await act(async () => {
+                Object.getOwnPropertyDescriptor(proto.prototype, "value")!.set!.call(element, value);
+                element.dispatchEvent(new Event("input", { bubbles: true }));
+            });
+        };
+        await type(sheet.querySelector<HTMLInputElement>("#mj-routine-name")!, "ctx");
+        await type(sheet.querySelector<HTMLInputElement>("#mj-routine-title")!, "Context");
+        await type(sheet.querySelector<HTMLTextAreaElement>("#mj-routine-prompt")!, "Look at it.");
+        await act(async () => button(sheet, "When something happens").click());
+        const form = sheet.querySelector<HTMLFormElement>("form.mj_RoutineEditor")!;
+        // The browser's step check would block 42 (min 1) without a word: the journal's rules decide.
+        expect(form.noValidate).toBe(true);
+        await type(sheet.querySelector<HTMLInputElement>('input[aria-label="Percent"]')!, "42");
+        await act(async () => sheet.querySelector<HTMLButtonElement>('button[data-action="save-routine"]')!.click());
+        expect(createRoutine).toHaveBeenCalledWith({
+            name: "ctx",
+            title: "Context",
+            prompt: "Look at it.",
+            trigger: { kind: "context_over", pct: 42 },
+            tz: "Europe/London",
+            enabled: true,
+        });
+    });
 });
