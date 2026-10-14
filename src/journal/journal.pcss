@@ -326,6 +326,167 @@ textarea {
     flex: 0 0 auto;
 }
 
+/* The title and the mission chip share the title row. The chip gives way first (flex-shrink
+   1000): its name truncates, down to "#12 +2", before the title starts to. */
+.mj_HeaderTitleRow {
+    display: flex;
+    min-width: 0;
+    max-width: 100%;
+    align-items: center;
+    gap: var(--cpd-space-2x);
+}
+
+/* The title never goes below a readable stub; past that the chip is hidden (useChipFit). */
+.mj_HeaderTitleRow > .mj_HeaderCluster {
+    flex: 0 1 auto;
+    min-width: min(6rem, 100%);
+}
+
+.mj_MissionChip {
+    position: relative;
+    display: inline-flex;
+    flex: 0 1000 auto;
+    min-width: 0;
+    max-width: 240px;
+}
+
+/* No room beside the title's stub even for "#12 +2" (see useChipFit): out of the flow and out of
+   reach, but still laid out so it can be measured again when the header widens. */
+.mj_MissionChip.mj_MissionChip_hidden {
+    position: absolute;
+    visibility: hidden;
+    pointer-events: none;
+}
+
+/* A grid, so the chip's narrowest is its number and "+n": the name track alone can reach 0. */
+.mj_MissionChip_trigger {
+    display: grid;
+    width: 100%;
+    height: 26px;
+    grid-template-columns: auto auto minmax(0, max-content) auto auto;
+    align-items: center;
+    box-sizing: border-box;
+    border: 0;
+    border-radius: 999px;
+    background: var(--cpd-color-bg-subtle-secondary);
+    color: var(--cpd-color-text-secondary);
+    padding: 0 8px;
+    font: 500 12px/16px var(--cpd-font-family-ui);
+    white-space: nowrap;
+    overflow: hidden;
+    cursor: pointer;
+}
+
+.mj_MissionChip_trigger_current {
+    color: var(--cpd-color-text-action-accent);
+}
+
+.mj_MissionChip_trigger:hover {
+    background: var(--cpd-color-bg-subtle-primary);
+}
+
+.mj_MissionChip_flag {
+    width: 12px;
+    height: 12px;
+    margin-right: 4px;
+}
+
+.mj_MissionChip_num {
+    font-variant-numeric: tabular-nums;
+}
+
+.mj_MissionChip_name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.mj_MissionChip_name:not(:empty) {
+    padding-left: 4px;
+}
+
+/* No room for a readable name (see useChipNameFits): kept in the DOM, at no width, so its
+   natural width can still be measured. */
+.mj_MissionChip_name.mj_MissionChip_name_hidden {
+    max-width: 0;
+    padding-left: 0;
+    visibility: hidden;
+}
+
+.mj_MissionChip_more {
+    font-weight: 600;
+}
+
+.mj_MissionChip_more:not(:empty) {
+    padding-left: 4px;
+}
+
+.mj_MissionChip_chevron {
+    width: 10px;
+    height: 10px;
+    margin-left: 4px;
+    color: var(--cpd-color-icon-secondary);
+}
+
+.mj_MissionChip .mj_HeaderMenu {
+    top: calc(100% + var(--cpd-space-1x));
+    left: 0;
+    width: min(320px, calc(100vw - 32px));
+    gap: var(--cpd-space-3x);
+}
+
+.mj_MissionMenu_group {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.mj_MissionMenu .mj_MissionMenu_label {
+    padding: 0 var(--cpd-space-2x) 2px;
+    color: var(--cpd-color-text-tertiary);
+    font: 600 11px/16px var(--cpd-font-family-ui);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.mj_MissionMenu .mj_MissionMenu_item {
+    display: flex;
+    min-height: 0;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    background: transparent;
+    padding: 6px var(--cpd-space-2x);
+    text-align: left;
+}
+
+.mj_MissionMenu .mj_MissionMenu_item:hover,
+.mj_MissionMenu .mj_MissionMenu_item:focus-visible {
+    background: var(--cpd-color-bg-subtle-secondary);
+}
+
+.mj_MissionMenu .mj_MissionMenu_title {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    color: var(--cpd-color-text-primary);
+    font-weight: 600;
+}
+
+.mj_MissionMenu .mj_MissionMenu_item_earlier .mj_MissionMenu_title {
+    font-weight: 400;
+}
+
+.mj_MissionMenu .mj_MissionMenu_num {
+    color: var(--cpd-color-text-secondary);
+    font-variant-numeric: tabular-nums;
+}
+
+.mj_MissionMenu .mj_MissionMenu_line {
+    color: var(--cpd-color-text-secondary);
+    font: 400 12px/16px var(--cpd-font-family-ui);
+}
+
 .mj_HeaderOverflowTrigger svg {
     width: 18px;
     height: 18px;
@@ -1212,6 +1373,41 @@ textarea {
 }
 
 .mj_JumpToBottom:focus-visible {
+    outline: 2px solid var(--cpd-color-icon-accent-primary);
+    outline-offset: 2px;
+}
+
+/* Floating Stop control: the Jump-to-bottom pill's shape and tint, on the opposite
+   end of the same trailing edge. */
+.mj_StopTurn {
+    position: absolute;
+    z-index: 2;
+    top: var(--cpd-space-2x);
+    right: var(--cpd-space-4x);
+    display: inline-flex;
+    width: 36px;
+    height: 36px;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: var(--cpd-color-bg-canvas-default);
+    box-shadow: var(--cpd-shadow-float);
+    color: var(--cpd-color-text-primary);
+    cursor: pointer;
+}
+
+.mj_StopTurn svg {
+    width: 18px;
+    height: 18px;
+}
+
+.mj_StopTurn:hover {
+    background: var(--cpd-color-bg-subtle-primary);
+}
+
+.mj_StopTurn:focus-visible {
     outline: 2px solid var(--cpd-color-icon-accent-primary);
     outline-offset: 2px;
 }
@@ -2335,6 +2531,63 @@ textarea {
     margin-right: 12px;
 }
 
+/* A recent folder: its path, then how long since a session last started there. */
+.mj_NewSessionSheet [role="listitem"].mj_NewSessionSheet_folder {
+    flex-direction: row;
+    align-items: baseline;
+    gap: 12px;
+}
+
+.mj_NewSessionSheet_folderPath {
+    min-width: 0;
+    flex: 1 1 auto;
+    overflow: hidden;
+    font-family: var(--cpd-font-family-mono);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_NewSessionSheet_folderUsed {
+    flex: 0 0 auto;
+    color: var(--cpd-color-text-secondary);
+    font-size: 12px;
+}
+
+/* Agent switch (Claude / Codex): the segmented control at its own width. */
+.mj_NewSessionSheet_agentSwitch {
+    align-self: flex-start;
+}
+
+/* Model and effort pickers side by side, each label above its select. */
+.mj_NewSessionSheet_picks {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+}
+
+.mj_NewSessionSheet_pick {
+    min-width: 0;
+    flex: 1 1 160px;
+}
+
+.mj_NewSessionSheet select {
+    display: block;
+    width: 100%;
+    min-height: 34px;
+    box-sizing: border-box;
+    border: 1px solid var(--cpd-color-border-interactive-secondary);
+    border-radius: var(--cpd-radius-field);
+    background: var(--cpd-color-bg-canvas-default);
+    color: var(--cpd-color-text-primary);
+    padding: 0 8px;
+    font: 400 13.5px/20px var(--cpd-font-family-ui);
+}
+
+.mj_NewSessionSheet select:focus-visible {
+    border-color: var(--cpd-color-border-interactive-primary);
+    outline: none;
+}
+
 /* Box usage under an agent (and above the folder list once one is chosen): the box's last
    capacity report — limits with reset times, live sessions, disk — and an "as of" caption
    saying how old the numbers are. Spans, not divs: it sits inside the agent's <button>. */
@@ -2602,6 +2855,22 @@ li.mj_AttachmentChip_error {
     filter: brightness(1.08);
 }
 
+/* agent_chat consent card — same .mj_PromptCard chrome and detail rows as the spawn card;
+   the accent border + label mark it as a consent ask rather than a question. */
+.mj_PromptCard_chat {
+    border-color: var(--cpd-color-border-accent);
+}
+
+.mj_PromptCard_chat .mj_PromptLabel {
+    color: var(--cpd-color-text-action-accent);
+}
+
+/* An agent request the client can't answer (malformed payload): one inert muted line. */
+.mj_AgentRequestNotice {
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-body-sm-regular);
+}
+
 /* Standalone timeline row for the durable spawn_outcome event once the card has scrolled
    away — a single status line, no card chrome. */
 .mj_SpawnOutcomeRow {
@@ -2716,6 +2985,44 @@ li.mj_AttachmentChip_error {
     outline-offset: 2px;
 }
 
+/* pick_many: options are toggles (a leading check box, ticked = accent), and the separate
+   Send below them is the card's one filled primary. */
+.mj_PromptOptions button.mj_PromptOption_toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding-left: 10px;
+}
+
+.mj_PromptOption_check {
+    display: inline-flex;
+    flex: 0 0 auto;
+    width: 14px;
+    height: 14px;
+    box-sizing: border-box;
+    align-items: center;
+    justify-content: center;
+    border: 1.5px solid var(--cpd-color-border-interactive-primary);
+    border-radius: 4px;
+}
+
+.mj_PromptOption_check svg {
+    width: 11px;
+    height: 11px;
+}
+
+.mj_PromptOptions button.mj_PromptOption_toggle[aria-pressed="true"] {
+    border-color: var(--cpd-color-border-accent);
+    color: var(--cpd-color-text-action-accent);
+}
+
+.mj_PromptOptions button.mj_PromptOption_toggle[aria-pressed="true"] .mj_PromptOption_check {
+    border-color: var(--cpd-color-bg-accent);
+    background: var(--cpd-color-bg-accent);
+    color: var(--cpd-color-text-on-accent);
+}
+
+.mj_PromptOptions_send button:disabled,
 .mj_PromptText button:disabled {
     cursor: default;
     opacity: 0.5;
@@ -2851,6 +3158,52 @@ li.mj_AttachmentChip_error {
     color: var(--cpd-color-terminal-fg);
     padding: 8px;
     font: 400 12px/16px var(--cpd-font-family-mono);
+}
+
+/* Running tool stream (Mac ToolStreamCard): a chevron in the header; the pane shows about three
+   lines collapsed (Mac: 76pt) and a bounded scrolling pane expanded. */
+.mj_LiveTool_header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.mj_LiveTool_header > span:first-child {
+    min-width: 0;
+    flex: 1 1 auto;
+}
+
+.mj_LiveTool_toggle {
+    display: inline-flex;
+    width: 20px;
+    height: 20px;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--cpd-color-text-tertiary);
+    cursor: pointer;
+}
+
+.mj_LiveTool_toggle svg {
+    width: 13px;
+    height: 13px;
+}
+
+.mj_LiveTool_toggle:focus-visible {
+    border-radius: 4px;
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: 1px;
+}
+
+.mj_LiveTool pre.mj_LiveTool_collapsed {
+    max-height: 76px;
+}
+
+.mj_LiveTool pre.mj_LiveTool_expanded {
+    max-height: 600px;
 }
 
 .mj_DiffCard {
@@ -3062,6 +3415,64 @@ button.mj_File {
 
 .mj_FileCaption {
     margin-top: 4px;
+}
+
+/* Reaped attachment (server media reaper): the name stays readable but muted, "Expired" takes
+   the size's place, and nothing is clickable. */
+.mj_File_expired {
+    color: var(--cpd-color-text-secondary);
+    cursor: default;
+}
+
+.mj_File_expired .mj_Expired {
+    margin-left: var(--cpd-space-1x);
+}
+
+.mj_MediaExpired {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--cpd-space-1-5x);
+    border: 1px dashed var(--cpd-color-border-subtle);
+    border-radius: 6px;
+    padding: var(--cpd-space-3x) var(--cpd-space-4x);
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-body-sm-regular);
+}
+
+/* Inline audio player: the file row on top, the browser's own controls below. */
+.mj_Audio {
+    display: inline-flex;
+    flex-direction: column;
+    gap: var(--cpd-space-1x);
+    max-width: min(420px, 100%);
+}
+
+.mj_Audio_head {
+    display: flex;
+    align-items: center;
+    gap: var(--cpd-space-1-5x);
+    min-width: 0;
+}
+
+.mj_Audio_player {
+    width: min(360px, 60vw);
+    height: 36px;
+}
+
+.mj_Audio_retry {
+    border: 1px solid var(--cpd-color-border-interactive-secondary);
+    border-radius: var(--cpd-radius-md);
+    background: var(--cpd-color-bg-canvas-raised);
+    color: var(--cpd-color-text-primary);
+    font: var(--cpd-font-body-sm-regular);
+    padding: 2px var(--cpd-space-2x);
+    margin-left: var(--cpd-space-1x);
+    cursor: pointer;
+}
+
+.mj_Audio_retry:focus-visible {
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: 2px;
 }
 
 /* Reflow fix: when the bridge sent dims, the frame carries an inline aspect-ratio + width so
@@ -3887,6 +4298,11 @@ button.mj_File {
     color: var(--cpd-color-text-secondary);
     font: var(--cpd-font-body-xs-regular);
     font-family: var(--cpd-font-family-mono);
+}
+
+.mj_MediaViewer_audio {
+    width: min(360px, 70vw);
+    margin-top: var(--cpd-space-2x);
 }
 
 .mj_MediaViewer_downloadNote {

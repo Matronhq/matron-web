@@ -455,6 +455,51 @@ describe("Composer voice recording", () => {
         expect(stored.join("\n")).not.toContain("example.com");
     });
 
+    it("records a sent caption for Up recall as it goes, and a note sent mid-walk ends the walk", async () => {
+        const client = makeClient();
+        const upload = deferred<"sent">();
+        jest.spyOn(client, "sendVoiceNote").mockReturnValue(upload.promise);
+        jest.spyOn(client, "sendMessage").mockResolvedValue(true);
+        const { container } = await renderComposer(false, client);
+        const up = async (): Promise<void> => {
+            await act(async () => {
+                composerTextarea(container).dispatchEvent(
+                    new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true, cancelable: true }),
+                );
+            });
+        };
+        await typeDraft(container, "older");
+        await act(async () => {
+            composerTextarea(container).dispatchEvent(
+                new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+            );
+        });
+        await typeDraft(container, "newer");
+        await act(async () => {
+            composerTextarea(container).dispatchEvent(
+                new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+            );
+        });
+
+        // Walk back to "older" and send it as the caption of a voice note.
+        await up();
+        await up();
+        expect(composerTextarea(container).value).toBe("older");
+        await startRecording(container);
+        await click(container, "Stop and send voice message");
+        await advance(0);
+        expect(composerTextarea(container).value).toBe("");
+
+        // The walk is over, so Up starts afresh from the newest line: the caption, recallable
+        // while the upload is still running.
+        await up();
+        expect(composerTextarea(container).value).toBe("older");
+        // The upload finishing doesn't disturb a walk under way.
+        await act(async () => upload.resolve("sent"));
+        await up();
+        expect(composerTextarea(container).value).toBe("newer");
+    });
+
     it("clears the draft as the send starts, not when the upload finishes", async () => {
         const client = makeClient();
         const upload = deferred<"sent">();
