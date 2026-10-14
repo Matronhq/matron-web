@@ -2061,6 +2061,64 @@ export class MatronJournalClient {
         if (this.state.goToNumberOpen) this.patch({ goToNumberOpen: false });
     }
 
+    // ── Subagent side pane and media browser ────────────────────────────────
+
+    /**
+     * Opens a subagent from a Subtask line or a subagent pill. With its parent on screen it opens
+     * in the pane beside the parent (switching the pane if another subagent is there); from
+     * anywhere else, such as a sibling subagent opened on its own, it opens as the conversation.
+     */
+    public openSubChat(childId: string): void {
+        const child = this.state.conversations.find((conversation) => conversation.id === childId);
+        const parentId = child?.parent_convo_id;
+        if (parentId && parentId === this.state.selectedConversationId && !this.state.trackerView?.open) {
+            const open = this.state.subChatPane;
+            if (open?.parentId !== parentId || open.childId !== childId) {
+                this.patch({ subChatPane: { parentId, childId } });
+            }
+            return;
+        }
+        void this.selectConversation(childId, { suppressNotFound: true });
+    }
+
+    public closeSubChat(): void {
+        if (this.state.subChatPane) this.patch({ subChatPane: undefined });
+    }
+
+    /**
+     * Every stored event of a conversation, oldest first: what the side pane and the media browser
+     * show for a conversation other than (or as well as) the one on screen. When its history was
+     * never loaded, the newest page is fetched first, as opening the conversation would. Never
+     * throws: a failed fetch still returns what is stored.
+     */
+    public async conversationEvents(conversationId: string): Promise<JournalEvent[]> {
+        const db = this.database;
+        if (!db) return [];
+        const api = this.api;
+        if (api && !this.history.get(conversationId)?.initialized) {
+            try {
+                const response = await api.messages(conversationId, undefined, HISTORY_PAGE_SIZE);
+                if (this.database !== db) return [];
+                await db.putHistory(response.events);
+                if (!this.history.get(conversationId)?.initialized) {
+                    const known = this.state.conversations.find((candidate) => candidate.id === conversationId);
+                    const emptyWithKnownHistory = response.events.length === 0 && (known?.last_seq ?? 0) > 0;
+                    this.history.set(conversationId, {
+                        initialized: !emptyWithKnownHistory,
+                        oldestSeq: response.events.reduce<number | undefined>(
+                            (current, event) => (current === undefined ? event.seq : Math.min(current, event.seq)),
+                            undefined,
+                        ),
+                        hasMore: emptyWithKnownHistory || response.events.length === HISTORY_PAGE_SIZE,
+                    });
+                }
+            } catch {
+                // Offline or refused: show what is stored.
+            }
+        }
+        return db.events(conversationId);
+    }
+
     /**
      * Asks the journal what the signed-in user's number `num` is. Never throws: a 404 is `none`
      * (no such number), anything else that goes wrong is `failed`. The payload is checked field

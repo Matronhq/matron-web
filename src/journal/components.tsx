@@ -18,6 +18,7 @@ import React, {
     useState,
     useSyncExternalStore,
 } from "react";
+import { createPortal } from "react-dom";
 
 import matronLogo from "../../res/matron-logo-simple.svg";
 import {
@@ -92,6 +93,7 @@ import {
     InactiveIcon,
     InterruptedIcon,
     KebabIcon,
+    MediaBrowserIcon,
     PdfFileIcon,
     TextFileIcon,
     VideoFileIcon,
@@ -145,6 +147,10 @@ import {
     useMarkdownPreviewPanel,
 } from "./markdown-preview";
 import { TrackerPane } from "./tracker/TrackerPane";
+import { MediaBrowserSheet } from "./media-browser";
+import { SubChatPane, useChatArea } from "./subchat-pane";
+import { chatSidePane, subtaskDescription } from "./subtask";
+import { SubtaskLine } from "./subtask-link";
 import {
     buildMediaCorpus,
     isRenderableInViewer,
@@ -2438,6 +2444,7 @@ const CONVERSATION_LIST_IGNORED_STATE = new Set<keyof ClientState>([
     "hasOlderHistory",
     "sendTick",
     "dragActive",
+    "subChatPane",
 ]);
 
 export function sameStateExcept(
@@ -3427,18 +3434,68 @@ function ChatHeader({
                 // Keyed by conversation id so a selection change while the menu is open
                 // remounts (and closes) it, instead of silently retargeting the actions.
                 conversation && (
-                    <HeaderOverflowMenu
-                        key={conversation.id}
-                        client={client}
-                        conversation={conversation}
-                        state={state}
-                    />
+                    <>
+                        <MediaBrowserButton
+                            key={`media:${conversation.id}`}
+                            client={client}
+                            convoId={conversation.id}
+                        />
+                        <HeaderOverflowMenu
+                            key={conversation.id}
+                            client={client}
+                            conversation={conversation}
+                            state={state}
+                        />
+                    </>
                 )
             }
             hideControlsWhenCompact
             limits={meters}
             collapse={collapse}
         />
+    );
+}
+
+// Opens the conversation's Media / Files / Links browser. Keyed by conversation, so moving to
+// another chat closes it.
+function MediaBrowserButton({ client, convoId }: { client: MatronJournalClient; convoId: string }): React.ReactElement {
+    const [open, setOpen] = useState(false);
+    const close = useCallback(() => setOpen(false), []);
+    // A Files row: the chat's own file chip, so a file opens the same way it does in the chat.
+    const renderFile = useCallback(
+        (item: MediaItem): React.ReactNode =>
+            item.expired ? (
+                <ExpiredFile filename={item.filename} contentType={item.contentType} />
+            ) : (
+                <AuthenticatedMedia
+                    client={client}
+                    mediaId={item.mediaId}
+                    image={false}
+                    filename={item.filename || "attachment"}
+                    contentType={item.contentType}
+                    size={item.size}
+                />
+            ),
+        [client],
+    );
+    return (
+        <>
+            <button
+                type="button"
+                className="mj_IconButton mj_MediaBrowserToggle"
+                aria-label="Media browser"
+                aria-haspopup="dialog"
+                title="Media, files & links"
+                onClick={() => setOpen(true)}
+            >
+                <MediaBrowserIcon aria-hidden />
+            </button>
+            {open &&
+                createPortal(
+                    <MediaBrowserSheet client={client} convoId={convoId} renderFile={renderFile} onClose={close} />,
+                    document.body,
+                )}
+        </>
     );
 }
 
@@ -4939,23 +4996,36 @@ export function EventContent({
 }): React.ReactElement | null {
     const answer = answeredPromptReplies.get(`${event.convo_id}:${event.seq}`);
     switch (event.type) {
-        case "text":
+        case "text": {
             // A tracker fallback text (payload.fallback_for set) is the plain-text mirror the
             // bridge emits for old clients that can't render the real `item` marker. This client
             // renders that marker, so suppress the duplicate fallback text.
             if (asString(event.payload.fallback_for)) return null;
+            const body = asString(event.payload.body);
+            // A bridge "🔀 Subtask: …" line opens the subagent it started, once that is known.
+            const subtask = event.sender.startsWith("user:") ? undefined : subtaskDescription(body);
+            if (subtask) {
+                return (
+                    <SubtaskLine client={client} convoId={event.convo_id} description={subtask}>
+                        <div className="mj_Markdown">
+                            <MarkdownBody text={body} label={String(event.seq)} />
+                        </div>
+                    </SubtaskLine>
+                );
+            }
             return (
                 <div className="mj_Markdown">
                     {/* A Coordinator briefing (payload.briefing_id) is an ordinary text event in the
                         Coordinator conversation; a small badge says what it is. */}
                     {asString(event.payload.briefing_id) ? <span className="mj_BriefingBadge">Briefing</span> : null}
                     <MarkdownBody
-                        text={asString(event.payload.body)}
+                        text={body}
                         label={String(event.seq)}
                         onTrackerLink={(kind, num) => client.openTrackerLink(kind, num)}
                     />
                 </div>
             );
+        }
         case "item": {
             // Quiet invalidation-only markers (reordered/updated) and unknown actions render null. An
             // item card shows its item's latest state (foldItemCards), not this marker's frozen one.
@@ -6860,12 +6930,14 @@ export function SubagentStrip({
                     </span>
                     {ordered.map((child) => {
                         const isCurrent = mode === "child" && child.id === state.selectedConversationId;
+                        // In a parent, the subagent open in the pane beside it.
+                        const inPane = mode === "parent" && chatSidePane(state)?.childId === child.id;
                         const isRunning = child.session_state === "running";
                         const outcomeStatus = accessibleOutcome(classifyOutcome(child));
                         const className = [
                             "mj_SubagentPill",
                             !isRunning && "mj_SubagentPill_finished",
-                            isCurrent && "mj_SubagentPill_current",
+                            (isCurrent || inPane) && "mj_SubagentPill_current",
                         ]
                             .filter(Boolean)
                             .join(" ");
@@ -6874,9 +6946,9 @@ export function SubagentStrip({
                                 <button
                                     className={className}
                                     aria-label={`Open subagent ${conversationTitle(child)}, ${outcomeStatus}`}
-                                    aria-current={isCurrent ? "true" : undefined}
+                                    aria-current={isCurrent || inPane ? "true" : undefined}
                                     disabled={isCurrent}
-                                    onClick={() => void client.selectConversation(child.id)}
+                                    onClick={() => client.openSubChat(child.id)}
                                 >
                                     <WorkerMark conversation={child} className="mj_WorkerMark mj_SubagentPill_icon" />
                                     <OutcomeGlyph conversation={child} className="mj_SubagentPill_icon" />
@@ -6891,6 +6963,22 @@ export function SubagentStrip({
             )}
         </div>
     );
+}
+
+// The subagent pane's rows: what the chat's own transcript would show for a read-only subagent.
+const SUBCHAT_HIDDEN_TYPES = new Set(["read_marker", "edit", "session_status", "convo_meta", "summary"]);
+function subChatVisibleEvents(events: JournalEvent[]): JournalEvent[] {
+    return events.filter(
+        (event) =>
+            !SUBCHAT_HIDDEN_TYPES.has(event.type) &&
+            !isUnrenderableNoticeEvent(event) &&
+            !isSuppressedTrackerEvent(event),
+    );
+}
+
+const NO_PROMPT_REPLIES: ReadonlyMap<string, { choice?: string }> = new Map();
+function renderSubChatEvent(event: JournalEvent, client: MatronJournalClient): React.ReactNode {
+    return <EventContent client={client} event={event} answeredPromptReplies={NO_PROMPT_REPLIES} isReadOnly />;
 }
 
 function SignedInApp({ client, state }: { client: MatronJournalClient; state: ClientState }): React.ReactElement {
@@ -6973,6 +7061,11 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
     // The field is modal, so the shortcut stays off while the upload sheet holds the app inert.
     useGoToNumberShortcut(client, !state.stagedUploads);
 
+    // The pane beside the chat (a subagent, opened from a Subtask line or a subagent pill).
+    const sidePane = chatSidePane(state);
+    const chatAreaRef = useRef<HTMLDivElement>(null);
+    const chatArea = useChatArea(appContent, chatAreaRef, sidePane !== undefined);
+
     return (
         <MarkdownPreviewContext.Provider value={markdownPreview.context}>
             <div className="mj_App_wrapper">
@@ -6986,6 +7079,7 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                         <div />
                     </div>
                     <div
+                        ref={chatAreaRef}
                         className={`mj_ChatView_wrapper ${state.trackerView?.open || state.selectedConversationId ? "" : "mj_Chat_mobileHidden"}`}
                     >
                         {state.trackerView?.open ? (
@@ -7061,6 +7155,18 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                             </main>
                         )}
                     </div>
+                    {sidePane?.kind === "subchat" ? (
+                        <SubChatPane
+                            key={sidePane.parentId}
+                            client={client}
+                            conversations={state.conversations}
+                            parentId={sidePane.parentId}
+                            childId={sidePane.childId}
+                            area={chatArea}
+                            visibleEvents={subChatVisibleEvents}
+                            renderEvent={renderSubChatEvent}
+                        />
+                    ) : null}
                     {markdownPreview.target ? (
                         <MarkdownPreviewPanel
                             client={client}

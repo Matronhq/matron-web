@@ -1,0 +1,371 @@
+/*
+Copyright 2026 Matron Contributors.
+
+SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
+Please see LICENSE files in the repository root for full details.
+*/
+
+import React, { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+
+import { MatronJournalClient } from "../../../src/journal/client";
+import { MatronApp } from "../../../src/journal/components";
+import type { ClientState, Conversation, JournalEvent, Session } from "../../../src/journal/types";
+
+jest.mock("../../../res/matron-logo-simple.svg", () => "matron-logo.svg");
+
+const SESSION: Session = {
+    serverUrl: "https://journal.example",
+    token: "token",
+    deviceId: 1,
+    userId: 2,
+    username: "alice",
+};
+
+const convo = (
+    id: string,
+    title: string,
+    session_state = "done",
+    parent_convo_id?: string,
+    created_at = 0,
+): Conversation => ({
+    id,
+    title,
+    session_state,
+    last_seq: 1,
+    unread_count: 0,
+    snippet: "",
+    created_at,
+    parent_convo_id,
+    read_up_to_seq: 1,
+});
+
+const text = (convoId: string, seq: number, body: string, sender = "agent:claude"): JournalEvent => ({
+    seq,
+    convo_id: convoId,
+    ts: 1_782_000_000_000 + seq * 60_000,
+    sender,
+    type: "text",
+    payload: { body },
+});
+
+interface ClientInternals {
+    state: ClientState;
+    database?: unknown;
+    api?: unknown;
+}
+
+function internals(client: MatronJournalClient): ClientInternals {
+    return client as unknown as ClientInternals;
+}
+
+function signedInClient(
+    conversations: Conversation[],
+    selectedConversationId: string,
+    events: JournalEvent[] = [],
+): MatronJournalClient {
+    const client = new MatronJournalClient();
+    internals(client).state = {
+        ...client.getSnapshot(),
+        phase: "signed-in",
+        session: SESSION,
+        conversations,
+        selectedConversationId,
+        events,
+        pendingMessages: [],
+        connection: "online",
+    };
+    return client;
+}
+
+function patchState(client: MatronJournalClient, patch: Partial<ClientState>): void {
+    const target = client as unknown as { patch(patch: Partial<ClientState>): void };
+    target.patch(patch);
+}
+
+let rendered: { container: HTMLDivElement; root: Root } | undefined;
+
+async function renderClient(client: MatronJournalClient): Promise<HTMLDivElement> {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    await act(async () => root.render(React.createElement(MatronApp, { client })));
+    rendered = { container, root };
+    return container;
+}
+
+// jsdom lays nothing out; give the app and the chat area real widths so the pane can tell
+// "beside the chat" from "covering it".
+function layOut(appRight: number, chatLeft: number): void {
+    jest.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+        const left = this.classList.contains("mj_ChatView_wrapper") ? chatLeft : 0;
+        return {
+            left,
+            top: 0,
+            right: appRight,
+            bottom: 800,
+            width: appRight - left,
+            height: 800,
+            x: left,
+            y: 0,
+        } as DOMRect;
+    });
+}
+
+beforeAll(() => {
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+});
+
+afterEach(async () => {
+    if (rendered) {
+        await act(async () => rendered?.root.unmount());
+        rendered.container.remove();
+        rendered = undefined;
+    }
+    document.body.innerHTML = "";
+    jest.restoreAllMocks();
+});
+
+const PARENT = convo("parent", "Parent", "running");
+const LINT = convo("parent:sub:1", "lint the workspace", "running", "parent", 1);
+const DOCS = convo("parent:sub:2", "docs sweep", "done", "parent", 2);
+
+describe("client.openSubChat", () => {
+    it("opens a subagent beside its parent, and switches it", () => {
+        const client = signedInClient([PARENT, LINT, DOCS], "parent");
+        client.openSubChat(LINT.id);
+        expect(client.getSnapshot().subChatPane).toEqual({ parentId: "parent", childId: LINT.id });
+        client.openSubChat(DOCS.id);
+        expect(client.getSnapshot().subChatPane).toEqual({ parentId: "parent", childId: DOCS.id });
+        client.closeSubChat();
+        expect(client.getSnapshot().subChatPane).toBeUndefined();
+    });
+
+    it("opens a subagent as the conversation when its parent is not on screen", () => {
+        const client = signedInClient([PARENT, LINT, DOCS], LINT.id);
+        const select = jest.spyOn(client, "selectConversation").mockResolvedValue();
+        client.openSubChat(DOCS.id);
+        expect(select).toHaveBeenCalledWith(DOCS.id, { suppressNotFound: true });
+        expect(client.getSnapshot().subChatPane).toBeUndefined();
+    });
+});
+
+describe("client.conversationEvents", () => {
+    it("fetches the newest page once when the history was never loaded, then reads the store", async () => {
+        const client = signedInClient([PARENT, LINT], "parent");
+        const stored = [text(LINT.id, 1, "hello")];
+        const database = {
+            putHistory: jest.fn().mockResolvedValue(undefined),
+            events: jest.fn().mockResolvedValue(stored),
+        };
+        const api = { messages: jest.fn().mockResolvedValue({ events: stored }) };
+        internals(client).database = database;
+        internals(client).api = api;
+
+        await expect(client.conversationEvents(LINT.id)).resolves.toEqual(stored);
+        expect(api.messages).toHaveBeenCalledWith(LINT.id, undefined, 80);
+        expect(database.putHistory).toHaveBeenCalledWith(stored);
+
+        await client.conversationEvents(LINT.id);
+        expect(api.messages).toHaveBeenCalledTimes(1);
+        expect(database.events).toHaveBeenCalledTimes(2);
+    });
+
+    it("still returns what is stored when the fetch fails", async () => {
+        const client = signedInClient([PARENT, LINT], "parent");
+        const stored = [text(LINT.id, 1, "cached")];
+        internals(client).database = { putHistory: jest.fn(), events: jest.fn().mockResolvedValue(stored) };
+        internals(client).api = { messages: jest.fn().mockRejectedValue(new Error("offline")) };
+        await expect(client.conversationEvents(LINT.id)).resolves.toEqual(stored);
+    });
+});
+
+describe("Subtask lines", () => {
+    it("draws a matched Subtask line as a card that opens the subagent beside the chat", async () => {
+        const client = signedInClient([PARENT, LINT, DOCS], "parent", [
+            text("parent", 1, "🔀 Subtask: lint the workspace"),
+        ]);
+        jest.spyOn(client, "conversationEvents").mockResolvedValue([text(LINT.id, 1, "Linting 14 packages")]);
+        layOut(1400, 300);
+        const container = await renderClient(client);
+
+        const card = container.querySelector<HTMLButtonElement>(".mj_SubtaskCard");
+        expect(card?.getAttribute("aria-label")).toBe("Open subagent lint the workspace, running");
+        expect(card?.textContent).toContain("Subagent · running");
+        // The row around it is the ordinary transcript row.
+        expect(card?.closest("li.mj_EventTile")).not.toBeNull();
+
+        await act(async () => card?.click());
+        const pane = container.querySelector("aside.mj_SubChatPane");
+        expect(pane?.getAttribute("aria-label")).toBe("Subagent lint the workspace");
+        expect(pane?.classList.contains("mj_SubChatPane_covering")).toBe(false);
+        expect(pane?.textContent).toContain("Linting 14 packages");
+        expect(pane?.textContent).toContain("Running");
+        // The parent chat stays on screen with its composer.
+        expect(client.getSnapshot().selectedConversationId).toBe("parent");
+        expect(container.querySelector(".mj_ChatView")).not.toBeNull();
+    });
+
+    it("stays plain text until the subagent is known, then becomes a card", async () => {
+        const client = signedInClient([PARENT], "parent", [text("parent", 1, "🔀 Subtask: docs sweep")]);
+        const container = await renderClient(client);
+        expect(container.querySelector(".mj_SubtaskCard")).toBeNull();
+        expect(container.textContent).toContain("🔀 Subtask: docs sweep");
+
+        await act(async () => patchState(client, { conversations: [PARENT, DOCS] }));
+        expect(container.querySelector(".mj_SubtaskCard")?.getAttribute("aria-label")).toBe(
+            "Open subagent docs sweep, finished",
+        );
+    });
+
+    it("leaves the user's own messages alone", async () => {
+        const client = signedInClient([PARENT, DOCS], "parent", [
+            text("parent", 1, "🔀 Subtask: docs sweep", "user:alice"),
+        ]);
+        const container = await renderClient(client);
+        expect(container.querySelector(".mj_SubtaskCard")).toBeNull();
+    });
+});
+
+describe("the subagent pane", () => {
+    it("closes from its header, and belongs to the chat it was opened from", async () => {
+        const other = convo("other", "Other");
+        const client = signedInClient([PARENT, LINT, DOCS, other], "parent");
+        jest.spyOn(client, "conversationEvents").mockResolvedValue([]);
+        jest.spyOn(client, "selectConversation").mockImplementation(async (id) => {
+            patchState(client, { selectedConversationId: id });
+        });
+        layOut(1400, 300);
+        const container = await renderClient(client);
+
+        await act(async () => client.openSubChat(DOCS.id));
+        expect(container.querySelector("aside.mj_SubChatPane")?.textContent).toContain("No messages yet");
+        expect(container.querySelector(".mj_SubChatPane_state")?.textContent).toBe("Finished");
+
+        await act(async () => void client.selectConversation("other"));
+        expect(container.querySelector("aside.mj_SubChatPane")).toBeNull();
+        await act(async () => void client.selectConversation("parent"));
+        expect(container.querySelector("aside.mj_SubChatPane")).not.toBeNull();
+
+        await act(async () =>
+            container.querySelector<HTMLButtonElement>('button[aria-label="Close subagent"]')?.click(),
+        );
+        expect(container.querySelector("aside.mj_SubChatPane")).toBeNull();
+    });
+
+    it("switches between siblings from its header", async () => {
+        const client = signedInClient([PARENT, LINT, DOCS], "parent");
+        jest.spyOn(client, "conversationEvents").mockResolvedValue([]);
+        layOut(1400, 300);
+        const container = await renderClient(client);
+        await act(async () => client.openSubChat(LINT.id));
+
+        const select = container.querySelector<HTMLSelectElement>('select[aria-label="Switch subagent"]');
+        expect([...(select?.options ?? [])].map((option) => option.textContent)).toEqual([
+            "● lint the workspace",
+            "○ docs sweep",
+        ]);
+        await act(async () => {
+            select!.value = DOCS.id;
+            select!.dispatchEvent(new Event("change", { bubbles: true }));
+        });
+        expect(client.getSnapshot().subChatPane?.childId).toBe(DOCS.id);
+    });
+
+    it("covers the chat, with a back button, when the chat area is narrower than 820px", async () => {
+        const client = signedInClient([PARENT, LINT], "parent");
+        jest.spyOn(client, "conversationEvents").mockResolvedValue([]);
+        layOut(1000, 300);
+        const container = await renderClient(client);
+        await act(async () => client.openSubChat(LINT.id));
+
+        const pane = container.querySelector<HTMLElement>("aside.mj_SubChatPane");
+        expect(pane?.classList.contains("mj_SubChatPane_covering")).toBe(true);
+        expect(pane?.style.left).toBe("300px");
+        expect(container.querySelector('button[aria-label="Close subagent"]')).toBeNull();
+        const back = container.querySelector<HTMLButtonElement>('button[aria-label="Back to chat"]');
+        expect(document.activeElement).toBe(back);
+        await act(async () => back?.click());
+        expect(client.getSnapshot().subChatPane).toBeUndefined();
+    });
+});
+
+describe("the media browser", () => {
+    const EVENTS: JournalEvent[] = [
+        text("parent", 1, "Report is up at https://example.com/report.\nDetails inside."),
+        {
+            seq: 2,
+            convo_id: "parent",
+            ts: 1_782_000_120_000,
+            sender: "agent:claude",
+            type: "file",
+            payload: { blob_ref: "file-1", name: "notes.zip", size: 4096, content_type: "application/zip" },
+        },
+    ];
+
+    async function openBrowser(client: MatronJournalClient): Promise<HTMLElement> {
+        const container = await renderClient(client);
+        await act(async () =>
+            container.querySelector<HTMLButtonElement>('button[aria-label="Media browser"]')?.click(),
+        );
+        const dialog = document.querySelector<HTMLElement>('[role="dialog"].mj_MediaBrowser');
+        if (!dialog) throw new Error("Media browser did not open");
+        return dialog;
+    }
+
+    function tab(dialog: HTMLElement, label: string): HTMLButtonElement {
+        const match = [...dialog.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(
+            (t) => t.textContent === label,
+        );
+        if (!match) throw new Error(`Missing tab ${label}`);
+        return match;
+    }
+
+    it("opens from the chat header on Media, with Files and Links tabs", async () => {
+        const client = signedInClient([PARENT], "parent");
+        jest.spyOn(client, "conversationEvents").mockResolvedValue(EVENTS);
+        const dialog = await openBrowser(client);
+
+        expect([...dialog.querySelectorAll('[role="tab"]')].map((t) => t.textContent)).toEqual([
+            "Media",
+            "Files",
+            "Links",
+        ]);
+        expect(tab(dialog, "Media").getAttribute("aria-selected")).toBe("true");
+        expect(dialog.textContent).toContain("No media yet");
+
+        await act(async () => tab(dialog, "Files").click());
+        expect(dialog.querySelector(".mj_MediaBrowser_file")?.textContent).toContain("notes.zip");
+        expect(dialog.querySelector(".mj_MediaBrowser_file")?.textContent).toContain("4 KB");
+
+        await act(async () => tab(dialog, "Links").click());
+        const link = dialog.querySelector<HTMLAnchorElement>("a.mj_MediaBrowser_link");
+        expect(link?.getAttribute("href")).toBe("https://example.com/report");
+        expect(link?.getAttribute("target")).toBe("_blank");
+        expect(link?.getAttribute("rel")).toBe("noopener noreferrer");
+        expect(link?.textContent).toContain("Report is up at https://example.com/report.");
+    });
+
+    it("moves between tabs with the arrow keys and closes on Escape or Done", async () => {
+        const client = signedInClient([PARENT], "parent");
+        jest.spyOn(client, "conversationEvents").mockResolvedValue([]);
+        let dialog = await openBrowser(client);
+
+        await act(async () =>
+            tab(dialog, "Media").dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true })),
+        );
+        expect(tab(dialog, "Links").getAttribute("aria-selected")).toBe("true");
+        expect(dialog.textContent).toContain("No links yet");
+
+        await act(async () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+        expect(document.querySelector(".mj_MediaBrowser")).toBeNull();
+
+        await act(async () =>
+            rendered?.container.querySelector<HTMLButtonElement>('button[aria-label="Media browser"]')?.click(),
+        );
+        dialog = document.querySelector<HTMLElement>(".mj_MediaBrowser")!;
+        const done = [...dialog.querySelectorAll("button")].find((b) => b.textContent === "Done");
+        await act(async () => done?.click());
+        expect(document.querySelector(".mj_MediaBrowser")).toBeNull();
+    });
+});
