@@ -429,6 +429,13 @@ export function AddAgentSheet({
 
     useEffect(() => () => clearTimeout(claimTimer.current), []);
 
+    // The code and name fields unmount once approved: keep keyboard focus on the button that
+    // remains (Close while waiting, Done once connected) rather than letting it fall to <body>.
+    const finalButton = useRef<HTMLButtonElement>(null);
+    useEffect(() => {
+        if (phase.kind === "waiting" || phase.kind === "success") finalButton.current?.focus();
+    }, [phase.kind]);
+
     // Preview once the field holds a full code, after a short pause; any edit starts over.
     useEffect(() => {
         const normalized = normalizePairingCode(code);
@@ -685,11 +692,11 @@ export function AddAgentSheet({
             )}
             <div className="mj_UploadConfirm_actions">
                 {phase.kind === "success" ? (
-                    <button type="button" className="mj_UploadConfirm_send" data-autofocus onClick={onClose}>
+                    <button type="button" className="mj_UploadConfirm_send" ref={finalButton} onClick={onClose}>
                         Done
                     </button>
                 ) : (
-                    <button type="button" onClick={onClose}>
+                    <button type="button" ref={phase.kind === "waiting" ? finalButton : undefined} onClick={onClose}>
                         {phase.kind === "waiting" ? "Close" : "Cancel"}
                     </button>
                 )}

@@ -334,6 +334,7 @@ describe("Settings → Devices", () => {
             await act(async () => button("Approve").click());
             expect(api.pairApprove).toHaveBeenCalledWith("KTNM3VQ8", "box-c", "c");
             expect(deviceSheet()!.textContent).toContain("Waiting for the agent to connect…");
+            expect(document.activeElement).toBe(button("Close"));
 
             (api as unknown as { add: (device: DeviceDTO) => void }).add({
                 device_id: 12,
@@ -344,6 +345,7 @@ describe("Settings → Devices", () => {
             });
             await advance(PAIR_CLAIM_POLL_MS);
             expect(deviceSheet()!.textContent).toContain("box-c is connected.");
+            expect(document.activeElement).toBe(button("Done"));
         });
 
         it("refuses a pasted pairing link for another server without sending it", async () => {
