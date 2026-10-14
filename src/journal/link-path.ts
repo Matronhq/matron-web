@@ -15,7 +15,7 @@ export interface TrackerLinkPath {
 }
 
 /**
- * `/u/dan/412` (or `/u/dan/412/`) → `{ user: "dan", num: 412 }`; any other path → null. The
+ * `/u/alice/412` (or `/u/alice/412/`) → `{ user: "alice", num: 412 }`; any other path → null. The
  * prefix before `/u/` is allowed, so an app served under a sub-path still reads its links.
  */
 export function parseTrackerLinkPath(pathname: string): TrackerLinkPath | null {
