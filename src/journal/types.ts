@@ -1333,6 +1333,7 @@ export function eventSnippet(type: string, payload: EventPayload): string {
         // into the snapshot snippet, and the two must be byte-exact or the sidebar row
         // flip-flops across a resume (same ruling just applied to the Android client).
         if (asString(payload.kind) === "agent_spawn") return "🤝 Agent spawn request";
+        if (asString(payload.kind) === "agent_chat") return "🤝 Agent chat request";
         return `Permission: ${asString(payload.description).slice(0, 100)}`;
     }
     if (type === "spawn_outcome") {

@@ -425,6 +425,24 @@ export class JournalApi {
         });
     }
 
+    // Answers one parked agent-chat ask — the ONLY path that resolves an agent-chat consent card
+    // (a prompt_reply never reaches the parked row). Keyed on the room and the device the row is
+    // filed under. Resolves to the server's `delivered` flag; 409 (no longer awaiting an answer)
+    // and 404 (not this user's room) surface as a typed JournalApiError.
+    public async answerAgentChat(
+        roomId: string,
+        targetDeviceId: number,
+        decision: "approve" | "deny",
+        signal?: AbortSignal,
+    ): Promise<boolean> {
+        const response = await this.json<{ delivered?: boolean }>("/agent-chat/answer", {
+            method: "POST",
+            body: { room_id: roomId, target_device_id: targetDeviceId, decision },
+            signal,
+        });
+        return response?.delivered === true;
+    }
+
     // ── Tracker: missions / milestones / items (all at journal root, Bearer-auth, user-global) ──
 
     /** GET /missions?state= — the mission list rows (counts + last-milestone digest baked in). */

@@ -1661,6 +1661,16 @@ export class MatronJournalClient {
         await this.api.answerAgentSpawn(requestId, decision, signal);
     }
 
+    public async answerAgentChat(
+        roomId: string,
+        targetDeviceId: number,
+        decision: "approve" | "deny",
+        signal?: AbortSignal,
+    ): Promise<boolean> {
+        if (!this.api) throw new Error("Not signed in.");
+        return this.api.answerAgentChat(roomId, targetDeviceId, decision, signal);
+    }
+
     // Concurrent callers for the same id (the viewer body and its DownloadLink mount in the
     // same commit) share one in-flight request: without the dedupe map each miss fetched the
     // blob again and the loser's object URL was overwritten in the cache — never revoked, a

@@ -21,6 +21,22 @@ import React, {
 
 import matronLogo from "../../res/matron-logo-simple.svg";
 import { INITIAL_SGR_STATE, parseAnsi, stripLeadingSgrFragment } from "./ansi";
+import {
+    agentChatCardKey,
+    agentChatFromLabel,
+    agentChatHeadline,
+    agentChatToLabel,
+    type AgentChatDecision,
+    type AgentChatRequest,
+    type AgentChatResolution,
+    isAgentChatPayload,
+    parseAgentChatRequest,
+    readAgentChatResolutions,
+    rememberAgentChatAnswer,
+    rememberedAgentChatAnswer,
+    type RememberedAgentChatAnswer,
+    unanswerableAgentRequestNotice,
+} from "./agent-chat";
 import { JournalApiError } from "./api";
 import {
     type AgentProbe,
@@ -3695,6 +3711,194 @@ function AgentSpawnCard({
     );
 }
 
+type AgentChatLocalPhase = { kind: "idle" } | { kind: "sending" } | { kind: "failed"; message: string };
+
+const noopAgentChatAnswer = (_decision: AgentChatDecision, _signal?: AbortSignal): Promise<unknown> =>
+    Promise.resolve();
+
+// A transport failure surfaces as a JournalApiError with status 0.
+function agentChatErrorMessage(error: unknown): string {
+    if (error instanceof JournalApiError && error.status === 404) return "That request is no longer on the server.";
+    if (error instanceof JournalApiError && error.status !== 0) return "The server refused that answer.";
+    return "Couldn't reach the server — check your connection and try again.";
+}
+
+function rememberedResolution(answer: RememberedAgentChatAnswer | undefined): AgentChatResolution | undefined {
+    if (answer === undefined) return undefined;
+    return answer === "expired" ? { kind: "expired" } : { kind: "answered", approved: answer === "approve" };
+}
+
+// The agent-chat consent card: who is asking to talk to whom, about what and why, and the two
+// buttons that answer it. Same .mj_PromptCard chrome as the spawn card. Unlike the spawn card
+// there is no durable outcome event to wait for: a 200 from the answer call IS the decision, so
+// it is remembered locally. Precedence: what the timeline says (the consent item's closing
+// marker — a decision made on another device, or the ask lapsing) > the answer remembered here
+// > the in-flight/failed tap > answerable. A 409 means the ask stopped waiting between drawing
+// and the tap; that is nothing the user can act on, so it settles the card rather than erroring.
+function AgentChatRequestCard({
+    event,
+    request,
+    resolution,
+    isReadOnly = false,
+    onAnswer = noopAgentChatAnswer,
+}: {
+    event: JournalEvent;
+    request: AgentChatRequest;
+    resolution?: AgentChatResolution;
+    isReadOnly?: boolean;
+    onAnswer?: (decision: AgentChatDecision, signal?: AbortSignal) => Promise<unknown>;
+}): React.ReactElement {
+    const cardKey = agentChatCardKey(event);
+    const [remembered, setRemembered] = useState(() => rememberedAgentChatAnswer(cardKey));
+    const [phase, setPhase] = useState<AgentChatLocalPhase>({ kind: "idle" });
+    const sendingRef = useRef(false);
+    const mountedRef = useRef(false);
+    const abortRef = useRef<AbortController | null>(null);
+
+    useEffect(() => {
+        mountedRef.current = true;
+        return (): void => {
+            mountedRef.current = false;
+            abortRef.current?.abort();
+        };
+    }, []);
+
+    const settled = resolution ?? rememberedResolution(remembered);
+
+    const settle = (answer: RememberedAgentChatAnswer): void => {
+        rememberAgentChatAnswer(cardKey, answer);
+        if (!mountedRef.current) return;
+        setRemembered(answer);
+        setPhase({ kind: "idle" });
+    };
+
+    const handleAnswer = (decision: AgentChatDecision): void => {
+        if (settled || sendingRef.current) return;
+        sendingRef.current = true;
+        const controller = new AbortController();
+        abortRef.current = controller;
+        setPhase({ kind: "sending" });
+        void onAnswer(decision, controller.signal)
+            .then(
+                () => settle(decision),
+                (error: unknown) => {
+                    if (error instanceof JournalApiError && error.status === 409) {
+                        settle("expired");
+                    } else if (mountedRef.current) {
+                        setPhase({ kind: "failed", message: agentChatErrorMessage(error) });
+                    }
+                },
+            )
+            .finally(() => {
+                sendingRef.current = false;
+            });
+    };
+
+    const sending = !settled && phase.kind === "sending";
+    const fields: Array<[string, string, string]> = [
+        ["from", "From", agentChatFromLabel(request)],
+        ["to", "To", agentChatToLabel(request)],
+    ];
+    if (request.topic) fields.push(["about", "About", request.topic]);
+    if (request.justification) fields.push(["why", "Why", request.justification]);
+
+    return (
+        <div className="mj_PromptCard mj_PromptCard_chat">
+            <div className="mj_PromptHeader">
+                <span className="mj_PromptLabel">Agent chat request</span>
+                <time className="mj_PromptTime" dateTime={new Date(event.ts).toISOString()}>
+                    {formatTime(event.ts)}
+                </time>
+            </div>
+            <div className="mj_PromptBody">
+                <span className="mj_PromptGlyph" aria-hidden="true">
+                    <PromptPeopleGlyph />
+                </span>
+                <span className="mj_PromptQuestion">{agentChatHeadline(request)}</span>
+            </div>
+            <div className="mj_SpawnDetails">
+                {fields.map(([key, label, value]) => (
+                    <div key={key} className={`mj_SpawnDetail mj_ChatDetail_${key}`}>
+                        <span className="mj_SpawnDetail_label">{label}</span>
+                        <span className="mj_SpawnDetail_value">{value}</span>
+                    </div>
+                ))}
+            </div>
+            {!isReadOnly && !settled && (
+                <div className="mj_PromptOptions">
+                    <button type="button" disabled={sending} onClick={() => handleAnswer("deny")}>
+                        Decline
+                    </button>
+                    <button
+                        type="button"
+                        className="mj_PromptOption_affirmative"
+                        disabled={sending}
+                        onClick={() => handleAnswer("approve")}
+                    >
+                        Approve
+                    </button>
+                </div>
+            )}
+            {sending && (
+                <div className="mj_PromptResolved mj_PromptResolved_pending">
+                    <span className="mj_PromptGlyph" aria-hidden="true" />
+                    <span className="mj_Muted">Sending…</span>
+                </div>
+            )}
+            {!settled && phase.kind === "failed" && (
+                <div className="mj_PromptResolved mj_PromptResolved_failed" role="alert">
+                    <span className="mj_PromptGlyph" aria-hidden="true" />
+                    <span className="mj_Answered" style={{ color: "var(--cpd-color-text-critical-primary)" }}>
+                        {phase.message}
+                    </span>
+                </div>
+            )}
+            {settled?.kind === "answered" && (
+                <div
+                    className={`mj_PromptResolved ${settled.approved ? "mj_PromptResolved_allowed" : "mj_PromptResolved_denied"}`}
+                >
+                    <span
+                        className="mj_PromptGlyph mj_PromptGlyph_ok"
+                        aria-hidden="true"
+                        style={{
+                            color: settled.approved ? "var(--cpd-color-usage-low)" : "var(--cpd-color-text-secondary)",
+                        }}
+                    >
+                        {settled.approved ? <PromptCheckGlyph /> : <PromptDeniedGlyph />}
+                    </span>
+                    <span className="mj_Answered">{settled.approved ? "Approved" : "Declined"}</span>
+                </div>
+            )}
+            {settled?.kind === "expired" && (
+                <div className="mj_PromptResolved mj_PromptResolved_expired">
+                    <span className="mj_PromptGlyph" aria-hidden="true" />
+                    <span className="mj_Muted">This request is no longer waiting for an answer.</span>
+                </div>
+            )}
+        </div>
+    );
+}
+
+function PromptPeopleGlyph(): React.ReactElement {
+    return (
+        <svg
+            viewBox="0 0 24 24"
+            width="15"
+            height="15"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.7"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+        >
+            <circle cx="9" cy="8" r="3" />
+            <path d="M3.5 19a5.5 5.5 0 0 1 11 0" />
+            <path d="M16 5.5a3 3 0 0 1 0 5" />
+            <path d="M17.5 14a5.5 5.5 0 0 1 3 5" />
+        </svg>
+    );
+}
+
 // Minimal standalone row for the durable spawn_outcome event itself (§ design "Timeline
 // rendering of spawn_outcome itself") — keeps the record legible once the card has scrolled
 // away, and stops the default case's raw JSON <details> dump.
@@ -4203,6 +4407,7 @@ function isSuppressedTrackerEvent(event: JournalEvent): boolean {
 }
 
 const EMPTY_SPAWN_OUTCOMES: ReadonlyMap<string, EventPayload> = new Map();
+const EMPTY_AGENT_CHAT_RESOLUTIONS: ReadonlyMap<string, AgentChatResolution> = new Map();
 
 // A permission-decision reply is a prompt_reply targeting a permission_request
 // card. The card already renders the decision inline (answered/allowed/denied
@@ -4222,6 +4427,7 @@ export function EventContent({
     event,
     answeredPromptReplies,
     spawnOutcomes = EMPTY_SPAWN_OUTCOMES,
+    agentChatResolutions = EMPTY_AGENT_CHAT_RESOLUTIONS,
     isReadOnly = false,
     resolvedAction,
 }: {
@@ -4229,6 +4435,7 @@ export function EventContent({
     event: JournalEvent;
     answeredPromptReplies: ReadonlyMap<string, { choice?: string }>;
     spawnOutcomes?: ReadonlyMap<string, EventPayload>;
+    agentChatResolutions?: ReadonlyMap<string, AgentChatResolution>;
     isReadOnly?: boolean;
     resolvedAction?: (itemId: string) => "send" | "cancel" | undefined;
 }): React.ReactElement | null {
@@ -4282,6 +4489,26 @@ export function EventContent({
                 />
             );
         case "permission_request": {
+            if (isAgentChatPayload(event.payload)) {
+                const request = parseAgentChatRequest(event.payload);
+                // A malformed agent-chat payload can't be answered: the generic PromptCard's
+                // Allow/Deny would post a prompt_reply nothing reads. Draw an inert notice instead.
+                if (!request) {
+                    return <div className="mj_AgentRequestNotice">{unanswerableAgentRequestNotice(event.payload)}</div>;
+                }
+                return (
+                    <AgentChatRequestCard
+                        key={`${event.convo_id}:${event.seq}`}
+                        event={event}
+                        request={request}
+                        resolution={agentChatResolutions.get(agentChatCardKey(event))}
+                        isReadOnly={isReadOnly}
+                        onAnswer={(decision, signal) =>
+                            client.answerAgentChat(request.roomId, request.targetDeviceId, decision, signal)
+                        }
+                    />
+                );
+            }
             if (asString(event.payload.kind) === "agent_spawn") {
                 const requestId = asString(event.payload.request_id);
                 // A malformed agent_spawn payload (no request_id/task) can never be resolved:
@@ -4386,6 +4613,7 @@ function EventRow({
     event,
     answeredPromptReplies,
     spawnOutcomes,
+    agentChatResolutions,
     isReadOnly = false,
     resolvedAction,
     continuation = false,
@@ -4396,6 +4624,7 @@ function EventRow({
     event: JournalEvent;
     answeredPromptReplies: ReadonlyMap<string, { choice?: string }>;
     spawnOutcomes?: ReadonlyMap<string, EventPayload>;
+    agentChatResolutions?: ReadonlyMap<string, AgentChatResolution>;
     isReadOnly?: boolean;
     resolvedAction: (itemId: string) => "send" | "cancel" | undefined;
     continuation?: boolean;
@@ -4454,6 +4683,7 @@ function EventRow({
                             event={event}
                             answeredPromptReplies={answeredPromptReplies}
                             spawnOutcomes={spawnOutcomes}
+                            agentChatResolutions={agentChatResolutions}
                             isReadOnly={isReadOnly}
                             resolvedAction={resolvedAction}
                         />
@@ -4713,6 +4943,9 @@ function Timeline({
         }
         return outcomes;
     }, [state.events]);
+    // Agent-chat cards settled by the timeline itself (the consent item's closing marker): a
+    // decision made on another device, or the ask lapsing.
+    const agentChatResolutions = useMemo(() => readAgentChatResolutions(state.events), [state.events]);
     const releasedActions = useMemo(() => {
         const actions = new Map<string, "send" | "cancel">();
         for (const event of state.events) {
@@ -4867,6 +5100,7 @@ function Timeline({
                                             event={item.event}
                                             answeredPromptReplies={answeredPromptReplies}
                                             spawnOutcomes={spawnOutcomes}
+                                            agentChatResolutions={agentChatResolutions}
                                             isReadOnly={isReadOnly}
                                             resolvedAction={resolvedAction}
                                             continuation={
