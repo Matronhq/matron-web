@@ -333,7 +333,6 @@ function setup(
     const clearAppBadge = jest.fn().mockResolvedValue(undefined);
     const notifier = new DesktopNotifier(client, {
         Notification: notification.api,
-        locks: undefined,
         channel: () => undefined,
         storage: memoryStorage(),
         document: doc,
@@ -538,38 +537,69 @@ describe("DesktopNotifier", () => {
         expect(notification.shown[0].options?.silent).toBe(true);
     });
 
-    it("shows each event in one tab only (localStorage claim)", async () => {
-        const storage = memoryStorage();
-        const a = setup({ env: { storage } });
-        const b = setup({ env: { storage } });
-        a.notifier.start();
-        b.notifier.start();
+    it("uses the session state the frames saw when another tab applied the running event", async () => {
+        const api: Api = {
+            notifySettings: jest
+                .fn()
+                .mockResolvedValue({ mode: "all", events: { other_done: true }, has_coordinator: false }),
+            coordinator: jest.fn().mockResolvedValue({ convo_id: null }),
+        };
+        const { client, notifier, notification } = setup({ api });
+        signedIn(client, { conversations: [conversation("c2", { session_state: "waiting" })] });
+        notifier.start();
         await flush();
-        const once = event({ type: "prompt" });
-        deliver(a.client, once);
-        deliver(b.client, once);
-        expect(a.notification.shown.length + b.notification.shown.length).toBe(1);
+        // Another tab applied "running": this tab saw the frame but its list still says waiting.
+        frame(client, event({ type: "session_status", payload: { state: "running" } }));
+        const ended = event({ type: "session_status", payload: { state: "waiting" } });
+        frame(client, ended);
+        deliver(client, ended);
+        expect(notification.shown.map((shown) => shown.options?.body)).toEqual(["Turn finished"]);
     });
 
-    it("shows events only in the tab holding the leader lock", async () => {
-        let held = false;
-        const locks = {
-            request: jest.fn((_name: string, callback: () => Promise<void>) => {
-                if (held) return new Promise(() => undefined);
-                held = true;
-                return callback();
-            }),
+    it("notifies only what needs the user until the settings have been read", async () => {
+        const api: Api = {
+            notifySettings: jest.fn().mockRejectedValue(new Error("offline")),
+            coordinator: jest.fn().mockRejectedValue(new Error("offline")),
         };
-        const a = setup({ env: { locks } });
-        const b = setup({ env: { locks } });
-        a.notifier.start();
-        b.notifier.start();
+        const { client, notifier, notification } = setup({ api });
+        notifier.start();
         await flush();
-        const once = event({ type: "prompt" });
-        deliver(a.client, once);
-        deliver(b.client, once);
-        expect(a.notification.shown).toHaveLength(1);
-        expect(b.notification.shown).toHaveLength(0);
+        deliver(client, event());
+        expect(notification.shown).toHaveLength(0);
+        deliver(client, event({ type: "prompt", payload: { question: "Go?" } }));
+        expect(notification.shown).toHaveLength(1);
+    });
+
+    it("closes its notifications and clears the app badge on sign-out", async () => {
+        const { client, notifier, notification, clearAppBadge } = setup();
+        const stop = notifier.start();
+        await flush();
+        deliver(client, event({ type: "prompt" }));
+        expect(notification.shown).toHaveLength(1);
+        clearAppBadge.mockClear();
+        stop();
+        expect(notification.shown[0].close).toHaveBeenCalled();
+        expect(clearAppBadge).toHaveBeenCalled();
+    });
+
+    it("forgets a focused tab that went away without saying so once another tab takes focus", async () => {
+        const bus = channelBus();
+        const background = setup({ focused: false, env: { channel: bus } });
+        const crashed = setup({ focused: true, env: { channel: bus } });
+        const other = setup({ focused: false, env: { channel: bus } });
+        signedIn(crashed.client, { selectedConversationId: "c2" });
+        signedIn(other.client, { selectedConversationId: "c3" });
+        background.notifier.start();
+        crashed.notifier.start();
+        other.notifier.start();
+        await flush();
+        deliver(background.client, event({ convo_id: "c2", type: "prompt" }));
+        expect(background.notification.shown).toHaveLength(0);
+
+        // The focused tab dies without a pagehide; the user focuses another tab.
+        bus().postMessage({ type: "view", tab: "other-tab", focused: true, convoId: "c3" });
+        deliver(background.client, event({ convo_id: "c2", type: "prompt" }));
+        expect(background.notification.shown).toHaveLength(1);
     });
 
     it("stays quiet about a conversation another focused tab has on screen", async () => {

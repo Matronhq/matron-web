@@ -20,10 +20,13 @@ Please see LICENSE files in the repository root for full details.
  * - never for the user's own events, a subagent's child conversation, or the conversation open
  *   in a focused tab (this one or another).
  *
- * Several tabs see the same events; only one shows a notification. With the Web Locks API one
- * tab holds a leader lock; without it the first tab to record the event's seq in localStorage
- * shows it. Tabs tell each other which conversation they show (BroadcastChannel) so a background
- * tab never notifies about what a focused one has on screen.
+ * Several tabs see the same events; only one shows a notification. That needs no lock: the tabs
+ * share one IndexedDB journal with one cursor, so exactly one tab newly applies each event, and
+ * only that tab's client hands it to the live listener. Tabs tell each other which conversation
+ * they show (BroadcastChannel) so a background tab never notifies about what a focused one has on
+ * screen. Only one document can have focus at a time, so a tab that reports focus (or this tab
+ * gaining it) clears every other tab's claim: a tab that crashed while focused leaves nothing
+ * behind.
  *
  * The document title carries the unread total ("(3) Matron") and so does the app badge where
  * the browser has one (navigator.setAppBadge), counted like the nav rail's badge.
@@ -293,10 +296,6 @@ export interface NotificationConstructorLike {
     requestPermission(): Promise<NotificationPermission>;
 }
 
-interface LockManagerLike {
-    request(name: string, callback: () => Promise<void>): Promise<unknown>;
-}
-
 interface ChannelLike {
     postMessage(message: unknown): void;
     close(): void;
@@ -311,7 +310,6 @@ interface NotifyApi {
 /** Everything the notifier touches outside itself; tests pass fakes. */
 export interface NotifierEnvironment {
     Notification?: NotificationConstructorLike;
-    locks?: LockManagerLike;
     channel?: () => ChannelLike | undefined;
     storage?: Storage;
     document?: Document;
@@ -323,8 +321,6 @@ export interface NotifierEnvironment {
 }
 
 const PREFS_KEY = "matron_desktop_notifications_v1";
-const CLAIM_KEY = "matron_desktop_notifications_claim_v1";
-const LEADER_LOCK = "matron-desktop-notifications";
 const CHANNEL = "matron-desktop-notifications";
 // Events older than this when they arrive (a reconnect replaying what was missed) only update the
 // list: a burst of stale notifications after a laptop wakes says nothing the badge does not.
@@ -342,7 +338,6 @@ function defaultEnvironment(): NotifierEnvironment {
     }
     return {
         Notification: typeof Notification === "undefined" ? undefined : (Notification as NotificationConstructorLike),
-        locks: (nav as (Navigator & { locks?: LockManagerLike }) | undefined)?.locks,
         channel: () => (typeof BroadcastChannel === "undefined" ? undefined : new BroadcastChannel(CHANNEL)),
         storage,
         document: typeof document === "undefined" ? undefined : document,
@@ -367,14 +362,19 @@ export class DesktopNotifier {
     private starts = 0;
     private teardown: Array<() => void> = [];
     private channel?: ChannelLike;
-    private leader = false;
-    private releaseLeader?: () => void;
     private readonly peers = new Map<string, PeerView>();
     private lastAnnounced = "";
     private baseTitle?: string;
     private lastBadge = -1;
-    // The journal's settings for the signed-in session; null = unavailable (fallback rules).
-    private view: NotifyView | null = null;
+    // The journal's settings for the signed-in session: null = a journal without them (the
+    // fallback rules), undefined = not read yet or the read failed (only what needs the user).
+    private view: NotifyView | null | undefined = undefined;
+    // Each conversation's session state as the journal frames reached this tab, and the state
+    // before the latest session_status frame. Every tab sees every frame, but only one applies
+    // each event, so the client's own conversation list can miss the "running" another tab applied.
+    private readonly sessionStates = new Map<string, { seq: number; state: string; before: string | undefined }>();
+    // The notification on screen per conversation, closed on sign-out.
+    private readonly open = new Map<string, NotificationLike>();
     private coordinatorId: string | null = null;
     private sessionKey?: string;
     // Moves on every live `notify` frame and session change: a GET sent before is older news.
@@ -455,6 +455,8 @@ export class DesktopNotifier {
         const win = this.env.window;
         if (win) {
             const onFocusChange = (): void => {
+                // Only one document has focus: no other tab can have a conversation on screen.
+                if (this.ownView().focused) this.peers.clear();
                 this.refresh();
                 this.announce();
             };
@@ -481,24 +483,6 @@ export class DesktopNotifier {
             this.post({ type: "query" });
         }
 
-        if (this.env.locks) {
-            void this.env.locks
-                .request(
-                    LEADER_LOCK,
-                    () =>
-                        new Promise<void>((release) => {
-                            if (this.starts === 0) {
-                                release();
-                                return;
-                            }
-                            this.leader = true;
-                            this.releaseLeader = release;
-                            this.post({ type: "query" });
-                        }),
-                )
-                .catch(() => undefined);
-        }
-
         this.onClientChange();
         this.announce();
     }
@@ -508,12 +492,20 @@ export class DesktopNotifier {
         for (const stop of this.teardown.splice(0)) stop();
         this.channel?.close();
         this.channel = undefined;
-        this.leader = false;
-        this.releaseLeader?.();
-        this.releaseLeader = undefined;
         this.peers.clear();
         this.lastAnnounced = "";
+        this.sessionStates.clear();
+        // Signed out (or unmounted): no count and no message text left behind.
+        for (const notification of this.open.values()) {
+            try {
+                notification.close();
+            } catch {
+                // Already gone.
+            }
+        }
+        this.open.clear();
         if (this.env.document && this.baseTitle !== undefined) this.env.document.title = this.baseTitle;
+        if (this.lastBadge > 0) this.env.clearAppBadge?.()?.catch(() => undefined);
         this.lastBadge = -1;
     }
 
@@ -528,7 +520,8 @@ export class DesktopNotifier {
         const key = session ? `${session.serverUrl}|${session.userId}|${session.token}` : undefined;
         if (key !== this.sessionKey) {
             this.sessionKey = key;
-            this.view = null;
+            this.view = undefined;
+            this.sessionStates.clear();
             this.coordinatorId = null;
             this.settingsEpoch += 1;
             this.sessionEpoch += 1;
@@ -537,6 +530,8 @@ export class DesktopNotifier {
         // The `notify` frame is never replayed, so each (re)connect reads the settings again.
         if (session && state.connection !== this.lastConnection) {
             this.lastConnection = state.connection;
+            // A snapshot after a reconnect may move session states without frames.
+            this.sessionStates.clear();
             if (state.connection === "online" && this.snapshot.enabled) void this.loadSettings();
         }
     }
@@ -597,12 +592,33 @@ export class DesktopNotifier {
 
     private onFrame(frame: unknown): void {
         const candidate = frame as { kind?: unknown; settings?: unknown };
+        if (candidate.kind === "journal") {
+            this.trackSessionState(frame as JournalEvent);
+            return;
+        }
         if (candidate.kind !== "notify") return;
         const settings = parseNotifySettings(candidate.settings);
         if (!settings) return;
         // The frame is the synced part only: this device's level stays as the last GET left it.
         this.view = { ...settings, device_level: this.view?.device_level ?? "all" };
         this.settingsEpoch += 1;
+    }
+
+    private trackSessionState(event: JournalEvent): void {
+        if (event.type !== "session_status" || typeof event.payload?.state !== "string") return;
+        if (typeof event.convo_id !== "string" || typeof event.seq !== "number") return;
+        const known = this.sessionStates.get(event.convo_id);
+        if (known && known.seq >= event.seq) return;
+        const before = known
+            ? known.state
+            : this.client.getSnapshot().conversations.find((row) => row.id === event.convo_id)?.session_state;
+        this.sessionStates.set(event.convo_id, { seq: event.seq, state: event.payload.state, before });
+    }
+
+    /** The session state before this event: from the frames when they saw it, else the client's list. */
+    private stateBefore(event: JournalEvent, previous: Conversation | undefined): string | undefined {
+        const known = event.type === "session_status" ? this.sessionStates.get(event.convo_id) : undefined;
+        return known && known.seq === event.seq ? known.before : previous?.session_state;
     }
 
     private onJournalEvent(event: JournalEvent, previous: Conversation | undefined): void {
@@ -612,12 +628,14 @@ export class DesktopNotifier {
         if (typeof event.ts === "number" && event.ts < now - STALE_EVENT_MS) return;
         // A subagent's child conversation never notifies (the journal never pushes for one either).
         if (previous?.parent_convo_id || typeof event.payload.parent_convo_id === "string") return;
-        const cls = classifyEvent(event, previous?.session_state);
+        const cls = classifyEvent(event, this.stateBefore(event, previous));
         if (!cls) return;
         const key = eventKey(cls, { isCoordinator: event.convo_id === this.coordinatorId, isRoom: false });
-        if (!shouldNotify(key, event.type, event.convo_id, this.view, now)) return;
+        // Settings not read yet (or the read failed): only what needs the user, which every preset sends.
+        const allowed =
+            this.view === undefined ? NEEDS_ME.has(key) : shouldNotify(key, event.type, event.convo_id, this.view, now);
+        if (!allowed) return;
         if (this.isOnScreen(event.convo_id)) return;
-        if (!this.claim(event)) return;
         this.show(event, previous, cls);
     }
 
@@ -626,22 +644,6 @@ export class DesktopNotifier {
         if (own.focused && own.convoId === convoId) return true;
         for (const peer of this.peers.values()) if (peer.focused && peer.convoId === convoId) return true;
         return false;
-    }
-
-    /** Whether this tab is the one to show the notification. */
-    private claim(event: JournalEvent): boolean {
-        if (this.env.locks) return this.leader;
-        const storage = this.env.storage;
-        if (!storage) return true;
-        const session = this.client.getSnapshot().session;
-        const key = `${CLAIM_KEY}:${session?.serverUrl ?? ""}:${session?.userId ?? ""}`;
-        try {
-            if (Number(storage.getItem(key) ?? 0) >= event.seq) return false;
-            storage.setItem(key, String(event.seq));
-        } catch {
-            // Storage unavailable: better a notification per tab than none.
-        }
-        return true;
     }
 
     private show(event: JournalEvent, previous: Conversation | undefined, cls: NotifyClass): void {
@@ -663,10 +665,12 @@ export class DesktopNotifier {
             console.warn("matron:notification", error);
             return;
         }
+        this.open.set(conversationId, notification);
         notification.onclick = () => {
             this.env.window?.focus();
             void this.client.selectConversation(conversationId);
             notification.close();
+            if (this.open.get(conversationId) === notification) this.open.delete(conversationId);
         };
     }
 
@@ -699,6 +703,8 @@ export class DesktopNotifier {
         }
         if (message.type !== "view" || typeof message.tab !== "string" || message.tab === this.tabId) return;
         if (message.focused === true) {
+            // Only one document has focus: whichever tab had it before no longer does.
+            this.peers.clear();
             this.peers.set(message.tab, {
                 focused: true,
                 convoId: typeof message.convoId === "string" ? message.convoId : null,
