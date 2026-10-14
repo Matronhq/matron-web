@@ -2616,6 +2616,22 @@ li.mj_AttachmentChip_error {
     filter: brightness(1.08);
 }
 
+/* agent_chat consent card — same .mj_PromptCard chrome and detail rows as the spawn card;
+   the accent border + label mark it as a consent ask rather than a question. */
+.mj_PromptCard_chat {
+    border-color: var(--cpd-color-border-accent);
+}
+
+.mj_PromptCard_chat .mj_PromptLabel {
+    color: var(--cpd-color-text-action-accent);
+}
+
+/* An agent request the client can't answer (malformed payload): one inert muted line. */
+.mj_AgentRequestNotice {
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-body-sm-regular);
+}
+
 /* Standalone timeline row for the durable spawn_outcome event once the card has scrolled
    away — a single status line, no card chrome. */
 .mj_SpawnOutcomeRow {
