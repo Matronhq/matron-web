@@ -40,6 +40,7 @@ import {
     availableResolutions,
     formatRelativeTime,
     humanizeSize,
+    isConsentItem,
     itemStatusText,
     kindLabel,
     needsUser,
@@ -784,7 +785,10 @@ export function ItemDetail({
     };
     const missionText = missionNum ? itemMissionText(missionNum, mission) : "";
 
-    const showMenu = item.state === "closed" || resolutions.length > 0;
+    // A consent card closes when its request is decided and the journal refuses to reopen it (409),
+    // so a closed one offers no Reopen.
+    const canReopen = item.state === "closed" && !isConsentItem(item);
+    const showMenu = canReopen || resolutions.length > 0;
 
     // matron://item / matron://mission deep links inside the item body + comment threads open the
     // target tracker surface in-app (F6) — same handler the timeline uses.
@@ -857,7 +861,7 @@ export function ItemDetail({
                         </button>
                         {menuOpen ? (
                             <div className="mj_TrackerMenu_list" role="menu">
-                                {item.state === "closed" ? (
+                                {canReopen ? (
                                     <button
                                         type="button"
                                         role="menuitem"

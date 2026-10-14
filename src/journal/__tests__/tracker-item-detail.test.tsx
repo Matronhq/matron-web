@@ -172,6 +172,48 @@ describe("ItemDetail", () => {
         expect(menuLabels(container)).toEqual(["Reopen"]);
     });
 
+    it("offers no Reopen for a closed consent item", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <ItemDetail
+                item={trackerItem({
+                    state: "closed",
+                    awaiting: null,
+                    resolution: "decided",
+                    kind: "decision",
+                    links: [{ url: "matron://consent/spawn/sp_1", title: "Spawn request" }],
+                })}
+                comments={[]}
+                client={client as unknown as MatronJournalClient}
+                onBack={jest.fn()}
+            />,
+        );
+
+        expect(container.querySelector(".mj_TrackerMenu_button")).toBeNull();
+        expect(client.reopenTrackerItem).not.toHaveBeenCalled();
+    });
+
+    it("still offers Reopen for a closed item whose links are not consent links", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <ItemDetail
+                item={trackerItem({
+                    state: "closed",
+                    awaiting: null,
+                    resolution: "done",
+                    kind: "task",
+                    links: [{ url: "https://example.com/pull/1" }, { url: "matron://item/4" }],
+                })}
+                comments={[]}
+                client={client as unknown as MatronJournalClient}
+                onBack={jest.fn()}
+            />,
+        );
+
+        await openMenu(container);
+        expect(menuLabels(container)).toEqual(["Reopen"]);
+    });
+
     it("routes a resolve click through client.closeTrackerItem", async () => {
         const client = fakeClient();
         const { container } = await mount(
