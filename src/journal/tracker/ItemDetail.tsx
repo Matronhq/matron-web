@@ -46,6 +46,7 @@ import {
     statusRowText,
 } from "./format";
 import { CommentBubbleGlyph, MissionGlyph, TrackerGlyph } from "./glyphs";
+import { useHandoverCaption } from "./handover";
 import { type CommentAuthor, commentAuthor, itemMission, itemMissionText, itemOriginLabel } from "./item-context";
 import { buildTrackerMediaCorpus, InlineBody } from "./ItemAttachments";
 import { useWorkingLabel, WorkingIndicator } from "./working";
@@ -546,6 +547,7 @@ export function ItemDetail({
     // Always drawn for an item filed from a conversation, unless the detail is shown inside that
     // conversation; a granted or shared item has no origin ("") and so no row.
     const showOrigin = item.origin_convo_id !== "" && item.origin_convo_id !== selectedConvoId;
+    const handoverCaption = useHandoverCaption(item.handover);
 
     // The item's mission, named from the missions list (it follows renames live).
     const missionNum = item.mission_num;
@@ -869,7 +871,7 @@ export function ItemDetail({
             </div>
 
             <div className="mj_TrackerDetail_scroll" ref={scrollRef}>
-                {missionNum || showOrigin ? (
+                {missionNum || showOrigin || handoverCaption ? (
                     <div className="mj_TrackerContext">
                         {missionNum ? (
                             <button
@@ -899,6 +901,7 @@ export function ItemDetail({
                                 <span className="mj_TrackerContext_text">Opened from {originLabel}</span>
                             </button>
                         ) : null}
+                        {handoverCaption ? <div className="mj_TrackerHandover">{handoverCaption}</div> : null}
                     </div>
                 ) : null}
 
