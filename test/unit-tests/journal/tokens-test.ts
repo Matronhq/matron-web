@@ -77,6 +77,13 @@ describe("token layer", () => {
         expect(extra).toEqual([]);
     });
 
+    it("defines every --cpd token the stylesheets use", () => {
+        const used = SHEETS.flatMap(([, css]) =>
+            [...stripComments(css).matchAll(/var\((--cpd-[\w-]+)/g)].map((match) => match[1]),
+        );
+        expect([...new Set(used.filter((name) => !light.has(name)))]).toEqual([]);
+    });
+
     it("uses the Mac timeline gradient for the message canvas in both themes", () => {
         expect(light.get("--cpd-color-bg-room-canvas")).toBe("linear-gradient(180deg, #f2f0ea 0%, #e8e5dc 100%)");
         expect(dark.get("--cpd-color-bg-room-canvas")).toBe("linear-gradient(180deg, #1d1b18 0%, #171512 100%)");
