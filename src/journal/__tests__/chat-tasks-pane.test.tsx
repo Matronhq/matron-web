@@ -286,6 +286,68 @@ describe("ChatTasksPane", () => {
         expect(client.moveChatTask).toHaveBeenCalledTimes(1);
     });
 
+    it("keeps focus on a task moved from the keyboard, and tells how to move it", async () => {
+        const client = fakeClient();
+        const { container, root } = await mount(client, { open: true, scope: "c1", items: TASKS });
+        const rowOf = (id: string): HTMLButtonElement =>
+            container.querySelector<HTMLButtonElement>(`[data-task-id="${id}"] .mj_TrackerItemRow`)!;
+        const hint = document.getElementById(rowOf("a").getAttribute("aria-describedby")!);
+        expect(hint?.textContent).toBe("Alt+Up and Alt+Down move the focused task.");
+
+        rowOf("a").focus();
+        act(() => {
+            rowOf("a").dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", altKey: true, bubbles: true }));
+        });
+        expect(client.moveChatTask).toHaveBeenCalledWith("a", 1);
+        // Browsers drop focus when React moves the focused row's node; jsdom does not, so stand in.
+        rowOf("a").blur();
+        // The client redraws the list with "a" after "b".
+        const moved = [TASKS[1], { ...TASKS[0], rank: 250 }, TASKS[2]];
+        await act(async () => {
+            root.render(
+                <ChatTasksPane
+                    client={client as unknown as MatronJournalClient}
+                    pane={{ open: true, scope: "c1", items: moved }}
+                    convoId="c1"
+                    conversations={CONVERSATIONS}
+                />,
+            );
+        });
+        expect(rowTitles(container, "Tasks")).toEqual(["Pick the fonts", "Draft the copy", "Ship it"]);
+        expect(document.activeElement).toBe(rowOf("a"));
+    });
+
+    describe("covering the chat on a narrow window", () => {
+        const realMatchMedia = window.matchMedia;
+        beforeEach(() => {
+            window.matchMedia = ((query: string) => ({ matches: true, media: query })) as typeof window.matchMedia;
+        });
+        afterEach(() => {
+            window.matchMedia = realMatchMedia;
+        });
+
+        it("takes focus, closes on Escape, and hands focus back", async () => {
+            const opener = document.createElement("button");
+            document.body.append(opener);
+            opener.focus();
+            const client = fakeClient();
+            const { container } = await mount(client, { open: true, scope: "c1", items: TASKS });
+            const close = container.querySelector<HTMLButtonElement>(".mj_ChatTasks_close")!;
+            expect(document.activeElement).toBe(close);
+
+            act(() => {
+                close.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+            });
+            expect(client.toggleChatTasks).toHaveBeenCalledWith(false);
+
+            act(() => mounted!.root.unmount());
+            mounted!.container.remove();
+            mounted = undefined;
+            expect(document.activeElement).toBe(opener);
+            opener.remove();
+        });
+    });
+
     it("shows a failed move until dismissed", async () => {
         const client = fakeClient();
         const { container } = await mount(client, {

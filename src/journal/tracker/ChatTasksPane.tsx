@@ -14,7 +14,7 @@ Please see LICENSE files in the repository root for full details.
  * its item in the tracker. Below 700px wide the pane covers the chat, with its own close button.
  */
 
-import React, { useEffect, useId, useMemo, useRef, useState } from "react";
+import React, { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import type { MatronJournalClient } from "../client";
 import { CloseIcon } from "../icons";
@@ -25,6 +25,8 @@ import { ItemRow } from "./ItemRow";
 
 const CREATABLE_KINDS: readonly TrackerItemCreate["kind"][] = ["task", "question", "decision"];
 const TASK_DRAG_TYPE = "application/x-matron-task";
+// Below this width the pane covers the chat (see tracker.pcss), so it takes focus like a sheet.
+const OVERLAY_QUERY = "(max-width: 700px)";
 
 export function ChatTasksPane({
     client,
@@ -40,6 +42,22 @@ export function ChatTasksPane({
     const scope = pane.allFor === convoId ? "all" : convoId;
     const isAll = scope === "all";
     const [creating, setCreating] = useState(false);
+    const paneRef = useRef<HTMLElement>(null);
+    const closeRef = useRef<HTMLButtonElement>(null);
+
+    // Covering the chat, the pane takes focus on open and hands it back on close; beside the chat
+    // it leaves focus where it was.
+    useEffect(() => {
+        if (!window.matchMedia?.(OVERLAY_QUERY).matches) return;
+        const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+        closeRef.current?.focus();
+        const pane = paneRef.current;
+        return () => {
+            const active = document.activeElement;
+            const lost = !active || active === document.body || (pane?.contains(active) ?? false);
+            if (lost && opener?.isConnected) opener.focus();
+        };
+    }, []);
 
     // Every conversation switch, scope switch and reopen reloads the list.
     useEffect(() => {
@@ -61,9 +79,10 @@ export function ChatTasksPane({
         originTitles.get(item.origin_convo_id) ?? itemOriginTitle(item) ?? "Another chat";
     const openItem = (num: number): void => client.openTrackerItem(num);
 
-    const row = (item: TrackerItem): React.ReactElement => (
+    const row = (item: TrackerItem, describedBy?: string): React.ReactElement => (
         <ItemRow
             key={item.id}
+            describedBy={describedBy}
             item={item}
             scope={isAll ? "all" : "chat"}
             originTitle={originTitle(item)}
@@ -112,7 +131,7 @@ export function ChatTasksPane({
                 {sections.needsYou.length > 0 ? (
                     <section className="mj_TrackerSection" aria-label="Needs you">
                         <h2 className="mj_TrackerSection_header">Needs you</h2>
-                        {sections.needsYou.map(row)}
+                        {sections.needsYou.map((item) => row(item))}
                     </section>
                 ) : null}
                 {sections.tasks.length > 0 ? (
@@ -121,13 +140,13 @@ export function ChatTasksPane({
                 {sections.decisions.length > 0 ? (
                     <section className="mj_TrackerSection" aria-label="Decisions">
                         <h2 className="mj_TrackerSection_header">Decisions</h2>
-                        {sections.decisions.map(row)}
+                        {sections.decisions.map((item) => row(item))}
                     </section>
                 ) : null}
                 {sections.done.length > 0 ? (
                     <section className="mj_TrackerSection" aria-label="Done">
                         <h2 className="mj_TrackerSection_header">Done</h2>
-                        {sections.done.map(row)}
+                        {sections.done.map((item) => row(item))}
                     </section>
                 ) : null}
             </>
@@ -135,10 +154,21 @@ export function ChatTasksPane({
     }
 
     return (
-        <aside className="mj_ChatTasks" aria-label="Tasks and decisions">
+        <aside
+            ref={paneRef}
+            className="mj_ChatTasks"
+            aria-label="Tasks and decisions"
+            onKeyDown={(event) => {
+                if (event.key !== "Escape" || event.defaultPrevented) return;
+                if (!window.matchMedia?.(OVERLAY_QUERY).matches) return;
+                event.preventDefault();
+                client.toggleChatTasks(false);
+            }}
+        >
             <header className="mj_ChatTasks_header">
                 <h1 className="mj_ChatTasks_title">Tasks &amp; decisions</h1>
                 <button
+                    ref={closeRef}
                     type="button"
                     className="mj_IconButton mj_ChatTasks_close"
                     aria-label="Close tasks and decisions"
@@ -229,8 +259,25 @@ function TaskSection({
 }: {
     client: MatronJournalClient;
     tasks: TrackerItem[];
-    renderRow: (item: TrackerItem) => React.ReactElement;
+    renderRow: (item: TrackerItem, describedBy?: string) => React.ReactElement;
 }): React.ReactElement {
+    const hintId = useId();
+    const listRef = useRef<HTMLDivElement>(null);
+    // The task a keyboard move was made on: once the list redraws in its new order, focus goes back
+    // to its row (React may have moved that row's node, which drops focus in some browsers).
+    const refocus = useRef<string | null>(null);
+    useLayoutEffect(() => {
+        const id = refocus.current;
+        if (!id) return;
+        refocus.current = null;
+        const wrap = Array.from(listRef.current?.querySelectorAll<HTMLElement>("[data-task-id]") ?? []).find(
+            (el) => el.dataset.taskId === id,
+        );
+        // Only if focus was dropped, never taken from somewhere the user has moved on to.
+        const active = document.activeElement;
+        const dropped = !active || active === document.body || (listRef.current?.contains(active) ?? false);
+        if (wrap && dropped && !wrap.contains(active)) wrap.querySelector<HTMLElement>("button")?.focus();
+    }, [tasks]);
     const [dragging, setDragging] = useState<string | null>(null);
     // Where the dragged task would land: before the task at this index (tasks.length = the end).
     const [dropAt, setDropAt] = useState<number | null>(null);
@@ -251,7 +298,13 @@ function TaskSection({
     return (
         <section className="mj_TrackerSection" aria-label="Tasks">
             <h2 className="mj_TrackerSection_header">Tasks</h2>
+            {movable ? (
+                <p id={hintId} className="mj_SrOnly">
+                    Alt+Up and Alt+Down move the focused task.
+                </p>
+            ) : null}
             <div
+                ref={listRef}
                 className="mj_ChatTasks_taskList"
                 onDragOver={(event) => {
                     if (!dragging || !event.dataTransfer.types.includes(TASK_DRAG_TYPE)) return;
@@ -293,10 +346,11 @@ function TaskSection({
                             event.preventDefault();
                             const next = event.key === "ArrowUp" ? index - 1 : index + 1;
                             if (next < 0 || next >= tasks.length) return;
+                            refocus.current = task.id;
                             void client.moveChatTask(task.id, next);
                         }}
                     >
-                        {renderRow(task)}
+                        {renderRow(task, movable ? hintId : undefined)}
                     </div>
                 ))}
             </div>
