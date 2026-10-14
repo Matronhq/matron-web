@@ -3392,6 +3392,12 @@ button.mj_File {
     margin-left: var(--cpd-space-2x);
 }
 
+/* Inside the icon · name · size rows the row's own gap spaces the size. */
+.mj_File > .mj_FileSize,
+.mj_Audio_head > .mj_FileSize {
+    margin-left: 0;
+}
+
 .mj_FileCaption {
     margin-top: 4px;
 }
@@ -3401,10 +3407,6 @@ button.mj_File {
 .mj_File_expired {
     color: var(--cpd-color-text-secondary);
     cursor: default;
-}
-
-.mj_File_expired .mj_Expired {
-    margin-left: var(--cpd-space-1x);
 }
 
 .mj_MediaExpired {
