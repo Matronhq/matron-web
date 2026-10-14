@@ -105,6 +105,14 @@ export class JournalApiError extends Error {
     }
 }
 
+/**
+ * Whether a media fetch failed because the blob is gone for good: the server's media reaper
+ * deletes old blobs, and a 404 for a blob id is permanent (ids are never reused).
+ */
+export function isMediaExpiredError(error: unknown): boolean {
+    return error instanceof JournalApiError && error.status === 404;
+}
+
 function electronBridge(): JournalElectron | undefined {
     return (window as Window & { electron?: JournalElectron }).electron;
 }
@@ -423,6 +431,24 @@ export class JournalApi {
             body: { request_id: requestId, decision },
             signal,
         });
+    }
+
+    // Answers one parked agent-chat ask — the ONLY path that resolves an agent-chat consent card
+    // (a prompt_reply never reaches the parked row). Keyed on the room and the device the row is
+    // filed under. Resolves to the server's `delivered` flag; 409 (no longer awaiting an answer)
+    // and 404 (not this user's room) surface as a typed JournalApiError.
+    public async answerAgentChat(
+        roomId: string,
+        targetDeviceId: number,
+        decision: "approve" | "deny",
+        signal?: AbortSignal,
+    ): Promise<boolean> {
+        const response = await this.json<{ delivered?: boolean }>("/agent-chat/answer", {
+            method: "POST",
+            body: { room_id: roomId, target_device_id: targetDeviceId, decision },
+            signal,
+        });
+        return response?.delivered === true;
     }
 
     // ── Tracker: missions / milestones / items (all at journal root, Bearer-auth, user-global) ──

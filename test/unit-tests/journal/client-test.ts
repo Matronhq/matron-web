@@ -12,7 +12,7 @@ import {
     pinnedStore,
     unreadStore,
 } from "../../../src/journal/client";
-import { JournalApi, JournalApiError } from "../../../src/journal/api";
+import { isMediaExpiredError, JournalApi, JournalApiError } from "../../../src/journal/api";
 import { JournalConnection } from "../../../src/journal/connection";
 import { JournalDatabase } from "../../../src/journal/database";
 import { TextDecoder as NodeTextDecoder, TextEncoder as NodeTextEncoder } from "node:util";
@@ -3241,6 +3241,113 @@ describe("session creation orchestration", () => {
         await expect(client.recentFolders(9)).resolves.toEqual([{ path: "/valid", last_used: null }]);
     });
 
+    it("reads the agent, model and effort offer off a recent_folders reply", async () => {
+        const client = withAgentReply({
+            ok: true,
+            origin: "agent",
+            result: {
+                folders: [{ path: "/srv/app", last_used: 5 }],
+                agent_options: [
+                    { value: "claude", label: "Claude" },
+                    { value: "codex" },
+                    { value: "codex", label: "Codex again" },
+                    { value: "" },
+                    "claude",
+                ],
+                default_agent: "claude",
+                model_options: [
+                    { value: "default", label: "Default" },
+                    { value: "opus", label: "Opus" },
+                    { value: "sonnet", label: "" },
+                ],
+                default_model: "opus",
+                effort_options: [
+                    { value: "low", label: "Low" },
+                    { value: "high", label: "High" },
+                ],
+                default_effort: "high",
+            },
+        });
+
+        await expect(client.newSessionOffer(9)).resolves.toEqual({
+            folders: [{ path: "/srv/app", last_used: 5 }],
+            agentOptions: [
+                { value: "claude", label: "Claude" },
+                { value: "codex", label: "codex" },
+            ],
+            defaultAgent: "claude",
+            modelOptions: [
+                { value: "opus", label: "Opus" },
+                { value: "sonnet", label: "sonnet" },
+            ],
+            defaultModel: "opus",
+            effortOptions: [
+                { value: "low", label: "Low" },
+                { value: "high", label: "High" },
+            ],
+            defaultEffort: "high",
+        });
+    });
+
+    it("reads an older bridge's reply, and a failed one, as an empty offer", async () => {
+        const empty = {
+            folders: [],
+            agentOptions: [],
+            defaultAgent: null,
+            modelOptions: [],
+            defaultModel: null,
+            effortOptions: [],
+            defaultEffort: null,
+        };
+
+        await expect(
+            withAgentReply({ ok: true, origin: "agent", result: { folders: [], default_model: "" } }).newSessionOffer(
+                9,
+            ),
+        ).resolves.toEqual(empty);
+        await expect(
+            withAgentReply({ ok: false, origin: "agent", code: "internal" }).newSessionOffer(9),
+        ).resolves.toEqual(empty);
+    });
+
+    it("sends the sheet's agent, model and effort picks on start", async () => {
+        const client = withAgentReply({ ok: true, origin: "agent", result: { convo_id: "new-convo" } });
+
+        await client.startSessionRpc(9, "/srv/app", false, { agent: "claude", model: "opus", effort: "high" });
+
+        expect(internals(client).connection?.agentRequest).toHaveBeenCalledWith(9, "start", {
+            workdir: "/srv/app",
+            agent: "claude",
+            model: "opus",
+            effort: "high",
+        });
+    });
+
+    it.each([
+        ["bad_model", "That box doesn't offer that model — pick another."],
+        ["bad_effort", "That box doesn't offer that effort — pick another."],
+        ["bad_agent", "That box can't start that agent — pick another."],
+    ])("maps a %s refusal to a pick-another error", async (code, message) => {
+        const client = withAgentReply({ ok: false, origin: "agent", code });
+
+        await expect(client.startSessionRpc(9, "", false, { model: "opus" })).resolves.toEqual({
+            kind: "error",
+            message,
+        });
+    });
+
+    it("maps a Codex browser-tools refusal to an error, not an uncertain start", async () => {
+        const client = withAgentReply({ ok: false, origin: "agent", code: "bad_request" });
+
+        await expect(client.startSessionRpc(9, "", true, { agent: "codex" })).resolves.toEqual({
+            kind: "error",
+            message: "That box can't give Codex browser tools — untick Browser tools.",
+        });
+        await expect(client.startSessionRpc(9, "", false, { agent: "claude" })).resolves.toEqual({
+            kind: "uncertain",
+        });
+    });
+
     it("returns typed not-connected fallbacks while the connection is absent", async () => {
         const client = new MatronJournalClient();
         internals(client).state = signedInState(client);
@@ -3474,6 +3581,30 @@ describe("MatronJournalClient mediaUrl", () => {
         await expect(client.mediaUrl("m1")).rejects.toThrow("boom");
         await expect(client.mediaUrl("m1")).resolves.toBe("blob:ok");
         expect(media).toHaveBeenCalledTimes(2);
+    });
+
+    it("remembers a 404 as expired and never asks for that blob again", async () => {
+        const { client, media } = mediaClient();
+        media.mockRejectedValueOnce(new JournalApiError("not found", 404));
+
+        expect(client.isMediaExpired("m1")).toBe(false);
+        const first = await client.mediaUrl("m1").catch((error: unknown) => error);
+        expect(isMediaExpiredError(first)).toBe(true);
+        expect(client.isMediaExpired("m1")).toBe(true);
+
+        // Blob ids are immutable: a reaped blob never comes back, so no second request.
+        const second = await client.mediaUrl("m1").catch((error: unknown) => error);
+        expect(isMediaExpiredError(second)).toBe(true);
+        expect(media).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not treat a transient failure as expired", async () => {
+        const { client, media } = mediaClient();
+        media.mockRejectedValueOnce(new JournalApiError("busy", 503));
+
+        const error = await client.mediaUrl("m1").catch((caught: unknown) => caught);
+        expect(isMediaExpiredError(error)).toBe(false);
+        expect(client.isMediaExpired("m1")).toBe(false);
     });
 });
 

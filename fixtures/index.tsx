@@ -23,6 +23,7 @@ import "@fontsource/inter/latin-400.css";
 import "@fontsource/inter/latin-500.css";
 import "@fontsource/inter/latin-600.css";
 
+import { JournalApiError } from "../src/journal/api";
 import { archiveStore, favoriteStore, MatronJournalClient, pinnedStore, unreadStore } from "../src/journal/client";
 import { MatronApp } from "../src/journal/components";
 import type { ClientState, Conversation, JournalEvent, Session } from "../src/journal/types";
@@ -376,11 +377,122 @@ const events: JournalEvent[] = [
         type: "item",
         payload: { item_id: "it_42", num: 42, kind: "task", title: "Rotate the staging deploy key", action: "commented", by: "agent", awaiting: "user", comment: { id: "cm_3", body: "Needs an admin to approve the new key." } },
     },
+    // Agent-chat consent card, waiting on the user: who asks whom, about what and why, with
+    // Decline / Approve answered over the journal's answer route.
     {
-        // Multi-select question (mode: pick_many): options toggle, one Send answers with them all.
         seq: 28,
         convo_id: "c1",
         ts: T + 910,
+        sender: "agent:claude",
+        type: "permission_request",
+        payload: {
+            kind: "agent_chat",
+            request: "invite",
+            room_id: "room-fixture-1",
+            from_device_id: 1,
+            from_name: "box-a",
+            from_convo_id: "c1",
+            from_convo_title: "matron-web · deploy",
+            target_device_id: 2,
+            to_name: "box-b",
+            to_convo_id: "c2",
+            to_convo_title: "infra: backup rotation",
+            topic: "Rotate the backup credentials",
+            justification: "box-b owns the backup job and needs the new nginx config path.",
+        },
+    },
+    // A chat card already decided — settled by its consent item's closing marker (seq 30).
+    {
+        seq: 29,
+        convo_id: "c1",
+        ts: T + 960,
+        sender: "agent:claude",
+        type: "permission_request",
+        payload: {
+            kind: "agent_chat",
+            request: "invite",
+            room_id: "room-fixture-2",
+            from_device_id: 1,
+            from_name: "box-a",
+            from_convo_id: "c1",
+            from_convo_title: "matron-web · deploy",
+            target_device_id: 2,
+            to_name: "box-b",
+            to_convo_id: "c2",
+            to_convo_title: "infra: backup rotation",
+            topic: "Share the deploy checklist",
+            justification: "",
+        },
+    },
+    {
+        seq: 30,
+        convo_id: "c1",
+        ts: T + 990,
+        sender: "agent:claude",
+        type: "item",
+        payload: {
+            item_id: "it_fixture_chat",
+            num: 12,
+            kind: "question",
+            title: "box-a wants to start a chat with box-b",
+            action: "closed",
+            by: "user",
+            resolution: "decided",
+            consent: "chat",
+            consent_ask: "room-fixture-2/2",
+            consent_outcome: "denied",
+            comment: { id: "cm_fixture_chat", body: "Declined." },
+        },
+    },
+    {
+        // A malformed agent-chat payload (no room_id) → an inert notice, never dead buttons.
+        seq: 31,
+        convo_id: "c1",
+        ts: T + 1020,
+        sender: "agent:claude",
+        type: "permission_request",
+        payload: { kind: "agent_chat", request: "invite", topic: "Compare the test logs" },
+    },
+    {
+        // A voice note: plays in the inline audio player (blob stubbed below).
+        seq: 32,
+        convo_id: "c1",
+        ts: T + 1040,
+        sender: "user:operator",
+        type: "file",
+        payload: { blob_ref: "fixture-voice", filename: "voice-note.m4a", content_type: "audio/mp4", size: 48_128 },
+    },
+    {
+        // Reaped by the server's media reaper: payload tombstone.
+        seq: 33,
+        convo_id: "c1",
+        ts: T + 1060,
+        sender: "agent:claude",
+        type: "image",
+        payload: { blob_ref: "fixture-reaped-image", content_type: "image/png", expired: true },
+    },
+    {
+        seq: 34,
+        convo_id: "c1",
+        ts: T + 1080,
+        sender: "agent:claude",
+        type: "file",
+        payload: { blob_ref: null, filename: "deploy-2026-07-01.log", size: 18_432, expired: true },
+    },
+    {
+        // Synced before the reap (no tombstone): the 404 on fetch flips it to expired.
+        seq: 35,
+        convo_id: "c1",
+        ts: T + 1100,
+        sender: "agent:claude",
+        type: "image",
+        payload: { blob_ref: "fixture-gone", content_type: "image/png" },
+    },
+    {
+        // Multi-select question (mode: pick_many): options toggle, one Send answers with them all.
+        seq: 36,
+        convo_id: "c1",
+        ts: T + 1120,
         sender: "agent:claude",
         type: "prompt",
         payload: {
@@ -396,6 +508,20 @@ const events: JournalEvent[] = [
     },
 ];
 
+// ?toolstream adds a running tool_stream tile with more output than its collapsed pane shows.
+const toolStreams: ClientState["toolStreams"] = {};
+if (new URLSearchParams(window.location.search).has("toolstream")) {
+    toolStreams["stream-1"] = {
+        messageRef: "stream-1",
+        command: "pnpm lint",
+        content: Array.from({ length: 40 }, (_, i) => `\x1b[90m[${i + 1}/40]\x1b[0m checked src/file-${i + 1}.ts`).join(
+            "\n",
+        ),
+        offset: 0,
+        headTruncated: false,
+    };
+}
+
 const client = new MatronJournalClient();
 const state: ClientState = {
     ...client.getSnapshot(),
@@ -409,6 +535,7 @@ const state: ClientState = {
     ],
     selectedConversationId: "c1",
     events,
+    toolStreams,
     pendingMessages: [],
     connection: "online",
     sessionStatus: {
@@ -446,7 +573,7 @@ const signedOutState: ClientState = {
 // ?tracker=inbox | ?tracker=item opens the tracker pane on canned data (unify step 5); the
 // network loads are stubbed so the fixture stays offline.
 const trackerMode = fixtureParams.get("tracker");
-if (trackerMode === "projects" || trackerMode === "project") {
+if (trackerMode === "projects" || trackerMode === "project" || trackerMode === "mission") {
     const now = Date.now();
     const project = (
         num: number,
@@ -533,6 +660,78 @@ if (trackerMode === "projects" || trackerMode === "project") {
         trackerMode === "project"
             ? { open: true, view: "missions", selectedProjectId: 2645 }
             : { open: true, view: "missions" };
+    // ?tracker=mission: a mission page with a status, both item groups and enough milestones to page.
+    if (trackerMode === "mission") {
+        tracker.trackerView = { open: true, view: "missions", selectedMissionId: 1706 };
+        const steps = [
+            "Projects dashboard and project page merged",
+            "Settings sheet follows the Mac layout",
+            "User: run phase 2 all the way through, missions included",
+            "Tracker pane restyled with the new tokens",
+            "Chat header and composer aligned",
+            "Sidebar groups and session tags landed",
+        ];
+        const milestones = Array.from({ length: 24 }, (_, index) => ({
+            id: `ml_${index}`,
+            mission_id: "ms_1706",
+            num: 3990 - index,
+            kind: index % 6 === 2 ? "user_input" : "progress",
+            title: index < steps.length ? steps[index] : `Review round ${24 - index} addressed`,
+            body: index === 0 ? "Both pages read from the same project rollups." : "",
+            convo_id: "c1",
+            seq: 24 - index,
+            device_id: 1,
+            created_by: "agent",
+            created_at: now - (index + 1) * 3 * 3_600_000,
+        }));
+        const ref = (num: number, kind: string, awaiting: string | null, title: string) => ({
+            id: `it_${num}`,
+            num,
+            kind,
+            state: "open",
+            awaiting,
+            title,
+            origin_convo_id: "c1",
+            updated_at: now - 3_600_000,
+        });
+        tracker.trackerMission = {
+            mission: {
+                ...mission(1706, "Unify matron-web and the Mac app design", null, "running", 1),
+                body: "Bring the web client in line with the Mac app, one surface at a time.",
+                status: "Step 7 (projects) in progress; steps 2 to 6 are open PRs waiting on **review**.",
+                status_by: "agent",
+                status_updated_at: now - 12 * 60_000,
+                project_id: "pj_2645",
+                project_num: 2645,
+                open_items: 3,
+                milestones: milestones.length,
+            },
+            milestones,
+            items: [
+                ref(3939, "question", "user", "Merge unify step 2: sign-in follows the Mac app?"),
+                ref(3951, "task", "agent", "Screenshot every themed surface in dark mode"),
+                ref(3944, "decision", null, "Tokens come from the Mac palette, not the old theme"),
+            ],
+            conversations: [{ id: "c1", title: "Unify matron-web and the Mac app design", state: "running", box: "box-a" }],
+        };
+        stub.fetchMissionClosedItems = async () => ({
+            items: [
+                { num: 3901, kind: "task", resolution: "done", title: "Audit every web surface against the Mac app" },
+                { num: 3912, kind: "question", resolution: "answered", title: "Keep the old accent colour?" },
+                { num: 3920, kind: "decision", resolution: "decided", title: "One design token file for both themes" },
+            ].map((row) => ({
+                id: `it_${row.num}`,
+                state: "closed",
+                awaiting: null,
+                mission_id: "ms_1706",
+                mission_num: 1706,
+                origin_convo_id: "c1",
+                updated_at: now - 86_400_000,
+                ...row,
+            })),
+            cursor: null,
+        });
+    }
     if (trackerMode === "project") {
         tracker.trackerProject = {
             project: { ...projects[0], body: "Audit first, then the Mac app sets the direction and the web follows." },
@@ -829,10 +1028,65 @@ if (trackerMode === "inbox" || trackerMode === "item") {
 (client as unknown as { listAgents: () => Promise<unknown[]> }).listAgents = async () => [
     { device_id: "dev-local", connected: true, label: "workstation", hostname: "workstation", name: "workstation" },
 ];
-(client as unknown as { recentFolders: () => Promise<unknown[]> }).recentFolders = async () => [
-    { path: "/srv/app/web" },
-    { path: "/srv/app/api" },
-];
+// The offer carries the agent switch and the model / effort pickers; `?newSessionAgents=1`
+// offers Claude only (no switch), as a box without Codex does.
+(client as unknown as { newSessionOffer: () => Promise<unknown> }).newSessionOffer = async () => ({
+    folders: [
+        { path: "/srv/app/web", last_used: Date.now() - 150 * 60_000 },
+        { path: "/srv/app/api", last_used: Date.now() - 3 * 24 * 60 * 60_000 },
+        { path: "/srv/app", last_used: null },
+    ],
+    agentOptions:
+        new URLSearchParams(window.location.search).get("newSessionAgents") === "1"
+            ? [{ value: "claude", label: "Claude" }]
+            : [
+                  { value: "claude", label: "Claude" },
+                  { value: "codex", label: "Codex" },
+              ],
+    defaultAgent: "claude",
+    modelOptions: [
+        { value: "opus", label: "Opus" },
+        { value: "sonnet", label: "Sonnet" },
+        { value: "haiku", label: "Haiku" },
+    ],
+    defaultModel: "opus",
+    effortOptions: [
+        { value: "low", label: "Low" },
+        { value: "medium", label: "Medium" },
+        { value: "high", label: "High" },
+        { value: "xhigh", label: "X-High" },
+        { value: "max", label: "Max" },
+    ],
+    defaultEffort: "high",
+});
+
+// Media stubs: a short generated tone for the voice note, a 404 for the reaped blob.
+function toneWav(seconds = 2, rate = 8000): Blob {
+    const samples = seconds * rate;
+    const view = new DataView(new ArrayBuffer(44 + samples * 2));
+    const text = (offset: number, value: string): void =>
+        [...value].forEach((ch, i) => view.setUint8(offset + i, ch.charCodeAt(0)));
+    text(0, "RIFF");
+    view.setUint32(4, 36 + samples * 2, true);
+    text(8, "WAVEfmt ");
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, rate, true);
+    view.setUint32(28, rate * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    text(36, "data");
+    view.setUint32(40, samples * 2, true);
+    for (let i = 0; i < samples; i++) view.setInt16(44 + i * 2, Math.sin((i / rate) * 2 * Math.PI * 440) * 8000, true);
+    return new Blob([view.buffer], { type: "audio/wav" });
+}
+const realMediaUrl = client.mediaUrl.bind(client);
+client.mediaUrl = async (mediaId: string): Promise<string> => {
+    if (mediaId === "fixture-voice") return URL.createObjectURL(toneWav());
+    if (mediaId === "fixture-gone") throw new JournalApiError("Not found", 404);
+    return realMediaUrl(mediaId);
+};
 
 const params = new URLSearchParams(window.location.search);
 document.documentElement.setAttribute("data-theme", params.get("theme") === "dark" ? "dark" : "light");

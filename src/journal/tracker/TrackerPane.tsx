@@ -112,6 +112,25 @@ export function TrackerPane({
         if (selectedMissionId != null) void client.loadMission(selectedMissionId);
     };
 
+    // The shown mission's project, for its breadcrumb: from the projects list, or the project page
+    // it was opened from. Unknown until one of them is loaded (the effect below loads the list). A
+    // mission row without project_num (an older journal) opened from a project page is in that one.
+    const shownMission =
+        view === "missions" && state.trackerMission?.mission?.num === selectedMissionId
+            ? state.trackerMission?.mission
+            : undefined;
+    const missionProjectNum = shownMission ? (shownMission.project_num ?? selectedProjectId ?? null) : null;
+    const missionProject =
+        missionProjectNum == null
+            ? null
+            : (state.projects?.find((project) => project.num === missionProjectNum) ??
+              (state.trackerProject?.project.num === missionProjectNum ? state.trackerProject.project : null));
+    const missionProjectKnown = missionProjectNum == null || missionProject != null;
+    const projectsLoaded = state.projects !== undefined;
+    useEffect(() => {
+        if (!missionProjectKnown && !projectsLoaded) void client.loadProjects();
+    }, [client, missionProjectKnown, projectsLoaded]);
+
     const body = ((): React.ReactElement => {
         // Render a cached detail ONLY when it belongs to the current selection. A detail loaded for
         // a previously selected row is cleared to null on selection change (openTracker*), but the
@@ -180,8 +199,12 @@ export function TrackerPane({
                         detail={state.trackerMission}
                         client={client}
                         agents={state.agents}
+                        project={state.projectsUnsupported ? null : missionProject}
+                        rootLabel={state.projectsUnsupported ? "Missions" : "Projects"}
                         onOpenItem={(num) => client.openTrackerItem(num)}
                         onBack={backFromMission}
+                        onOpenRoot={() => switchView("missions")}
+                        onOpenProject={backToProject}
                     />
                 </>
             );
