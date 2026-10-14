@@ -600,6 +600,8 @@ export class DesktopNotifier {
     private nextWriteId = 0;
     // The newest write whose answer became `view`: an older write answering late is older news.
     private newestAnsweredWrite = -1;
+    // Counts answered writes, so a GET that was in flight across one leaves this device's level alone.
+    private answeredWrites = 0;
     private settingsError: string | null = null;
     private readonly settingsListeners = new Set<() => void>();
     private settingsSnapshot: NotifySettingsState;
@@ -651,6 +653,7 @@ export class DesktopNotifier {
                 this.newestAnsweredWrite = id;
                 this.view = answer;
                 this.settingsEpoch += 1;
+                this.answeredWrites += 1;
             }
             this.settingsError = null;
         } catch (error) {
@@ -835,6 +838,7 @@ export class DesktopNotifier {
         if (!session) return;
         const epoch = this.settingsEpoch;
         const sessionEpoch = this.sessionEpoch;
+        const answeredWrites = this.answeredWrites;
         const api = this.env.api(session);
         const [notify, coordinator] = await Promise.allSettled([api.notifySettings(), api.coordinator()]);
         if (sessionEpoch !== this.sessionEpoch) return;
@@ -842,8 +846,11 @@ export class DesktopNotifier {
         const answer = notify.status === "fulfilled" ? parseNotifyView(notify.value) : null;
         if (epoch !== this.settingsEpoch) {
             // A live frame landed meanwhile and holds the newer synced part, but frames never carry
-            // this device's level: take that from the answer.
-            if (answer && this.view) this.view = { ...this.view, device_level: answer.device_level };
+            // this device's level: take that from the answer — unless a write answered meanwhile,
+            // whose answer already holds a newer level than this read.
+            if (answer && this.view && answeredWrites === this.answeredWrites) {
+                this.view = { ...this.view, device_level: answer.device_level };
+            }
             this.emitSettings();
             return;
         }
