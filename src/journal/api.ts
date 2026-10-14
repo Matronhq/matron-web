@@ -17,6 +17,7 @@ import {
     type LoginResponse,
     type MatronConfig,
     type MessagesResponse,
+    type ConversationMissionLink,
     type Mission,
     type MissionDetail,
     type NumberLookup,
@@ -71,12 +72,14 @@ type TrackerMissionListState = "open" | "closed";
 
 /** `GET /items` query params (all optional; server clamps `limit` to ≤500). */
 interface ItemsFilter {
-    state?: TrackerItemState;
+    /** `done` is For you's Done view: closed, or answered and no longer waiting on the user. */
+    state?: TrackerItemState | "done";
     /** One kind, or several: any of them (a journal that predates the list form answers 400). */
     kind?: TrackerItemKind | readonly TrackerItemKind[];
     awaiting?: TrackerAwaiting;
     label?: string;
-    sort?: "rank" | "updated";
+    /** `acted`: the user's last action on the item first, falling back to its close time. */
+    sort?: "rank" | "updated" | "acted";
     since?: number;
     limit?: number;
     cursor?: string;
@@ -103,6 +106,14 @@ export class JournalApiError extends Error {
     ) {
         super(message);
     }
+}
+
+/**
+ * Whether a media fetch failed because the blob is gone for good: the server's media reaper
+ * deletes old blobs, and a 404 for a blob id is permanent (ids are never reused).
+ */
+export function isMediaExpiredError(error: unknown): boolean {
+    return error instanceof JournalApiError && error.status === 404;
 }
 
 function electronBridge(): JournalElectron | undefined {
@@ -425,6 +436,24 @@ export class JournalApi {
         });
     }
 
+    // Answers one parked agent-chat ask — the ONLY path that resolves an agent-chat consent card
+    // (a prompt_reply never reaches the parked row). Keyed on the room and the device the row is
+    // filed under. Resolves to the server's `delivered` flag; 409 (no longer awaiting an answer)
+    // and 404 (not this user's room) surface as a typed JournalApiError.
+    public async answerAgentChat(
+        roomId: string,
+        targetDeviceId: number,
+        decision: "approve" | "deny",
+        signal?: AbortSignal,
+    ): Promise<boolean> {
+        const response = await this.json<{ delivered?: boolean }>("/agent-chat/answer", {
+            method: "POST",
+            body: { room_id: roomId, target_device_id: targetDeviceId, decision },
+            signal,
+        });
+        return response?.delivered === true;
+    }
+
     // ── Tracker: missions / milestones / items (all at journal root, Bearer-auth, user-global) ──
 
     /** GET /missions?state= — the mission list rows (counts + last-milestone digest baked in). */
@@ -456,6 +485,32 @@ export class JournalApi {
     /** GET /missions/:id — full detail (mission + milestones newest-first + open items + convos). */
     public mission(id: string | number): Promise<MissionDetail> {
         return this.json<MissionDetail>(`/missions/${encodeTrackerId(id)}`);
+    }
+
+    /** GET /conversations/:id/missions — every mission the conversation is or was on, current
+     *  first. A row spreads the mission flat beside the link fields; a nested `mission` object is
+     *  accepted too, so either journal shape reads the same. */
+    public async conversationMissions(convoId: string): Promise<ConversationMissionLink[]> {
+        const body = await this.json<{ missions?: unknown }>(`/conversations/${encodeURIComponent(convoId)}/missions`);
+        const rows = Array.isArray(body.missions) ? body.missions : [];
+        return rows.flatMap((row): ConversationMissionLink[] => {
+            if (!row || typeof row !== "object") return [];
+            const record = row as Record<string, unknown>;
+            const nested = record.mission && typeof record.mission === "object" ? record.mission : {};
+            const mission = { ...record, ...nested } as Record<string, unknown>;
+            if (typeof mission.id !== "string" || typeof mission.num !== "number") return [];
+            const endedAt = typeof record.ended_at === "number" ? record.ended_at : null;
+            return [
+                {
+                    ...(mission as unknown as Mission),
+                    current: record.current === true,
+                    active: typeof record.active === "boolean" ? record.active : endedAt == null,
+                    how: typeof record.how === "string" ? record.how : null,
+                    joined_at: typeof record.joined_at === "number" ? record.joined_at : null,
+                    ended_at: endedAt,
+                },
+            ];
+        });
     }
 
     /** GET /items — the filtered/sorted item list (`next_cursor` paginates; server clamps limit ≤500). */
@@ -538,6 +593,30 @@ export class JournalApi {
     /** DELETE /memories/:name — the deleted row comes back. */
     public deleteMemory(name: string): Promise<{ memory: Memory }> {
         return this.json<{ memory: Memory }>(`/memories/${encodeURIComponent(name)}`, { method: "DELETE" });
+    }
+
+    // ── Notification settings (journal /notify, /coordinator; Bearer-auth, per user) ──
+
+    /**
+     * GET /notify — what may notify the user: the synced mode, event switches and per-conversation
+     * overrides, plus this device's own level. Unvalidated (notifications.ts parses it); a journal
+     * that predates the route answers 404, which throws a JournalApiError.
+     */
+    public async notifySettings(): Promise<unknown> {
+        return this.json<unknown>("/notify");
+    }
+
+    /**
+     * GET /coordinator — `{convo_id, consent}`: the user's Coordinator conversation (null for none)
+     * and whether the Coordinator may answer chat and spawn asks. Unvalidated.
+     */
+    public async coordinator(): Promise<unknown> {
+        return this.json<unknown>("/coordinator");
+    }
+
+    /** PUT /coordinator {consent} — the Coordinator consent-approval switch. Unvalidated `{convo_id, consent}`. */
+    public async putCoordinatorConsent(consent: boolean): Promise<unknown> {
+        return this.json<unknown>("/coordinator", { method: "PUT", body: { consent } });
     }
 
     // ── New-chat defaults (journal /defaults; Bearer-auth, per user) ──

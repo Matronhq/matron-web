@@ -14,11 +14,15 @@ import {
     milestoneKindLabel,
     missionLabel,
     needsUser,
+    offeredItemActions,
     oneLine,
     closedStatusLabel,
     resolutionLabel,
     resolveActionLabel,
+    spawnConsentRequestId,
+    statusByline,
     statusRowText,
+    missionItemGroups,
 } from "../../../src/journal/tracker/format";
 import type { StatusSnapshot, TrackerItemKind, TrackerResolution } from "../../../src/journal/types";
 
@@ -34,6 +38,27 @@ describe("needsUser", () => {
     });
     it("is false for a closed item even if it still records awaiting-user", () => {
         expect(needsUser({ state: "closed", awaiting: "user" })).toBe(false);
+    });
+});
+
+describe("offeredItemActions", () => {
+    it("offers every action while the item is open, whoever it awaits", () => {
+        expect(offeredItemActions({ kind: "question", state: "open", actions: ["Option A", "Option B"] })).toEqual([
+            "Option A",
+            "Option B",
+        ]);
+        expect(offeredItemActions({ kind: "task", state: "open", actions: ["Go"] })).toEqual(["Go"]);
+    });
+    it("offers none once the item is closed", () => {
+        expect(offeredItemActions({ kind: "question", state: "closed", actions: ["Go"] })).toEqual([]);
+        expect(offeredItemActions({ kind: "notice", state: "closed", actions: ["Seen"] })).toEqual([]);
+    });
+    it("offers none when the item has none", () => {
+        expect(offeredItemActions({ kind: "question", state: "open", actions: [] })).toEqual([]);
+        expect(offeredItemActions({ kind: "question", state: "open" })).toEqual([]);
+    });
+    it("still offers Seen on an open notice from a journal that predates item actions", () => {
+        expect(offeredItemActions({ kind: "notice", state: "open" })).toEqual(["Seen"]);
     });
 });
 
@@ -250,5 +275,79 @@ describe("isFromViewedConvo", () => {
     it("treats an unknown viewer as another session", () => {
         expect(isFromViewedConvo({ origin_convo_id: "c1" }, null)).toBe(false);
         expect(isFromViewedConvo({ origin_convo_id: "c1" }, undefined)).toBe(false);
+    });
+});
+
+describe("spawnConsentRequestId", () => {
+    const withLink = (url: string): { links: { url: string }[] } => ({ links: [{ url }] });
+
+    it("reads the request id from the journal's spawn consent link", () => {
+        expect(spawnConsentRequestId(withLink("matron://consent/spawn/sp_1"))).toBe("sp_1");
+    });
+    it("compares the scheme and host case-insensitively, the kind as written", () => {
+        expect(spawnConsentRequestId(withLink("MATRON://Consent/spawn/sp_1"))).toBe("sp_1");
+        expect(spawnConsentRequestId(withLink("matron://consent/Spawn/sp_1"))).toBeNull();
+    });
+    it("rejects anything but the exact shape", () => {
+        for (const url of [
+            "matron://consent/spawn/",
+            "matron://consent/spawn//sp_1",
+            "matron://consent/spawn/sp_1/",
+            "matron://consent/spawn/sp_1/extra",
+            "matron://consent/spawn/sp_1?x=1",
+            "matron://consent/spawn/sp_1#top",
+            "https://example.com/consent/spawn/sp_1",
+        ]) {
+            expect(spawnConsentRequestId(withLink(url))).toBeNull();
+        }
+    });
+    it("is null for an agent-chat consent item and for an ordinary one", () => {
+        expect(spawnConsentRequestId(withLink("matron://consent/chat/room_1/7"))).toBeNull();
+        expect(spawnConsentRequestId({ links: [] })).toBeNull();
+    });
+    it("takes the first well-formed link", () => {
+        expect(
+            spawnConsentRequestId({
+                links: [
+                    { url: "https://example.com/pull/1" },
+                    { url: "matron://consent/spawn/sp_2" },
+                    { url: "matron://consent/spawn/sp_3" },
+                ],
+            }),
+        ).toBe("sp_2");
+    });
+});
+
+describe("statusByline", () => {
+    const now = Date.UTC(2026, 5, 15, 12, 0, 0);
+    it("says when and who, in a sentence", () => {
+        expect(statusByline(now - 12 * 60_000, "agent", now)).toBe("Updated 12m ago by an agent");
+        expect(statusByline(now - 3 * 3_600_000, "user", now)).toBe("Updated 3h ago by you");
+        expect(statusByline(now - 10_000, "agent", now)).toBe("Updated just now by an agent");
+    });
+    it("drops the author when unknown", () => {
+        expect(statusByline(now - 2 * 86_400_000, null, now)).toBe("Updated 2d ago");
+    });
+    it("names the date a week or more back", () => {
+        expect(statusByline(now - 30 * 86_400_000, "agent", now)).toMatch(/^Updated on .+ by an agent$/);
+    });
+    it("is null without a time", () => {
+        expect(statusByline(null, "agent", now)).toBeNull();
+        expect(statusByline(undefined, undefined, now)).toBeNull();
+    });
+});
+
+describe("missionItemGroups", () => {
+    it("splits open items into needs-you and the rest, keeping the journal's order", () => {
+        const items = [
+            { id: "a", state: "open" as const, awaiting: "user" as const },
+            { id: "b", state: "open" as const, awaiting: "agent" as const },
+            { id: "c", state: "open" as const, awaiting: null },
+            { id: "d", state: "open" as const, awaiting: "user" as const },
+            { id: "e", state: "closed" as const, awaiting: null },
+        ];
+        const groups = missionItemGroups(items);
+        expect(groups.needsYou.map((item) => item.id)).toEqual(["a", "d"]);
+        expect(groups.others.map((item) => item.id)).toEqual(["b", "c"]);
     });
 });

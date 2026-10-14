@@ -15,6 +15,7 @@ import {
     fakeSeen,
     type FakeSeen,
     trackerItem,
+    trackerMission,
     trackerMissionDetail,
     trackerProject,
     trackerProjectDetail,
@@ -313,8 +314,9 @@ describe("TrackerPane inbox", () => {
                 })}
             />,
         );
-        const back = [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) =>
-            /back|‹/i.test(button.getAttribute("aria-label") ?? button.textContent ?? ""),
+        // The breadcrumb's project crumb.
+        const back = [...container.querySelectorAll<HTMLButtonElement>(".mj_TrackerCrumb")].find(
+            (button) => button.textContent === trackerProject().title,
         )!;
         client.loadProject.mockClear();
         await act(async () => back.click());
@@ -322,6 +324,64 @@ describe("TrackerPane inbox", () => {
         // Same project id, so the pane's selection effect cannot reload it: back reloads explicitly,
         // or a mission just closed would still read as open on the project page.
         expect(client.loadProject).toHaveBeenLastCalledWith(2645);
+    });
+
+    it("names the mission's own project in the breadcrumb and opens it", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <TrackerPane
+                client={client as unknown as MatronJournalClient}
+                state={paneState({
+                    trackerView: { open: true, view: "missions", selectedMissionId: 5 },
+                    projects: [trackerProject({ num: 31, title: "Docs site" }), trackerProject()],
+                    trackerMission: trackerMissionDetail({ mission: trackerMission({ project_num: 31 }) }),
+                })}
+            />,
+        );
+        const crumbs = [...container.querySelectorAll<HTMLButtonElement>("button.mj_TrackerCrumb")];
+        expect(crumbs.map((crumb) => crumb.textContent)).toEqual(["‹ Projects", "Docs site"]);
+        await act(async () => crumbs[1].click());
+        expect(client.openTrackerProject).toHaveBeenCalledWith(31);
+        expect(client.loadProject).toHaveBeenLastCalledWith(31);
+    });
+
+    it("opens the Projects dashboard from the first crumb", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <TrackerPane
+                client={client as unknown as MatronJournalClient}
+                state={paneState({
+                    trackerView: { open: true, view: "missions", selectedProjectId: 2645, selectedMissionId: 5 },
+                    projects: [trackerProject()],
+                    trackerMission: trackerMissionDetail(),
+                })}
+            />,
+        );
+        await act(async () => container.querySelector<HTMLButtonElement>("button.mj_TrackerCrumb")!.click());
+        expect(client.openTrackerView).toHaveBeenCalledWith({
+            view: "missions",
+            itemId: null,
+            missionId: null,
+            memoryName: null,
+            projectId: null,
+        });
+    });
+
+    it("loads the projects when the mission's project is not known yet", async () => {
+        const client = fakeClient();
+        // Opened from another project's page, so the dashboard's own load does not run.
+        const { container } = await mount(
+            <TrackerPane
+                client={client as unknown as MatronJournalClient}
+                state={paneState({
+                    trackerView: { open: true, view: "missions", selectedProjectId: 2645, selectedMissionId: 5 },
+                    trackerMission: trackerMissionDetail({ mission: trackerMission({ project_num: 31 }) }),
+                })}
+            />,
+        );
+        expect(client.loadProjects).toHaveBeenCalledTimes(1);
+        const crumbs = [...container.querySelectorAll(".mj_TrackerCrumb")].map((crumb) => crumb.textContent);
+        expect(crumbs).toEqual(["‹ Projects", "#5"]);
     });
 
     it("leaves the project page while a mission opened from it is still loading", async () => {

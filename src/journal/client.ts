@@ -9,6 +9,7 @@ import {
     JOURNAL_ATTACHMENTS_MAX,
     JournalApi,
     JournalApiError,
+    isMediaExpiredError,
     knownErrorMessage,
     loadMatronConfig,
     parseBoxDefaultsState,
@@ -17,6 +18,7 @@ import {
 } from "./api";
 import { JournalConnection } from "./connection";
 import { effectiveUnread, makeIdSetStore, type IdSetStore } from "./conversation-flags";
+import { parseCoordinatorConsent, resetSessionStops, spawnConsentRowsIn } from "./coordinator-consent";
 import { JournalDatabase } from "./database";
 import { parseOwnTrackerUrl, parseTrackerLinkPath, type TrackerLinkPath } from "./link-path";
 import {
@@ -35,6 +37,7 @@ import {
 import { SeenTracker } from "./seen-tracker";
 import { mergeSessionStatus } from "./status";
 import { appendFeedPage, kindsWithMore } from "./tracker/projectActivity";
+import { doneSortKey, inDone } from "./tracker/format";
 import {
     asNumber,
     buildSidebarIndex,
@@ -45,6 +48,7 @@ import {
     type BriefingState,
     type ClientState,
     type Conversation,
+    type ConversationMissionLink,
     type BoxDefaults,
     type BoxDefaultsPatch,
     type BoxDefaultsState,
@@ -54,6 +58,7 @@ import {
     type JournalBoxStatusFrame,
     isSubChat,
     type MatronLinkKind,
+    type Mission,
     type NumberLookup,
     type NumberLookupKind,
     type NumberLookupOutcome,
@@ -61,6 +66,7 @@ import {
     type JournalEvent,
     MESSAGE_EVENT_TYPES,
     normalizeServerUrl,
+    type NewSessionOffer,
     type PendingMessage,
     type RecentFolder,
     rendersAsTopLevelRow,
@@ -69,6 +75,9 @@ import {
     type ServerFrame,
     type Session,
     type SnapshotResponse,
+    type SpawnConsentRows,
+    type StartOption,
+    type StartSessionPicks,
     type TrackerAttachment,
     type JournalControlFrame,
     type TrackerCommentWrite,
@@ -97,6 +106,10 @@ const MESSAGE_SEARCH_MAX_QUERY_LEN = 256;
 const MESSAGE_SEARCH_TIMEOUT_MS = 15_000;
 /** How long "go to number" waits for the journal before reporting a failed lookup. */
 export const NUMBER_LOOKUP_TIMEOUT_MS = 15_000;
+/** A mission page's closed items come in pages of this many (the Mac's closed-items page). */
+export const MISSION_CLOSED_PAGE = 50;
+/** How many `GET /items` pages of closed items one `fetchMissionClosedItems` call walks at most. */
+const MISSION_CLOSED_SCAN_PAGES = 4;
 
 const NUMBER_LOOKUP_KINDS: readonly NumberLookupKind[] = ["item", "mission", "milestone", "project"];
 const isTrackerNumber = (value: unknown): value is number =>
@@ -222,6 +235,39 @@ export type WorkerKind = "claude" | "codex";
 /** How one item comment went: written, or not — with why, unless the session ended meanwhile
  *  (signed out, or another account signed in), when there is nothing left to report it to. */
 export type TrackerCommentOutcome = { ok: true } | { ok: false; reason?: string };
+
+function parseRecentFolders(raw: unknown): RecentFolder[] {
+    if (!Array.isArray(raw)) return [];
+    return raw.flatMap((entry): RecentFolder[] => {
+        if (typeof entry !== "object" || entry === null || Array.isArray(entry)) return [];
+        const folder = entry as Record<string, unknown>;
+        if (
+            typeof folder.path !== "string" ||
+            folder.path.length === 0 ||
+            (folder.last_used !== null && (typeof folder.last_used !== "number" || !Number.isFinite(folder.last_used)))
+        ) {
+            return [];
+        }
+        return [{ path: folder.path, last_used: folder.last_used }];
+    });
+}
+
+// Bridge order is kept. A repeated value is dropped: the value is the option's identity.
+function parseStartOptions(raw: unknown): StartOption[] {
+    if (!Array.isArray(raw)) return [];
+    const seen = new Set<string>();
+    return raw.flatMap((entry): StartOption[] => {
+        if (typeof entry !== "object" || entry === null || Array.isArray(entry)) return [];
+        const { value, label } = entry as Record<string, unknown>;
+        if (typeof value !== "string" || value.length === 0 || seen.has(value)) return [];
+        seen.add(value);
+        return [{ value, label: typeof label === "string" && label.length > 0 ? label : value }];
+    });
+}
+
+function parseOfferDefault(raw: unknown): string | null {
+    return typeof raw === "string" && raw.length > 0 ? raw : null;
+}
 
 export function workerKind(conversation: Conversation): WorkerKind | null {
     if (!isSubChat(conversation)) return null;
@@ -359,11 +405,18 @@ export function voiceNoteFile(blob: Blob): File {
     return new File([blob], `voice-note.${ext}`, { type });
 }
 
+/** See MatronJournalClient.addLiveListener. */
+export interface LiveListener {
+    frame?(frame: ServerFrame): void;
+    journalEvent?(event: JournalEvent, previous: Conversation | undefined): void;
+}
+
 export class MatronJournalClient {
     private state = blankState();
     // The `/u/<name>/<n>` link the page was opened at, until the first sign-in opens it.
     private pathLink: TrackerLinkPath | null = parseTrackerLinkPath(window.location.pathname);
     private readonly listeners = new Set<() => void>();
+    private readonly liveListeners = new Set<LiveListener>();
     private api?: JournalApi;
     // Monotonic guard so only the latest message-search request writes its results — an earlier
     // slow response (or a cleared box) can never clobber a newer query's hits. See searchMessages.
@@ -377,6 +430,10 @@ export class MatronJournalClient {
     // `seen` / `item_seen` over the socket. Separate from read_marker and the unread badge.
     public readonly seen = new SeenTracker({ send: (op) => this.connection?.send(op) ?? false });
     private readonly history = new Map<string, ConversationHistoryState>();
+    // The latest-history-page fetch a spawn consent item made per conversation, keyed
+    // `${sessionGen}:${convoId}`: in flight (later reads wait on it) or done (a card that is not in
+    // that page is not asked for again). A failed fetch is forgotten so the next read retries.
+    private readonly consentHistoryFetches = new Map<string, Promise<void>>();
     private readonly activities = new Map<string, JournalEphemeralFrame["activity"]>();
     private readonly statuses = new Map<string, NonNullable<JournalEphemeralFrame["status"]>>();
     private readonly textStreams = new Map<string, Record<string, string>>();
@@ -384,6 +441,8 @@ export class MatronJournalClient {
     private readonly retiredStreamRefs = new Set<string>();
     private readonly mediaUrls = new Map<string, string>();
     private readonly mediaUrlRequests = new Map<string, Promise<string>>();
+    // Blob ids the server answered 404 for: reaped, permanently. Never re-requested.
+    private readonly expiredMedia = new Set<string>();
     private readonly readHighWater = new Map<string, number>();
     private readonly readTimers = new Map<string, number>();
     private pendingFiles = new Map<string, File>();
@@ -414,6 +473,16 @@ export class MatronJournalClient {
     private inboxPendingWrites = new Map<string, TrackerItem>();
     private trackerMissionsGen = 0;
     private trackerProjectsGen = 0;
+    private conversationMissionsGen = 0;
+    // The last missions fetched per conversation, so returning to one shows its chip at once
+    // (and the header does not jump) while the fresh fetch runs. Cleared with the session.
+    private readonly conversationMissionsCache = new Map<string, ConversationMissionLink[]>();
+    // The generation of the newest load per conversation: only that load may write its cache entry,
+    // so a slower, older request cannot put back what a newer one replaced.
+    private readonly conversationMissionsCacheGen = new Map<string, number>();
+    // Pending marker-driven refetch of the chip's missions: a burst of `mission` markers (a
+    // reconnect replay; `left` then `current_changed`) costs one GET.
+    private conversationMissionsRefetchTimer?: number;
     private trackerProjectGen = 0;
     // Pending marker-driven inbox refetch. A burst of `item` markers (a reconnect replay, a batch of
     // agent writes) coalesces into ONE inbox walk instead of one per marker.
@@ -429,6 +498,12 @@ export class MatronJournalClient {
     // timed_out, which no frame announces).
     private briefingGen = 0;
     private settingsGen = 0;
+    // Coordinator consent switch: bumped by every write, so a GET sent before one is dropped and
+    // only the latest write's answer moves the switch; the journal's last known value (where a
+    // failed write puts the switch back); and the write chain that keeps PUTs in tap order.
+    private coordinatorConsentEpoch = 0;
+    private coordinatorConsentConfirmed?: boolean;
+    private coordinatorConsentWrite: Promise<void> = Promise.resolve();
     private briefingExpiryTimer?: number;
     // New-chat defaults. What the sheet shows is always `defaultsServer` (the latest answer from
     // the journal: a GET result, a PUT response's key, or a live frame, applied in arrival order)
@@ -519,6 +594,27 @@ export class MatronJournalClient {
 
     public readonly getSnapshot = (): ClientState => this.state;
 
+    /**
+     * Observes what the socket delivers, for side effects that live outside the client (desktop
+     * notifications): every server frame as it arrives, and each journal event once it is newly
+     * applied, with the conversation as it stood before it. Listeners only watch; a throwing one
+     * is logged and never disturbs sync.
+     */
+    public readonly addLiveListener = (listener: LiveListener): (() => void) => {
+        this.liveListeners.add(listener);
+        return () => this.liveListeners.delete(listener);
+    };
+
+    private emitLive(call: (listener: LiveListener) => void): void {
+        for (const listener of this.liveListeners) {
+            try {
+                call(listener);
+            } catch (error) {
+                console.warn("matron:live-listener", error);
+            }
+        }
+    }
+
     public async initialise(): Promise<void> {
         let config = {};
         try {
@@ -594,6 +690,8 @@ export class MatronJournalClient {
         this.database?.close();
         this.database = undefined;
         this.api = undefined;
+        this.coordinatorConsentConfirmed = undefined;
+        resetSessionStops();
         this.defaultsServer = undefined;
         this.defaultsPending.clear();
         this.defaultsSaving.clear();
@@ -607,6 +705,7 @@ export class MatronJournalClient {
         this.boxDefaultsErrorAt = 0;
         for (const url of this.mediaUrls.values()) URL.revokeObjectURL(url);
         this.mediaUrls.clear();
+        this.expiredMedia.clear();
         // The archived-conversations key is deliberately left in place: it is a per-device
         // preference that re-login should restore. Clearing it here would also go unnoticed
         // by this tab, since storage events only fire in other tabs.
@@ -659,25 +758,28 @@ export class MatronJournalClient {
     }
 
     public async recentFolders(agentDeviceId: number): Promise<RecentFolder[]> {
+        return (await this.newSessionOffer(agentDeviceId)).folders;
+    }
+
+    // A box's `recent_folders` reply: its folders, plus the agent, model and effort choices a
+    // `start` there may name. A failed or malformed reply is an empty offer, never a throw.
+    public async newSessionOffer(agentDeviceId: number): Promise<NewSessionOffer> {
         const reply = await this.agentRpc(agentDeviceId, "recent_folders", {});
-        if (!reply.ok || typeof reply.result !== "object" || reply.result === null || Array.isArray(reply.result)) {
-            return [];
-        }
-        const folders = (reply.result as Record<string, unknown>).folders;
-        if (!Array.isArray(folders)) return [];
-        return folders.flatMap((raw): RecentFolder[] => {
-            if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return [];
-            const folder = raw as Record<string, unknown>;
-            if (
-                typeof folder.path !== "string" ||
-                folder.path.length === 0 ||
-                (folder.last_used !== null &&
-                    (typeof folder.last_used !== "number" || !Number.isFinite(folder.last_used)))
-            ) {
-                return [];
-            }
-            return [{ path: folder.path, last_used: folder.last_used }];
-        });
+        const result =
+            reply.ok && typeof reply.result === "object" && reply.result !== null && !Array.isArray(reply.result)
+                ? (reply.result as Record<string, unknown>)
+                : {};
+        return {
+            folders: parseRecentFolders(result.folders),
+            agentOptions: parseStartOptions(result.agent_options),
+            defaultAgent: parseOfferDefault(result.default_agent),
+            // The bridge's model list mirrors its /model buttons, which lead with the `default`
+            // alias; the sheet's own Default row already stands for that, so drop the duplicate.
+            modelOptions: parseStartOptions(result.model_options).filter((option) => option.value !== "default"),
+            defaultModel: parseOfferDefault(result.default_model),
+            effortOptions: parseStartOptions(result.effort_options).filter((option) => option.value !== "default"),
+            defaultEffort: parseOfferDefault(result.default_effort),
+        };
     }
 
     // One ask of a box that may be asleep. The journal boots an idle-stopped box whenever a
@@ -691,12 +793,17 @@ export class MatronJournalClient {
         return "failed";
     }
 
-    public startSessionRpc(agentDeviceId: number, workdir: string, browser: boolean): Promise<StartOutcome> {
+    public startSessionRpc(
+        agentDeviceId: number,
+        workdir: string,
+        browser: boolean,
+        picks: StartSessionPicks = {},
+    ): Promise<StartOutcome> {
         if (this.startSessionRequest) {
             return Promise.resolve({ kind: "error", message: "A session is already starting — please wait." });
         }
 
-        const request = this.performStartSessionRpc(agentDeviceId, workdir, browser);
+        const request = this.performStartSessionRpc(agentDeviceId, workdir, browser, picks);
         this.startSessionRequest = request;
         const clear = (): void => {
             if (this.startSessionRequest === request) this.startSessionRequest = undefined;
@@ -709,11 +816,15 @@ export class MatronJournalClient {
         agentDeviceId: number,
         workdir: string,
         browser: boolean,
+        picks: StartSessionPicks,
     ): Promise<StartOutcome> {
-        const params: { workdir?: string; browser?: true } = {};
+        const params: { workdir?: string; browser?: true } & StartSessionPicks = {};
         const normalizedWorkdir = workdir.trim();
         if (normalizedWorkdir) params.workdir = normalizedWorkdir;
         if (browser) params.browser = true;
+        if (picks.agent) params.agent = picks.agent;
+        if (picks.model) params.model = picks.model;
+        if (picks.effort) params.effort = picks.effort;
 
         const reply = await this.agentRpc(agentDeviceId, "start", params);
         if (reply.ok) {
@@ -736,6 +847,22 @@ export class MatronJournalClient {
         }
         if (reply.origin === "agent" && reply.code === "bad_workdir") {
             return { kind: "error", message: "That folder doesn't exist on the box." };
+        }
+        // The pickers only ever show what this box's own reply offered, so these mean the box
+        // has changed since; the Default rows always work.
+        if (reply.origin === "agent" && reply.code === "bad_model") {
+            return { kind: "error", message: "That box doesn't offer that model — pick another." };
+        }
+        if (reply.origin === "agent" && reply.code === "bad_effort") {
+            return { kind: "error", message: "That box doesn't offer that effort — pick another." };
+        }
+        if (reply.origin === "agent" && reply.code === "bad_agent") {
+            return { kind: "error", message: "That box can't start that agent — pick another." };
+        }
+        // A bridge without Codex's app-server transport refuses browser tools on an explicit Codex
+        // start: a definite refusal, so no session is coming — not "may have started".
+        if (reply.origin === "agent" && reply.code === "bad_request" && picks.agent === "codex" && browser) {
+            return { kind: "error", message: "That box can't give Codex browser tools — untick Browser tools." };
         }
         return { kind: "uncertain" };
     }
@@ -1666,6 +1793,81 @@ export class MatronJournalClient {
         await this.api.answerAgentSpawn(requestId, decision, signal);
     }
 
+    /**
+     * Answers the agent-spawn ask a consent item stands for, through the same call as the card in
+     * the conversation, then refetches the item if it is still the one open: the journal closes it
+     * once the ask is decided, and after a 409 (answered elsewhere, or expired) the copy that still
+     * offered the buttons was stale. Errors are rethrown unchanged for the card's state machine.
+     */
+    public async answerSpawnConsent(
+        itemNum: number,
+        requestId: string,
+        decision: "approve" | "deny",
+        signal?: AbortSignal,
+    ): Promise<void> {
+        try {
+            await this.answerAgentSpawn(requestId, decision, signal);
+        } catch (error) {
+            if (error instanceof JournalApiError && error.status === 409) this.refreshSelectedItem(itemNum);
+            throw error;
+        }
+        this.refreshSelectedItem(itemNum);
+    }
+
+    private refreshSelectedItem(itemNum: number): void {
+        if (this.isSelectedTrackerItem(itemNum)) void this.loadItem(itemNum);
+    }
+
+    /**
+     * The agent-spawn ask a consent item stands for, as the conversation that asked tells it: the
+     * card's own event and its outcome. Read from the local store. A conversation this device has
+     * not opened may not hold the card yet, so the first miss fetches that conversation's latest
+     * history page once (per conversation and session) and looks again. Never throws: a store or
+     * network failure reads as "not here", which the item shows as a card that has not arrived.
+     */
+    public async spawnConsentRows(convoId: string, requestId: string): Promise<SpawnConsentRows> {
+        const database = this.database;
+        const none: SpawnConsentRows = { request: null, outcome: null };
+        if (!database || !convoId || !requestId) return none;
+        let rows: SpawnConsentRows;
+        try {
+            rows = spawnConsentRowsIn(await database.events(convoId), requestId);
+        } catch {
+            return none;
+        }
+        const api = this.api;
+        if (rows.request || !api) return rows;
+        const fetchKey = `${this.sessionGen}:${convoId}`;
+        let fetch = this.consentHistoryFetches.get(fetchKey);
+        if (!fetch) {
+            fetch = (async (): Promise<void> => {
+                const response = await api.messages(convoId);
+                if (this.database === database && this.api === api) await database.putHistory(response.events);
+            })();
+            this.consentHistoryFetches.set(fetchKey, fetch);
+            fetch.catch(() => {
+                if (this.consentHistoryFetches.get(fetchKey) === fetch) this.consentHistoryFetches.delete(fetchKey);
+            });
+        }
+        try {
+            await fetch;
+            if (this.database !== database) return rows;
+            return spawnConsentRowsIn(await database.events(convoId), requestId);
+        } catch {
+            return rows;
+        }
+    }
+
+    public async answerAgentChat(
+        roomId: string,
+        targetDeviceId: number,
+        decision: "approve" | "deny",
+        signal?: AbortSignal,
+    ): Promise<boolean> {
+        if (!this.api) throw new Error("Not signed in.");
+        return this.api.answerAgentChat(roomId, targetDeviceId, decision, signal);
+    }
+
     // Concurrent callers for the same id (the viewer body and its DownloadLink mount in the
     // same commit) share one in-flight request: without the dedupe map each miss fetched the
     // blob again and the loser's object URL was overwritten in the cache — never revoked, a
@@ -1673,6 +1875,7 @@ export class MatronJournalClient {
     public mediaUrl(mediaId: string): Promise<string> {
         const cached = this.mediaUrls.get(mediaId);
         if (cached) return Promise.resolve(cached);
+        if (this.expiredMedia.has(mediaId)) return Promise.reject(new JournalApiError("Media expired", 404));
         const inflight = this.mediaUrlRequests.get(mediaId);
         if (inflight) return inflight;
         const api = this.api;
@@ -1690,12 +1893,20 @@ export class MatronJournalClient {
                 }
                 this.mediaUrls.set(mediaId, url);
                 return url;
+            } catch (error) {
+                if (isMediaExpiredError(error) && this.sessionGen === gen) this.expiredMedia.add(mediaId);
+                throw error;
             } finally {
                 this.mediaUrlRequests.delete(mediaId);
             }
         })();
         this.mediaUrlRequests.set(mediaId, request);
         return request;
+    }
+
+    /** Whether a fetch for this blob already came back 404 (reaped server-side). */
+    public isMediaExpired(mediaId: string): boolean {
+        return this.expiredMedia.has(mediaId);
     }
 
     public selectedConversation(): Conversation | undefined {
@@ -1974,6 +2185,53 @@ export class MatronJournalClient {
             }
             return false;
         }
+    }
+
+    // ── Coordinator consent approval (Settings → Coordinator; GET/PUT /coordinator `consent`) ──
+
+    /** GET /coordinator: the switch's value. A journal without `consent` leaves it hidden. */
+    public async loadCoordinatorConsent(): Promise<void> {
+        const api = this.api;
+        if (!api) return;
+        const epoch = this.coordinatorConsentEpoch;
+        try {
+            const enabled = parseCoordinatorConsent(await api.coordinator());
+            // A write since the GET was sent is newer than its answer.
+            if (this.api !== api || this.coordinatorConsentEpoch !== epoch) return;
+            this.coordinatorConsentConfirmed = enabled;
+            this.patch({ coordinatorConsent: { ...this.state.coordinatorConsent, enabled } });
+        } catch {
+            // Keep what is shown: a blip must not take the switch away.
+        }
+    }
+
+    /**
+     * PUT /coordinator {consent}. The switch moves at once; a failed write puts it back to the
+     * journal's last known value and says why. Writes go one at a time, in tap order, so the
+     * journal ends on the last tap, and only the latest write's answer moves the switch.
+     */
+    public setCoordinatorConsent(enabled: boolean): Promise<void> {
+        const api = this.api;
+        const current = this.state.coordinatorConsent?.enabled;
+        if (!api || current === undefined || current === enabled) return Promise.resolve();
+        const epoch = ++this.coordinatorConsentEpoch;
+        this.patch({ coordinatorConsent: { enabled, error: undefined } });
+        const write = this.coordinatorConsentWrite.then(async () => {
+            if (this.api !== api) return;
+            try {
+                const stored = parseCoordinatorConsent(await api.putCoordinatorConsent(enabled)) ?? enabled;
+                if (this.api !== api) return;
+                this.coordinatorConsentConfirmed = stored;
+                if (this.coordinatorConsentEpoch === epoch) this.patch({ coordinatorConsent: { enabled: stored } });
+            } catch (error) {
+                if (this.api !== api || this.coordinatorConsentEpoch !== epoch) return;
+                this.patch({
+                    coordinatorConsent: { enabled: this.coordinatorConsentConfirmed, error: errorMessage(error) },
+                });
+            }
+        });
+        this.coordinatorConsentWrite = write;
+        return write;
     }
 
     // A settings frame (or hello_ok) is the journal's word on the current value; it supersedes any
@@ -2530,7 +2788,11 @@ export class MatronJournalClient {
             let cursor: string | undefined;
             let truncated = false;
             for (let page = 0; ; page += 1) {
-                const { items, next_cursor } = await api.items({ state: "open", ...(cursor ? { cursor } : {}) });
+                const { items, next_cursor } = await api.items({
+                    state: "open",
+                    limit: OPEN_ITEMS_PAGE,
+                    ...(cursor ? { cursor } : {}),
+                });
                 if (this.api !== api || this.trackerInboxGen !== gen) return;
                 for (const item of items) {
                     if (seen.has(item.id)) continue;
@@ -2634,6 +2896,98 @@ export class MatronJournalClient {
                 trackerLoading: false,
             });
         }
+    }
+
+    /**
+     * Fetch the missions a conversation is or was on, for the chat header's mission chip. The
+     * result is kept for that conversation only; the header never shows it against another. A
+     * journal without the route (404) reads as "no missions", which hides the chip. Any other
+     * failure keeps what was shown.
+     */
+    public async loadConversationMissions(convoId: string): Promise<void> {
+        const api = this.api;
+        if (!api) return;
+        const gen = ++this.conversationMissionsGen;
+        this.conversationMissionsCacheGen.set(convoId, gen);
+        const cached = this.conversationMissionsCache.get(convoId);
+        if (cached && this.state.conversationMissions?.convoId !== convoId) {
+            this.patch({ conversationMissions: { convoId, links: cached } });
+        }
+        try {
+            const links = await api.conversationMissions(convoId);
+            if (this.api !== api) return;
+            if (this.conversationMissionsCacheGen.get(convoId) === gen)
+                this.conversationMissionsCache.set(convoId, links);
+            if (this.conversationMissionsGen !== gen) return;
+            this.patch({ conversationMissions: { convoId, links } });
+        } catch (error) {
+            if (this.api !== api) return;
+            const missing = error instanceof JournalApiError && error.status === 404;
+            if (missing && this.conversationMissionsCacheGen.get(convoId) === gen)
+                this.conversationMissionsCache.set(convoId, []);
+            if (this.conversationMissionsGen !== gen) return;
+            if (missing) this.patch({ conversationMissions: { convoId, links: [] } });
+        }
+    }
+
+    // Coalesce marker-driven refetches of the chip's missions (see conversationMissionsRefetchTimer).
+    // The timer reads the selection when it fires, so a switch in the meantime fetches nothing extra.
+    private scheduleConversationMissionsRefetch(): void {
+        if (this.conversationMissionsRefetchTimer !== undefined) return;
+        this.conversationMissionsRefetchTimer = window.setTimeout(() => {
+            this.conversationMissionsRefetchTimer = undefined;
+            const convoId = this.state.selectedConversationId;
+            if (convoId) void this.loadConversationMissions(convoId);
+        }, 250);
+    }
+
+    /** Whether a mission marker changes what the chip of the conversation on screen shows: it landed
+     *  there (joined, left, made current), or it is about a mission the chip lists — a rename or a
+     *  close is written to the mission's origin conversation only. */
+    private missionMarkerConcernsChip(event: JournalEvent): boolean {
+        const selected = this.state.selectedConversationId;
+        if (!selected) return false;
+        if (event.convo_id === selected) return true;
+        const shown = this.state.conversationMissions;
+        if (shown?.convoId !== selected) return false;
+        const missionId = typeof event.payload.mission_id === "string" ? event.payload.mission_id : null;
+        const num = asNumber(event.payload.num, 0);
+        return shown.links.some((link) => link.id === missionId || (num > 0 && link.num === num));
+    }
+
+    /**
+     * One page of a mission's closed items, most recently updated first. `GET /items` has no
+     * mission filter, so this walks the user's closed items newest first (at most
+     * MISSION_CLOSED_SCAN_PAGES requests of 500) and keeps the mission's own, stopping once `want`
+     * are found. The walk starts no further back than the mission's creation (`since`): the journal
+     * bumps an item's `updated_at` whenever it is put on a mission, so none of the mission's items
+     * is older than the mission. `cursor` is where the walk stopped, null once every candidate has
+     * been seen — pass it back to continue. Not store state: the mission page holds the pages it
+     * asked for. Rejects on a failed request, and resolves empty when signed out.
+     */
+    public async fetchMissionClosedItems(
+        mission: Pick<Mission, "id" | "created_at">,
+        cursor: string | null = null,
+        want: number = MISSION_CLOSED_PAGE,
+    ): Promise<{ items: TrackerItem[]; cursor: string | null }> {
+        const api = this.api;
+        if (!api) return { items: [], cursor: null };
+        const since = Number.isInteger(mission.created_at) && mission.created_at > 0 ? mission.created_at : undefined;
+        const items: TrackerItem[] = [];
+        let next = cursor;
+        for (let page = 0; page < MISSION_CLOSED_SCAN_PAGES; page++) {
+            const res = await api.items({
+                state: "closed",
+                sort: "updated",
+                limit: 500,
+                ...(since !== undefined ? { since } : {}),
+                cursor: next ?? undefined,
+            });
+            for (const item of res.items) if (item.mission_id === mission.id) items.push(item);
+            next = res.next_cursor;
+            if (!next || items.length >= want) break;
+        }
+        return { items, cursor: next };
     }
 
     // ── Tracker mutations (fresh Idempotency-Key per call → refetch the affected row + patch).
@@ -2742,15 +3096,28 @@ export class MatronJournalClient {
     }
 
     /**
-     * The Done rows minus any of `open`. A refresh only re-reads the first page, so a row loaded
-     * from a later page that has since been reopened would otherwise stay listed as done.
+     * The Done rows with any of `open` that waits on the user again dropped. A refresh only
+     * re-reads the first page, so a row loaded from a later page that has since been reopened would
+     * otherwise stay listed as done. An open row the user has answered stays: it is done for them.
      */
     private doneWithoutOpen(open: TrackerItem[]): Partial<ClientState> {
         const done = this.state.inboxDone;
         if (!done || open.length === 0) return {};
-        const ids = new Set(open.map((item) => item.id));
+        const ids = new Set(open.filter((item) => !inDone(item)).map((item) => item.id));
         const items = done.items.filter((row) => !ids.has(row.id));
         return items.length === done.items.length ? {} : { inboxDone: { ...done, items } };
+    }
+
+    /**
+     * The Done rows with `item` as just written: an item the user has just answered, seen or closed
+     * goes to the top at once, before the refetch lands; one that waits on them again leaves.
+     */
+    private doneWithWritten(item: TrackerItem): Partial<ClientState> {
+        const done = this.state.inboxDone;
+        if (!done) return {};
+        const others = done.items.filter((row) => row.id !== item.id);
+        if (!inDone(item)) return others.length === done.items.length ? {} : { inboxDone: { ...done, items: others } };
+        return { inboxDone: { ...done, items: inDoneOrder([item, ...others]) } };
     }
 
     private applyWrittenItem(item: TrackerItem): void {
@@ -2770,7 +3137,7 @@ export class MatronJournalClient {
                               : inbox.filter((row) => row.id !== item.id),
                   }
                 : {}),
-            ...(item.state === "open" ? this.doneWithoutOpen([item]) : {}),
+            ...this.doneWithWritten(item),
             ...(detail && detail.item.id === item.id ? { trackerItem: { ...detail, item } } : {}),
         });
     }
@@ -2791,7 +3158,7 @@ export class MatronJournalClient {
             const { items, next_cursor } = await api.items(INBOX_DONE_FILTER);
             if (this.api !== api || this.trackerInboxDoneGen !== gen) return;
             const fresh = new Set(items.map((item) => item.id));
-            const open = new Set((this.state.inboxItems ?? []).map((item) => item.id));
+            const open = new Set((this.state.inboxItems ?? []).filter((item) => !inDone(item)).map((item) => item.id));
             const oldest = items[items.length - 1];
             // Below the fresh page only: anything newer that it does not list is no longer closed.
             // The latest rows in state, not the ones from before the request: a row reopened
@@ -2839,7 +3206,9 @@ export class MatronJournalClient {
             // The rows in state now, not the ones from before the request: a row reopened while
             // it was in flight has been dropped from them and must stay dropped.
             const rows = this.state.inboxDone?.items ?? done.items;
-            const skip = new Set([...rows, ...(this.state.inboxItems ?? [])].map((item) => item.id));
+            const skip = new Set(
+                [...rows, ...(this.state.inboxItems ?? []).filter((item) => !inDone(item))].map((item) => item.id),
+            );
             this.patch({
                 inboxDone: {
                     items: [...rows, ...items.filter((item) => !skip.has(item.id))],
@@ -2977,6 +3346,16 @@ export class MatronJournalClient {
         // The inbox feeds the For you badge on the rail, so it follows item markers even while the
         // pane is closed; everything else is refetched only for an open pane.
         if (event.type === "item" && (this.inboxTracked() || this.state.inboxDone)) this.scheduleInboxRefetch();
+        // The header chip of the conversation on screen follows the mission markers that concern it
+        // (see missionMarkerConcernsChip) whether or not the pane is open — also while its first load
+        // is in flight (the newer load supersedes it) or after a failed one.
+        if (event.type === "mission" && this.missionMarkerConcernsChip(event)) {
+            // A load already in flight predates the marker: it may neither publish nor cache.
+            this.conversationMissionsGen += 1;
+            if (this.state.selectedConversationId)
+                this.conversationMissionsCacheGen.delete(this.state.selectedConversationId);
+            this.scheduleConversationMissionsRefetch();
+        }
         if (!this.state.trackerView?.open) return;
         // The open item's `working` block follows the conversation that owns it: a turn starting
         // or ending there changes what the thread's indicator should say, and no item marker
@@ -3616,6 +3995,7 @@ export class MatronJournalClient {
     }
 
     private async handleFrame(frame: ServerFrame): Promise<void> {
+        this.emitLive((listener) => listener.frame?.(frame));
         if (frame.kind === "journal") {
             await this.handleJournal(frame);
             return;
@@ -3689,6 +4069,8 @@ export class MatronJournalClient {
         }
         this.clearHistoryError();
         this.scheduleAck(event.seq);
+        const previous = this.state.conversations.find((conversation) => conversation.id === event.convo_id);
+        this.emitLive((listener) => listener.journalEvent?.(event, previous));
 
         const messageRef = typeof event.payload.message_ref === "string" ? event.payload.message_ref : undefined;
         if (messageRef) {
@@ -4000,6 +4382,11 @@ export class MatronJournalClient {
         if (this.trackerMissionsRefetchTimer !== undefined) window.clearTimeout(this.trackerMissionsRefetchTimer);
         this.trackerMissionsRefetchTimer = undefined;
         this.trackerMissionRefetchPending = false;
+        if (this.conversationMissionsRefetchTimer !== undefined)
+            window.clearTimeout(this.conversationMissionsRefetchTimer);
+        this.conversationMissionsRefetchTimer = undefined;
+        this.conversationMissionsCache.clear();
+        this.conversationMissionsCacheGen.clear();
         if (this.trackerItemWorkingRefetchTimer !== undefined) window.clearTimeout(this.trackerItemWorkingRefetchTimer);
         this.trackerItemWorkingRefetchTimer = undefined;
         if (this.briefingExpiryTimer !== undefined) window.clearTimeout(this.briefingExpiryTimer);
@@ -4011,6 +4398,7 @@ export class MatronJournalClient {
         this.pendingAck = 0;
         this.historyError = undefined;
         this.history.clear();
+        this.consentHistoryFetches.clear();
         this.activities.clear();
         this.statuses.clear();
         this.textStreams.clear();
@@ -4136,18 +4524,29 @@ export function commentFailureMessage(error: unknown): string {
     return knownErrorMessage(error.code) ?? `The server refused it (HTTP ${error.status}).`;
 }
 
+// The journal's largest page. The open-items walk is sequential, so on a real network each extra
+// page is another round trip before the inbox can show anything; the default 100 took a dozen.
+const OPEN_ITEMS_PAGE = 500;
+
 /** The Done tab's page: what the user answered, decided or read, most recently touched first. */
 const INBOX_DONE_FILTER = {
-    state: "closed",
+    state: "done",
     kind: ["question", "decision", "notice"],
-    sort: "updated",
+    sort: "acted",
     limit: 50,
 } as const;
 
-/** True when `row` comes after `mark` in the journal's `sort=updated` order (newest first, then
- *  the higher number). */
+/** True when `row` comes after `mark` in the journal's `sort=acted` order (the user's last action
+ *  first, then the higher number). */
 function sortsAfter(row: TrackerItem, mark: TrackerItem): boolean {
-    return row.updated_at < mark.updated_at || (row.updated_at === mark.updated_at && row.num < mark.num);
+    const r = doneSortKey(row);
+    const m = doneSortKey(mark);
+    return r < m || (r === m && row.num < mark.num);
+}
+
+/** Done rows in the journal's `sort=acted` order. */
+function inDoneOrder(rows: TrackerItem[]): TrackerItem[] {
+    return [...rows].sort((a, b) => (sortsAfter(a, b) ? 1 : sortsAfter(b, a) ? -1 : 0));
 }
 
 /** The label of a notice's one-tap answer; the journal closes the notice when it is tapped. */

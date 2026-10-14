@@ -18,11 +18,18 @@ Please see LICENSE files in the repository root for full details.
  * For you: the journal's per-user `notices` setting (agents file things to read as items with a
  * Seen button instead of leaving them in chat). The sheet asks the client to load it on open; the
  * switch is hidden until the value is known and on a journal without settings (GET /settings 404).
+ *
+ * Coordinator: the journal's consent-approval switch (`consent` on GET/PUT /coordinator), hidden
+ * on a journal that does not return it.
+ *
+ * Notifications: desktop notifications in this browser while a tab is open (notifications.ts).
+ * Turning them on asks the browser for permission, so it must happen on the click itself.
  */
 
 import React, { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import type { MatronJournalClient } from "./client";
+import { type DesktopNotificationsState, notificationsFor } from "./notifications";
 import { getSnapshot, setTheme, subscribe, type ThemePref } from "./theme";
 import type { BoxDefaults, BoxDefaultsState, DefaultsState, Session, UserDefaultKey } from "./types";
 
@@ -309,6 +316,114 @@ function BoxesDefaults({ client }: { client: MatronJournalClient }): React.React
     );
 }
 
+// Coordinator: the journal's consent-approval switch. On, the Coordinator may answer chat and spawn
+// asks for the user (each card then says so, with its reason). Hidden until the journal answers,
+// and on a journal without the switch.
+function CoordinatorConsent({ client }: { client: MatronJournalClient }): React.ReactElement | null {
+    const state = useSyncExternalStore(client.subscribe, () => client.getSnapshot().coordinatorConsent);
+
+    useEffect(() => void client.loadCoordinatorConsent(), [client]);
+
+    if (state?.enabled === undefined) return null;
+    const enabled = state.enabled;
+    return (
+        <section className="mj_SettingsSheet_group" aria-labelledby="mj-settings-coordinator">
+            <h3 id="mj-settings-coordinator" className="mj_SettingsSheet_groupTitle">
+                Coordinator
+            </h3>
+            <div className="mj_SettingsSheet_rows">
+                <div className="mj_SettingsSheet_row mj_SettingsSheet_switchRow">
+                    <span className="mj_SettingsSheet_switchText">
+                        <span id="mj-settings-coordinator-consent">Let the Coordinator approve chats and spawns</span>
+                        <span id="mj-settings-coordinator-consent-help" className="mj_SettingsSheet_help">
+                            Each request it answers says so on its card, with the reason.
+                        </span>
+                    </span>
+                    <button
+                        type="button"
+                        role="switch"
+                        className="mj_SettingsSheet_switch"
+                        data-setting="coordinator-consent"
+                        aria-checked={enabled}
+                        aria-labelledby="mj-settings-coordinator-consent"
+                        aria-describedby="mj-settings-coordinator-consent-help"
+                        onClick={() => void client.setCoordinatorConsent(!enabled)}
+                    />
+                </div>
+            </div>
+            {state.error ? (
+                <p className="mj_SettingsSheet_error" role="alert">
+                    Couldn't save: {state.error}
+                </p>
+            ) : null}
+        </section>
+    );
+}
+
+const PERMISSION_HELP: Record<DesktopNotificationsState["permission"], string> = {
+    unsupported: "This browser can't show notifications.",
+    default: "Your browser will ask to allow notifications from Matron.",
+    granted: "Allowed in this browser.",
+    denied: "Blocked in this browser. Allow notifications for this site in the browser's settings to turn them on.",
+};
+
+function DesktopNotifications({ client }: { client: MatronJournalClient }): React.ReactElement {
+    const notifier = notificationsFor(client);
+    const state = useSyncExternalStore(notifier.subscribe, notifier.getSnapshot);
+    const blocked = state.permission === "unsupported" || state.permission === "denied";
+    return (
+        <section className="mj_SettingsSheet_group" aria-labelledby="mj-settings-notifications">
+            <h3 id="mj-settings-notifications" className="mj_SettingsSheet_groupTitle">
+                Notifications
+            </h3>
+            <div className="mj_SettingsSheet_rows">
+                <div className="mj_SettingsSheet_row mj_SettingsSheet_switchRow">
+                    <span className="mj_SettingsSheet_switchText">
+                        <span id="mj-settings-desktop-notifications">Desktop notifications</span>
+                        <span
+                            id="mj-settings-desktop-notifications-help"
+                            className="mj_SettingsSheet_help"
+                            data-permission={state.permission}
+                        >
+                            {PERMISSION_HELP[state.permission]}
+                        </span>
+                    </span>
+                    <button
+                        type="button"
+                        role="switch"
+                        className="mj_SettingsSheet_switch"
+                        data-setting="desktop-notifications"
+                        aria-checked={state.enabled}
+                        aria-labelledby="mj-settings-desktop-notifications"
+                        aria-describedby="mj-settings-desktop-notifications-help"
+                        disabled={blocked}
+                        onClick={() => (state.enabled ? notifier.disable() : void notifier.enable())}
+                    />
+                </div>
+                <div className="mj_SettingsSheet_row mj_SettingsSheet_switchRow">
+                    <span className="mj_SettingsSheet_switchText">
+                        <span id="mj-settings-notification-sound">Play sound</span>
+                    </span>
+                    <button
+                        type="button"
+                        role="switch"
+                        className="mj_SettingsSheet_switch"
+                        data-setting="notification-sound"
+                        aria-checked={state.enabled && state.sound}
+                        aria-labelledby="mj-settings-notification-sound"
+                        disabled={!state.enabled}
+                        onClick={() => notifier.setSound(!state.sound)}
+                    />
+                </div>
+            </div>
+            <p className="mj_SettingsSheet_help">
+                Shown while Matron is open in a tab, for what your notification settings send to this device. Nothing
+                shows for the conversation you are looking at.
+            </p>
+        </section>
+    );
+}
+
 export function SettingsSheet({
     client,
     session,
@@ -453,8 +568,10 @@ export function SettingsSheet({
                         ))}
                     </div>
                 </section>
+                <DesktopNotifications client={client} />
                 <NewChatDefaults client={client} />
                 <BoxesDefaults client={client} />
+                <CoordinatorConsent client={client} />
                 {notices !== undefined && onNoticesChange ? (
                     <section className="mj_SettingsSheet_group" aria-labelledby="mj-settings-foryou">
                         <h3 id="mj-settings-foryou" className="mj_SettingsSheet_groupTitle">

@@ -20,8 +20,31 @@ import React, {
 } from "react";
 
 import matronLogo from "../../res/matron-logo-simple.svg";
+import {
+    AgentSpawnCard,
+    isAnswerableAgentSpawn,
+    PROMPT_REPLY_CONFIRMATION_TIMEOUT_MS,
+    PromptTerminalGlyph,
+} from "./agent-spawn-card";
 import { INITIAL_SGR_STATE, parseAnsi, stripLeadingSgrFragment } from "./ansi";
-import { JournalApiError } from "./api";
+import {
+    agentChatAnswersScope,
+    agentChatCardKey,
+    agentChatFromLabel,
+    agentChatHeadline,
+    agentChatToLabel,
+    type AgentChatDecision,
+    type AgentChatRequest,
+    type AgentChatResolution,
+    isAgentChatPayload,
+    parseAgentChatRequest,
+    readAgentChatResolutions,
+    rememberAgentChatAnswer,
+    rememberedAgentChatAnswer,
+    type RememberedAgentChatAnswer,
+    unanswerableAgentRequestNotice,
+} from "./agent-chat";
+import { isMediaExpiredError, JournalApiError } from "./api";
 import {
     type AgentProbe,
     BROWSER_MEMORY_SAFETY_MAX_BYTES,
@@ -32,8 +55,17 @@ import {
 } from "./client";
 import { copyText } from "./clipboard";
 import { type DraftStore, makeDraftStore } from "./composer-drafts";
+import { SentMessageHistory } from "./sent-history";
 import { effectiveUnread } from "./conversation-flags";
+import { chipHeadline, chipLabel, isEarlierLink, linkLine, missionSections } from "./conversation-missions";
 import { type RowContextMenu, useRowContextMenu } from "./context-menu";
+import {
+    coordinatorBadgeText,
+    type CoordinatorDecision,
+    readCoordinatorDecisions,
+    stopSpawnedSession,
+} from "./coordinator-consent";
+import { CoordinatorEventNotice, isUnrenderableNoticeEvent } from "./coordinator-notices";
 import { dateTimeFormat } from "./date-format";
 import { GoToNumberDialog, goToNumberShortcutLabel, NumberSearchResult, useGoToNumberShortcut } from "./goto-number";
 import { PinDialog, type PinDialogTarget } from "./PinDialogs";
@@ -78,21 +110,33 @@ import {
     DarkThemeIcon,
     StarFilledIcon,
     StarIcon,
+    StopIcon,
     UnarchiveIcon,
     UploadTrayIcon,
     CheckCircleIcon,
     XOctagonIcon,
     PlusCircleIcon,
     ArrowUpCircleIcon,
+    ProjectsIcon,
 } from "./icons";
 import { NAV_RAIL_WIDTH, NavRail, type NavKey } from "./NavRail";
+import { notificationsFor, unreadTotal as countUnread } from "./notifications";
 import { SettingsSheet } from "./SettingsSheet";
 import { displayTitle, TaggedTitle } from "./SessionTag";
 import { groupByDay } from "./sidebar-groups";
 import { observeSeenRows } from "./seen-tracker";
 import { createLongPressController, type LongPressController } from "./longPress";
 import { MarkdownBody, markdownToPlainText } from "./markdown";
-import { isRenderableItemMarker, MemoryNotice, MilestoneCard, MissionNotice, renderItemMarker } from "./tracker/cards";
+import {
+    EMPTY_ITEM_CARD_FOLD,
+    foldItemCards,
+    isRenderableItemMarker,
+    type ItemCardFold,
+    MemoryNotice,
+    MilestoneCard,
+    MissionNotice,
+    renderItemMarker,
+} from "./tracker/cards";
 import { needsUser } from "./tracker/format";
 import {
     isPreviewableMarkdown,
@@ -106,10 +150,12 @@ import {
     buildMediaCorpus,
     isRenderableInViewer,
     type MediaItem,
+    mediaRenderKind,
     MediaViewer,
     MediaViewerContext,
     type MediaViewerContextValue,
     useMediaViewer,
+    useRenderableObjectUrl,
 } from "./media-viewer";
 import { getSnapshot, nextThemePref, setTheme, subscribe } from "./theme";
 import {
@@ -147,6 +193,7 @@ import {
     type ClientState,
     type MessageSearchState,
     type Conversation,
+    type ConversationMissionLink,
     type ConvoPin,
     conversationTitle,
     type DeviceDTO,
@@ -159,15 +206,17 @@ import {
     imageFrameStyle,
     isNearBottom,
     type MediaDims,
+    mediaFileName,
     parseMediaDims,
     type JournalEvent,
     type PendingMessage,
-    type RecentFolder,
+    type NewSessionOffer,
+    type StartOption,
+    type StartSessionPicks,
     rendersAsTopLevelRow,
     isSubChat,
     type SessionStatus,
     spawnOutcomeKind,
-    type SpawnOutcomeKind,
     spawnOutcomeSnippet,
     type StagedUploadItem,
     type StagedUploads,
@@ -188,7 +237,9 @@ const NAV_KEY_FOR_VIEW: Record<"missions" | "inbox" | "memories", NavKey> = {
     inbox: "decisions",
     memories: "memories",
 };
-const LEFT_PANEL_SIZE_KEY = "mx_lhs_size";
+const LEFT_PANEL_SIZE_KEY = "matron_sidebar_width";
+// The key earlier versions stored the width under; moved to the current key on first read.
+const LEGACY_LEFT_PANEL_SIZE_KEY = "mx_lhs_size";
 const LEFT_PANEL_DEFAULT_WIDTH = 350;
 const LEFT_PANEL_MIN_WIDTH = 224;
 
@@ -199,6 +250,13 @@ function clampLeftPanelWidth(width: number, containerWidth: number): number {
 function initialLeftPanelWidth(): number {
     let storedWidth = Number.NaN;
     try {
+        const legacy = window.localStorage.getItem(LEGACY_LEFT_PANEL_SIZE_KEY);
+        if (legacy !== null) {
+            if (window.localStorage.getItem(LEFT_PANEL_SIZE_KEY) === null) {
+                window.localStorage.setItem(LEFT_PANEL_SIZE_KEY, legacy);
+            }
+            window.localStorage.removeItem(LEGACY_LEFT_PANEL_SIZE_KEY);
+        }
         storedWidth = Number.parseInt(window.localStorage.getItem(LEFT_PANEL_SIZE_KEY) ?? "", 10);
     } catch {
         // Storage can be unavailable; the default width remains usable.
@@ -484,12 +542,85 @@ type SheetState =
           step: "folders";
           agent: DeviceDTO;
           foldersRequestId: number;
-          folders?: RecentFolder[];
+          offer?: NewSessionOffer;
           foldersError?: string;
       }
     | { step: "starting"; agent: DeviceDTO }
     | { step: "uncertain" }
-    | { step: "error"; agent: DeviceDTO; message: string };
+    // The box's offer rides along so Retry sends the same picks, and Change options can go back
+    // to the form to pick another.
+    | { step: "error"; agent: DeviceDTO; message: string; offer?: NewSessionOffer };
+
+// The sheet's own agent, model and effort picks. null = no pick: the box's default applies.
+interface SheetPicks {
+    agent: string | null;
+    model: string | null;
+    effort: string | null;
+}
+
+const NO_PICKS: SheetPicks = { agent: null, model: null, effort: null };
+
+const EMPTY_OFFER: NewSessionOffer = {
+    folders: [],
+    agentOptions: [],
+    defaultAgent: null,
+    modelOptions: [],
+    defaultModel: null,
+    effortOptions: [],
+    defaultEffort: null,
+};
+
+const CLAUDE_AGENT = "claude";
+
+function offers(options: StartOption[], value: string | null): value is string {
+    return value !== null && options.some((option) => option.value === value);
+}
+
+// The agent `start` names: the pick when this box offers it, else the box's default, else its
+// first offer. Reads as Claude on a bridge that offers none, which is what such a bridge runs.
+function selectedAgent(offer: NewSessionOffer, picks: SheetPicks): string {
+    if (offers(offer.agentOptions, picks.agent)) return picks.agent;
+    if (offers(offer.agentOptions, offer.defaultAgent)) return offer.defaultAgent;
+    return offer.agentOptions[0]?.value ?? CLAUDE_AGENT;
+}
+
+// A pick this box doesn't list is dropped, not parked: carried to the next box it would be a
+// `bad_model` (or `bad_agent`, `bad_effort`) waiting to happen.
+function prunePicks(offer: NewSessionOffer, picks: SheetPicks): SheetPicks {
+    return {
+        agent: offers(offer.agentOptions, picks.agent) ? picks.agent : null,
+        model: offers(offer.modelOptions, picks.model) ? picks.model : null,
+        effort: offers(offer.effortOptions, picks.effort) ? picks.effort : null,
+    };
+}
+
+function startPicks(offer: NewSessionOffer | undefined, picks: SheetPicks): StartSessionPicks {
+    if (!offer) return {};
+    const result: StartSessionPicks = {};
+    const agent = selectedAgent(offer, picks);
+    // Named whenever the box offered agents, even its default: saying what was shown beats
+    // trusting the box default not to have moved since. A bridge that offered none isn't told.
+    if (offer.agentOptions.length > 0) result.agent = agent;
+    // Model and effort are Claude's: a Codex session takes neither, and the bridge refuses one.
+    // No pick omits the key, so the box's own default (the user's, else the box's) applies.
+    if (agent === CLAUDE_AGENT) {
+        if (offers(offer.modelOptions, picks.model)) result.model = picks.model;
+        if (offers(offer.effortOptions, picks.effort)) result.effort = picks.effort;
+    }
+    return result;
+}
+
+// The nil row's title: "Default (Opus)" on a box that names its default, plain "Default" else.
+function defaultRowTitle(options: StartOption[], value: string | null): string {
+    if (value === null) return "Default";
+    return `Default (${options.find((option) => option.value === value)?.label ?? value})`;
+}
+
+// A recent folder's caption: how long since a session last started there. last_used is epoch ms;
+// null is the bridge's default folder on a box that has never started one.
+function folderLastUsed(lastUsed: number | null, now: number): string {
+    return lastUsed === null ? "Never used" : formatSampleAge(Math.max(0, now - lastUsed));
+}
 
 // What an offline box's row says while its Wake button is at work. Absent = not being woken.
 type RowWake = "waking" | "failed";
@@ -570,6 +701,7 @@ export function NewSessionSheet({
     const now = useMinuteClock();
     const [workdir, setWorkdir] = useState("");
     const [browserTools, setBrowserTools] = useState(false);
+    const [picks, setPicks] = useState<SheetPicks>(NO_PICKS);
     const [showBack, setShowBack] = useState(false);
     const sheetStateRef = useRef(sheetState);
     const agentsRef = useRef<DeviceDTO[]>([]);
@@ -627,8 +759,8 @@ export function NewSessionSheet({
             const foldersRequestId = ++foldersRequestIdRef.current;
             setShowBack(backAvailable);
             transition({ step: "folders", agent, foldersRequestId });
-            void client.recentFolders(agent.device_id).then(
-                (folders) => {
+            void client.newSessionOffer(agent.device_id).then(
+                (offer) => {
                     const current = sheetStateRef.current;
                     if (
                         !mountedRef.current ||
@@ -639,7 +771,8 @@ export function NewSessionSheet({
                     ) {
                         return;
                     }
-                    transition({ ...current, folders });
+                    setPicks((current) => prunePicks(offer, current));
+                    transition({ ...current, offer });
                 },
                 () => {
                     const current = sheetStateRef.current;
@@ -652,7 +785,7 @@ export function NewSessionSheet({
                     ) {
                         return;
                     }
-                    transition({ ...current, folders: [], foldersError: "Couldn't load recent folders." });
+                    transition({ ...current, offer: EMPTY_OFFER, foldersError: "Couldn't load recent folders." });
                 },
             );
         },
@@ -700,9 +833,14 @@ export function NewSessionSheet({
 
     const start = async (agent: DeviceDTO, path = workdir, browser = browserTools): Promise<void> => {
         if (startingRef.current || dismissedRef.current) return;
+        const current = sheetStateRef.current;
+        const offer =
+            (current.step === "folders" || current.step === "error") && current.agent.device_id === agent.device_id
+                ? current.offer
+                : undefined;
         startingRef.current = true;
         transition({ step: "starting", agent });
-        const outcome = await client.startSessionRpc(agent.device_id, path, browser);
+        const outcome = await client.startSessionRpc(agent.device_id, path, browser, startPicks(offer, picks));
         if (!mountedRef.current || dismissedRef.current) return;
         if (outcome.kind === "created") {
             dismissedRef.current = true;
@@ -715,10 +853,18 @@ export function NewSessionSheet({
             return;
         }
         startingRef.current = false;
-        transition({ step: "error", agent, message: outcome.message });
+        transition({ step: "error", agent, message: outcome.message, offer });
     };
 
     const folderState = sheetState.step === "folders" ? sheetState : undefined;
+    const offer = folderState?.offer;
+    const agentPick = offer ? selectedAgent(offer, picks) : CLAUDE_AGENT;
+    // One choice is no choice: the switch shows only with a second agent to switch to. The model
+    // and effort pickers hide for a box that offers none (an older bridge, or one whose default
+    // agent is Codex) and while Codex is picked.
+    const agentSwitchVisible = (offer?.agentOptions.length ?? 0) > 1;
+    const modelPickerVisible = offer !== undefined && offer.modelOptions.length > 0 && agentPick === CLAUDE_AGENT;
+    const effortPickerVisible = offer !== undefined && offer.effortOptions.length > 0 && agentPick === CLAUDE_AGENT;
 
     return (
         <div className="mj_UploadConfirm_scrim" role="dialog" aria-modal="true" aria-labelledby="mj-new-session-title">
@@ -816,24 +962,28 @@ export function NewSessionSheet({
                     <>
                         <p>Start on {agentName(folderState.agent)}</p>
                         <BoxUsage status={boxStatuses[folderState.agent.device_id]} now={now} />
-                        {folderState.folders === undefined ? (
+                        {offer === undefined ? (
                             <div role="status">
                                 <span className="mj_Spinner" aria-hidden="true" /> Loading recent folders…
                             </div>
                         ) : (
-                            folderState.folders.length > 0 && (
+                            offer.folders.length > 0 && (
                                 <div role="list" aria-label="Recent folders">
-                                    {folderState.folders.map((folder) => (
+                                    {offer.folders.map((folder) => (
                                         <button
                                             key={folder.path}
                                             type="button"
                                             role="listitem"
+                                            className="mj_NewSessionSheet_folder"
                                             onClick={() => {
                                                 setWorkdir(folder.path);
                                                 void start(folderState.agent, folder.path, browserTools);
                                             }}
                                         >
-                                            {folder.path}
+                                            <span className="mj_NewSessionSheet_folderPath">{folder.path}</span>
+                                            <span className="mj_NewSessionSheet_folderUsed">
+                                                {folderLastUsed(folder.last_used, now)}
+                                            </span>
                                         </button>
                                     ))}
                                 </div>
@@ -850,6 +1000,76 @@ export function NewSessionSheet({
                             onChange={(event) => setWorkdir(event.target.value)}
                             placeholder="Agent default"
                         />
+                        {offer && agentSwitchVisible && (
+                            <div
+                                className="mj_TrackerSegment mj_NewSessionSheet_agentSwitch"
+                                role="group"
+                                aria-label="Agent"
+                            >
+                                {offer.agentOptions.map((option) => (
+                                    <button
+                                        key={option.value}
+                                        type="button"
+                                        aria-pressed={agentPick === option.value}
+                                        onClick={() => setPicks((current) => ({ ...current, agent: option.value }))}
+                                    >
+                                        {option.label}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                        {offer && (modelPickerVisible || effortPickerVisible) && (
+                            <div className="mj_NewSessionSheet_picks">
+                                {modelPickerVisible && (
+                                    <div className="mj_NewSessionSheet_pick">
+                                        <label htmlFor="mj-new-session-model">Model</label>
+                                        <select
+                                            id="mj-new-session-model"
+                                            value={picks.model ?? ""}
+                                            onChange={(event) =>
+                                                setPicks((current) => ({
+                                                    ...current,
+                                                    model: event.target.value || null,
+                                                }))
+                                            }
+                                        >
+                                            <option value="">
+                                                {defaultRowTitle(offer.modelOptions, offer.defaultModel)}
+                                            </option>
+                                            {offer.modelOptions.map((option) => (
+                                                <option key={option.value} value={option.value}>
+                                                    {option.label}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                )}
+                                {effortPickerVisible && (
+                                    <div className="mj_NewSessionSheet_pick">
+                                        <label htmlFor="mj-new-session-effort">Effort</label>
+                                        <select
+                                            id="mj-new-session-effort"
+                                            value={picks.effort ?? ""}
+                                            onChange={(event) =>
+                                                setPicks((current) => ({
+                                                    ...current,
+                                                    effort: event.target.value || null,
+                                                }))
+                                            }
+                                        >
+                                            <option value="">
+                                                {defaultRowTitle(offer.effortOptions, offer.defaultEffort)}
+                                            </option>
+                                            {offer.effortOptions.map((option) => (
+                                                <option key={option.value} value={option.value}>
+                                                    {option.label}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                )}
+                            </div>
+                        )}
                         <label>
                             <input
                                 type="checkbox"
@@ -899,6 +1119,21 @@ export function NewSessionSheet({
                     <>
                         <p className="mj_UploadConfirm_error">{sheetState.message}</p>
                         <div className="mj_UploadConfirm_actions">
+                            {sheetState.offer && (
+                                <button
+                                    type="button"
+                                    onClick={() =>
+                                        transition({
+                                            step: "folders",
+                                            agent: sheetState.agent,
+                                            foldersRequestId: foldersRequestIdRef.current,
+                                            offer: sheetState.offer,
+                                        })
+                                    }
+                                >
+                                    Change options
+                                </button>
+                            )}
                             <button
                                 type="button"
                                 className="mj_UploadConfirm_send"
@@ -1012,18 +1247,18 @@ export function MessageSearchResults({
                 Messages
             </div>
             {failed ? (
-                <p className="mj_RoomListEmpty" role="status">
+                <p className="mj_ConversationListEmpty" role="status">
                     Search is unavailable right now.
                 </p>
             ) : hits.length === 0 ? (
                 // Hits are bound to their query, so an empty set while loading means the current
                 // query has no results yet — show a searching state, never a prior query's rows.
                 loading ? (
-                    <p className="mj_RoomListEmpty" role="status">
+                    <p className="mj_ConversationListEmpty" role="status">
                         Searching…
                     </p>
                 ) : (
-                    <p className="mj_RoomListEmpty" role="status">
+                    <p className="mj_ConversationListEmpty" role="status">
                         No messages match your search.
                     </p>
                 )
@@ -1065,10 +1300,10 @@ function ConversationListView({
     const [accountOpen, setAccountOpen] = useState(false);
     const [newSessionOpen, setNewSessionOpen] = useState(false);
     const [pinDialog, setPinDialog] = useState<PinDialogTarget>();
-    const [roomMenu, setRoomMenu] = useState<{ conversationId: string; left: number; top: number }>();
-    const roomMenuRef = useRef(roomMenu);
-    const roomMenuElementRef = useRef<HTMLDivElement>(null);
-    const roomMenuOpenerRef = useRef<HTMLElement | null>(null);
+    const [conversationMenu, setConversationMenu] = useState<{ conversationId: string; left: number; top: number }>();
+    const conversationMenuRef = useRef(conversationMenu);
+    const conversationMenuElementRef = useRef<HTMLDivElement>(null);
+    const conversationMenuOpenerRef = useRef<HTMLElement | null>(null);
     // Pending rAF id for the post-menu-action focus restore; cancelled before re-scheduling
     // and on unmount so a stale callback can never steal focus (see restoreFocusAfterMenuAction).
     const restoreFocusFrameRef = useRef<number | undefined>(undefined);
@@ -1076,9 +1311,9 @@ function ConversationListView({
     const longPressTargetRef = useRef<{ conversationId: string; row: HTMLButtonElement } | undefined>(undefined);
     const longPressFiredRef = useRef(false);
     const longPressScrollCleanupRef = useRef<() => void>(() => undefined);
-    const openRoomMenuRef = useRef<(conversationId: string, left: number, top: number, opener: HTMLElement) => void>(
-        () => undefined,
-    );
+    const openConversationMenuRef = useRef<
+        (conversationId: string, left: number, top: number, opener: HTMLElement) => void
+    >(() => undefined);
     const longPressControllerRef = useRef<LongPressController | undefined>(undefined);
     const childOutcomesRef = useRef(
         new Map(
@@ -1133,12 +1368,12 @@ function ConversationListView({
         return () => clearTimeout(timer);
     }, [query, client]);
 
-    roomMenuRef.current = roomMenu;
-    openRoomMenuRef.current = (conversationId, left, top, opener): void => {
+    conversationMenuRef.current = conversationMenu;
+    openConversationMenuRef.current = (conversationId, left, top, opener): void => {
         setAccountOpen(false);
         setNewSessionOpen(false);
-        roomMenuOpenerRef.current = opener;
-        setRoomMenu({ conversationId, left, top });
+        conversationMenuOpenerRef.current = opener;
+        setConversationMenu({ conversationId, left, top });
     };
     if (!longPressControllerRef.current) {
         longPressControllerRef.current = createLongPressController({
@@ -1149,15 +1384,15 @@ function ConversationListView({
                 if (!target) return;
                 const rect = target.row.getBoundingClientRect();
                 longPressFiredRef.current = true;
-                openRoomMenuRef.current(target.conversationId, rect.right, rect.top, target.row);
+                openConversationMenuRef.current(target.conversationId, rect.right, rect.top, target.row);
             },
         });
     }
 
-    const closeRoomMenu = useCallback((restoreFocus = false): void => {
-        if (!roomMenuRef.current) return;
-        setRoomMenu(undefined);
-        if (restoreFocus) roomMenuOpenerRef.current?.focus();
+    const closeConversationMenu = useCallback((restoreFocus = false): void => {
+        if (!conversationMenuRef.current) return;
+        setConversationMenu(undefined);
+        if (restoreFocus) conversationMenuOpenerRef.current?.focus();
     }, []);
 
     // After a menu ACTION (mark-read/archive/unarchive) the focused menuitem unmounts, and
@@ -1166,7 +1401,7 @@ function ConversationListView({
     // connected (mark-read), else the always-present search input, so keyboard focus never falls
     // through to document.body.
     const restoreFocusAfterMenuAction = useCallback((): void => {
-        const opener = roomMenuOpenerRef.current;
+        const opener = conversationMenuOpenerRef.current;
         // Cancel any still-pending restore before scheduling a new one. Without this the
         // leaked callback fires on a LATER tick (or in a later test), finds its opener
         // disconnected, and yanks focus to the search input — a real focus-steal, and the
@@ -1175,7 +1410,7 @@ function ConversationListView({
         restoreFocusFrameRef.current = requestAnimationFrame(() => {
             restoreFocusFrameRef.current = undefined;
             if (opener && opener.isConnected) opener.focus();
-            else document.getElementById("room-list-search-input")?.focus();
+            else document.getElementById("conversation-search-input")?.focus();
         });
     }, []);
 
@@ -1213,16 +1448,17 @@ function ConversationListView({
     );
 
     useEffect(() => {
-        if (!roomMenu) return;
+        if (!conversationMenu) return;
         const onPointerDown = (event: PointerEvent): void => {
-            if (!roomMenuRef.current || roomMenuElementRef.current?.contains(event.target as Node)) return;
-            closeRoomMenu();
+            if (!conversationMenuRef.current || conversationMenuElementRef.current?.contains(event.target as Node))
+                return;
+            closeConversationMenu();
         };
         const onKeyDown = (event: KeyboardEvent): void => {
-            if (roomMenuRef.current && event.key === "Escape") closeRoomMenu(true);
+            if (conversationMenuRef.current && event.key === "Escape") closeConversationMenu(true);
         };
         const onScroll = (): void => {
-            if (roomMenuRef.current) closeRoomMenu();
+            if (conversationMenuRef.current) closeConversationMenu();
         };
         document.addEventListener("pointerdown", onPointerDown);
         document.addEventListener("keydown", onKeyDown);
@@ -1232,22 +1468,22 @@ function ConversationListView({
             document.removeEventListener("keydown", onKeyDown);
             document.removeEventListener("scroll", onScroll, true);
         };
-    }, [Boolean(roomMenu), closeRoomMenu]);
+    }, [Boolean(conversationMenu), closeConversationMenu]);
 
     useLayoutEffect(() => {
-        if (!roomMenu || !roomMenuElementRef.current) return;
-        const rect = roomMenuElementRef.current.getBoundingClientRect();
-        const left = Math.max(8, Math.min(roomMenu.left, window.innerWidth - rect.width - 8));
-        const top = Math.max(8, Math.min(roomMenu.top, window.innerHeight - rect.height - 8));
-        if (left !== roomMenu.left || top !== roomMenu.top) {
-            setRoomMenu({ ...roomMenu, left, top });
+        if (!conversationMenu || !conversationMenuElementRef.current) return;
+        const rect = conversationMenuElementRef.current.getBoundingClientRect();
+        const left = Math.max(8, Math.min(conversationMenu.left, window.innerWidth - rect.width - 8));
+        const top = Math.max(8, Math.min(conversationMenu.top, window.innerHeight - rect.height - 8));
+        if (left !== conversationMenu.left || top !== conversationMenu.top) {
+            setConversationMenu({ ...conversationMenu, left, top });
         }
-    }, [roomMenu]);
+    }, [conversationMenu]);
 
     useLayoutEffect(() => {
-        if (!roomMenu) return;
-        roomMenuElementRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
-    }, [roomMenu]);
+        if (!conversationMenu) return;
+        conversationMenuElementRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+    }, [conversationMenu]);
     // ONE canonical index feeds BOTH sidebar paths here (top-level fallback + nested
     // splice) AND the client-side selection/unread/mark-all consumers, so "rendered" and
     // "selectable/counted" can never diverge. rendersAsTopLevelRow: a non-child always
@@ -1325,17 +1561,17 @@ function ConversationListView({
             !state.archivedIds.has(conversation.id) &&
             isTopLevelRow(conversation),
     );
-    const menuConversation = roomMenu
-        ? state.conversations.find((conversation) => conversation.id === roomMenu.conversationId)
+    const menuConversation = conversationMenu
+        ? state.conversations.find((conversation) => conversation.id === conversationMenu.conversationId)
         : undefined;
 
     useEffect(() => {
-        if (roomMenu && !menuConversation) closeRoomMenu();
-    }, [roomMenu, menuConversation, closeRoomMenu]);
+        if (conversationMenu && !menuConversation) closeConversationMenu();
+    }, [conversationMenu, menuConversation, closeConversationMenu]);
 
     const openAtElement = (conversationId: string, anchor: HTMLElement, opener: HTMLElement = anchor): void => {
         const rect = anchor.getBoundingClientRect();
-        openRoomMenuRef.current(conversationId, rect.right, rect.bottom, opener);
+        openConversationMenuRef.current(conversationId, rect.right, rect.bottom, opener);
     };
 
     // Nav rail: which section is current, and the unread total it badges (archived rows excluded;
@@ -1343,11 +1579,7 @@ function ConversationListView({
     const navActive: NavKey = state.trackerView?.open
         ? NAV_KEY_FOR_VIEW[state.trackerView.view ?? "inbox"]
         : "conversations";
-    const unreadTotal = state.conversations.reduce((total, conversation) => {
-        if (state.archivedIds.has(conversation.id)) return total;
-        if (conversation.unread_count > 0) return total + conversation.unread_count;
-        return total + (effectiveUnread(conversation, state.unreadOverrideIds) ? 1 : 0);
-    }, 0);
+    const unreadTotal = countUnread(state.conversations, state.archivedIds, state.unreadOverrideIds);
     // The For you badge: open items awaiting the user, the inbox's own "Needs you" filter.
     const needsYouTotal = (state.inboxItems ?? []).filter(needsUser).length;
     const closeSettings = useCallback(() => setAccountOpen(false), []);
@@ -1388,7 +1620,9 @@ function ConversationListView({
             : [];
     // Move up / Move down step through the pins the Pinned section shows (hidden archived pins
     // keep their place but are hopped over, so every step moves the row on screen).
-    const menuPinIndex = roomMenu ? shownPins.findIndex((pin) => pin.convo_id === roomMenu.conversationId) : -1;
+    const menuPinIndex = conversationMenu
+        ? shownPins.findIndex((pin) => pin.convo_id === conversationMenu.conversationId)
+        : -1;
     const shownPinIds = shownPins.map((pin) => pin.convo_id);
     const nestedChildRows = (conversation: Conversation): React.ReactElement[] =>
         tab === "archived"
@@ -1442,9 +1676,9 @@ function ConversationListView({
             effectiveUnread(child, state.unreadOverrideIds),
         );
         return (
-            <div className="mj_RoomListItem_wrapper" role="listitem" key={conversation.id}>
+            <div className="mj_ConversationListItem_wrapper" role="listitem" key={conversation.id}>
                 <button
-                    className={`mj_RoomListItem${selected ? " mj_RoomListItem_selected" : ""}${isSubagent ? " mj_RoomListItem_sub" : ""}`}
+                    className={`mj_ConversationListItem${selected ? " mj_ConversationListItem_selected" : ""}${isSubagent ? " mj_ConversationListItem_sub" : ""}`}
                     type="button"
                     aria-current={selected ? "page" : undefined}
                     aria-label={`Open ${isSubagent ? "subagent" : "room"} ${name}${outcomeStatus ? `, ${outcomeStatus}` : ""}, last activity ${relativeTimestamp}${overrideUnread ? ", marked unread" : ""}${
@@ -1469,7 +1703,12 @@ function ConversationListView({
                             openAtElement(conversation.id, trigger ?? event.currentTarget, event.currentTarget);
                             return;
                         }
-                        openRoomMenuRef.current(conversation.id, event.clientX, event.clientY, event.currentTarget);
+                        openConversationMenuRef.current(
+                            conversation.id,
+                            event.clientX,
+                            event.clientY,
+                            event.currentTarget,
+                        );
                     }}
                     onPointerDown={(event) => {
                         if (event.pointerType !== "touch") return;
@@ -1499,73 +1738,76 @@ function ConversationListView({
                         live/terminal outcome. Parent rows keep the shipped pin-or-status behaviour
                         (star renders separately before the meta). */}
                     {isSubagent ? (
-                        <span className="mj_RoomListWorkerGlyphs" aria-hidden="true">
-                            <WorkerMark conversation={conversation} className="mj_WorkerMark mj_RoomListWorkerMark" />
+                        <span className="mj_ConversationListWorkerGlyphs" aria-hidden="true">
+                            <WorkerMark
+                                conversation={conversation}
+                                className="mj_WorkerMark mj_ConversationListWorkerMark"
+                            />
                             <OutcomeGlyph
                                 conversation={conversation}
-                                className="mj_RoomListOutcomeGlyph"
-                                spinnerClassName="mj_RoomListSubSpinner"
+                                className="mj_ConversationListOutcomeGlyph"
+                                spinnerClassName="mj_ConversationListSubSpinner"
                             />
                         </span>
                     ) : pin ? (
-                        <span className="mj_RoomListPinGlyph mj_PinGlyph" aria-hidden="true">
+                        <span className="mj_ConversationListPinGlyph mj_PinGlyph" aria-hidden="true">
                             {pinGlyph(pin)}
                         </span>
                     ) : isPinned(conversation.id) ? (
-                        <span className="mj_RoomListPinGlyph">
+                        <span className="mj_ConversationListPinGlyph">
                             <PinIcon aria-hidden />
                         </span>
                     ) : (
                         <span
-                            className={`mj_RoomListStatus mj_RoomListStatus_${
+                            className={`mj_ConversationListStatus mj_ConversationListStatus_${
                                 conversation.session_state === "running" ? "running" : "idle"
                             }`}
                             aria-hidden="true"
                         />
                     )}
-                    <span className={`mj_RoomListText${unread ? " mj_RoomListText_unread" : ""}`}>
-                        <span className="mj_RoomListName" title={name} data-testid="room-name">
+                    <span className={`mj_ConversationListText${unread ? " mj_ConversationListText_unread" : ""}`}>
+                        <span className="mj_ConversationListName" title={name} data-testid="conversation-name">
                             {isSubagent && (
-                                <span className="mj_RoomListSubArrow" aria-hidden="true">
+                                <span className="mj_ConversationListSubArrow" aria-hidden="true">
                                     ↳{" "}
                                 </span>
                             )}
                             {pin ? pin.label : <TaggedTitle conversation={conversation} agents={state.agents} />}
                         </span>
                         <span
-                            className="mj_RoomListMeta"
+                            className="mj_ConversationListMeta"
                             title={pin ? displayTitle(conversation) : conversation.snippet}
                         >
                             {pin ? (
                                 <>
-                                    <span className="mj_RoomListSnippet">
+                                    <span className="mj_ConversationListSnippet">
                                         <TaggedTitle conversation={conversation} agents={state.agents} />
                                     </span>
-                                    <span className="mj_RoomListDot"> · </span>
+                                    <span className="mj_ConversationListDot"> · </span>
                                 </>
                             ) : (
                                 conversation.snippet && (
                                     <>
-                                        <span className="mj_RoomListSnippet">{conversation.snippet}</span>
-                                        <span className="mj_RoomListDot"> · </span>
+                                        <span className="mj_ConversationListSnippet">{conversation.snippet}</span>
+                                        <span className="mj_ConversationListDot"> · </span>
                                     </>
                                 )
                             )}
-                            <span className="mj_RoomListTime">{relativeTimestamp}</span>
+                            <span className="mj_ConversationListTime">{relativeTimestamp}</span>
                         </span>
                     </span>
                     {state.favoriteIds.has(conversation.id) && (
-                        <span className="mj_RoomListStarGlyph">
+                        <span className="mj_ConversationListStarGlyph">
                             <StarFilledIcon aria-hidden />
                         </span>
                     )}
-                    <span className="mj_RoomListTrailing">
+                    <span className="mj_ConversationListTrailing">
                         {collapsedSubagentCount > 0 && (
                             // Decorative: the hidden-child count + unread state are announced via the
                             // containing row button's aria-label (a nested label here would be silent to AT).
                             <span
-                                className={`mj_RoomListCollapsedSubs${
-                                    collapsedSubagentUnread ? " mj_RoomListCollapsedSubs_unread" : ""
+                                className={`mj_ConversationListCollapsedSubs${
+                                    collapsedSubagentUnread ? " mj_ConversationListCollapsedSubs_unread" : ""
                                 }`}
                                 aria-hidden="true"
                             >
@@ -1587,10 +1829,10 @@ function ConversationListView({
                     trigger is invisible to mouse users (no hover reveal) but appears on
                     keyboard focus, so keyboard/AT users keep a discoverable, operable route. */}
                 <button
-                    className="mj_RoomItemMenu_trigger"
+                    className="mj_ConversationMenu_trigger"
                     type="button"
                     aria-haspopup="menu"
-                    aria-expanded={roomMenu?.conversationId === conversation.id}
+                    aria-expanded={conversationMenu?.conversationId === conversation.id}
                     aria-label="Conversation options"
                     ref={(element) => {
                         if (element) menuTriggerRefs.current.set(conversation.id, element);
@@ -1609,14 +1851,14 @@ function ConversationListView({
 
     // A pin whose conversation is gone (or not in this client's list): greyed, Move pin… / Unpin only.
     const renderMissingPin = (pin: ConvoPin): React.ReactElement => (
-        <div className="mj_RoomListItem_wrapper mj_PinRow_missing" role="listitem" key={pin.convo_id}>
-            <div className="mj_RoomListItem" aria-label={`Pinned ${pin.label}, conversation unavailable`}>
-                <span className="mj_RoomListPinGlyph mj_PinGlyph" aria-hidden="true">
+        <div className="mj_ConversationListItem_wrapper mj_PinRow_missing" role="listitem" key={pin.convo_id}>
+            <div className="mj_ConversationListItem" aria-label={`Pinned ${pin.label}, conversation unavailable`}>
+                <span className="mj_ConversationListPinGlyph mj_PinGlyph" aria-hidden="true">
                     {pinGlyph(pin)}
                 </span>
-                <span className="mj_RoomListText">
-                    <span className="mj_RoomListName">{pin.label}</span>
-                    <span className="mj_RoomListMeta">Conversation unavailable</span>
+                <span className="mj_ConversationListText">
+                    <span className="mj_ConversationListName">{pin.label}</span>
+                    <span className="mj_ConversationListMeta">Conversation unavailable</span>
                 </span>
             </div>
             <div className="mj_PinRow_actions">
@@ -1649,7 +1891,7 @@ function ConversationListView({
 
     return (
         <div
-            className={`mx_LeftPanel_outerWrapper ${
+            className={`mj_Sidebar_outerWrapper ${
                 // At the phone breakpoint the main region owns the whole width whenever it has a
                 // surface to show: a selected conversation OR the open tracker pane (mirrors the
                 // mj_Chat_mobileHidden test on the main region, so the two never both render).
@@ -1662,7 +1904,7 @@ function ConversationListView({
                 counts={{ conversations: unreadTotal, decisions: needsYouTotal }}
                 onSelect={(key) => {
                     setAccountOpen(false);
-                    closeRoomMenu();
+                    closeConversationMenu();
                     if (key === "conversations") client.closeTrackerView();
                     // A rail tap always lands on the section's home, not a page left open inside it.
                     else
@@ -1707,18 +1949,18 @@ function ConversationListView({
                     </button>
                 }
             />
-            <div className="mx_LeftPanel_wrapper mx_LeftPanel_newRoomList">
-                <div className="mx_LeftPanel_wrapper--user">
-                    <div className="mx_LeftPanel mx_LeftPanel_newRoomList">
-                        <div className="mx_LeftPanel_roomListContainer">
-                            <nav className="mx_RoomListPanel" aria-label="Room list">
+            <div className="mj_Sidebar_wrapper mj_Sidebar_list">
+                <div className="mj_Sidebar_wrapper--user">
+                    <div className="mj_Sidebar mj_Sidebar_list">
+                        <div className="mj_Sidebar_listContainer">
+                            <nav className="mj_ConversationListPanel" aria-label="Room list">
                                 <header
-                                    className="mj_RoomListHeader"
+                                    className="mj_ConversationListHeader"
                                     aria-label="Room options"
-                                    data-testid="room-list-header"
+                                    data-testid="conversation-list-header"
                                 >
-                                    <h2 className="mj_RoomListTitle">Conversations</h2>
-                                    <div className="mj_RoomListHeaderActions">
+                                    <h2 className="mj_ConversationListTitle">Conversations</h2>
+                                    <div className="mj_ConversationListHeaderActions">
                                         {tab !== "archived" && hasActiveUnread && (
                                             <button
                                                 className="mj_IconButton mj_MarkAllReadButton"
@@ -1746,7 +1988,7 @@ function ConversationListView({
                                             title="New session — runs /start"
                                             onClick={() => {
                                                 setAccountOpen(false);
-                                                closeRoomMenu();
+                                                closeConversationMenu();
                                                 setNewSessionOpen(true);
                                             }}
                                         >
@@ -1754,7 +1996,7 @@ function ConversationListView({
                                         </button>
                                     </div>
                                 </header>
-                                <div className="mj_RoomListTabs" role="group" aria-label="Filter conversations">
+                                <div className="mj_ConversationListTabs" role="group" aria-label="Filter conversations">
                                     {(
                                         [
                                             ["active", "Active"],
@@ -1766,7 +2008,7 @@ function ConversationListView({
                                             key={key}
                                             type="button"
                                             data-tab={key}
-                                            className={`mj_RoomListTab${tab === key ? " mj_RoomListTab_active" : ""}`}
+                                            className={`mj_ConversationListTab${tab === key ? " mj_ConversationListTab_active" : ""}`}
                                             aria-pressed={tab === key}
                                             aria-label={key === "favorites" ? "Favorites" : undefined}
                                             onClick={(event) => {
@@ -1778,15 +2020,15 @@ function ConversationListView({
                                         </button>
                                     ))}
                                 </div>
-                                <div data-testid="room-list-search" className="mx_RoomListSearch" role="search">
+                                <div data-testid="conversation-search" className="mj_ConversationSearch" role="search">
                                     <label
-                                        className="mx_RoomListSearch_inputWrapper mx_no_textinput"
-                                        htmlFor="room-list-search-input"
+                                        className="mj_ConversationSearch_inputWrapper mj_noTextInput"
+                                        htmlFor="conversation-search-input"
                                     >
                                         <SearchIcon aria-hidden />
                                         <input
-                                            id="room-list-search-input"
-                                            className="mx_RoomListSearch_input"
+                                            id="conversation-search-input"
+                                            className="mj_ConversationSearch_input"
                                             type="search"
                                             value={query}
                                             onChange={(event) => setQuery(event.target.value)}
@@ -1819,7 +2061,7 @@ function ConversationListView({
                                         {outcomeAnnouncement}
                                     </span>
                                 )}
-                                <div className="mj_RoomList" data-testid="room-list">
+                                <div className="mj_ConversationList" data-testid="conversation-list">
                                     <NumberSearchResult client={client} query={query} />
                                     {/* Active/Favorites render each parent row, then splice
                                         its NON-ARCHIVED subagent children in beneath (indented) —
@@ -1841,8 +2083,8 @@ function ConversationListView({
                                         section first. Each parent row is followed by its nested
                                         running children, as before. */}
                                     {pinSection.length > 0 && (
-                                        <section className="mj_RoomListGroup" aria-label="Pinned">
-                                            <div className="mj_RoomListGroup_label" aria-hidden="true">
+                                        <section className="mj_ConversationListGroup" aria-label="Pinned">
+                                            <div className="mj_ConversationListGroup_label" aria-hidden="true">
                                                 Pinned
                                             </div>
                                             <div role="list">
@@ -1862,11 +2104,11 @@ function ConversationListView({
                                     )}
                                     {rowGroups.map((group) => (
                                         <section
-                                            className="mj_RoomListGroup"
+                                            className="mj_ConversationListGroup"
                                             key={group.label}
                                             aria-label={group.label}
                                         >
-                                            <div className="mj_RoomListGroup_label" aria-hidden="true">
+                                            <div className="mj_ConversationListGroup_label" aria-hidden="true">
                                                 {group.label}
                                             </div>
                                             <div role="list">
@@ -1878,27 +2120,31 @@ function ConversationListView({
                                         </section>
                                     ))}
                                     {tab === "active" && !hasAnyActive && archivedTotal === 0 && !pinSection.length && (
-                                        <p className="mj_RoomListEmpty">Your agent conversations will appear here.</p>
+                                        <p className="mj_ConversationListEmpty">
+                                            Your agent conversations will appear here.
+                                        </p>
                                     )}
                                     {tab === "active" && !hasAnyActive && archivedTotal > 0 && !pinSection.length && (
-                                        <p className="mj_RoomListEmpty">No active conversations.</p>
+                                        <p className="mj_ConversationListEmpty">No active conversations.</p>
                                     )}
                                     {tab === "active" && hasAnyActive && !visibleRows.length && !pinSection.length && (
-                                        <p className="mj_RoomListEmpty">No conversations match your search.</p>
+                                        <p className="mj_ConversationListEmpty">No conversations match your search.</p>
                                     )}
                                     {tab === "favorites" && !hasAnyFavorite && (
-                                        <p className="mj_RoomListEmpty">No favorite conversations yet.</p>
+                                        <p className="mj_ConversationListEmpty">No favorite conversations yet.</p>
                                     )}
                                     {tab === "favorites" && hasAnyFavorite && !visibleRows.length && (
-                                        <p className="mj_RoomListEmpty">No favorites match your search.</p>
+                                        <p className="mj_ConversationListEmpty">No favorites match your search.</p>
                                     )}
                                     {tab === "archived" && archivedTotal === 0 && (
-                                        <p className="mj_RoomListEmpty">No archived conversations.</p>
+                                        <p className="mj_ConversationListEmpty">No archived conversations.</p>
                                     )}
                                     {tab === "archived" && archivedTotal > 0 && !visibleRows.length && (
-                                        <p className="mj_RoomListEmpty">No archived conversations match your search.</p>
+                                        <p className="mj_ConversationListEmpty">
+                                            No archived conversations match your search.
+                                        </p>
                                     )}
-                                    {/* Inside the room-list scroll container so the Messages section
+                                    {/* Inside the conversation list scroll container so the Messages section
                                         scrolls with the chat list — a long hit list stays reachable. */}
                                     <MessageSearchResults
                                         query={query}
@@ -1936,12 +2182,12 @@ function ConversationListView({
                         onClose={() => setPinDialog(undefined)}
                     />
                 )}
-                {roomMenu && menuConversation && (
+                {conversationMenu && menuConversation && (
                     <div
-                        className="mj_HeaderMenu mj_RoomItemMenu"
+                        className="mj_HeaderMenu mj_ConversationMenu"
                         role="menu"
-                        ref={roomMenuElementRef}
-                        style={{ position: "fixed", left: roomMenu.left, top: roomMenu.top }}
+                        ref={conversationMenuElementRef}
+                        style={{ position: "fixed", left: conversationMenu.left, top: conversationMenu.top }}
                         onKeyDown={(event) => {
                             const items = Array.from(
                                 event.currentTarget.querySelectorAll<HTMLElement>('[role="menuitem"]'),
@@ -1965,18 +2211,18 @@ function ConversationListView({
                             } else if (event.key === "Escape") {
                                 event.preventDefault();
                                 event.stopPropagation();
-                                closeRoomMenu(true);
+                                closeConversationMenu(true);
                             }
                         }}
                     >
                         {journalPins ? (
-                            !(roomMenu && journalPinnedIds.has(roomMenu.conversationId)) ? (
+                            !(conversationMenu && journalPinnedIds.has(conversationMenu.conversationId)) ? (
                                 <button
-                                    className="mj_RoomItemMenu_item"
+                                    className="mj_ConversationMenu_item"
                                     type="button"
                                     role="menuitem"
                                     onClick={() => {
-                                        closeRoomMenu();
+                                        closeConversationMenu();
                                         setPinDialog({ kind: "edit", convoId: menuConversation.id });
                                     }}
                                 >
@@ -1986,11 +2232,11 @@ function ConversationListView({
                             ) : (
                                 <>
                                     <button
-                                        className="mj_RoomItemMenu_item"
+                                        className="mj_ConversationMenu_item"
                                         type="button"
                                         role="menuitem"
                                         onClick={() => {
-                                            closeRoomMenu();
+                                            closeConversationMenu();
                                             setPinDialog({ kind: "edit", convoId: menuConversation.id });
                                         }}
                                     >
@@ -1999,11 +2245,11 @@ function ConversationListView({
                                     </button>
                                     {menuPinIndex > 0 && (
                                         <button
-                                            className="mj_RoomItemMenu_item"
+                                            className="mj_ConversationMenu_item"
                                             type="button"
                                             role="menuitem"
                                             onClick={() => {
-                                                closeRoomMenu();
+                                                closeConversationMenu();
                                                 void client.shiftPin(menuConversation.id, "up", shownPinIds);
                                                 restoreFocusAfterMenuAction();
                                             }}
@@ -2014,11 +2260,11 @@ function ConversationListView({
                                     )}
                                     {menuPinIndex >= 0 && menuPinIndex < shownPins.length - 1 && (
                                         <button
-                                            className="mj_RoomItemMenu_item"
+                                            className="mj_ConversationMenu_item"
                                             type="button"
                                             role="menuitem"
                                             onClick={() => {
-                                                closeRoomMenu();
+                                                closeConversationMenu();
                                                 void client.shiftPin(menuConversation.id, "down", shownPinIds);
                                                 restoreFocusAfterMenuAction();
                                             }}
@@ -2028,11 +2274,11 @@ function ConversationListView({
                                         </button>
                                     )}
                                     <button
-                                        className="mj_RoomItemMenu_item"
+                                        className="mj_ConversationMenu_item"
                                         type="button"
                                         role="menuitem"
                                         onClick={() => {
-                                            closeRoomMenu();
+                                            closeConversationMenu();
                                             setPinDialog({ kind: "move", convoId: menuConversation.id });
                                         }}
                                     >
@@ -2040,11 +2286,11 @@ function ConversationListView({
                                         Move pin…
                                     </button>
                                     <button
-                                        className="mj_RoomItemMenu_item"
+                                        className="mj_ConversationMenu_item"
                                         type="button"
                                         role="menuitem"
                                         onClick={() => {
-                                            closeRoomMenu();
+                                            closeConversationMenu();
                                             void client.removePin(menuConversation.id);
                                             restoreFocusAfterMenuAction();
                                         }}
@@ -2056,11 +2302,11 @@ function ConversationListView({
                             )
                         ) : state.pinnedIds.has(menuConversation.id) ? (
                             <button
-                                className="mj_RoomItemMenu_item"
+                                className="mj_ConversationMenu_item"
                                 type="button"
                                 role="menuitem"
                                 onClick={() => {
-                                    closeRoomMenu();
+                                    closeConversationMenu();
                                     client.unpinConversation(menuConversation.id);
                                     restoreFocusAfterMenuAction();
                                 }}
@@ -2070,11 +2316,11 @@ function ConversationListView({
                             </button>
                         ) : (
                             <button
-                                className="mj_RoomItemMenu_item"
+                                className="mj_ConversationMenu_item"
                                 type="button"
                                 role="menuitem"
                                 onClick={() => {
-                                    closeRoomMenu();
+                                    closeConversationMenu();
                                     client.pinConversation(menuConversation.id);
                                     restoreFocusAfterMenuAction();
                                 }}
@@ -2085,11 +2331,11 @@ function ConversationListView({
                         )}
                         {state.favoriteIds.has(menuConversation.id) ? (
                             <button
-                                className="mj_RoomItemMenu_item"
+                                className="mj_ConversationMenu_item"
                                 type="button"
                                 role="menuitem"
                                 onClick={() => {
-                                    closeRoomMenu();
+                                    closeConversationMenu();
                                     client.unfavoriteConversation(menuConversation.id);
                                     restoreFocusAfterMenuAction();
                                 }}
@@ -2099,11 +2345,11 @@ function ConversationListView({
                             </button>
                         ) : (
                             <button
-                                className="mj_RoomItemMenu_item"
+                                className="mj_ConversationMenu_item"
                                 type="button"
                                 role="menuitem"
                                 onClick={() => {
-                                    closeRoomMenu();
+                                    closeConversationMenu();
                                     client.favoriteConversation(menuConversation.id);
                                     restoreFocusAfterMenuAction();
                                 }}
@@ -2115,11 +2361,11 @@ function ConversationListView({
                         {!state.archivedIds.has(menuConversation.id) &&
                             !effectiveUnread(menuConversation, state.unreadOverrideIds) && (
                                 <button
-                                    className="mj_RoomItemMenu_item"
+                                    className="mj_ConversationMenu_item"
                                     type="button"
                                     role="menuitem"
                                     onClick={() => {
-                                        closeRoomMenu();
+                                        closeConversationMenu();
                                         client.markConversationUnread(menuConversation.id);
                                         restoreFocusAfterMenuAction();
                                     }}
@@ -2131,11 +2377,11 @@ function ConversationListView({
                         {!state.archivedIds.has(menuConversation.id) &&
                             effectiveUnread(menuConversation, state.unreadOverrideIds) && (
                                 <button
-                                    className="mj_RoomItemMenu_item"
+                                    className="mj_ConversationMenu_item"
                                     type="button"
                                     role="menuitem"
                                     onClick={() => {
-                                        closeRoomMenu();
+                                        closeConversationMenu();
                                         client.markConversationRead(menuConversation.id);
                                         restoreFocusAfterMenuAction();
                                     }}
@@ -2149,11 +2395,11 @@ function ConversationListView({
                             stays true while collapsed, so "Show subagents" remains reachable). */}
                         {hasSubagentChildRows(menuConversation, sidebarIndex) && (
                             <button
-                                className="mj_RoomItemMenu_item"
+                                className="mj_ConversationMenu_item"
                                 type="button"
                                 role="menuitem"
                                 onClick={() => {
-                                    closeRoomMenu();
+                                    closeConversationMenu();
                                     client.toggleSubagentCollapse(menuConversation.id);
                                     restoreFocusAfterMenuAction();
                                 }}
@@ -2166,11 +2412,11 @@ function ConversationListView({
                         )}
                         {state.archivedIds.has(menuConversation.id) ? (
                             <button
-                                className="mj_RoomItemMenu_item"
+                                className="mj_ConversationMenu_item"
                                 type="button"
                                 role="menuitem"
                                 onClick={() => {
-                                    closeRoomMenu();
+                                    closeConversationMenu();
                                     client.unarchiveConversation(menuConversation.id);
                                     restoreFocusAfterMenuAction();
                                 }}
@@ -2180,11 +2426,11 @@ function ConversationListView({
                             </button>
                         ) : (
                             <button
-                                className="mj_RoomItemMenu_item"
+                                className="mj_ConversationMenu_item"
                                 type="button"
                                 role="menuitem"
                                 onClick={() => {
-                                    closeRoomMenu();
+                                    closeConversationMenu();
                                     client.archiveConversation(menuConversation.id);
                                     restoreFocusAfterMenuAction();
                                 }}
@@ -2563,6 +2809,17 @@ function HeaderDisclosure({
     );
 }
 
+/** The title cluster alone, or in a row with the control beside it (the mission chip). */
+function withAccessory(cluster: React.ReactElement, accessory: React.ReactNode): React.ReactElement {
+    if (!accessory) return cluster;
+    return (
+        <div className="mj_HeaderTitleRow">
+            {cluster}
+            {accessory}
+        </div>
+    );
+}
+
 export function HeaderShell({
     mode,
     onBack,
@@ -2571,6 +2828,7 @@ export function HeaderShell({
     titleNode,
     titleGlyph,
     titleBadge,
+    titleAccessory,
     subtitle,
     subtitleCompact,
     hasSubtitle,
@@ -2590,6 +2848,8 @@ export function HeaderShell({
     // requires the header to name the SUBAGENT when inside one — never the parent.
     titleGlyph?: React.ReactNode;
     titleBadge?: React.ReactNode;
+    /** A control beside the title, outside the heading (the mission chip). */
+    titleAccessory?: React.ReactNode;
     subtitle: React.ReactNode;
     subtitleCompact?: React.ReactNode;
     hasSubtitle: boolean;
@@ -2634,62 +2894,67 @@ export function HeaderShell({
     const controls = titleCollapsed && hideControlsWhenCompact ? null : rightControls;
 
     return (
-        <header
-            ref={headerRef}
-            className={`mx_RoomHeader light-panel mj_ChatHeader${mode === "child" ? " mj_SubChatHeader" : ""}`}
-            tabIndex={-1}
-        >
+        <header ref={headerRef} className={`mj_ChatHeader${mode === "child" ? " mj_SubChatHeader" : ""}`} tabIndex={-1}>
             <button type="button" className="mj_BackButton" onClick={onBack} aria-label={backLabel}>
                 <ChevronLeftIcon />
             </button>
-            {titleCollapsed ? (
-                <HeaderDisclosure
-                    className="mj_HeaderCluster mj_HeaderTitleCluster mj_HeaderTitleCluster_compact"
-                    triggerClassName="mj_HeaderTitleDisclosure"
-                    panelClassName="mj_HeaderMenu mj_TitlePopover"
-                    label="Conversation details"
-                    headerRef={headerRef}
-                    before={
+            {withAccessory(
+                titleCollapsed ? (
+                    <HeaderDisclosure
+                        className="mj_HeaderCluster mj_HeaderTitleCluster mj_HeaderTitleCluster_compact"
+                        triggerClassName="mj_HeaderTitleDisclosure"
+                        panelClassName="mj_HeaderMenu mj_TitlePopover"
+                        label="Conversation details"
+                        headerRef={headerRef}
+                        before={
+                            <div
+                                id={titleHeadingId}
+                                dir="auto"
+                                role="heading"
+                                aria-level={1}
+                                className="mj_ChatHeader_heading"
+                                title={title}
+                            >
+                                {titleGlyph && (
+                                    <span className="mj_HeaderTitleGlyph" aria-hidden="true">
+                                        {titleGlyph}
+                                    </span>
+                                )}
+                                <span className="mj_ChatHeader_truncated mj_lineClamp">{titleNode ?? title}</span>
+                                {titleBadge}
+                            </div>
+                        }
+                        trigger={
+                            <>
+                                {subtitleCompact}
+                                <ChevronDownIcon aria-hidden="true" />
+                            </>
+                        }
+                    >
+                        <div className="mj_TitlePopoverTitle">{title}</div>
+                        {hasSubtitle && <div className="mj_HeaderMeta">{subtitle}</div>}
+                    </HeaderDisclosure>
+                ) : (
+                    <div className="mj_HeaderCluster mj_HeaderTitleCluster">
                         <div
                             id={titleHeadingId}
                             dir="auto"
                             role="heading"
                             aria-level={1}
-                            className="mx_RoomHeader_heading"
-                            title={title}
+                            className="mj_ChatHeader_heading"
                         >
                             {titleGlyph && (
                                 <span className="mj_HeaderTitleGlyph" aria-hidden="true">
                                     {titleGlyph}
                                 </span>
                             )}
-                            <span className="mx_RoomHeader_truncated mx_lineClamp">{titleNode ?? title}</span>
+                            <span className="mj_ChatHeader_truncated mj_lineClamp">{titleNode ?? title}</span>
                             {titleBadge}
                         </div>
-                    }
-                    trigger={
-                        <>
-                            {subtitleCompact}
-                            <ChevronDownIcon aria-hidden="true" />
-                        </>
-                    }
-                >
-                    <div className="mj_TitlePopoverTitle">{title}</div>
-                    {hasSubtitle && <div className="mj_HeaderMeta">{subtitle}</div>}
-                </HeaderDisclosure>
-            ) : (
-                <div className="mj_HeaderCluster mj_HeaderTitleCluster">
-                    <div id={titleHeadingId} dir="auto" role="heading" aria-level={1} className="mx_RoomHeader_heading">
-                        {titleGlyph && (
-                            <span className="mj_HeaderTitleGlyph" aria-hidden="true">
-                                {titleGlyph}
-                            </span>
-                        )}
-                        <span className="mx_RoomHeader_truncated mx_lineClamp">{titleNode ?? title}</span>
-                        {titleBadge}
+                        {hasSubtitle && <div className="mj_HeaderMeta">{subtitle}</div>}
                     </div>
-                    {hasSubtitle && <div className="mj_HeaderMeta">{subtitle}</div>}
-                </div>
+                ),
+                titleAccessory,
             )}
             <div className="mj_HeaderControls">
                 {usageCollapsed && hasCollapsedUsage ? (
@@ -2798,7 +3063,7 @@ function HeaderOverflowMenu({
             </button>
             {open && (
                 <div
-                    className="mj_HeaderMenu mj_RoomItemMenu"
+                    className="mj_HeaderMenu mj_ConversationMenu"
                     role="menu"
                     ref={panelRef}
                     onKeyDown={(event) => {
@@ -2828,7 +3093,7 @@ function HeaderOverflowMenu({
                         journalPinned ? (
                             <>
                                 <button
-                                    className="mj_RoomItemMenu_item"
+                                    className="mj_ConversationMenu_item"
                                     type="button"
                                     role="menuitem"
                                     onClick={() => openPinDialog({ kind: "edit", convoId: id })}
@@ -2837,7 +3102,7 @@ function HeaderOverflowMenu({
                                     Edit pin…
                                 </button>
                                 <button
-                                    className="mj_RoomItemMenu_item"
+                                    className="mj_ConversationMenu_item"
                                     type="button"
                                     role="menuitem"
                                     onClick={() => openPinDialog({ kind: "move", convoId: id })}
@@ -2846,7 +3111,7 @@ function HeaderOverflowMenu({
                                     Move pin…
                                 </button>
                                 <button
-                                    className="mj_RoomItemMenu_item"
+                                    className="mj_ConversationMenu_item"
                                     type="button"
                                     role="menuitem"
                                     onClick={() => act(() => void client.removePin(id))}
@@ -2857,7 +3122,7 @@ function HeaderOverflowMenu({
                             </>
                         ) : (
                             <button
-                                className="mj_RoomItemMenu_item"
+                                className="mj_ConversationMenu_item"
                                 type="button"
                                 role="menuitem"
                                 onClick={() => openPinDialog({ kind: "edit", convoId: id })}
@@ -2868,7 +3133,7 @@ function HeaderOverflowMenu({
                         )
                     ) : (
                         <button
-                            className="mj_RoomItemMenu_item"
+                            className="mj_ConversationMenu_item"
                             type="button"
                             role="menuitem"
                             onClick={() =>
@@ -2880,7 +3145,7 @@ function HeaderOverflowMenu({
                         </button>
                     )}
                     <button
-                        className="mj_RoomItemMenu_item"
+                        className="mj_ConversationMenu_item"
                         type="button"
                         role="menuitem"
                         onClick={() =>
@@ -2894,7 +3159,7 @@ function HeaderOverflowMenu({
                     </button>
                     {!isArchived && (
                         <button
-                            className="mj_RoomItemMenu_item"
+                            className="mj_ConversationMenu_item"
                             type="button"
                             role="menuitem"
                             onClick={() =>
@@ -2908,7 +3173,7 @@ function HeaderOverflowMenu({
                         </button>
                     )}
                     <button
-                        className="mj_RoomItemMenu_item"
+                        className="mj_ConversationMenu_item"
                         type="button"
                         role="menuitem"
                         onClick={() =>
@@ -2922,6 +3187,185 @@ function HeaderOverflowMenu({
             )}
             {pinDialog && (
                 <PinDialog client={client} state={state} target={pinDialog} onClose={() => setPinDialog(undefined)} />
+            )}
+        </div>
+    );
+}
+
+/** The least of a mission name worth drawing in the chip; with less room it reads "#12 S…", so the
+ *  chip shows "#12 +2" instead (the Mac's minimumNameWidth). */
+const CHIP_MIN_NAME_PX = 40;
+const CHIP_MAX_PX = 240;
+const CHIP_TITLE_STUB_REM = 6;
+
+/**
+ * How the chip fits beside the conversation title: the title comes first and the chip takes what it
+ * leaves. The name shows while there is room for at least CHIP_MIN_NAME_PX of it, else the chip
+ * reads "#12 +2" rather than "#12 S…"; and the chip keeps that number-only width (`minWidth`) unless
+ * even that would push the title below its stub, when the chip is hidden (`minWidth` null). Measured from the
+ * title row (the chip's parent), since which of the two gives way depends on both their lengths.
+ */
+function useChipFit(
+    triggerRef: React.RefObject<HTMLButtonElement | null>,
+    name: string | null,
+): { nameFits: boolean; minWidth: number | null } {
+    const [fit, setFit] = useState<{ nameFits: boolean; minWidth: number | null }>({ nameFits: true, minWidth: null });
+    useLayoutEffect(() => {
+        const trigger = triggerRef.current;
+        const row = trigger?.parentElement?.parentElement;
+        const nameEl = trigger?.querySelector<HTMLElement>(".mj_MissionChip_name");
+        if (!trigger || !row || !nameEl) return;
+        const measure = (): void => {
+            const title = row.firstElementChild as HTMLElement | null;
+            const heading = title?.querySelector<HTMLElement>(".mj_ChatHeader_heading");
+            const meta = title?.querySelector<HTMLElement>(".mj_HeaderMeta, .mj_HeaderTitleDisclosure");
+            const titleWant = Math.max(heading?.scrollWidth ?? 0, meta?.scrollWidth ?? 0);
+            // The title's stub: `min-width: min(6rem, 100%)` on the title cluster in the CSS.
+            const rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+            const titleStub = Math.min(titleWant, CHIP_TITLE_STUB_REM * rem);
+            const gap = parseFloat(getComputedStyle(row).columnGap) || 0;
+            // The chip without its name ("#12 +2"), and with all of it, capped like the CSS.
+            const numberOnly = Math.ceil(trigger.scrollWidth - nameEl.getBoundingClientRect().width);
+            const full = Math.min(CHIP_MAX_PX, numberOnly + (name ? nameEl.scrollWidth + 4 : 0));
+            const room = row.clientWidth - titleWant - gap;
+            const nameFits = !!name && (room >= full || room >= numberOnly + CHIP_MIN_NAME_PX);
+            const minWidth = row.clientWidth - titleStub - gap >= numberOnly ? numberOnly : null;
+            setFit((prev) =>
+                prev.nameFits === nameFits && prev.minWidth === minWidth ? prev : { nameFits, minWidth },
+            );
+        };
+        measure();
+        if (typeof ResizeObserver === "undefined") return;
+        const observer = new ResizeObserver(measure);
+        observer.observe(row);
+        const heading = row.firstElementChild?.querySelector(".mj_ChatHeader_heading");
+        if (heading) observer.observe(heading);
+        return () => observer.disconnect();
+    }, [triggerRef, name]);
+    return fit;
+}
+
+// The chat header's mission chip, after the Mac's: "⚑ #12 Ship the docs +2 ▾" names the
+// conversation's current mission (else its newest), and opens every mission the conversation
+// touched as Current / Also on / Earlier. Picking one opens its mission page. Hidden while the
+// conversation has never been on a mission, and until its missions are fetched.
+export function MissionChip({
+    client,
+    conversation,
+    links,
+}: {
+    client: MatronJournalClient;
+    conversation: Conversation;
+    links: readonly ConversationMissionLink[];
+}): React.ReactElement | null {
+    const [open, setOpen] = useState(false);
+    const openerRef = useRef<HTMLButtonElement>(null);
+    const panelRef = useRef<HTMLDivElement>(null);
+    const close = useCallback(() => setOpen(false), []);
+    useDismissablePopover(open, close, { openerRef, panelRef });
+    useLayoutEffect(() => {
+        if (open) panelRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+    }, [open]);
+
+    const label = chipLabel(links, conversation.title);
+    const fit = useChipFit(openerRef, label?.name ?? null);
+    if (!label) return null;
+    const sections = missionSections(links);
+    const headline = chipHeadline(sections)!;
+    const groups: Array<[string, ConversationMissionLink[]]> = [
+        ["Current", sections.current ? [sections.current] : []],
+        ["Also on", sections.alsoOn],
+        ["Earlier", sections.earlier],
+    ];
+    const openMission = (num: number): void => {
+        close();
+        client.openTrackerMission(num);
+    };
+    const accessible =
+        `Mission ${headline.num}, ${headline.title}` +
+        (label.others > 0 ? `, and ${label.others} more` : "") +
+        ". Every mission this conversation worked on";
+
+    return (
+        <div
+            className={`mj_MissionChip${fit.minWidth == null ? " mj_MissionChip_hidden" : ""}`}
+            style={fit.minWidth != null ? { minWidth: fit.minWidth } : undefined}
+            onBlur={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) close();
+            }}
+        >
+            <button
+                ref={openerRef}
+                type="button"
+                className={`mj_MissionChip_trigger${headline.current ? " mj_MissionChip_trigger_current" : ""}`}
+                aria-label={accessible}
+                title="Every mission this conversation worked on"
+                aria-haspopup="menu"
+                aria-expanded={open}
+                onClick={() => setOpen((current) => !current)}
+            >
+                <ProjectsIcon className="mj_MissionChip_flag" aria-hidden="true" />
+                <span className="mj_MissionChip_num">{label.number}</span>
+                {/* Always rendered, empty when unused: the chip's grid has a fixed column for each. */}
+                <span className={`mj_MissionChip_name${fit.nameFits ? "" : " mj_MissionChip_name_hidden"}`}>
+                    {label.name ?? ""}
+                </span>
+                <span className="mj_MissionChip_more">{label.others > 0 ? `+${label.others}` : ""}</span>
+                <ChevronDownIcon className="mj_MissionChip_chevron" aria-hidden="true" />
+            </button>
+            {open && (
+                <div
+                    className="mj_HeaderMenu mj_MissionMenu"
+                    role="menu"
+                    aria-label="Missions"
+                    ref={panelRef}
+                    onKeyDown={(event) => {
+                        const items = Array.from(
+                            event.currentTarget.querySelectorAll<HTMLElement>('[role="menuitem"]'),
+                        );
+                        const index = items.findIndex((item) => item === document.activeElement);
+                        if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                            event.preventDefault();
+                            const step = event.key === "ArrowDown" ? 1 : -1;
+                            const next =
+                                index === -1
+                                    ? step === 1
+                                        ? 0
+                                        : items.length - 1
+                                    : (index + step + items.length) % items.length;
+                            items[next]?.focus();
+                        } else if (event.key === "Escape") {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            close();
+                            openerRef.current?.focus();
+                        }
+                    }}
+                >
+                    {groups.map(([groupLabel, rows]) =>
+                        rows.length === 0 ? null : (
+                            <div key={groupLabel} className="mj_MissionMenu_group" role="group" aria-label={groupLabel}>
+                                <div className="mj_MissionMenu_label" aria-hidden="true">
+                                    {groupLabel}
+                                </div>
+                                {rows.map((link) => (
+                                    <button
+                                        key={link.id}
+                                        type="button"
+                                        role="menuitem"
+                                        className={`mj_MissionMenu_item${isEarlierLink(link) ? " mj_MissionMenu_item_earlier" : ""}`}
+                                        onClick={() => openMission(link.num)}
+                                    >
+                                        <span className="mj_MissionMenu_title">
+                                            <span className="mj_MissionMenu_num">#{link.num}</span> {link.title}
+                                        </span>
+                                        <span className="mj_MissionMenu_line">{linkLine(link)}</span>
+                                    </button>
+                                ))}
+                            </div>
+                        ),
+                    )}
+                </div>
             )}
         </div>
     );
@@ -2944,6 +3388,14 @@ function ChatHeader({
     const meters = buildUsageMeters(status, limits);
     const shortModel = status?.model ? shortModelName(status.model) : undefined;
     const hasSubtitle = Boolean(status?.model || runState);
+    // The mission chip's data: fetched whenever another conversation comes on screen (mission
+    // markers keep it fresh after that), and only ever shown for the conversation it was fetched for.
+    const convoId = conversation?.id;
+    useEffect(() => {
+        if (convoId) void client.loadConversationMissions(convoId);
+    }, [client, convoId]);
+    const missionLinks =
+        convoId && state.conversationMissions?.convoId === convoId ? state.conversationMissions.links : [];
     return (
         <HeaderShell
             mode="parent"
@@ -2970,6 +3422,11 @@ function ChatHeader({
                 )
             }
             hasSubtitle={hasSubtitle}
+            titleAccessory={
+                conversation && missionLinks.length > 0 ? (
+                    <MissionChip client={client} conversation={conversation} links={missionLinks} />
+                ) : undefined
+            }
             rightControls={
                 status?.context && (
                     <button
@@ -3220,8 +3677,6 @@ export function QueuedReleaseCard({
     );
 }
 
-const PROMPT_REPLY_CONFIRMATION_TIMEOUT_MS = 10_000;
-
 function PromptCard({
     client,
     event,
@@ -3238,6 +3693,9 @@ function PromptCard({
     isReadOnly?: boolean;
 }): React.ReactElement {
     const [freeText, setFreeText] = useState("");
+    // Indexes of the options ticked on a pick_many question; nothing is sent until Send.
+    const [picked, setPicked] = useState<ReadonlySet<number>>(() => new Set());
+    const questionId = useId();
     const [locallyAnswered, setLocallyAnswered] = useState(false);
     const [confirmationTimedOut, setConfirmationTimedOut] = useState(false);
     const [nowMs, setNowMs] = useState(() => Date.now());
@@ -3258,6 +3716,9 @@ function PromptCard({
         }
         return { label: String(option), value: String(option) };
     });
+    // A multi-select question (`mode: "pick_many"`): options toggle, and one Send answers with
+    // every ticked option's value, in option order, joined by ", " — the reply the other apps send.
+    const pickMany = !permission && event.payload.mode === "pick_many" && options.length > 0;
     const resolved = answered || (!permission && locallyAnswered);
     const expiresAt =
         typeof event.payload.expires_at === "number" && Number.isFinite(event.payload.expires_at)
@@ -3305,9 +3766,24 @@ function PromptCard({
     // "Allow"; for a generic question the first option whose label reads affirmative
     // (send/yes/continue/confirm/ok/approve). Chosen by SEMANTICS, not position, so a
     // reordered payload never fills "Always allow" / "Deny" / "Cancel".
-    const affirmativeIndex = options.findIndex((option) =>
-        permission ? option.label.trim().toLocaleLowerCase() === "allow" : PROMPT_AFFIRMATIVE.test(option.label.trim()),
-    );
+    // A multi-select question's one primary is its Send button, never an option.
+    const affirmativeIndex = pickMany
+        ? -1
+        : options.findIndex((option) =>
+              permission
+                  ? option.label.trim().toLocaleLowerCase() === "allow"
+                  : PROMPT_AFFIRMATIVE.test(option.label.trim()),
+          );
+    const togglePicked = (index: number): void =>
+        setPicked((current) => {
+            const next = new Set(current);
+            if (!next.delete(index)) next.add(index);
+            return next;
+        });
+    const sendPicked = (): void => {
+        const values = options.filter((_option, index) => picked.has(index)).map((option) => option.value);
+        if (values.length > 0) answer(values.join(", "));
+    };
 
     return (
         <div className={permission ? "mj_PromptCard mj_PromptCard_permission" : "mj_PromptCard"}>
@@ -3321,9 +3797,46 @@ function PromptCard({
                 <span className="mj_PromptGlyph" aria-hidden="true">
                     {permission ? <PromptTerminalGlyph /> : <PromptMailGlyph />}
                 </span>
-                <span className="mj_PromptQuestion">{question}</span>
+                <span className="mj_PromptQuestion" id={questionId}>
+                    {question}
+                </span>
             </div>
-            {!isReadOnly && !resolved && options.length > 0 && (
+            {!isReadOnly && !resolved && pickMany && (
+                <>
+                    <div
+                        className="mj_PromptOptions mj_PromptOptions_pickMany"
+                        role="group"
+                        aria-labelledby={questionId}
+                    >
+                        {options.map((option, index) => (
+                            <button
+                                key={`${option.label}:${option.value}`}
+                                type="button"
+                                className="mj_PromptOption_toggle"
+                                aria-pressed={picked.has(index)}
+                                disabled={pending}
+                                onClick={() => togglePicked(index)}
+                            >
+                                <span className="mj_PromptOption_check" aria-hidden="true">
+                                    {picked.has(index) && <PromptCheckGlyph />}
+                                </span>
+                                {option.label}
+                            </button>
+                        ))}
+                    </div>
+                    <div className="mj_PromptOptions mj_PromptOptions_send">
+                        <button
+                            type="button"
+                            className="mj_PromptOption_affirmative"
+                            disabled={pending || picked.size === 0}
+                            onClick={sendPicked}
+                        >
+                            Send
+                        </button>
+                    </div>
+                </>
+            )}
+            {!isReadOnly && !resolved && !pickMany && options.length > 0 && (
                 <div className="mj_PromptOptions">
                     {options.map((option, index) => (
                         <button
@@ -3376,9 +3889,9 @@ function PromptCard({
                         aria-hidden="true"
                         style={
                             durablyDenied
-                                ? { color: "var(--cpd-color-text-critical-primary)" }
+                                ? { color: "var(--mj-color-text-critical-primary)" }
                                 : durablyAllowed
-                                  ? { color: "var(--cpd-color-usage-low)" }
+                                  ? { color: "var(--mj-color-usage-low)" }
                                   : undefined
                         }
                     >
@@ -3388,9 +3901,9 @@ function PromptCard({
                         className="mj_Answered"
                         style={
                             durablyDenied
-                                ? { color: "var(--cpd-color-text-critical-primary)" }
+                                ? { color: "var(--mj-color-text-critical-primary)" }
                                 : durablyAllowed
-                                  ? { color: "var(--cpd-color-usage-low)" }
+                                  ? { color: "var(--mj-color-usage-low)" }
                                   : undefined
                         }
                     >
@@ -3430,24 +3943,6 @@ function PromptMailGlyph(): React.ReactElement {
     );
 }
 
-function PromptTerminalGlyph(): React.ReactElement {
-    return (
-        <svg
-            viewBox="0 0 24 24"
-            width="15"
-            height="15"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.7"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-        >
-            <path d="m5 7 5 5-5 5" />
-            <path d="M13 17h6" />
-        </svg>
-    );
-}
-
 function PromptCheckGlyph(): React.ReactElement {
     return (
         <svg
@@ -3481,262 +3976,231 @@ function PromptDeniedGlyph(): React.ReactElement {
     );
 }
 
-// A journaled agent_spawn card is unanswerable if the bridge minted a malformed payload
-// (non-string/empty request_id or task) — rendered as a read-only AgentSpawnCard rather than
-// with Approve/Deny buttons nothing can resolve.
-function isAnswerableAgentSpawn(payload: EventPayload): boolean {
-    return (
-        typeof payload.request_id === "string" &&
-        payload.request_id.length > 0 &&
-        typeof payload.task === "string" &&
-        payload.task.length > 0
-    );
+type AgentChatLocalPhase = { kind: "idle" } | { kind: "sending" } | { kind: "failed"; message: string };
+
+type AgentChatAnswerOutcome =
+    { kind: "settled"; answer: RememberedAgentChatAnswer } | { kind: "failed"; message: string };
+
+// Answers still in flight, keyed by answers scope + card. Module-level so they outlive the card:
+// the request is never aborted on unmount, and a remounted card follows it instead of drawing
+// its buttons again (a second tap would race the first, and its 409 read as "expired").
+const agentChatAnswersInFlight = new Map<string, Promise<AgentChatAnswerOutcome>>();
+
+const noopAgentChatAnswer = (_decision: AgentChatDecision): Promise<unknown> => Promise.resolve();
+
+// A transport failure surfaces as a JournalApiError with status 0.
+function agentChatErrorMessage(error: unknown): string {
+    if (error instanceof JournalApiError && error.status === 404) return "That request is no longer on the server.";
+    if (error instanceof JournalApiError && error.status !== 0) return "The server refused that answer.";
+    return "Couldn't reach the server — check your connection and try again.";
 }
 
-const SPAWN_OUTCOME_CARD_LABELS: Record<Exclude<SpawnOutcomeKind, "failed">, string> = {
-    started: "Started",
-    declined: "Denied",
-    expired: "Expired",
-    unknown: "Spawn request resolved",
-};
-
-// Plain-text labels for the card's resolved-state row (§ design "Resolved states"). Distinct
-// from spawnOutcomeSnippet's emoji-prefixed copy, which is for the standalone timeline row.
-function spawnOutcomeCardLabel(payload: EventPayload): string {
-    const kind = spawnOutcomeKind(payload);
-    if (kind === "failed") {
-        const errorCode = asString(payload.error_code);
-        return errorCode ? `Failed — ${errorCode}` : "Failed";
-    }
-    return SPAWN_OUTCOME_CARD_LABELS[kind];
+function rememberedResolution(answer: RememberedAgentChatAnswer | undefined): AgentChatResolution | undefined {
+    if (answer === undefined) return undefined;
+    return answer === "expired" ? { kind: "expired" } : { kind: "answered", approved: answer === "approve" };
 }
 
-type AgentSpawnDecision = "approve" | "deny";
-type AgentSpawnLocalPhase = "idle" | "sending" | "retryable" | "already-answered" | "gone";
-
-const noopAgentSpawnAnswer = (_decision: AgentSpawnDecision, _signal?: AbortSignal): Promise<void> => Promise.resolve();
-const noopAgentSpawnOpen = (): void => undefined;
-
-// Joins the .mj_PromptCard family (§ design "Kind dispatch and components"): same chrome and
-// row order as PromptCard so answering doesn't reflow.
-//
-// Local state machine (§ design "Resolution state"): idle -> sending -> {resolved via the
-// DURABLE spawn_outcome event | retryable after PROMPT_REPLY_CONFIRMATION_TIMEOUT_MS with no
-// durable event, mirroring PromptCard's confirmation-timeout treatment}. A tap's own POST can
-// also fail synchronously: 409 (already answered elsewhere/expired) and 404 (row gone) resolve
-// the card immediately with local copy; any other failure (network/transport) goes straight to
-// the retryable state. The `outcome` prop (derived from journaled events, no local persistence)
-// always wins over local phase — a durable resolution can arrive from another device at any time.
-// The card's "Runs" line: the agent, model and effort the child will start with (journal
-// protocol.md "What will run"). A value taken from the target box's defaults is marked "(box
-// default)" — once, after the first value, when all of them came from the box; else on each.
-const SPAWN_AGENT_LABELS: Record<string, string> = { claude: "Claude", codex: "Codex" };
-
-function spawnRunsLabel(payload: EventPayload): string {
-    const parts = (["agent", "model", "effort"] as const).flatMap((key) => {
-        const value = asString(payload[key]).trim();
-        if (!value) return [];
-        const text = key === "agent" ? (SPAWN_AGENT_LABELS[value] ?? value) : value;
-        return [{ text, boxDefault: payload[`${key}_source`] === "box_default" }];
-    });
-    const allBoxDefault = parts.length > 0 && parts.every((part) => part.boxDefault);
-    return parts
-        .map((part, index) =>
-            (allBoxDefault ? index === 0 : part.boxDefault) ? `${part.text} (box default)` : part.text,
-        )
-        .join(" · ");
-}
-
-function AgentSpawnCard({
+// The agent-chat consent card: who is asking to talk to whom, about what and why, and the two
+// buttons that answer it. Same .mj_PromptCard chrome as the spawn card. Unlike the spawn card
+// there is no durable outcome event to wait for: a 200 from the answer call IS the decision, so
+// it is remembered locally. Precedence: what the timeline says (the consent item's closing
+// marker — a decision made on another device, or the ask lapsing) > the answer remembered here
+// > the in-flight/failed tap > answerable. A 409 means the ask stopped waiting between drawing
+// and the tap; that is nothing the user can act on, so it settles the card rather than erroring.
+// An answer in flight is never aborted when the card unmounts (leaving the conversation): the
+// decision may already be on the server, and it is still remembered when the call settles.
+function AgentChatRequestCard({
     event,
-    outcome,
+    request,
+    resolution,
+    coordinatorDecision,
+    answersScope,
     isReadOnly = false,
-    onAnswer = noopAgentSpawnAnswer,
-    onOpen = noopAgentSpawnOpen,
+    onAnswer = noopAgentChatAnswer,
 }: {
     event: JournalEvent;
-    outcome: EventPayload | null;
+    request: AgentChatRequest;
+    resolution?: AgentChatResolution;
+    /** The Coordinator's answer to this card, when it gave one: it settles the card, and its
+        reason goes on the outcome line. */
+    coordinatorDecision?: CoordinatorDecision;
+    /** Where this session's answers are remembered (agentChatAnswersScope). */
+    answersScope?: string;
     isReadOnly?: boolean;
-    onAnswer?: (decision: AgentSpawnDecision, signal?: AbortSignal) => Promise<void>;
-    onOpen?: (roomId: string) => void;
+    onAnswer?: (decision: AgentChatDecision) => Promise<unknown>;
 }): React.ReactElement {
-    const payload = event.payload;
-    const task = asString(payload.task);
-    const topic = asString(payload.topic);
-    const headline = topic || task.split("\n")[0] || "Agent spawn request";
-    const fromConvoTitle = asString(payload.from_convo_title);
-    const fromName = asString(payload.from_name);
-    const targetName = asString(payload.target_name);
-    const workdir = asString(payload.workdir);
-    const runs = spawnRunsLabel(payload);
-    const resolved = outcome !== null;
-    const kind = resolved ? spawnOutcomeKind(outcome) : undefined;
-    const roomId = resolved ? asString(outcome.room_id) : "";
-
-    const [phase, setPhase] = useState<AgentSpawnLocalPhase>("idle");
-    const phaseRef = useRef(phase);
-    // Bugbot/CodeRabbit finding on #23: attempt A's POST can still be in flight when the user
-    // retries (attempt B) after A's own confirmation timeout. Every phase transition below is
-    // gated on "is my attemptId still the current one?" so a late-settling A can never clobber
-    // B's `sending` with a stale `retryable`/`already-answered`/`gone` — which would otherwise
-    // re-enable Approve/Deny while B is still pending and invite a duplicate POST. mountedRef
-    // additionally guards the promise-settlement handlers (not the setTimeout below, whose
-    // cleanup already cancels it on unmount) — mirrors the new-session sheet's
-    // agentsRequestIdRef/mountedRef pattern above.
-    const attemptIdRef = useRef(0);
+    const cardKey = agentChatCardKey(event);
+    const flightKey = `${answersScope ?? ""}|${cardKey}`;
+    const [remembered, setRemembered] = useState(() => rememberedAgentChatAnswer(answersScope, cardKey));
+    // A card remounted while its answer is still in flight (the user left the conversation and
+    // came back) picks the request up again rather than offering the buttons a second time.
+    const [phase, setPhase] = useState<AgentChatLocalPhase>(() =>
+        agentChatAnswersInFlight.has(flightKey) ? { kind: "sending" } : { kind: "idle" },
+    );
     const mountedRef = useRef(false);
-    // Aborting the previous attempt's POST before the buttons re-enable narrows the
-    // Deny-races-Approve window: without it, a stalled Approve can still be in flight when the
-    // confirmation timeout re-enables the row, and a user's corrective Deny then loses the
-    // server-side first-arrival race to their own abandoned tap. The abort can't recall bytes the
-    // server already received — the durable outcome event stays authoritative for that case.
-    const abortRef = useRef<AbortController | null>(null);
-    const setLocalPhase = (next: AgentSpawnLocalPhase): void => {
-        phaseRef.current = next;
-        setPhase(next);
-    };
+
+    const follow = useCallback((flight: Promise<AgentChatAnswerOutcome>): void => {
+        void flight.then((outcome) => {
+            if (!mountedRef.current) return;
+            if (outcome.kind === "failed") {
+                setPhase({ kind: "failed", message: outcome.message });
+            } else {
+                setRemembered(outcome.answer);
+                setPhase({ kind: "idle" });
+            }
+        });
+    }, []);
 
     useEffect(() => {
         mountedRef.current = true;
+        const flight = agentChatAnswersInFlight.get(flightKey);
+        if (flight) follow(flight);
         return (): void => {
             mountedRef.current = false;
-            abortRef.current?.abort();
         };
-    }, []);
+    }, [flightKey, follow]);
 
-    const handleAnswer = (decision: AgentSpawnDecision): void => {
-        if (resolved || phaseRef.current === "sending") return;
-        const attemptId = ++attemptIdRef.current;
-        abortRef.current?.abort();
-        const controller = new AbortController();
-        abortRef.current = controller;
-        setLocalPhase("sending");
-        void onAnswer(decision, controller.signal).then(
-            () => undefined, // ack received; wait for the durable event (or the timeout effect below)
-            (error: unknown) => {
-                // A newer attempt (retry, or another tab) has already moved the phase on —
-                // this settlement is stale and must not touch state.
-                if (!mountedRef.current || attemptId !== attemptIdRef.current) return;
-                if (error instanceof JournalApiError && error.status === 409) setLocalPhase("already-answered");
-                else if (error instanceof JournalApiError && error.status === 404) setLocalPhase("gone");
-                else setLocalPhase("retryable"); // transport/other error -> back to answerable
-            },
-        );
+    // A Coordinator decision outranks everything: a later close of its consent item cannot undo it.
+    const settled: AgentChatResolution | undefined = coordinatorDecision
+        ? { kind: "answered", approved: coordinatorDecision.approved, byCoordinator: true }
+        : (resolution ?? rememberedResolution(remembered));
+
+    const handleAnswer = (decision: AgentChatDecision): void => {
+        if (settled || agentChatAnswersInFlight.has(flightKey)) return;
+        setPhase({ kind: "sending" });
+        const flight = onAnswer(decision)
+            .then(
+                (): AgentChatAnswerOutcome => ({ kind: "settled", answer: decision }),
+                (error: unknown): AgentChatAnswerOutcome =>
+                    error instanceof JournalApiError && error.status === 409
+                        ? { kind: "settled", answer: "expired" }
+                        : { kind: "failed", message: agentChatErrorMessage(error) },
+            )
+            .then((outcome): AgentChatAnswerOutcome => {
+                agentChatAnswersInFlight.delete(flightKey);
+                if (outcome.kind === "settled") {
+                    rememberAgentChatAnswer(answersScope, cardKey, outcome.answer);
+                    // A 409 never overwrites a decision already remembered for this card.
+                    const stored = rememberedAgentChatAnswer(answersScope, cardKey);
+                    return stored ? { kind: "settled", answer: stored } : outcome;
+                }
+                return outcome;
+            });
+        agentChatAnswersInFlight.set(flightKey, flight);
+        follow(flight);
     };
 
-    useEffect(() => {
-        if (phase !== "sending" || resolved) return;
-        const attemptId = attemptIdRef.current;
-        const timer = setTimeout(() => {
-            if (attemptId !== attemptIdRef.current) return; // superseded by a newer attempt
-            if (phaseRef.current === "sending") {
-                abortRef.current?.abort(); // kill the stalled POST before re-enabling the buttons
-                setLocalPhase("retryable");
-            }
-        }, PROMPT_REPLY_CONFIRMATION_TIMEOUT_MS);
-        return (): void => clearTimeout(timer);
-    }, [phase, resolved]);
-
-    const pending = !resolved && phase === "sending";
-    const retryable = !resolved && phase === "retryable";
-    const alreadyAnswered = !resolved && phase === "already-answered";
-    const gone = !resolved && phase === "gone";
-    // Hides the action row for the same reasons a durable resolution does — nothing more to
-    // tap — even though these two are local-only, never journaled.
-    const pseudoResolved = resolved || alreadyAnswered || gone;
+    const sending = !settled && phase.kind === "sending";
+    const fields: Array<[string, string, string]> = [
+        ["from", "From", agentChatFromLabel(request)],
+        ["to", "To", agentChatToLabel(request)],
+    ];
+    if (request.topic) fields.push(["about", "About", request.topic]);
+    if (request.justification) fields.push(["why", "Why", request.justification]);
 
     return (
-        <div className="mj_PromptCard mj_PromptCard_spawn">
+        <div className="mj_PromptCard mj_PromptCard_chat">
             <div className="mj_PromptHeader">
-                <span className="mj_PromptLabel">Agent spawn request</span>
+                <span className="mj_PromptLabel">Agent chat request</span>
                 <time className="mj_PromptTime" dateTime={new Date(event.ts).toISOString()}>
                     {formatTime(event.ts)}
                 </time>
             </div>
             <div className="mj_PromptBody">
                 <span className="mj_PromptGlyph" aria-hidden="true">
-                    <PromptTerminalGlyph />
+                    <PromptPeopleGlyph />
                 </span>
-                <span className="mj_SpawnHeadline">{headline}</span>
+                <span className="mj_PromptQuestion">{agentChatHeadline(request)}</span>
             </div>
             <div className="mj_SpawnDetails">
-                <div className="mj_SpawnDetail mj_SpawnDetail_from">
-                    <span className="mj_SpawnDetail_label">From</span>
-                    <span className="mj_SpawnDetail_value">
-                        {fromConvoTitle}
-                        {fromConvoTitle && fromName ? " · " : ""}
-                        {fromName}
-                    </span>
-                </div>
-                <div className="mj_SpawnDetail mj_SpawnDetail_target">
-                    <span className="mj_SpawnDetail_label">Target</span>
-                    <span className="mj_SpawnDetail_value">{targetName}</span>
-                </div>
-                <div className="mj_SpawnDetail mj_SpawnDetail_folder">
-                    <span className="mj_SpawnDetail_label">Folder</span>
-                    <span className="mj_SpawnDetail_value">{workdir}</span>
-                </div>
-                {runs && (
-                    <div className="mj_SpawnDetail mj_SpawnDetail_runs">
-                        <span className="mj_SpawnDetail_label">Runs</span>
-                        <span className="mj_SpawnDetail_value">{runs}</span>
+                {fields.map(([key, label, value]) => (
+                    <div key={key} className={`mj_SpawnDetail mj_ChatDetail_${key}`}>
+                        <span className="mj_SpawnDetail_label">{label}</span>
+                        <span className="mj_SpawnDetail_value">{value}</span>
                     </div>
-                )}
+                ))}
             </div>
-            <pre className="mj_SpawnTask">{task}</pre>
-            {/* A read-only card (sub-chat transcript viewer) never shows live Approve/Deny — it
-                mirrors PromptCard's own isReadOnly gate (§ Task-1-review scope A). */}
-            {!isReadOnly && !pseudoResolved && (
+            {!isReadOnly && !settled && (
                 <div className="mj_PromptOptions">
-                    <button type="button" disabled={pending} onClick={() => handleAnswer("deny")}>
-                        Deny
+                    <button type="button" disabled={sending} onClick={() => handleAnswer("deny")}>
+                        Decline
                     </button>
                     <button
                         type="button"
                         className="mj_PromptOption_affirmative"
-                        disabled={pending}
+                        disabled={sending}
                         onClick={() => handleAnswer("approve")}
                     >
                         Approve
                     </button>
                 </div>
             )}
-            {pending && (
+            {sending && (
                 <div className="mj_PromptResolved mj_PromptResolved_pending">
                     <span className="mj_PromptGlyph" aria-hidden="true" />
                     <span className="mj_Muted">Sending…</span>
                 </div>
             )}
-            {retryable && (
-                <div className="mj_PromptResolved mj_PromptResolved_retryable">
+            {!settled && phase.kind === "failed" && (
+                <div className="mj_PromptResolved mj_PromptResolved_failed" role="alert">
                     <span className="mj_PromptGlyph" aria-hidden="true" />
-                    <span className="mj_Muted">Reply not confirmed — tap to retry</span>
+                    <span className="mj_Answered" style={{ color: "var(--mj-color-text-critical-primary)" }}>
+                        {phase.message}
+                    </span>
                 </div>
             )}
-            {alreadyAnswered && (
+            {settled?.kind === "answered" && (
+                <div
+                    className={`mj_PromptResolved ${settled.approved ? "mj_PromptResolved_allowed" : "mj_PromptResolved_denied"}`}
+                >
+                    <span
+                        className="mj_PromptGlyph mj_PromptGlyph_ok"
+                        aria-hidden="true"
+                        style={{
+                            color: settled.approved ? "var(--mj-color-usage-low)" : "var(--mj-color-text-secondary)",
+                        }}
+                    >
+                        {settled.approved ? <PromptCheckGlyph /> : <PromptDeniedGlyph />}
+                    </span>
+                    <span className="mj_Answered">{agentChatOutcomeText(settled, coordinatorDecision)}</span>
+                </div>
+            )}
+            {settled?.kind === "expired" && (
                 <div className="mj_PromptResolved mj_PromptResolved_expired">
                     <span className="mj_PromptGlyph" aria-hidden="true" />
-                    <span className="mj_Answered">Already answered or expired</span>
-                </div>
-            )}
-            {gone && (
-                <div className="mj_PromptResolved mj_PromptResolved_gone">
-                    <span className="mj_PromptGlyph" aria-hidden="true" />
-                    <span className="mj_Answered">That request is no longer on the server.</span>
-                </div>
-            )}
-            {resolved && (
-                <div className={`mj_PromptResolved mj_PromptResolved_${kind}`}>
-                    <span className="mj_PromptGlyph" aria-hidden="true" />
-                    <span className="mj_Answered">{spawnOutcomeCardLabel(outcome)}</span>
-                    {kind === "started" && roomId && (
-                        <button type="button" className="mj_SpawnOpenButton" onClick={() => onOpen(roomId)}>
-                            Open
-                        </button>
-                    )}
+                    <span className="mj_Muted">This request is no longer waiting for an answer.</span>
                 </div>
             )}
         </div>
+    );
+}
+
+function agentChatOutcomeText(
+    settled: Extract<AgentChatResolution, { kind: "answered" }>,
+    coordinatorDecision: CoordinatorDecision | undefined,
+): string {
+    if (coordinatorDecision) return coordinatorBadgeText(coordinatorDecision);
+    if (settled.byCoordinator) return settled.approved ? "Approved by the Coordinator" : "Declined by the Coordinator";
+    return settled.approved ? "Approved" : "Declined";
+}
+
+function PromptPeopleGlyph(): React.ReactElement {
+    return (
+        <svg
+            viewBox="0 0 24 24"
+            width="15"
+            height="15"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.7"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+        >
+            <circle cx="9" cy="8" r="3" />
+            <path d="M3.5 19a5.5 5.5 0 0 1 11 0" />
+            <path d="M16 5.5a3 3 0 0 1 0 5" />
+            <path d="M17.5 14a5.5 5.5 0 0 1 3 5" />
+        </svg>
     );
 }
 
@@ -3844,6 +4308,182 @@ const FILE_KIND_ICON: Record<FileKind, (props: React.SVGProps<SVGSVGElement>) =>
     generic: FileIcon,
 };
 
+// An image the server's media reaper has deleted: say so instead of a forever-loading frame or
+// a fetch error. Reached from the payload tombstone (`expired: true`) or a 404 on fetch.
+function ExpiredImage({ caption }: { caption?: string }): React.ReactElement {
+    return (
+        <figure className="mj_Image">
+            <div
+                className="mj_MediaExpired"
+                role="img"
+                aria-label={caption ? `Image attachment, expired. ${caption}` : "Image attachment, expired"}
+            >
+                <ImageFileIcon className="mj_FileIcon" aria-hidden />
+                <span>Image expired</span>
+            </div>
+            {caption && <figcaption>{caption}</figcaption>}
+        </figure>
+    );
+}
+
+// The file counterpart: the name stays readable, the size gives way to "Expired", and there is
+// no click target — there is nothing left to download.
+function ExpiredFile({ filename, contentType }: { filename?: string; contentType?: string }): React.ReactElement {
+    const KindIcon = FILE_KIND_ICON[fileKindFromMime(contentType)];
+    const name = filename || "attachment";
+    return (
+        <span className="mj_File mj_File_expired" role="group" aria-label={`File attachment: ${name}, expired`}>
+            <KindIcon className="mj_FileIcon" aria-hidden />
+            <span className="mj_FileName">{name}</span>
+            <span className="mj_Expired">Expired</span>
+        </span>
+    );
+}
+
+// Voice notes and other short clips load into the player once their row scrolls into view, like
+// the viewer's thumbnails; past this size the player waits for a click so a long recording is not
+// downloaded just by scrolling past. Opening a conversation full of voice notes therefore fetches
+// only the ones on screen, not every clip in the history.
+const AUDIO_AUTOLOAD_MAX_BYTES = 20 * 1024 * 1024;
+
+function InlineAudio({
+    client,
+    mediaId,
+    filename,
+    contentType,
+    size,
+}: {
+    client: MatronJournalClient;
+    mediaId: string;
+    filename?: string;
+    contentType?: string;
+    size?: number;
+}): React.ReactElement {
+    const autoload = size !== undefined && size <= AUDIO_AUTOLOAD_MAX_BYTES;
+    // `clicked` asks for playback once the blob is in; `inView` only loads it.
+    const [clicked, setClicked] = useState(false);
+    const [inView, setInView] = useState(false);
+    const holderRef = useRef<HTMLButtonElement>(null);
+    useEffect(() => {
+        if (!autoload || inView) return undefined;
+        const holder = holderRef.current;
+        if (!holder) return undefined;
+        if (typeof IntersectionObserver === "undefined") {
+            setInView(true); // jsdom / old engines: degrade to eager
+            return undefined;
+        }
+        const observer = new IntersectionObserver((entries) => {
+            if (entries.some((entry) => entry.isIntersecting)) {
+                setInView(true);
+                observer.disconnect();
+            }
+        });
+        observer.observe(holder);
+        return () => observer.disconnect();
+    }, [autoload, inView]);
+    const name = filename || "audio";
+    const sizeLabel = formatBytes(size);
+    if (!clicked && !(autoload && inView)) {
+        return (
+            <button ref={holderRef} className="mj_File" onClick={() => setClicked(true)} aria-label={`Play ${name}`}>
+                <AudioFileIcon className="mj_FileIcon" />
+                <span className="mj_FileName">{name}</span>
+                {sizeLabel && <span className="mj_FileSize">{sizeLabel}</span>}
+            </button>
+        );
+    }
+    return (
+        <InlineAudioPlayer
+            client={client}
+            mediaId={mediaId}
+            filename={filename}
+            contentType={contentType}
+            sizeLabel={sizeLabel}
+            autoPlay={clicked}
+        />
+    );
+}
+
+function InlineAudioPlayer({
+    client,
+    mediaId,
+    filename,
+    contentType,
+    sizeLabel,
+    autoPlay,
+}: {
+    client: MatronJournalClient;
+    mediaId: string;
+    filename?: string;
+    contentType?: string;
+    sizeLabel?: string;
+    autoPlay: boolean;
+}): React.ReactElement {
+    // Same authenticated blob as every other attachment, re-typed so an octet-stream blob still
+    // plays.
+    const { url, error, expired, retry } = useRenderableObjectUrl(client, {
+        mediaId,
+        kind: "audio",
+        filename,
+        contentType,
+    });
+    const audioRef = useRef<HTMLAudioElement>(null);
+    // A click on Play starts playback once the blob arrives. The fetch outlives the click's
+    // user-activation window, so a browser with a strict autoplay policy may refuse: the player
+    // is on screen with its own controls by then, so a refusal just leaves it paused.
+    useEffect(() => {
+        if (!autoPlay || !url) return;
+        const played = audioRef.current?.play();
+        played?.catch(() => undefined);
+    }, [autoPlay, url]);
+    if (expired) return <ExpiredFile filename={filename} contentType={contentType} />;
+    const name = filename || "audio";
+    if (error) {
+        // A transient failure (a 404 is `expired` above): keep the row and offer another try.
+        return (
+            <div className="mj_Audio">
+                <div className="mj_Audio_head">
+                    <AudioFileIcon className="mj_FileIcon" aria-hidden />
+                    <span className="mj_FileName">{name}</span>
+                </div>
+                <div className="mj_Error">
+                    {error}{" "}
+                    <button
+                        type="button"
+                        className="mj_Audio_retry"
+                        onClick={retry}
+                        aria-label={`Retry loading ${name}`}
+                    >
+                        Retry
+                    </button>
+                </div>
+            </div>
+        );
+    }
+    return (
+        <div className="mj_Audio">
+            <div className="mj_Audio_head">
+                <AudioFileIcon className="mj_FileIcon" aria-hidden />
+                <span className="mj_FileName">{name}</span>
+                {sizeLabel && <span className="mj_FileSize">{sizeLabel}</span>}
+            </div>
+            {url ? (
+                // eslint-disable-next-line jsx-a11y/media-has-caption
+                <audio
+                    ref={audioRef}
+                    className="mj_Audio_player"
+                    src={url}
+                    controls
+                    preload="metadata"
+                    aria-label={`Play ${name}`}
+                />
+            ) : (
+                <div className="mj_MediaLoading">Loading audio…</div>
+            )}
+        </div>
+    );
+}
+
 function AuthenticatedMedia({
     client,
     mediaId,
@@ -3866,6 +4506,9 @@ function AuthenticatedMedia({
     const [url, setUrl] = useState<string>();
     const [error, setError] = useState<string>();
     const [loading, setLoading] = useState(false);
+    // A 404 means the blob was reaped server-side — permanent, so it renders as expired rather
+    // than as an error. Seeded from the client so a remounted row does not ask again.
+    const [expired, setExpired] = useState(() => client.isMediaExpired(mediaId));
     const viewer = useMediaViewer();
     const markdownPreview = useMarkdownPreview();
 
@@ -3874,16 +4517,24 @@ function AuthenticatedMedia({
         try {
             setUrl(await client.mediaUrl(mediaId));
         } catch (loadError) {
-            setError(errorMessage(loadError));
+            if (isMediaExpiredError(loadError)) setExpired(true);
+            else setError(errorMessage(loadError));
         } finally {
             setLoading(false);
         }
     }, [client, mediaId]);
 
     useEffect(() => {
-        if (image) void load();
-    }, [image, load]);
+        if (image && !expired) void load();
+    }, [image, expired, load]);
 
+    if (expired) {
+        return image ? (
+            <ExpiredImage caption={caption} />
+        ) : (
+            <ExpiredFile filename={filename} contentType={contentType} />
+        );
+    }
     if (error) return <div className="mj_Error">{error}</div>;
     if (image) {
         // Reserve an aspect-ratio box BEFORE the blob decodes so the thread does not reflow when
@@ -3930,22 +4581,36 @@ function AuthenticatedMedia({
             </figure>
         );
     }
+    if (mediaRenderKind(false, contentType, filename) === "audio") {
+        return (
+            <InlineAudio client={client} mediaId={mediaId} filename={filename} contentType={contentType} size={size} />
+        );
+    }
+    const sizeLabel = formatBytes(size);
+    const sizeTag = sizeLabel && <span className="mj_FileSize">{sizeLabel}</span>;
     const KindIcon = FILE_KIND_ICON[fileKindFromMime(contentType)];
     const fileLabel = filename || "Download attachment";
     // Markdown up to 2 MB opens in the side preview panel (which offers Download); larger files
     // keep the download chip.
     if (markdownPreview && isPreviewableMarkdown({ mime: contentType, name: filename, size })) {
         return (
-            <button
-                className="mj_File mj_File_preview"
-                onClick={() =>
-                    markdownPreview.openMarkdownPreview({ blobRef: mediaId, name: filename || "attachment.md", size })
-                }
-                aria-label={`Preview ${fileLabel}`}
-            >
-                <KindIcon className="mj_FileIcon" />
-                <span className="mj_FileName">{fileLabel}</span>
-            </button>
+            <>
+                <button
+                    className="mj_File mj_File_preview"
+                    onClick={() =>
+                        markdownPreview.openMarkdownPreview({
+                            blobRef: mediaId,
+                            name: filename || "attachment.md",
+                            size,
+                        })
+                    }
+                    aria-label={`Preview ${fileLabel}`}
+                >
+                    <KindIcon className="mj_FileIcon" />
+                    <span className="mj_FileName">{fileLabel}</span>
+                </button>
+                {sizeTag}
+            </>
         );
     }
     // Renderable files (svg / pdf / video / raster) open the lightbox inline; the viewer
@@ -3953,26 +4618,34 @@ function AuthenticatedMedia({
     // download chip (HTML and unknown never render inline).
     if (viewer && isRenderableInViewer(contentType, filename)) {
         return (
-            <button
-                className="mj_File mj_File_preview"
-                onClick={(event) => viewer.openViewer(mediaId, event.currentTarget)}
-                aria-label={`Preview ${fileLabel}`}
-            >
-                <KindIcon className="mj_FileIcon" />
-                <span className="mj_FileName">{fileLabel}</span>
-            </button>
+            <>
+                <button
+                    className="mj_File mj_File_preview"
+                    onClick={(event) => viewer.openViewer(mediaId, event.currentTarget)}
+                    aria-label={`Preview ${fileLabel}`}
+                >
+                    <KindIcon className="mj_FileIcon" />
+                    <span className="mj_FileName">{fileLabel}</span>
+                </button>
+                {sizeTag}
+            </>
         );
     }
-    return url ? (
-        <a className="mj_File" href={url} download={filename || "attachment"}>
-            <KindIcon className="mj_FileIcon" />
-            <span className="mj_FileName">{fileLabel}</span>
-        </a>
-    ) : (
-        <button className="mj_File" onClick={() => void load()} disabled={loading}>
-            <KindIcon className="mj_FileIcon" />
-            <span className="mj_FileName">{loading ? "Preparing download…" : fileLabel}</span>
-        </button>
+    return (
+        <>
+            {url ? (
+                <a className="mj_File" href={url} download={filename || "attachment"}>
+                    <KindIcon className="mj_FileIcon" />
+                    <span className="mj_FileName">{fileLabel}</span>
+                </a>
+            ) : (
+                <button className="mj_File" onClick={() => void load()} disabled={loading}>
+                    <KindIcon className="mj_FileIcon" />
+                    <span className="mj_FileName">{loading ? "Preparing download…" : fileLabel}</span>
+                </button>
+            )}
+            {sizeTag}
+        </>
     );
 }
 
@@ -4248,6 +4921,8 @@ function isSuppressedTrackerEvent(event: JournalEvent): boolean {
 }
 
 const EMPTY_SPAWN_OUTCOMES: ReadonlyMap<string, EventPayload> = new Map();
+const EMPTY_AGENT_CHAT_RESOLUTIONS: ReadonlyMap<string, AgentChatResolution> = new Map();
+const EMPTY_COORDINATOR_DECISIONS: ReadonlyMap<string, CoordinatorDecision> = new Map();
 
 // A permission-decision reply is a prompt_reply targeting a permission_request
 // card. The card already renders the decision inline (answered/allowed/denied
@@ -4267,6 +4942,9 @@ export function EventContent({
     event,
     answeredPromptReplies,
     spawnOutcomes = EMPTY_SPAWN_OUTCOMES,
+    agentChatResolutions = EMPTY_AGENT_CHAT_RESOLUTIONS,
+    coordinatorDecisions = EMPTY_COORDINATOR_DECISIONS,
+    itemCards = EMPTY_ITEM_CARD_FOLD,
     isReadOnly = false,
     resolvedAction,
 }: {
@@ -4274,6 +4952,10 @@ export function EventContent({
     event: JournalEvent;
     answeredPromptReplies: ReadonlyMap<string, { choice?: string }>;
     spawnOutcomes?: ReadonlyMap<string, EventPayload>;
+    agentChatResolutions?: ReadonlyMap<string, AgentChatResolution>;
+    /** The Coordinator's answers, keyed by card (readCoordinatorDecisions). */
+    coordinatorDecisions?: ReadonlyMap<string, CoordinatorDecision>;
+    itemCards?: ItemCardFold;
     isReadOnly?: boolean;
     resolvedAction?: (itemId: string) => "send" | "cancel" | undefined;
 }): React.ReactElement | null {
@@ -4296,15 +4978,22 @@ export function EventContent({
                     />
                 </div>
             );
-        case "item":
-            // Quiet invalidation-only markers (reordered/updated) and unknown actions render null.
-            return renderItemMarker(event, client);
+        case "item": {
+            // Quiet invalidation-only markers (reordered/updated) and unknown actions render null. An
+            // item card shows its item's latest state (foldItemCards), not this marker's frozen one.
+            const restated = itemCards.restated.get(event.seq);
+            return renderItemMarker(restated ? { ...event, payload: restated } : event, client);
+        }
         case "milestone":
             return <MilestoneCard client={client} event={event} />;
         case "mission":
             return <MissionNotice client={client} event={event} />;
         case "memory":
             return <MemoryNotice client={client} event={event} />;
+        case "coordinator":
+        case "routine":
+        case "consent_decision":
+            return <CoordinatorEventNotice event={event} />;
         case "prompt":
             if (asString(event.payload.kind) === "queued_release") {
                 return (
@@ -4327,6 +5016,28 @@ export function EventContent({
                 />
             );
         case "permission_request": {
+            if (isAgentChatPayload(event.payload)) {
+                const request = parseAgentChatRequest(event.payload);
+                // A malformed agent-chat payload can't be answered: the generic PromptCard's
+                // Allow/Deny would post a prompt_reply nothing reads. Draw an inert notice instead.
+                if (!request) {
+                    return <div className="mj_AgentRequestNotice">{unanswerableAgentRequestNotice(event.payload)}</div>;
+                }
+                return (
+                    <AgentChatRequestCard
+                        key={`${event.convo_id}:${event.seq}`}
+                        event={event}
+                        request={request}
+                        resolution={agentChatResolutions.get(agentChatCardKey(event))}
+                        coordinatorDecision={coordinatorDecisions.get(agentChatCardKey(event))}
+                        answersScope={agentChatAnswersScope(client.getSnapshot().session)}
+                        isReadOnly={isReadOnly}
+                        onAnswer={(decision) =>
+                            client.answerAgentChat(request.roomId, request.targetDeviceId, decision)
+                        }
+                    />
+                );
+            }
             if (asString(event.payload.kind) === "agent_spawn") {
                 const requestId = asString(event.payload.request_id);
                 // A malformed agent_spawn payload (no request_id/task) can never be resolved:
@@ -4339,6 +5050,7 @@ export function EventContent({
                         key={`${event.convo_id}:${event.seq}`}
                         event={event}
                         outcome={(requestId ? spawnOutcomes.get(requestId) : undefined) ?? null}
+                        coordinatorDecision={coordinatorDecisions.get(agentChatCardKey(event))}
                         isReadOnly={isReadOnly || !answerable}
                         onAnswer={
                             answerable
@@ -4346,6 +5058,9 @@ export function EventContent({
                                 : undefined
                         }
                         onOpen={(roomId) => void client.selectConversation(roomId, { suppressNotFound: true })}
+                        onStopSession={(convoId) =>
+                            void stopSpawnedSession(convoId, (target) => client.sendMessage("/stop", target))
+                        }
                     />
                 );
             }
@@ -4375,6 +5090,7 @@ export function EventContent({
             return <DiffCard data={parseDiffPayload(event.payload)} />;
         case "image": {
             const mediaId = asString(event.payload.blob_ref);
+            if (event.payload.expired === true) return <ExpiredImage caption={asString(event.payload.caption)} />;
             return mediaId ? (
                 <AuthenticatedMedia
                     client={client}
@@ -4389,14 +5105,20 @@ export function EventContent({
         }
         case "file": {
             const mediaId = asString(event.payload.blob_ref);
+            const expired = event.payload.expired === true;
             return (
                 <div>
-                    {mediaId ? (
+                    {expired ? (
+                        <ExpiredFile
+                            filename={mediaFileName(event.payload) || undefined}
+                            contentType={asString(event.payload.content_type) || undefined}
+                        />
+                    ) : mediaId ? (
                         <AuthenticatedMedia
                             client={client}
                             mediaId={mediaId}
                             image={false}
-                            filename={asString(event.payload.filename, "attachment")}
+                            filename={mediaFileName(event.payload) || "attachment"}
                             contentType={asString(event.payload.content_type) || undefined}
                             size={
                                 typeof event.payload.size === "number" && Number.isFinite(event.payload.size)
@@ -4405,10 +5127,12 @@ export function EventContent({
                             }
                         />
                     ) : (
-                        <span className="mj_Muted">File unavailable</span>
-                    )}
-                    {formatBytes(event.payload.size) && (
-                        <span className="mj_FileSize">{formatBytes(event.payload.size)}</span>
+                        <>
+                            <span className="mj_Muted">File unavailable</span>
+                            {formatBytes(event.payload.size) && (
+                                <span className="mj_FileSize">{formatBytes(event.payload.size)}</span>
+                            )}
+                        </>
                     )}
                     {asString(event.payload.caption) && (
                         <div className="mj_FileCaption">{asString(event.payload.caption)}</div>
@@ -4431,6 +5155,9 @@ function EventRow({
     event,
     answeredPromptReplies,
     spawnOutcomes,
+    agentChatResolutions,
+    coordinatorDecisions,
+    itemCards,
     isReadOnly = false,
     resolvedAction,
     continuation = false,
@@ -4441,6 +5168,9 @@ function EventRow({
     event: JournalEvent;
     answeredPromptReplies: ReadonlyMap<string, { choice?: string }>;
     spawnOutcomes?: ReadonlyMap<string, EventPayload>;
+    agentChatResolutions?: ReadonlyMap<string, AgentChatResolution>;
+    coordinatorDecisions?: ReadonlyMap<string, CoordinatorDecision>;
+    itemCards?: ItemCardFold;
     isReadOnly?: boolean;
     resolvedAction: (itemId: string) => "send" | "cancel" | undefined;
     continuation?: boolean;
@@ -4453,7 +5183,7 @@ function EventRow({
     return (
         <li
             ref={liRef}
-            className={`mx_EventTile${continuation ? " mx_EventTile_continuation" : ""}${lastInSection ? " mx_EventTile_lastInSection" : ""}`}
+            className={`mj_EventTile${continuation ? " mj_EventTile_continuation" : ""}${lastInSection ? " mj_EventTile_lastInSection" : ""}`}
             tabIndex={-1}
             aria-live="polite"
             aria-atomic="true"
@@ -4464,41 +5194,44 @@ function EventRow({
             onClickCapture={handlers.onClickCapture}
         >
             {!own && !continuation && (
-                <span className="mx_DisambiguatedProfile">
+                <span className="mj_SenderName">
                     <MsgAvatar />
-                    <span className="mx_DisambiguatedProfile_displayName">{displaySender(event.sender)}</span>
+                    <span className="mj_SenderName_displayName">{displaySender(event.sender)}</span>
                     {/* tool_output owns its timestamp inline (after the exit badge); prompt /
                         permission cards own theirs in the card header (§10.2). Suppress the
                         profile-row time for all three so a first-in-section event never shows
                         two identical timestamps. */}
                     {event.type !== "tool_output" && event.type !== "prompt" && event.type !== "permission_request" && (
                         <a href={`#event-${event.seq}`} onClick={(clickEvent) => clickEvent.preventDefault()}>
-                            <time className="mx_MessageTimestamp" dateTime={new Date(event.ts).toISOString()}>
+                            <time className="mj_MessageTimestamp" dateTime={new Date(event.ts).toISOString()}>
                                 {formatTime(event.ts)}
                             </time>
                         </a>
                     )}
                 </span>
             )}
-            <div className="mx_EventTile_line">
+            <div className="mj_EventTile_line">
                 {/* Own bubbles carry an inline timestamp (design: "…text <09:58>"). Agent
                     continuation blocks do NOT — the section shows one timestamp on the profile
                     row (§10.2 one-per-section), so continuation blocks fill to the shared right
                     edge with no reserved timestamp gutter (kills the first-block spill). */}
                 {own && event.type !== "tool_output" && (
                     <a href={`#event-${event.seq}`} onClick={(clickEvent) => clickEvent.preventDefault()}>
-                        <time className="mx_MessageTimestamp" dateTime={new Date(event.ts).toISOString()}>
+                        <time className="mj_MessageTimestamp" dateTime={new Date(event.ts).toISOString()}>
                             {formatTime(event.ts)}
                         </time>
                     </a>
                 )}
-                <div className="mx_MTextBody mx_EventTile_content">
+                <div className="mj_TextBody mj_EventTile_content">
                     <div className="markdown-body">
                         <EventContent
                             client={client}
                             event={event}
                             answeredPromptReplies={answeredPromptReplies}
                             spawnOutcomes={spawnOutcomes}
+                            agentChatResolutions={agentChatResolutions}
+                            coordinatorDecisions={coordinatorDecisions}
+                            itemCards={itemCards}
                             isReadOnly={isReadOnly}
                             resolvedAction={resolvedAction}
                         />
@@ -4520,27 +5253,110 @@ function MsgAvatar(): React.ReactElement {
     return <span className="mj_MsgAvatar" style={{ WebkitMaskImage: mask, maskImage: mask }} aria-hidden />;
 }
 
+/** How much of the stream tail a collapsed tool-stream pane renders; it only shows a few lines. */
+export const TOOL_STREAM_COLLAPSED_CAP_CHARS = 4096;
+
+// The tail a collapsed pane renders, opened at a line boundary so the cut never starts mid-word
+// or inside an escape sequence, unless the first line is long (then the tail is effectively one
+// line and trimming through it would drop nearly everything). `cut` says if anything was dropped.
+export function collapsedToolStreamSlice(text: string): { text: string; cut: boolean } {
+    if (text.length <= TOOL_STREAM_COLLAPSED_CAP_CHARS) return { text, cut: false };
+    const tail = text.slice(cleanCutStart(text, text.length - TOOL_STREAM_COLLAPSED_CAP_CHARS));
+    const newline = tail.slice(0, 512).indexOf("\n");
+    return { text: newline >= 0 ? tail.slice(newline + 1) : tail, cut: true };
+}
+
+// Where a cut at `start` can open cleanly: past the rest of an escape sequence it landed inside
+// (any fragment, not only "[…m"), and past the low half of a surrogate pair it split. Unlike a
+// head-truncated buffer, the text before the cut is at hand, so the fix is exact.
+function cleanCutStart(text: string, start: number): number {
+    const lookback = Math.max(0, start - 64);
+    const escAt = text.slice(lookback, start).lastIndexOf("\x1b");
+    if (escAt >= 0) {
+        const esc = lookback + escAt;
+        let end = esc + 2; // ESC + one byte, for a non-CSI escape
+        if (text[esc + 1] === "[") {
+            while (end < text.length) {
+                const code = text.charCodeAt(end);
+                end++;
+                if (code >= 0x40 && code <= 0x7e) break;
+            }
+        }
+        if (end > start) start = end;
+    }
+    const code = text.charCodeAt(start);
+    if (code >= 0xdc00 && code <= 0xdfff) start++;
+    return start;
+}
+
 export function ToolStream({ stream }: { stream: ToolStreamState }): React.ReactElement {
+    // Mac ToolStreamCard: collapsed to the last few lines, expandable to a taller scrolling pane.
+    const [expanded, setExpanded] = useState(false);
     const nodes = useMemo(() => {
-        const cleaned = stream.headTruncated ? stripLeadingSgrFragment(stream.content) : stream.content;
-        const text = stream.headTruncated ? `… earlier output omitted …\n${cleaned}` : stream.content;
-        return parseAnsi(text, INITIAL_SGR_STATE, "", 0).nodes;
-    }, [stream.content, stream.headTruncated]);
+        let shown = stream.headTruncated ? stripLeadingSgrFragment(stream.content) : stream.content;
+        let cut = stream.headTruncated;
+        if (!expanded) {
+            const sliced = collapsedToolStreamSlice(shown);
+            shown = sliced.text;
+            cut = cut || sliced.cut;
+        }
+        return parseAnsi(cut ? `… earlier output omitted …\n${shown}` : shown, INITIAL_SGR_STATE, "", 0).nodes;
+    }, [stream.content, stream.headTruncated, expanded]);
+    // Stay pinned to the newest output unless the user has scrolled up.
+    const paneRef = useRef<HTMLPreElement>(null);
+    const pinned = useRef(true);
+    useLayoutEffect(() => {
+        const pane = paneRef.current;
+        if (pane && pinned.current) pane.scrollTop = pane.scrollHeight;
+    }, [nodes]);
+    const onScroll = (): void => {
+        const pane = paneRef.current;
+        if (pane) pinned.current = pane.scrollHeight - pane.scrollTop - pane.clientHeight < 8;
+    };
 
     return (
-        <li className="mx_EventTile mx_EventTile_lastInSection" tabIndex={-1} data-layout="bubble" data-self="false">
-            <span className="mx_DisambiguatedProfile">
+        <li className="mj_EventTile mj_EventTile_lastInSection" tabIndex={-1} data-layout="bubble" data-self="false">
+            <span className="mj_SenderName">
                 <MsgAvatar />
-                <span className="mx_DisambiguatedProfile_displayName">agent</span>
+                <span className="mj_SenderName_displayName">agent</span>
             </span>
-            <div className="mx_EventTile_line">
-                <div className="mx_MTextBody mx_EventTile_content">
+            <div className="mj_EventTile_line">
+                <div className="mj_TextBody mj_EventTile_content">
                     <div className="markdown-body mj_LiveTool">
-                        <div>
-                            <span className="mj_LiveDot" /> Running{" "}
-                            <code>{stream.command || stream.tool || "tool"}</code>
+                        <div className="mj_LiveTool_header">
+                            <span>
+                                <span className="mj_LiveDot" /> Running{" "}
+                                <code>{stream.command || stream.tool || "tool"}</code>
+                            </span>
+                            <button
+                                type="button"
+                                className="mj_LiveTool_toggle"
+                                aria-expanded={expanded}
+                                aria-label={expanded ? "Collapse output" : "Expand output"}
+                                onClick={() => {
+                                    // Like the Mac pane's bottom anchor: the resized pane opens on the newest output.
+                                    pinned.current = true;
+                                    setExpanded((current) => !current);
+                                }}
+                            >
+                                <svg viewBox="0 0 16 16" width={16} height={16} aria-hidden="true">
+                                    <path
+                                        d={expanded ? "m4 6 4 4 4-4" : "m6 4 4 4-4 4"}
+                                        fill="none"
+                                        stroke="currentColor"
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                    />
+                                </svg>
+                            </button>
                         </div>
-                        <pre>{nodes}</pre>
+                        <pre
+                            ref={paneRef}
+                            onScroll={onScroll}
+                            className={expanded ? "mj_LiveTool_expanded" : "mj_LiveTool_collapsed"}
+                        >
+                            {nodes}
+                        </pre>
                     </div>
                 </div>
             </div>
@@ -4605,7 +5421,7 @@ function PendingAttachment({
 
     return (
         <li
-            className={`mx_EventTile mx_EventTile_lastInSection mj_AttachmentChip mj_AttachmentChip_${message.attachState ?? "sending"}`}
+            className={`mj_EventTile mj_EventTile_lastInSection mj_AttachmentChip mj_AttachmentChip_${message.attachState ?? "sending"}`}
             data-layout="bubble"
             data-self="true"
         >
@@ -4652,6 +5468,68 @@ function PendingAttachment({
             )}
         </li>
     );
+}
+
+/**
+ * The floating "stop the current turn" control, top-trailing over the timeline. Shown while
+ * the durable run-state says a turn is running; a tap sends the bridge's `!esc` interrupt —
+ * exactly what typing `!esc` in the composer sends — without touching the draft. The send
+ * lands in the timeline as an ordinary own-message, so that echo is the feedback; a second
+ * tap while the first is still being queued is dropped rather than sending `!esc` twice.
+ * Mounted keyed by conversation, so the linger after a turn and the in-flight latch both
+ * belong to one conversation and never carry over to another.
+ */
+function StopTurnButton({
+    client,
+    conversationId,
+    running,
+}: {
+    client: MatronJournalClient;
+    conversationId: string;
+    running: boolean;
+}): React.ReactElement | null {
+    const visible = useMinDisplayDuration(running);
+    const sending = useRef(false);
+    if (!visible) return null;
+    return (
+        <button
+            className="mj_StopTurn"
+            type="button"
+            aria-label="Stop the current turn"
+            title="Stop the current turn — sends !esc"
+            onClick={() => {
+                if (sending.current) return;
+                sending.current = true;
+                void client
+                    .sendMessage("!esc", conversationId)
+                    .catch((error) => console.warn("Stop command failed to send:", error))
+                    .finally(() => {
+                        sending.current = false;
+                    });
+            }}
+        >
+            <StopIcon />
+        </button>
+    );
+}
+
+const MIN_DISPLAY_MS = 500;
+
+/**
+ * Holds a brief `active` flag true for MIN_DISPLAY_MS after it last was, so a short turn
+ * doesn't flash the control on and off.
+ */
+function useMinDisplayDuration(active: boolean): boolean {
+    const [held, setHeld] = useState(active);
+    useEffect(() => {
+        if (active) {
+            setHeld(true);
+            return;
+        }
+        const timer = setTimeout(() => setHeld(false), MIN_DISPLAY_MS);
+        return () => clearTimeout(timer);
+    }, [active]);
+    return active || held;
 }
 
 function Timeline({
@@ -4714,16 +5592,20 @@ function Timeline({
         }
         return { queuedReleasePromptSeqs, legacyQueuePromptSeqs, permissionRequestSeqs };
     }, [state.events]);
+    // One card per tracker item, at its latest card marker, in its latest state (foldItemCards).
+    const itemCards = useMemo(() => foldItemCards(state.events), [state.events]);
     const visibleEvents = useMemo(
         () =>
             state.events.filter(
                 (event) =>
-                    !["read_marker", "edit", "session_status", "convo_meta"].includes(event.type) &&
+                    !["read_marker", "edit", "session_status", "convo_meta", "summary"].includes(event.type) &&
+                    !isUnrenderableNoticeEvent(event) &&
                     !isQueuedReleaseReply(event, queuedReleasePromptSeqs, legacyQueuePromptSeqs) &&
                     !isSuppressedTrackerEvent(event) &&
+                    !(event.type === "item" && itemCards.hidden.has(event.seq)) &&
                     !isPermissionDecisionReply(event, permissionRequestSeqs),
             ),
-        [state.events, queuedReleasePromptSeqs, legacyQueuePromptSeqs, permissionRequestSeqs],
+        [state.events, queuedReleasePromptSeqs, legacyQueuePromptSeqs, permissionRequestSeqs, itemCards],
     );
     const timeline = useMemo(
         () =>
@@ -4764,6 +5646,11 @@ function Timeline({
         }
         return outcomes;
     }, [state.events]);
+    // Agent-chat cards settled by the timeline itself (the consent item's closing marker): a
+    // decision made on another device, or the ask lapsing.
+    const agentChatResolutions = useMemo(() => readAgentChatResolutions(state.events), [state.events]);
+    // The Coordinator's answers to chat and spawn cards (`consent_decision`), for their badges.
+    const coordinatorDecisions = useMemo(() => readCoordinatorDecisions(state.events), [state.events]);
     const releasedActions = useMemo(() => {
         const actions = new Map<string, "send" | "cancel">();
         for (const event of state.events) {
@@ -4892,10 +5779,10 @@ function Timeline({
     const sessionRunning = client.selectedConversation()?.session_state === "running";
 
     const timelineMain = (
-        <main className="mx_RoomView_timeline" data-testid="timeline">
-            <div className="mx_RoomView_messagePanel mx_AutoHideScrollbar" ref={scrollRef} onScroll={onScroll}>
-                <div className="mx_RoomView_messageListWrapper">
-                    <ol className="mx_RoomView_MessageList" aria-live="polite" ref={listRef}>
+        <main className="mj_ChatView_timeline" data-testid="timeline">
+            <div className="mj_ChatView_messagePanel mj_AutoHideScrollbar" ref={scrollRef} onScroll={onScroll}>
+                <div className="mj_ChatView_messageListWrapper">
+                    <ol className="mj_ChatView_messageList" aria-live="polite" ref={listRef}>
                         {state.hasOlderHistory && (
                             <li className="mj_HistoryRow">
                                 <button
@@ -4929,6 +5816,9 @@ function Timeline({
                                             event={item.event}
                                             answeredPromptReplies={answeredPromptReplies}
                                             spawnOutcomes={spawnOutcomes}
+                                            agentChatResolutions={agentChatResolutions}
+                                            coordinatorDecisions={coordinatorDecisions}
+                                            itemCards={itemCards}
                                             isReadOnly={isReadOnly}
                                             resolvedAction={resolvedAction}
                                             continuation={
@@ -4952,12 +5842,12 @@ function Timeline({
                                         <PendingAttachment client={client} message={message} isReadOnly={isReadOnly} />
                                     ) : (
                                         <li
-                                            className="mx_EventTile mx_EventTile_sending mx_EventTile_lastInSection"
+                                            className="mj_EventTile mj_EventTile_sending mj_EventTile_lastInSection"
                                             data-layout="bubble"
                                             data-self="true"
                                         >
-                                            <div className="mx_EventTile_line">
-                                                <div className="mx_MTextBody mx_EventTile_content">
+                                            <div className="mj_EventTile_line">
+                                                <div className="mj_TextBody mj_EventTile_content">
                                                     <div className="mj_Markdown">
                                                         <MarkdownBody text={message.body} label={message.localId} />
                                                     </div>
@@ -4971,17 +5861,17 @@ function Timeline({
                         })}
                         {Object.values(state.textStreams).map((text, index) => (
                             <li
-                                className="mx_EventTile mx_EventTile_lastInSection"
+                                className="mj_EventTile mj_EventTile_lastInSection"
                                 key={`text-stream-${index}`}
                                 data-layout="bubble"
                                 data-self="false"
                             >
-                                <span className="mx_DisambiguatedProfile">
+                                <span className="mj_SenderName">
                                     <MsgAvatar />
-                                    <span className="mx_DisambiguatedProfile_displayName">agent</span>
+                                    <span className="mj_SenderName_displayName">agent</span>
                                 </span>
-                                <div className="mx_EventTile_line">
-                                    <div className="mx_MTextBody mx_EventTile_content">
+                                <div className="mj_EventTile_line">
+                                    <div className="mj_TextBody mj_EventTile_content">
                                         <div className="mj_Markdown mj_Markdown_streaming">
                                             <MarkdownBody text={text} streaming label={`stream-${index}`} />
                                             <span className="mj_Cursor" />
@@ -4995,7 +5885,7 @@ function Timeline({
                                 <ToolStream key={stream.messageRef} stream={stream} />
                             ))}
                         {state.activity && state.activity.state !== "idle" && sessionRunning && (
-                            <li className="mx_WhoIsTypingTile mj_Activity">
+                            <li className="mj_TypingIndicator mj_Activity">
                                 <span />
                                 <span />
                                 <span />
@@ -5007,6 +5897,14 @@ function Timeline({
                     </ol>
                 </div>
             </div>
+            {!isReadOnly && state.selectedConversationId && (
+                <StopTurnButton
+                    key={state.selectedConversationId}
+                    client={client}
+                    conversationId={state.selectedConversationId}
+                    running={sessionRunning}
+                />
+            )}
             {!isFollowingTail && (
                 <button
                     className="mj_JumpToBottom"
@@ -5032,7 +5930,7 @@ function Timeline({
                             {/* Copy = readable plain text (markdown stripped); the raw markdown
                                 SOURCE is offered separately below (§10.7 icon per row). */}
                             <button
-                                className="mj_RoomItemMenu_item"
+                                className="mj_ConversationMenu_item"
                                 type="button"
                                 role="menuitem"
                                 onClick={() => {
@@ -5044,7 +5942,7 @@ function Timeline({
                                 <span>Copy</span>
                             </button>
                             <button
-                                className="mj_RoomItemMenu_item"
+                                className="mj_ConversationMenu_item"
                                 type="button"
                                 role="menuitem"
                                 onClick={() => {
@@ -5059,7 +5957,7 @@ function Timeline({
                         </>
                     )}
                     <button
-                        className="mj_RoomItemMenu_item"
+                        className="mj_ConversationMenu_item"
                         type="button"
                         role="menuitem"
                         onClick={() => {
@@ -5095,7 +5993,7 @@ function Timeline({
     return <MediaViewerContext.Provider value={mediaViewerValue}>{timelineMain}</MediaViewerContext.Provider>;
 }
 
-const SLASH_LISTBOX_ID = "mx_SlashPalette_listbox";
+const SLASH_LISTBOX_ID = "mj_SlashPalette_listbox";
 const slashRowId = (index: number): string => `${SLASH_LISTBOX_ID}_opt_${index}`;
 
 function SlashCommandPalette({
@@ -5120,12 +6018,12 @@ function SlashCommandPalette({
     }, [highlighted]);
 
     return (
-        <div className="mx_SlashPalette" id={SLASH_LISTBOX_ID} role="listbox">
+        <div className="mj_SlashPalette" id={SLASH_LISTBOX_ID} role="listbox">
             {folders.length > 0
                 ? folders.map((folder, index) => (
                       <div
-                          className={`mx_SlashPalette_row${
-                              highlighted === index ? " mx_SlashPalette_row_highlighted" : ""
+                          className={`mj_SlashPalette_row${
+                              highlighted === index ? " mj_SlashPalette_row_highlighted" : ""
                           }`}
                           id={slashRowId(index)}
                           key={`${folder}-${index}`}
@@ -5136,13 +6034,13 @@ function SlashCommandPalette({
                           onMouseDown={(event) => event.preventDefault()}
                           onClick={() => onSelectFolder(folder)}
                       >
-                          <span className="mx_SlashPalette_trigger">{folder}</span>
+                          <span className="mj_SlashPalette_trigger">{folder}</span>
                       </div>
                   ))
                 : commands.map((command, index) => (
                       <div
-                          className={`mx_SlashPalette_row${
-                              highlighted === index ? " mx_SlashPalette_row_highlighted" : ""
+                          className={`mj_SlashPalette_row${
+                              highlighted === index ? " mj_SlashPalette_row_highlighted" : ""
                           }`}
                           id={slashRowId(index)}
                           key={command.trigger}
@@ -5153,9 +6051,9 @@ function SlashCommandPalette({
                           onMouseDown={(event) => event.preventDefault()}
                           onClick={() => onSelectCommand(command)}
                       >
-                          <span className="mx_SlashPalette_trigger">{command.trigger}</span>
-                          {command.argHint && <span className="mx_SlashPalette_argHint">{command.argHint}</span>}
-                          <span className="mx_SlashPalette_summary">{command.summary}</span>
+                          <span className="mj_SlashPalette_trigger">{command.trigger}</span>
+                          {command.argHint && <span className="mj_SlashPalette_argHint">{command.argHint}</span>}
+                          <span className="mj_SlashPalette_summary">{command.summary}</span>
                       </div>
                   ))}
         </div>
@@ -5170,6 +6068,7 @@ function Composer({
     reloadDraft,
     sendingConvos,
     draftRevisions,
+    sentHistory,
 }: {
     client: MatronJournalClient;
     state: ClientState;
@@ -5178,6 +6077,7 @@ function Composer({
     reloadDraft: (conversationId: string) => void;
     sendingConvos: React.RefObject<Set<string>>;
     draftRevisions: React.RefObject<Map<string, number>>;
+    sentHistory: SentMessageHistory;
 }): React.ReactElement {
     const [body, setBody] = useState("");
     // The voice-note path reads the draft from a callback that outlives renders.
@@ -5210,6 +6110,9 @@ function Composer({
                 ? bodyRef.current.trim()
                 : "";
         if (caption) {
+            // The caption leaves the field now, so it joins sent history now (ending any walk) rather
+            // than after the upload: a failed note puts it back in the field anyway.
+            sentHistory.record(caption, capturedConvo);
             clearSentDraftRef.current(capturedConvo, draftRevisions.current.get(capturedConvo) ?? 0);
         }
         const failed = (): void => {
@@ -5268,6 +6171,8 @@ function Composer({
 
     const setBodyDraft = useCallback(
         (next: string) => {
+            // Any edit — typing, a palette pick, a restored draft — ends a sent-message walk.
+            sentHistory.endRecall();
             setBody(next);
             const cid = convoIdRef.current;
             if (!cid) return;
@@ -5282,7 +6187,7 @@ function Composer({
                 draftTimerConvoRef.current = undefined;
             }, 250);
         },
-        [draftRevisions, drafts, syncDurability],
+        [draftRevisions, drafts, syncDurability, sentHistory],
     );
 
     useEffect(() => {
@@ -5305,6 +6210,9 @@ function Composer({
         setBody(ok ? text : "");
         setDismissed(null);
         setHighlighted(null);
+        // A recalled sent line is shown but never written to the draft store, so the real draft
+        // is what loads here; just drop the walk.
+        sentHistory.endRecall();
         // Sync the badge FROM the store for the newly-selected convo — never a blind reset, so a
         // still-non-durable convo keeps its warning across switch-away/back (and a clear-failure flag surfaces).
         setNonDurable(convoId ? drafts.durability(convoId) === "non-durable" : false);
@@ -5358,6 +6266,25 @@ function Composer({
     };
     const restoreDraftRef = useRef(restoreDraft);
     restoreDraftRef.current = restoreDraft;
+    // Terminal-style recall of this conversation's sent messages. A recalled line is only
+    // shown — not written to the draft store — so the stored draft stays the real one, and
+    // leaving mid-walk can't save a recalled line as the draft. Editing it makes it the draft.
+    const showRecalled = (text: string | undefined): void => {
+        if (text === undefined) return;
+        setBody(text);
+        setHighlighted(null);
+        setDismissed(null);
+        resizeAfterRecall.current = true;
+    };
+    const resizeAfterRecall = useRef(false);
+    useLayoutEffect(() => {
+        if (!resizeAfterRecall.current || !textarea.current) return;
+        resizeAfterRecall.current = false;
+        const node = textarea.current;
+        node.style.height = "auto";
+        node.style.height = `${Math.min(node.scrollHeight, 144)}px`;
+        node.setSelectionRange(node.value.length, node.value.length);
+    }, [body]);
     const send = async (): Promise<void> => {
         const cid = convoIdRef.current;
         const submitted = body;
@@ -5366,6 +6293,7 @@ function Composer({
         sendingConvos.current.add(cid);
         try {
             if (await client.sendMessage(submitted, cid)) {
+                sentHistory.record(submitted.trim(), cid);
                 const folder = recentFolderArgument(submitted);
                 if (folder) store.record(folder);
                 clearSentDraft(cid, submittedRevision);
@@ -5377,8 +6305,8 @@ function Composer({
         }
     };
     return (
-        <div className="mx_MessageComposer" role="region" aria-label="Message composer" ref={voice.containerRef}>
-            <div className="mx_MessageComposer_wrapper">
+        <div className="mj_Composer" role="region" aria-label="Message composer" ref={voice.containerRef}>
+            <div className="mj_Composer_wrapper">
                 {state.connectionError && state.connectionErrorSeq !== dismissedSeq && (
                     <div className="mj_ConnectionError">
                         <span role="status">{state.connectionError}</span>
@@ -5433,9 +6361,9 @@ function Composer({
                             }}
                         />
                         <div className="mj_ComposerField" onClick={() => textarea.current?.focus()}>
-                            <div className="mx_BasicMessageComposer">
+                            <div className="mj_ComposerInput">
                                 <textarea
-                                    className="mx_BasicMessageComposer_input"
+                                    className="mj_ComposerInput_input"
                                     ref={textarea}
                                     rows={1}
                                     value={body}
@@ -5451,6 +6379,32 @@ function Composer({
                                     }}
                                     onKeyDown={(event) => {
                                         if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+                                        // An active walk owns Up/Down outright: a recalled one-word
+                                        // command opens the palette, and letting it take the arrows
+                                        // would trap the walk there. Otherwise the palette's arrows
+                                        // come first, and Up starts a walk only from an empty field
+                                        // (in a draft it moves the caret).
+                                        // Plain arrows only: with a modifier they keep their usual
+                                        // caret and selection meaning (the desktop app's moveUp:/moveDown:).
+                                        const plainArrow =
+                                            (event.key === "ArrowUp" || event.key === "ArrowDown") &&
+                                            !event.shiftKey &&
+                                            !event.altKey &&
+                                            !event.metaKey &&
+                                            !event.ctrlKey;
+                                        if (convoId && plainArrow) {
+                                            const walking = sentHistory.isNavigating;
+                                            if (event.key === "ArrowUp" && (walking || (!open && body === ""))) {
+                                                event.preventDefault();
+                                                showRecalled(sentHistory.recallOlder(convoId, body));
+                                                return;
+                                            }
+                                            if (event.key === "ArrowDown" && walking) {
+                                                event.preventDefault();
+                                                showRecalled(sentHistory.recallNewer(convoId));
+                                                return;
+                                            }
+                                        }
                                         if (open) {
                                             const count = folders.length || commands.length;
                                             if (event.key === "ArrowDown") {
@@ -5988,14 +6942,18 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
         (state.sessionStatus?.limits?.filter((limit) => limit.label.trim()).length ?? 0);
     const collapse = useAdaptiveHeader(bodyEl, meterCount);
     const appContent = useRef<HTMLDivElement>(null);
+    // Desktop notifications and the unread count in the title / app badge, while signed in.
+    useEffect(() => notificationsFor(client).start(), [client]);
     const uploadDialogWasOpen = useRef(Boolean(state.stagedUploads));
     const drafts = useMemo(() => makeDraftStore(state.session), [state.session]);
     const sendingConvos = useRef<Set<string>>(new Set());
     const draftRevisions = useRef<Map<string, number>>(new Map());
+    // Sent-message recall is per account, like the drafts; it lives for the page session only.
+    const sentHistory = useMemo(() => new SentMessageHistory(), [state.session]); // eslint-disable-line react-hooks/exhaustive-deps
 
     useEffect(() => {
         if (uploadDialogWasOpen.current && !state.stagedUploads) {
-            appContent.current?.querySelector<HTMLTextAreaElement>(".mx_BasicMessageComposer_input")?.focus();
+            appContent.current?.querySelector<HTMLTextAreaElement>(".mj_ComposerInput_input")?.focus();
         }
         uploadDialogWasOpen.current = Boolean(state.stagedUploads);
     }, [state.stagedUploads]);
@@ -6036,7 +6994,7 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
             // Any inner overlay still mounted → it owns this press; defer.
             if (
                 document.querySelector(
-                    ".mj_MediaViewer_scrim, .mj_EventSource_scrim, .mj_UploadConfirm_scrim, .mj_NewSessionSheet, .mj_SettingsScrim, .mj_EventRowMenu, .mj_RoomItemMenu, .mj_HeaderMenu, .mj_MdPreview, [role='menu']",
+                    ".mj_MediaViewer_scrim, .mj_EventSource_scrim, .mj_UploadConfirm_scrim, .mj_NewSessionSheet, .mj_SettingsScrim, .mj_EventRowMenu, .mj_ConversationMenu, .mj_HeaderMenu, .mj_MdPreview, [role='menu']",
                 )
             ) {
                 return;
@@ -6053,24 +7011,24 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
 
     return (
         <MarkdownPreviewContext.Provider value={markdownPreview.context}>
-            <div className="mx_MatrixChat_wrapper">
-                <div ref={appContent} className="mx_MatrixChat" inert={state.stagedUploads ? true : undefined}>
+            <div className="mj_App_wrapper">
+                <div ref={appContent} className="mj_App" inert={state.stagedUploads ? true : undefined}>
                     <ConversationList client={client} state={state} width={leftPanel.width} />
                     <div
-                        className="mx_ResizeHandle mx_ResizeHandle--horizontal"
+                        className="mj_ResizeHandle mj_ResizeHandle--horizontal"
                         data-id="lp-resizer"
                         onPointerDown={leftPanel.onPointerDown}
                     >
                         <div />
                     </div>
                     <div
-                        className={`mx_RoomView_wrapper ${state.trackerView?.open || state.selectedConversationId ? "" : "mj_Chat_mobileHidden"}`}
+                        className={`mj_ChatView_wrapper ${state.trackerView?.open || state.selectedConversationId ? "" : "mj_Chat_mobileHidden"}`}
                     >
                         {state.trackerView?.open ? (
                             <TrackerPane client={client} state={state} />
                         ) : state.selectedConversationId ? (
                             <div
-                                className={`mx_RoomView${dragActive ? " mj_RoomView_dragActive" : ""}`}
+                                className={`mj_ChatView${dragActive ? " mj_ChatView_dragActive" : ""}`}
                                 onDragOver={(event) => {
                                     if (!isFileDrag(event)) return;
                                     event.preventDefault();
@@ -6099,7 +7057,7 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                                 )}
                                 <div
                                     ref={setBodyEl}
-                                    className="mx_RoomView_body mx_MainSplit_timeline"
+                                    className="mj_ChatView_body mj_MainSplit_timeline"
                                     data-layout="bubble"
                                 >
                                     {childMode ? (
@@ -6129,13 +7087,14 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                                             }
                                             sendingConvos={sendingConvos}
                                             draftRevisions={draftRevisions}
+                                            sentHistory={sentHistory}
                                         />
                                     )}
                                 </div>
                             </div>
                         ) : (
-                            <main className="mx_HomePage mx_HomePage_default">
-                                <div className="mx_HomePage_default_wrapper">
+                            <main className="mj_HomePage mj_HomePage_default">
+                                <div className="mj_HomePage_default_wrapper">
                                     <img src={matronLogo} alt={state.config.brand || "Matron"} />
                                     <h1>Welcome to {state.config.brand || "Matron"}</h1>
                                 </div>
@@ -6161,7 +7120,7 @@ export function MatronApp({ client }: { client: MatronJournalClient }): React.Re
     const state = useSyncExternalStore(client.subscribe, client.getSnapshot);
     if (state.phase === "loading")
         return (
-            <div className="mx_MatrixChat_splash mj_Loading">
+            <div className="mj_App_splash mj_Loading">
                 <img src={matronLogo} alt="Matron" />
             </div>
         );

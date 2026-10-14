@@ -10,8 +10,8 @@ Please see LICENSE files in the repository root for full details.
  * mission and the conversation that owns it — the one that filed it — each a jump), the item body,
  * its comment thread (status rows rendered as centered muted lines from the structured
  * transition, with any closing/reopening note beneath as an ordinary comment card; a comment that
- * asks a follow-up question carries its own one-tap answer buttons; an open notice carries its
- * item-level Seen button under the body), a pinned reply
+ * asks a follow-up question carries its own one-tap answer buttons; an open item carries its own
+ * item-level buttons under the body, such as a notice's Seen), a pinned reply
  * composer, and a resolve/reopen menu. All mutations go through the client; the store refetch keeps
  * the thread live.
  */
@@ -19,24 +19,29 @@ Please see LICENSE files in the repository root for full details.
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
+import { AgentSpawnCard, type AgentSpawnDecision, isAnswerableAgentSpawn } from "../agent-spawn-card";
 import { JOURNAL_ATTACHMENTS_MAX } from "../api";
 import { type MatronJournalClient, type TrackerCommentOutcome, voiceNoteFile } from "../client";
+import { stopSpawnedSession } from "../coordinator-consent";
 import { ChevronLeftIcon, CloseIcon, KebabIcon, PlusCircleIcon, SendIcon } from "../icons";
 import { parseOwnTrackerUrl } from "../link-path";
 import { parseTrackerHref } from "../markdown";
 import { MediaViewer, MediaViewerContext, type MediaViewerContextValue } from "../media-viewer";
-import type {
-    TrackerAttachment,
-    TrackerComment,
-    TrackerCommentWrite,
-    TrackerItem,
-    TrackerLink,
-    TrackerLinkHandler,
-    TrackerResolution,
+import {
+    asString,
+    type SpawnConsentRows,
+    spawnOutcomeKind,
+    spawnOutcomeSnippet,
+    type TrackerAttachment,
+    type TrackerComment,
+    type TrackerCommentWrite,
+    type TrackerItem,
+    type TrackerLink,
+    type TrackerLinkHandler,
+    type TrackerResolution,
 } from "../types";
 import { useVoiceRecorder, VoiceErrorBanner, VoiceMicButton, VoiceRecordingBar } from "../voice-recorder";
 import {
-    awaitsSeen,
     availableResolutions,
     formatRelativeTime,
     humanizeSize,
@@ -44,7 +49,9 @@ import {
     itemStatusText,
     kindLabel,
     needsUser,
+    offeredItemActions,
     resolveActionLabel,
+    spawnConsentRequestId,
     statusRowText,
 } from "./format";
 import { CommentBubbleGlyph, MissionGlyph, TrackerGlyph } from "./glyphs";
@@ -91,6 +98,138 @@ function CommentActions({
                     </button>
                 );
             })}
+        </div>
+    );
+}
+
+/**
+ * The one-tap answers an agent filed with the item itself, under its body. Tapping one answers
+ * exactly as typing its label would. The chosen one is filled and does nothing when tapped again;
+ * the others stay tappable so the user can change their mind. Every button is disabled while the
+ * item has a write in flight, since a tap racing a close would reopen the item it closes.
+ */
+function ItemActions({
+    actions,
+    chosen,
+    disabled,
+    onTap,
+}: {
+    actions: string[];
+    chosen: string | null;
+    disabled: boolean;
+    onTap: (label: string) => void;
+}): React.ReactElement | null {
+    if (actions.length === 0) return null;
+    return (
+        <div className="mj_TrackerActions mj_TrackerItemActions" role="group" aria-label="Quick replies">
+            {actions.map((label) => {
+                const isChosen = label === chosen;
+                return (
+                    <button
+                        key={label}
+                        type="button"
+                        className={`mj_TrackerAction${isChosen ? " mj_TrackerAction_chosen" : ""}`}
+                        aria-pressed={isChosen}
+                        disabled={disabled}
+                        onClick={isChosen ? undefined : () => onTap(label)}
+                    >
+                        {label}
+                    </button>
+                );
+            })}
+        </div>
+    );
+}
+
+/**
+ * The agent-spawn ask a consent item stands for, read from the conversation that asked and read
+ * again whenever that conversation moves (a card arriving, its outcome landing). Undefined until
+ * the first read for this ask finishes, and for an item that is not a spawn consent item.
+ */
+function useSpawnConsentRows(
+    client: MatronJournalClient,
+    convoId: string,
+    requestId: string | null,
+    convoSeq: number | undefined,
+): SpawnConsentRows | undefined {
+    const [read, setRead] = useState<{ key: string; rows: SpawnConsentRows } | null>(null);
+    const key = requestId ? `${convoId}\n${requestId}` : "";
+    useEffect(() => {
+        if (!requestId) return;
+        let live = true;
+        void client.spawnConsentRows(convoId, requestId).then((rows) => {
+            if (live) setRead({ key, rows });
+        });
+        return (): void => {
+            live = false;
+        };
+    }, [client, convoId, requestId, convoSeq, key]);
+    return read && read.key === key ? read.rows : undefined;
+}
+
+/**
+ * The spawn consent card for a consent item, between the item's links and its body so the answer
+ * sits near the top. The full card when its own event is in this browser's store: what the user
+ * approves is then exactly what the timeline card shows, through the same answer call. Without it
+ * there is nothing to approve: the id in the item's link is agent-written and could name an ask the
+ * user has never seen, so the placeholder offers no buttons. It says the card has not arrived while
+ * the ask may still be waiting, or how the ask ended when its outcome is here (the latest history
+ * page can hold the outcome but not the older card) or the item is closed. A closed item settles the
+ * card: the journal closes it the moment the ask is answered.
+ */
+function SpawnConsentCard({
+    rows,
+    closed,
+    onAnswer,
+    onOpenRoom,
+    onStopSession,
+}: {
+    rows: SpawnConsentRows;
+    closed: boolean;
+    onAnswer: (decision: AgentSpawnDecision, signal?: AbortSignal) => Promise<void>;
+    onOpenRoom: (roomId: string) => void;
+    onStopSession: (convoId: string) => void;
+}): React.ReactElement {
+    const { request, outcome, coordinatorDecision } = rows;
+    if (request) {
+        const answerable = isAnswerableAgentSpawn(request.payload);
+        return (
+            <div className="mj_TrackerConsent">
+                <AgentSpawnCard
+                    event={request}
+                    outcome={outcome}
+                    coordinatorDecision={coordinatorDecision}
+                    isReadOnly={!answerable}
+                    settled={closed}
+                    onAnswer={answerable ? onAnswer : undefined}
+                    onOpen={onOpenRoom}
+                    onStopSession={onStopSession}
+                />
+            </div>
+        );
+    }
+    const roomId = outcome && spawnOutcomeKind(outcome) === "started" ? asString(outcome.room_id) : "";
+    return (
+        <div className="mj_TrackerConsent">
+            <div className="mj_PromptCard mj_PromptCard_spawn mj_TrackerConsent_waiting">
+                <div className="mj_PromptHeader">
+                    <span className="mj_PromptLabel">Agent spawn request</span>
+                </div>
+                <p className="mj_TrackerConsent_note">
+                    {outcome
+                        ? spawnOutcomeSnippet(outcome)
+                        : closed
+                          ? "This request is no longer waiting for an answer."
+                          : "The request card hasn't reached this browser yet. It can be approved once it arrives, or from the conversation it was asked in."}
+                </p>
+                {roomId ? (
+                    <div className="mj_PromptResolved">
+                        <button type="button" className="mj_SpawnOpenButton" onClick={() => onOpenRoom(roomId)}>
+                            Open
+                        </button>
+                    </div>
+                ) : null}
+            </div>
         </div>
     );
 }
@@ -560,14 +699,33 @@ export function ItemDetail({
         return client.postTrackerComment(item.num, write, key);
     };
 
-    const urgent = needsUser(item);
-    const hasUserReply = useMemo(() => comments.some((comment) => comment.author === "user"), [comments]);
-    const resolutions = item.state === "open" ? availableResolutions(item, hasUserReply) : [];
-
     const snapshot = client.getSnapshot();
     const selectedConvoId = snapshot.selectedConversationId;
     // Keyed on the conversation list (replaced on a rename or load), so the line follows it live.
     const conversations = snapshot.conversations;
+
+    // A spawn consent item carries the ask's card, answered here as in the conversation.
+    const spawnRequestId = spawnConsentRequestId(item);
+    const originSeq = conversations.find((conversation) => conversation.id === item.origin_convo_id)?.last_seq;
+    const spawnRows = useSpawnConsentRows(client, item.origin_convo_id, spawnRequestId, originSeq);
+    const answerSpawn = async (decision: AgentSpawnDecision, signal?: AbortSignal): Promise<void> => {
+        if (spawnRequestId) await client.answerSpawnConsent(item.num, spawnRequestId, decision, signal);
+    };
+    const openSpawnRoom = (roomId: string): void => {
+        client.closeTrackerView();
+        void client.selectConversation(roomId, { suppressNotFound: true });
+    };
+    const stopSpawnSession = (convoId: string): void => {
+        void stopSpawnedSession(convoId, (target) => client.sendMessage("/stop", target));
+    };
+
+    const urgent = needsUser(item);
+    const hasUserReply = useMemo(() => comments.some((comment) => comment.author === "user"), [comments]);
+    // A consent item still waiting for its answer offers no close: Approve and Decline are its only
+    // honest ones, and dismissing it would hide an ask that stays open on the journal. The journal
+    // closes the item itself once the ask is decided. One whose outcome is in has nothing to hide.
+    const awaitingConsent = isConsentItem(item) && !spawnRows?.outcome;
+    const resolutions = item.state === "open" && !awaitingConsent ? availableResolutions(item, hasUserReply) : [];
     const agents = snapshot.agents;
     const originLabel = useMemo(() => itemOriginLabel(item, conversations, agents), [item, conversations, agents]);
     // Always drawn for an item filed from a conversation, unless the detail is shown inside that
@@ -748,15 +906,34 @@ export function ItemDetail({
         }
     };
 
-    // The notice's Seen button: an item-level tap (no reply_to), which the journal answers by closing
-    // the notice. One-shot like the menu actions: a repeat after a lost response is harmless, since
-    // the notice is closed either way.
-    const seen = async (): Promise<void> => {
-        if (busy) return;
+    // A tap on one of the item's own buttons: a comment whose body is the label, with no reply_to
+    // (the journal records it as the item's `chosen_action`, and closes a notice answered Seen).
+    // The tap shows as chosen while it is on its way. Same retry rule as a comment's buttons: one
+    // slot holding the last attempted label, so a failed tap retried keeps its key and a different
+    // label gets a fresh one. Both the slot and the marker name the item they belong to: this view
+    // is reused when another item is opened, and a key from one item's failed tap must never be
+    // replayed as another item's answer.
+    const offeredActions = offeredItemActions(item);
+    const [sendingAction, setSendingAction] = useState<{ itemId: string; label: string } | null>(null);
+    const itemTapKeyRef = useRef<{ itemId: string; label: string; key: string } | null>(null);
+    const chosenAction =
+        [sendingAction?.itemId === item.id ? sendingAction.label : null, item.chosen_action].find(
+            (label): label is string => !!label && offeredActions.includes(label),
+        ) ?? null;
+    const tapItemAction = async (label: string): Promise<void> => {
+        if (busy || !offeredActions.includes(label) || label === chosenAction) return;
+        let slot = itemTapKeyRef.current;
+        if (!slot || slot.itemId !== item.id || slot.label !== label) {
+            slot = { itemId: item.id, label, key: crypto.randomUUID() };
+            itemTapKeyRef.current = slot;
+        }
         setBusy(true);
+        setSendingAction({ itemId: item.id, label });
         try {
-            await client.markItemSeen(item.num);
+            const ok = await client.commentItem(item.num, { action: label, body: label }, slot.key);
+            if (ok && itemTapKeyRef.current === slot) itemTapKeyRef.current = null;
         } finally {
+            setSendingAction(null);
             setBusy(false);
         }
     };
@@ -954,6 +1131,16 @@ export function ItemDetail({
                     </div>
                 ) : null}
 
+                {spawnRequestId && spawnRows ? (
+                    <SpawnConsentCard
+                        rows={spawnRows}
+                        closed={item.state === "closed"}
+                        onAnswer={answerSpawn}
+                        onOpenRoom={openSpawnRoom}
+                        onStopSession={stopSpawnSession}
+                    />
+                ) : null}
+
                 {/* The item's body attachments ride with the body: placed inline where it refers to
                     them, the rest after it. */}
                 <InlineBody
@@ -965,19 +1152,12 @@ export function ItemDetail({
                     proseClassName="mj_TrackerProse mj_TrackerItemBody"
                 />
 
-                {awaitsSeen(item) ? (
-                    <div className="mj_TrackerActions" role="group" aria-label="Quick replies">
-                        <button
-                            type="button"
-                            className="mj_TrackerAction"
-                            data-action="seen"
-                            disabled={busy}
-                            onClick={() => void seen()}
-                        >
-                            Seen
-                        </button>
-                    </div>
-                ) : null}
+                <ItemActions
+                    actions={offeredActions}
+                    chosen={chosenAction}
+                    disabled={busy}
+                    onTap={(label) => void tapItemAction(label)}
+                />
 
                 {comments.length > 0 ? (
                     <div className="mj_TrackerThread">

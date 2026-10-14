@@ -112,7 +112,7 @@ describe("timeline tail following", () => {
 
     it("shows the jump button only when not following and re-follows on click", async () => {
         rendered = await renderClient(signedInClient());
-        const panel = rendered.container.querySelector<HTMLDivElement>(".mx_RoomView_messagePanel")!;
+        const panel = rendered.container.querySelector<HTMLDivElement>(".mj_ChatView_messagePanel")!;
         setScrollMetrics(panel, 0);
 
         expect(rendered.container.querySelector(".mj_JumpToBottom")).toBeNull();
@@ -129,7 +129,7 @@ describe("timeline tail following", () => {
     it("does not force-follow incoming events while scrolled up", async () => {
         const client = signedInClient();
         rendered = await renderClient(client);
-        const panel = rendered.container.querySelector<HTMLDivElement>(".mx_RoomView_messagePanel")!;
+        const panel = rendered.container.querySelector<HTMLDivElement>(".mj_ChatView_messagePanel")!;
         setScrollMetrics(panel, 0);
         panel.dispatchEvent(new Event("scroll"));
         await flushFrames();
@@ -151,7 +151,7 @@ describe("timeline tail following", () => {
     it("a sendTick bump cancels a pending stale frame and forces follow", async () => {
         const client = signedInClient();
         rendered = await renderClient(client);
-        const panel = rendered.container.querySelector<HTMLDivElement>(".mx_RoomView_messagePanel")!;
+        const panel = rendered.container.querySelector<HTMLDivElement>(".mj_ChatView_messagePanel")!;
         setScrollMetrics(panel, 0);
 
         panel.dispatchEvent(new Event("scroll"));
@@ -188,7 +188,7 @@ describe("timeline tail following", () => {
             });
         });
         rendered = await renderClient(client);
-        const panel = rendered.container.querySelector<HTMLDivElement>(".mx_RoomView_messagePanel")!;
+        const panel = rendered.container.querySelector<HTMLDivElement>(".mj_ChatView_messagePanel")!;
         setScrollMetrics(panel, 100);
         panel.dispatchEvent(new Event("scroll"));
         await flushFrames();
@@ -209,7 +209,7 @@ describe("timeline tail following", () => {
     it("a conversation switch forces follow and a pre-switch frame cannot flip it off", async () => {
         const client = signedInClient();
         rendered = await renderClient(client);
-        const panel = rendered.container.querySelector<HTMLDivElement>(".mx_RoomView_messagePanel")!;
+        const panel = rendered.container.querySelector<HTMLDivElement>(".mj_ChatView_messagePanel")!;
         setScrollMetrics(panel, 0);
 
         panel.dispatchEvent(new Event("scroll"));
