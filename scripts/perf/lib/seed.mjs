@@ -12,7 +12,7 @@ Please see LICENSE files in the repository root for full details.
  */
 
 import crypto from "node:crypto";
-import { conversationEvents, rng, words, agentText, userText, SCALES } from "./dataset.mjs";
+import { conversationEvents, rng, words, agentText, userText, SCALES, DATASET_VERSION } from "./dataset.mjs";
 import { provision, login } from "./journal.mjs";
 
 /** A WebSocket that resolves sends against the journal frame they produce. */
@@ -199,7 +199,7 @@ export async function seed(journal, { scale = "full", seed: seedValue = 1, log =
                 op: "publish",
                 convo_id: convo.id,
                 type: "text",
-                payload: { text: "Done.", __perf_key: key },
+                payload: { body: "Done.", __perf_key: key },
                 idem_key: key,
             });
         }),
@@ -277,6 +277,7 @@ export async function seed(journal, { scale = "full", seed: seedValue = 1, log =
     for (const s of agentSockets) s.close();
     const sorted = [...conversations].sort((a, b) => b.events - a.events);
     return {
+        version: DATASET_VERSION,
         scale,
         seed: seedValue,
         username,

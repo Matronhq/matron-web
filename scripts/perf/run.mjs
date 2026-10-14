@@ -38,7 +38,7 @@ import { chromium } from "@playwright/test";
 import { startJournal, login } from "./lib/journal.mjs";
 import { seed, openSocket } from "./lib/seed.mjs";
 import { serveApp } from "./lib/serve.mjs";
-import { agentText, rng } from "./lib/dataset.mjs";
+import { agentText, rng, DATASET_VERSION } from "./lib/dataset.mjs";
 
 const args = Object.fromEntries(
     process.argv.slice(2).map((a) => {
@@ -433,7 +433,7 @@ async function measureAppend(page, env, convoId) {
     const before = await page.locator(TILES).count();
     const key = `append:${Date.now()}`;
     const t0 = Date.now();
-    agent.send({ op: "publish", convo_id: convoId, type: "text", payload: { text: "One more line." }, idem_key: key });
+    agent.send({ op: "publish", convo_id: convoId, type: "text", payload: { body: "One more line." }, idem_key: key });
     await settled(page, ({ sel, before }) => document.querySelectorAll(sel).length > before, { sel: TILES, before });
     return Date.now() - t0;
 }
@@ -543,7 +543,7 @@ async function streaming(browser, env) {
                         convo_id: id,
                         message_ref: ref,
                         type: "text",
-                        payload: { text: streamed },
+                        payload: { body: streamed },
                     });
                     ref = `perf-${Date.now()}-${tick}`;
                     streamed = "";
@@ -657,6 +657,9 @@ async function main() {
         const manifestFile = dataDir && path.join(dataDir, "manifest.json");
         const reuse = manifestFile && fs.existsSync(manifestFile) && JSON.parse(fs.readFileSync(manifestFile, "utf8"));
         if (reuse && reuse.scale !== SCALE) throw new Error(`${dataDir} holds a ${reuse.scale} dataset`);
+        if (reuse && reuse.version !== DATASET_VERSION) {
+            throw new Error(`${dataDir} holds an older dataset; remove it to seed a fresh one`);
+        }
         const journal = await startJournal({ dataDir });
         let manifest = reuse;
         if (!manifest) {

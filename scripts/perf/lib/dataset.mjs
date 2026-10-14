@@ -166,16 +166,19 @@ export function diff(r) {
 export function conversationEvents(r, count) {
     const events = [];
     while (events.length < count) {
-        events.push({ by: "user", type: "text", payload: { text: userText(r) } });
+        events.push({ by: "user", type: "text", payload: { body: userText(r) } });
         for (let i = 0, n = r.int(2, 12); i < n && events.length < count; i++) {
             const k = r.next();
-            if (k < 0.35) events.push({ by: "agent", type: "text", payload: { text: agentText(r) } });
+            if (k < 0.35) events.push({ by: "agent", type: "text", payload: { body: agentText(r) } });
             else if (k < 0.75) events.push({ by: "agent", type: "tool_output", payload: toolOutput(r) });
             else events.push({ by: "agent", type: "diff", payload: diff(r) });
         }
     }
     return events.slice(0, count);
 }
+
+/** Bump when the generated data changes shape, so a kept --data directory is re-seeded. */
+export const DATASET_VERSION = 2;
 
 /** Dataset sizes. "full" is shaped on a heavy account; "ci" is small enough for a CI runner. */
 export const SCALES = {
