@@ -1977,9 +1977,89 @@ describe("MatronJournalClient spawnConsentRows", () => {
         expect(rows).toEqual({ request: null, outcome: { request_id: "sp_1", outcome: "expired" } });
     });
 
+    it("fetches again on the next read after a failed fetch", async () => {
+        const messages = jest
+            .fn()
+            .mockRejectedValueOnce(new Error("offline"))
+            .mockResolvedValueOnce({ events: [card("sp_1", 30)] });
+        const { client } = withStore([], messages);
+
+        expect((await client.spawnConsentRows("c1", "sp_1")).request).toBeNull();
+        expect((await client.spawnConsentRows("c1", "sp_1")).request?.seq).toBe(30);
+        expect(messages).toHaveBeenCalledTimes(2);
+    });
+
+    it("lets a read that starts during the fetch wait for it", async () => {
+        let release!: (value: { events: JournalEvent[] }) => void;
+        const messages = jest.fn(() => new Promise<{ events: JournalEvent[] }>((resolve) => (release = resolve)));
+        const { client } = withStore([], messages);
+
+        const first = client.spawnConsentRows("c1", "sp_1");
+        const second = client.spawnConsentRows("c1", "sp_1");
+        await flush();
+        await flush();
+        release({ events: [card("sp_1", 30)] });
+
+        expect((await first).request?.seq).toBe(30);
+        expect((await second).request?.seq).toBe(30);
+        expect(messages).toHaveBeenCalledTimes(1);
+    });
+
     it("reads as not here when signed out", async () => {
         const { client } = makeClient();
 
         expect(await client.spawnConsentRows("c1", "sp_1")).toEqual({ request: null, outcome: null });
+    });
+});
+
+describe("MatronJournalClient answerSpawnConsent", () => {
+    it("answers the request and refetches the item while it is still the one open", async () => {
+        const { client, state } = makeClient({ trackerView: { open: true, view: "inbox", selectedItemId: 31 } });
+        const answerAgentSpawn = jest.fn().mockResolvedValue(undefined);
+        const itemFetch = jest.fn().mockResolvedValue({ item: item({ num: 31 }), comments: [] });
+        (state as unknown as { api: unknown }).api = { answerAgentSpawn, item: itemFetch };
+
+        await client.answerSpawnConsent(31, "sp_1", "approve");
+
+        expect(answerAgentSpawn).toHaveBeenCalledWith("sp_1", "approve", undefined);
+        expect(itemFetch).toHaveBeenCalledWith(31);
+    });
+
+    it("leaves a newer selection alone", async () => {
+        const { client, state } = makeClient({ trackerView: { open: true, view: "inbox", selectedItemId: 7 } });
+        const itemFetch = jest.fn();
+        (state as unknown as { api: unknown }).api = {
+            answerAgentSpawn: jest.fn().mockResolvedValue(undefined),
+            item: itemFetch,
+        };
+
+        await client.answerSpawnConsent(31, "sp_1", "deny");
+
+        expect(itemFetch).not.toHaveBeenCalled();
+    });
+
+    it("refetches the stale item on a 409 and rethrows it unchanged", async () => {
+        const { client, state } = makeClient({ trackerView: { open: true, view: "inbox", selectedItemId: 31 } });
+        const error = new JournalApiError("Already resolved", 409);
+        const itemFetch = jest.fn().mockResolvedValue({ item: item({ num: 31 }), comments: [] });
+        (state as unknown as { api: unknown }).api = {
+            answerAgentSpawn: jest.fn().mockRejectedValue(error),
+            item: itemFetch,
+        };
+
+        await expect(client.answerSpawnConsent(31, "sp_1", "deny")).rejects.toBe(error);
+        expect(itemFetch).toHaveBeenCalledWith(31);
+    });
+
+    it("does not refetch after another failure", async () => {
+        const { client, state } = makeClient({ trackerView: { open: true, view: "inbox", selectedItemId: 31 } });
+        const itemFetch = jest.fn();
+        (state as unknown as { api: unknown }).api = {
+            answerAgentSpawn: jest.fn().mockRejectedValue(new Error("offline")),
+            item: itemFetch,
+        };
+
+        await expect(client.answerSpawnConsent(31, "sp_1", "approve")).rejects.toThrow("offline");
+        expect(itemFetch).not.toHaveBeenCalled();
     });
 });

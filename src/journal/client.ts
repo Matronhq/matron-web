@@ -375,9 +375,10 @@ export class MatronJournalClient {
     private database?: JournalDatabase;
     private connection?: JournalConnection;
     private readonly history = new Map<string, ConversationHistoryState>();
-    // Conversations whose latest history page a spawn consent item has already fetched, keyed
-    // `${sessionGen}:${convoId}`, so a card that is not in that page is not asked for again.
-    private readonly consentHistoryFetched = new Set<string>();
+    // The latest-history-page fetch a spawn consent item made per conversation, keyed
+    // `${sessionGen}:${convoId}`: in flight (later reads wait on it) or done (a card that is not in
+    // that page is not asked for again). A failed fetch is forgotten so the next read retries.
+    private readonly consentHistoryFetches = new Map<string, Promise<void>>();
     private readonly activities = new Map<string, JournalEphemeralFrame["activity"]>();
     private readonly statuses = new Map<string, NonNullable<JournalEphemeralFrame["status"]>>();
     private readonly textStreams = new Map<string, Record<string, string>>();
@@ -1667,6 +1668,31 @@ export class MatronJournalClient {
     }
 
     /**
+     * Answers the agent-spawn ask a consent item stands for, through the same call as the card in
+     * the conversation, then refetches the item if it is still the one open: the journal closes it
+     * once the ask is decided, and after a 409 (answered elsewhere, or expired) the copy that still
+     * offered the buttons was stale. Errors are rethrown unchanged for the card's state machine.
+     */
+    public async answerSpawnConsent(
+        itemNum: number,
+        requestId: string,
+        decision: "approve" | "deny",
+        signal?: AbortSignal,
+    ): Promise<void> {
+        try {
+            await this.answerAgentSpawn(requestId, decision, signal);
+        } catch (error) {
+            if (error instanceof JournalApiError && error.status === 409) this.refreshSelectedItem(itemNum);
+            throw error;
+        }
+        this.refreshSelectedItem(itemNum);
+    }
+
+    private refreshSelectedItem(itemNum: number): void {
+        if (this.isSelectedTrackerItem(itemNum)) void this.loadItem(itemNum);
+    }
+
+    /**
      * The agent-spawn ask a consent item stands for, as the conversation that asked tells it: the
      * card's own event and its outcome. Read from the local store. A conversation this device has
      * not opened may not hold the card yet, so the first miss fetches that conversation's latest
@@ -1683,14 +1709,23 @@ export class MatronJournalClient {
         } catch {
             return none;
         }
-        const fetchKey = `${this.sessionGen}:${convoId}`;
         const api = this.api;
-        if (rows.request || !api || this.consentHistoryFetched.has(fetchKey)) return rows;
-        this.consentHistoryFetched.add(fetchKey);
+        if (rows.request || !api) return rows;
+        const fetchKey = `${this.sessionGen}:${convoId}`;
+        let fetch = this.consentHistoryFetches.get(fetchKey);
+        if (!fetch) {
+            fetch = (async (): Promise<void> => {
+                const response = await api.messages(convoId);
+                if (this.database === database && this.api === api) await database.putHistory(response.events);
+            })();
+            this.consentHistoryFetches.set(fetchKey, fetch);
+            fetch.catch(() => {
+                if (this.consentHistoryFetches.get(fetchKey) === fetch) this.consentHistoryFetches.delete(fetchKey);
+            });
+        }
         try {
-            const response = await api.messages(convoId);
-            if (this.database !== database || this.api !== api) return rows;
-            await database.putHistory(response.events);
+            await fetch;
+            if (this.database !== database) return rows;
             return findSpawnConsentRows(await database.events(convoId), requestId);
         } catch {
             return rows;

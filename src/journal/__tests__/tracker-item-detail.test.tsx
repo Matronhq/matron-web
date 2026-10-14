@@ -34,7 +34,7 @@ interface FakeClient {
     loadMissions: jest.Mock;
     loadItem: jest.Mock;
     spawnConsentRows: jest.Mock;
-    answerAgentSpawn: jest.Mock;
+    answerSpawnConsent: jest.Mock;
 }
 
 function fakeClient(): FakeClient {
@@ -51,7 +51,7 @@ function fakeClient(): FakeClient {
         loadMissions: jest.fn().mockResolvedValue(undefined),
         loadItem: jest.fn().mockResolvedValue(undefined),
         spawnConsentRows: jest.fn().mockResolvedValue({ request: null, outcome: null }),
-        answerAgentSpawn: jest.fn().mockResolvedValue(undefined),
+        answerSpawnConsent: jest.fn().mockResolvedValue(undefined),
     };
 }
 
@@ -1360,21 +1360,20 @@ describe("ItemDetail spawn consent", () => {
         expect(order).toEqual(["mj_TrackerLinks", "mj_TrackerConsent", expect.stringContaining("mj_TrackerItemBody")]);
     });
 
-    it("approves through the same answer call as the timeline card, then refetches the item", async () => {
+    it("approves through the client's consent answer for this item", async () => {
         const client = fakeClient();
         client.spawnConsentRows.mockResolvedValue(rows());
         const { container } = await render(client, consentItem());
 
         await act(async () => button(container, "Approve")!.click());
 
-        expect(client.answerAgentSpawn).toHaveBeenCalledWith("sp_1", "approve", expect.any(AbortSignal));
-        expect(client.loadItem).toHaveBeenCalledWith(31);
+        expect(client.answerSpawnConsent).toHaveBeenCalledWith(31, "sp_1", "approve", expect.any(AbortSignal));
     });
 
     it("shows sending while the answer is on its way", async () => {
         const client = fakeClient();
         client.spawnConsentRows.mockResolvedValue(rows());
-        client.answerAgentSpawn.mockReturnValue(new Promise(() => undefined));
+        client.answerSpawnConsent.mockReturnValue(new Promise(() => undefined));
         const { container } = await render(client, consentItem());
 
         await act(async () => button(container, "Deny")!.click());
@@ -1432,10 +1431,10 @@ describe("ItemDetail spawn consent", () => {
         expect(client.selectConversation).toHaveBeenCalledWith("room_9", { suppressNotFound: true });
     });
 
-    it("settles a 409 as already answered and refetches the stale item", async () => {
+    it("settles a 409 as already answered", async () => {
         const client = fakeClient();
         client.spawnConsentRows.mockResolvedValue(rows());
-        client.answerAgentSpawn.mockRejectedValue(new JournalApiError("Already resolved", 409));
+        client.answerSpawnConsent.mockRejectedValue(new JournalApiError("Already resolved", 409));
         const { container } = await render(client, consentItem());
 
         await act(async () => button(container, "Deny")!.click());
@@ -1443,7 +1442,6 @@ describe("ItemDetail spawn consent", () => {
         expect(container.querySelector(".mj_TrackerConsent .mj_PromptResolved_expired")?.textContent).toBe(
             "Already answered or expired",
         );
-        expect(client.loadItem).toHaveBeenCalledWith(31);
     });
 
     it("offers no buttons when the card has not reached this browser", async () => {

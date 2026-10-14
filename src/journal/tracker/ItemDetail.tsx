@@ -20,7 +20,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { AgentSpawnCard, type AgentSpawnDecision, isAnswerableAgentSpawn } from "../agent-spawn-card";
-import { JOURNAL_ATTACHMENTS_MAX, JournalApiError } from "../api";
+import { JOURNAL_ATTACHMENTS_MAX } from "../api";
 import { type MatronJournalClient, type TrackerCommentOutcome, voiceNoteFile } from "../client";
 import { ChevronLeftIcon, CloseIcon, KebabIcon, PlusCircleIcon, SendIcon } from "../icons";
 import { parseOwnTrackerUrl } from "../link-path";
@@ -680,16 +680,7 @@ export function ItemDetail({
     const originSeq = conversations.find((conversation) => conversation.id === item.origin_convo_id)?.last_seq;
     const spawnRows = useSpawnConsentRows(client, item.origin_convo_id, spawnRequestId, originSeq);
     const answerSpawn = async (decision: AgentSpawnDecision, signal?: AbortSignal): Promise<void> => {
-        if (!spawnRequestId) return;
-        const num = item.num;
-        try {
-            await client.answerAgentSpawn(spawnRequestId, decision, signal);
-        } catch (error) {
-            // Answered elsewhere or expired: the copy that still offered the buttons was stale.
-            if (error instanceof JournalApiError && error.status === 409) void client.loadItem(num);
-            throw error;
-        }
-        void client.loadItem(num);
+        if (spawnRequestId) await client.answerSpawnConsent(item.num, spawnRequestId, decision, signal);
     };
     const openSpawnRoom = (roomId: string): void => {
         client.closeTrackerView();
