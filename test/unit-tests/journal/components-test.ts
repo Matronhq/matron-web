@@ -583,6 +583,143 @@ describe("permission request cards", () => {
     });
 });
 
+describe("multi-select question cards", () => {
+    let rendered: { container: HTMLDivElement; root: Root } | undefined;
+
+    const pickManyPrompt = (payload: Record<string, unknown> = {}): JournalEvent => ({
+        seq: 50,
+        convo_id: "c1",
+        ts: 1,
+        sender: "agent:claude",
+        type: "prompt",
+        payload: {
+            question: "Which checks should run?",
+            mode: "pick_many",
+            options: [
+                { id: "opt_a", label: "Lint", value: "lint" },
+                { id: "opt_b", label: "Unit tests", value: "unit" },
+                { id: "opt_c", label: "Screenshots", value: "shots" },
+            ],
+            ...payload,
+        },
+    });
+
+    const buttons = (card: Element): HTMLButtonElement[] => [...card.querySelectorAll<HTMLButtonElement>("button")];
+    const byLabel = (card: Element, label: string): HTMLButtonElement =>
+        buttons(card).find((button) => button.textContent === label)!;
+
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    afterEach(async () => {
+        if (rendered) {
+            await act(async () => rendered?.root.unmount());
+            rendered.container.remove();
+            rendered = undefined;
+        }
+        jest.restoreAllMocks();
+    });
+
+    it("toggles options without sending, then sends the ticked values in option order", async () => {
+        const client = signedInClient({ events: [pickManyPrompt()] });
+        const sendPromptReply = jest.spyOn(client, "sendPromptReply").mockReturnValue(true);
+        rendered = await renderClient(client);
+        const card = rendered.container.querySelector(".mj_PromptCard")!;
+
+        const send = byLabel(card, "Send");
+        expect(send.classList.contains("mj_PromptOption_affirmative")).toBe(true);
+        expect(send.disabled).toBe(true);
+        expect(card.querySelectorAll(".mj_PromptOption_affirmative")).toHaveLength(1);
+        const group = card.querySelector('[role="group"]')!;
+        expect(document.getElementById(group.getAttribute("aria-labelledby")!)?.textContent).toBe(
+            "Which checks should run?",
+        );
+
+        await act(async () => byLabel(card, "Screenshots").click());
+        await act(async () => byLabel(card, "Lint").click());
+        expect(sendPromptReply).not.toHaveBeenCalled();
+        expect(byLabel(card, "Lint").getAttribute("aria-pressed")).toBe("true");
+        expect(byLabel(card, "Unit tests").getAttribute("aria-pressed")).toBe("false");
+        expect(send.disabled).toBe(false);
+
+        await act(async () => send.click());
+
+        expect(sendPromptReply).toHaveBeenCalledTimes(1);
+        expect(sendPromptReply).toHaveBeenCalledWith(50, "lint, shots", undefined);
+        expect(card.querySelector(".mj_PromptOptions")).toBeNull();
+        expect(card.querySelector(".mj_PromptResolved")?.textContent).toBe("Answered");
+    });
+
+    it("unticks an option on a second tap, and disables Send once nothing is ticked", async () => {
+        const client = signedInClient({ events: [pickManyPrompt()] });
+        const sendPromptReply = jest.spyOn(client, "sendPromptReply").mockReturnValue(true);
+        rendered = await renderClient(client);
+        const card = rendered.container.querySelector(".mj_PromptCard")!;
+
+        await act(async () => byLabel(card, "Unit tests").click());
+        await act(async () => byLabel(card, "Unit tests").click());
+
+        expect(byLabel(card, "Unit tests").getAttribute("aria-pressed")).toBe("false");
+        expect(byLabel(card, "Send").disabled).toBe(true);
+        await act(async () => byLabel(card, "Send").click());
+        expect(sendPromptReply).not.toHaveBeenCalled();
+    });
+
+    it("sends plain string options by their label", async () => {
+        const client = signedInClient({ events: [pickManyPrompt({ options: ["Red", "Green", "Blue"] })] });
+        const sendPromptReply = jest.spyOn(client, "sendPromptReply").mockReturnValue(true);
+        rendered = await renderClient(client);
+        const card = rendered.container.querySelector(".mj_PromptCard")!;
+
+        await act(async () => byLabel(card, "Blue").click());
+        await act(async () => byLabel(card, "Green").click());
+        await act(async () => byLabel(card, "Send").click());
+
+        expect(sendPromptReply).toHaveBeenCalledWith(50, "Green, Blue", undefined);
+    });
+
+    it("keeps the ticks when the reply could not be sent", async () => {
+        const client = signedInClient({ events: [pickManyPrompt()] });
+        jest.spyOn(client, "sendPromptReply").mockReturnValue(false);
+        rendered = await renderClient(client);
+        const card = rendered.container.querySelector(".mj_PromptCard")!;
+
+        await act(async () => byLabel(card, "Lint").click());
+        await act(async () => byLabel(card, "Send").click());
+
+        expect(byLabel(card, "Lint").getAttribute("aria-pressed")).toBe("true");
+        expect(byLabel(card, "Send").disabled).toBe(false);
+    });
+
+    it("shows a question answered elsewhere as resolved, without toggles", async () => {
+        const reply: JournalEvent = {
+            seq: 51,
+            convo_id: "c1",
+            ts: 2,
+            sender: "user:alice",
+            type: "prompt_reply",
+            payload: { target_seq: 50, choice: "lint, unit" },
+        };
+        rendered = await renderClient(signedInClient({ events: [pickManyPrompt(), reply] }));
+        const card = rendered.container.querySelector(".mj_PromptCard")!;
+
+        expect(card.querySelector(".mj_PromptOption_toggle")).toBeNull();
+        expect(card.querySelector(".mj_PromptResolved")?.textContent).toBe("Answered");
+    });
+
+    it("leaves a single-choice question sending on the first tap", async () => {
+        const client = signedInClient({ events: [pickManyPrompt({ mode: "pick_one" })] });
+        const sendPromptReply = jest.spyOn(client, "sendPromptReply").mockReturnValue(true);
+        rendered = await renderClient(client);
+        const card = rendered.container.querySelector(".mj_PromptCard")!;
+
+        expect(card.querySelector(".mj_PromptOption_toggle")).toBeNull();
+        await act(async () => byLabel(card, "Unit tests").click());
+        expect(sendPromptReply).toHaveBeenCalledWith(50, "unit", undefined);
+    });
+});
+
 describe("markdown render-site integration", () => {
     let rendered: { container: HTMLDivElement; root: Root } | undefined;
 

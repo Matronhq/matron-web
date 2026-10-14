@@ -488,6 +488,24 @@ const events: JournalEvent[] = [
         type: "image",
         payload: { blob_ref: "fixture-gone", content_type: "image/png" },
     },
+    {
+        // Multi-select question (mode: pick_many): options toggle, one Send answers with them all.
+        seq: 36,
+        convo_id: "c1",
+        ts: T + 1120,
+        sender: "agent:claude",
+        type: "prompt",
+        payload: {
+            question: "Which checks should I run before the deploy?",
+            mode: "pick_many",
+            options: [
+                { id: "opt_a", label: "Lint", value: "Lint" },
+                { id: "opt_b", label: "Unit tests", value: "Unit tests" },
+                { id: "opt_c", label: "Visual screenshots", value: "Visual screenshots" },
+                { id: "opt_d", label: "Smoke test on staging", value: "Smoke test on staging" },
+            ],
+        },
+    },
 ];
 
 // ?toolstream adds a running tool_stream tile with more output than its collapsed pane shows.
