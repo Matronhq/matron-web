@@ -370,6 +370,16 @@ export class JournalDatabase {
             if (conversation.parent_convo_id == null && incomingParent) {
                 conversation.parent_convo_id = incomingParent;
             }
+            // Room membership: a present value replaces the stored one; an absent key keeps it.
+            const { participants, participant_convos: participantConvos } = event.payload;
+            if (Array.isArray(participants)) {
+                conversation.participants = participants.filter((id): id is number => Number.isSafeInteger(id));
+            }
+            if (Array.isArray(participantConvos)) {
+                conversation.participant_convos = participantConvos.filter(
+                    (id): id is string => typeof id === "string" && id !== "",
+                );
+            }
         } else if (event.type === "session_status" && typeof event.payload.state === "string") {
             conversation.session_state = event.payload.state;
             if (hasValidSessionOutcome(event.payload.session_outcome)) {

@@ -267,6 +267,7 @@ function channelBus(): () => {
 interface Api {
     notifySettings: jest.Mock;
     coordinator: jest.Mock;
+    updateNotify?: jest.Mock;
 }
 
 function notFoundApi(): Api {
@@ -340,7 +341,7 @@ function setup(
         now: () => NOW,
         setAppBadge,
         clearAppBadge,
-        api: () => api,
+        api: () => ({ updateNotify: jest.fn().mockRejectedValue(new Error("not stubbed")), ...api }),
         ...options.env,
     });
     return { client, notifier, notification, api, doc, focus, setAppBadge, clearAppBadge };

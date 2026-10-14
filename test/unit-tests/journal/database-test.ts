@@ -61,6 +61,43 @@ describe("JournalDatabase", () => {
         database.close();
     });
 
+    it("keeps a room's membership from the snapshot and replaces it from a membership convo_meta", async () => {
+        const database = await JournalDatabase.open("https://journal.example", 11, "alice");
+        await database.replaceWithSnapshot({
+            seq: 0,
+            conversations: [
+                {
+                    id: "c1",
+                    title: "Room",
+                    session_state: "waiting",
+                    last_seq: 0,
+                    unread_count: 0,
+                    snippet: "",
+                    created_at: 1,
+                    participants: [3],
+                    participant_convos: [],
+                },
+            ],
+        });
+        expect((await database.conversations())[0]).toMatchObject({ participants: [3], participant_convos: [] });
+
+        await database.applyJournal(
+            event(1, "journal", "convo_meta", { participants: [3, 4], participant_convos: ["a1", "", 7, "b1"] }),
+        );
+        expect((await database.conversations())[0]).toMatchObject({
+            participants: [3, 4],
+            participant_convos: ["a1", "b1"],
+        });
+
+        // A convo_meta without the keys (a rename) leaves the membership alone.
+        await database.applyJournal(event(2, "journal", "convo_meta", { title: "Room 2" }));
+        expect((await database.conversations())[0]).toMatchObject({
+            title: "Room 2",
+            participant_convos: ["a1", "b1"],
+        });
+        database.close();
+    });
+
     it("counts a journaled spawn_outcome as a message event — bumps unread and sets the snippet", async () => {
         const database = await JournalDatabase.open("https://journal.example", 10, "alice");
         await database.replaceWithSnapshot({

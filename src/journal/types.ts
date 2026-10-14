@@ -146,6 +146,12 @@ export interface Conversation {
     agent_device_id?: number | null;
     last_ts?: number;
     read_up_to_seq: number;
+    /** A room's owner plus joined participant device ids (`/snapshot`, membership `convo_meta`);
+     *  absent on a conversation that was never an agent-chat room. */
+    participants?: number[];
+    /** A room's participant conversation ids, owner side first; [] when unknown or nobody is
+     *  joined. Present on exactly the rows that carry `participants`. */
+    participant_convos?: string[];
 }
 
 /** One of the user's agent boxes as the snapshot and `device_meta` frames describe it. */

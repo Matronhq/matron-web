@@ -121,6 +121,7 @@ import {
 } from "./icons";
 import { NAV_RAIL_WIDTH, NavRail, type NavKey } from "./NavRail";
 import { notificationsFor, unreadTotal as countUnread } from "./notifications";
+import { ConvoNotifyBell, RoomsControl } from "./ChatHeaderRooms";
 import { SettingsSheet } from "./SettingsSheet";
 import { displayTitle, TaggedTitle } from "./SessionTag";
 import { groupByDay } from "./sidebar-groups";
@@ -3427,12 +3428,21 @@ function ChatHeader({
                 // Keyed by conversation id so a selection change while the menu is open
                 // remounts (and closes) it, instead of silently retargeting the actions.
                 conversation && (
-                    <HeaderOverflowMenu
-                        key={conversation.id}
-                        client={client}
-                        conversation={conversation}
-                        state={state}
-                    />
+                    <>
+                        <RoomsControl
+                            key={`rooms-${conversation.id}`}
+                            client={client}
+                            state={state}
+                            conversation={conversation}
+                        />
+                        <ConvoNotifyBell key={`notify-${conversation.id}`} client={client} convoId={conversation.id} />
+                        <HeaderOverflowMenu
+                            key={conversation.id}
+                            client={client}
+                            conversation={conversation}
+                            state={state}
+                        />
+                    </>
                 )
             }
             hideControlsWhenCompact

@@ -35,6 +35,7 @@ Please see LICENSE files in the repository root for full details.
 import { JournalApi, JournalApiError } from "./api";
 import type { LiveListener, MatronJournalClient } from "./client";
 import { effectiveUnread } from "./conversation-flags";
+import { isJoinedRoom } from "./conversation-rooms";
 import { displayTitle } from "./SessionTag";
 import { type ClientState, type Conversation, eventSnippet, type JournalEvent, type Session } from "./types";
 
@@ -133,6 +134,203 @@ export function parseNotifyView(raw: unknown): NotifyView | null {
 /** The switches in force: Coordinator mode only means something while there is a Coordinator. */
 export function effectiveEvents(settings: NotifySettings): Record<NotifyEvent, boolean> {
     return settings.mode === "coordinator" && !settings.has_coordinator ? { ...PRESET_ALL } : settings.events;
+}
+
+// The switches each preset fixes (journal src/notify.js PRESETS); custom keeps its own.
+const PRESET_COORDINATOR: Record<NotifyEvent, boolean> = {
+    ...PRESET_ALL,
+    other_done: false,
+    stopped: false,
+};
+
+// ── Changes (PUT /notify) ─────────────────────────────────────────────────────────────────────
+
+/** One change the user makes, so a failed write takes back exactly that change. */
+export type NotifyChange =
+    | { kind: "mode"; mode: NotifyMode }
+    /** Switching an event while on a preset moves the user to custom, starting from that preset. */
+    | { kind: "event"; event: NotifyEvent; on: boolean }
+    | { kind: "device_level"; level: NotifyDeviceLevel }
+    /** null = follow the mode. Leaves any mute as it is. */
+    | { kind: "convo_level"; convoId: string; level: NotifyConvoLevel | null }
+    /** null = unmute. Leaves the level as it is. */
+    | { kind: "convo_mute"; convoId: string; until: number | null }
+    /** Drops the conversation's override entirely: level and mute. */
+    | { kind: "clear_convo"; convoId: string };
+
+/** The PUT /notify body. An explicit null clears a level or a mute; an absent key leaves it. */
+export function notifyChangeBody(change: NotifyChange): Record<string, unknown> {
+    switch (change.kind) {
+        case "mode":
+            return { mode: change.mode };
+        case "event":
+            return { events: { [change.event]: change.on } };
+        case "device_level":
+            return { device_level: change.level };
+        case "convo_level":
+            return { convo: { convo_id: change.convoId, level: change.level } };
+        case "convo_mute":
+            return { convo: { convo_id: change.convoId, mute_until: change.until } };
+        case "clear_convo":
+            return { convo: { convo_id: change.convoId, level: null, mute_until: null } };
+    }
+}
+
+/** Edits one conversation's row (a changed row goes first, as the journal lists the latest change
+ *  first); a row left with neither a level nor a mute is dropped, as the journal deletes it. */
+function updatingConvo(
+    convos: NotifyConvoOverride[],
+    convoId: string,
+    edit: (row: NotifyConvoOverride) => NotifyConvoOverride,
+): NotifyConvoOverride[] {
+    const current = convos.find((row) => row.convo_id === convoId) ?? {
+        convo_id: convoId,
+        level: null,
+        mute_until: null,
+    };
+    const next = edit(current);
+    const rest = convos.filter((row) => row.convo_id !== convoId);
+    return next.level !== null || next.mute_until !== null ? [next, ...rest] : rest;
+}
+
+/** The change as the journal will apply it (setNotifyPrefs / setConvoNotify), for the copy shown
+ *  while the PUT is in flight. */
+export function applyNotifyChange(view: NotifyView, change: NotifyChange): NotifyView {
+    switch (change.kind) {
+        case "mode":
+            // Custom keeps whatever switches were showing.
+            return {
+                ...view,
+                mode: change.mode,
+                events:
+                    change.mode === "all"
+                        ? { ...PRESET_ALL }
+                        : change.mode === "coordinator"
+                          ? { ...PRESET_COORDINATOR }
+                          : view.events,
+            };
+        case "event":
+            return {
+                ...view,
+                mode: "custom",
+                events: { ...view.events, [change.event]: change.event === "prompts" ? true : change.on },
+            };
+        case "device_level":
+            return { ...view, device_level: change.level };
+        case "convo_level":
+            return {
+                ...view,
+                convos: updatingConvo(view.convos, change.convoId, (row) => ({ ...row, level: change.level })),
+            };
+        case "convo_mute":
+            return {
+                ...view,
+                convos: updatingConvo(view.convos, change.convoId, (row) => ({ ...row, mute_until: change.until })),
+            };
+        case "clear_convo":
+            return { ...view, convos: view.convos.filter((row) => row.convo_id !== change.convoId) };
+    }
+}
+
+/** The mute choices a conversation's Notifications menu offers. */
+export type NotifyMuteDuration = "hour" | "eight_hours" | "tomorrow_morning";
+export const NOTIFY_MUTE_DURATIONS: readonly NotifyMuteDuration[] = ["hour", "eight_hours", "tomorrow_morning"];
+
+/** When a mute started at `now` ends; "tomorrow" is 08:00 on the next calendar day, local time. */
+export function muteEnd(duration: NotifyMuteDuration, now: number): number {
+    if (duration === "hour") return now + 60 * 60_000;
+    if (duration === "eight_hours") return now + 8 * 60 * 60_000;
+    const tomorrow = new Date(now);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(8, 0, 0, 0);
+    return tomorrow.getTime();
+}
+
+/** One conversation's notification state as the header and the lists show it. */
+export interface ConvoNotifyState {
+    /** null = follow the mode. */
+    level: NotifyConvoLevel | null;
+    /** Only while the mute runs; a lapsed one reads null. */
+    mutedUntil: number | null;
+    /** Nothing from this conversation notifies: level None, or a mute still running. */
+    silenced: boolean;
+}
+
+export function convoNotifyState(
+    view: NotifySettings | null | undefined,
+    convoId: string,
+    now: number,
+): ConvoNotifyState {
+    const row = view?.convos.find((candidate) => candidate.convo_id === convoId);
+    const level = row?.level ?? null;
+    const mutedUntil = row?.mute_until != null && row.mute_until > now ? row.mute_until : null;
+    return { level, mutedUntil, silenced: level === "none" || mutedUntil !== null };
+}
+
+/** The conversations with a level or a running mute, latest change first. */
+export function activeOverrides(view: NotifySettings | null | undefined, now: number): NotifyConvoOverride[] {
+    return (view?.convos ?? []).filter(
+        (row) => row.level !== null || (row.mute_until !== null && row.mute_until > now),
+    );
+}
+
+// ── Words (the Mac's NotifySettings+Titles) ───────────────────────────────────────────────────
+
+export const NOTIFY_MODE_TITLES: Record<NotifyMode, { title: string; subtitle: string }> = {
+    coordinator: { title: "Coordinator mode", subtitle: "Only the Coordinator's turns and anything that needs you" },
+    all: { title: "Every session", subtitle: "Every session's turns and anything that needs you" },
+    custom: { title: "Custom", subtitle: "Your own choice of the events below" },
+};
+
+export const NOTIFY_EVENT_TITLES: Record<NotifyEvent, string> = {
+    prompts: "Permission prompts & secret requests",
+    questions: "Questions and items awaiting me",
+    notices: "Things to read",
+    coordinator_done: "Coordinator finished a turn",
+    other_done: "Other sessions finished a turn",
+    stopped: "A session stopped or crashed mid-turn",
+    rooms: "Agent room messages",
+    activity: "Routine activity (batched)",
+};
+
+export const NOTIFY_CONVO_LEVEL_TITLES: Record<NotifyConvoLevel, string> = {
+    all: "All",
+    needs_me: "Needs me",
+    none: "None",
+};
+
+export const NOTIFY_DEFAULT_LEVEL_TITLE = "Default (follow mode)";
+
+export const NOTIFY_DEVICE_LEVEL_TITLES: Record<NotifyDeviceLevel, string> = {
+    all: "All of the above",
+    needs_me: "Needs-me only",
+    off: "Off",
+};
+
+export const NOTIFY_MUTE_TITLES: Record<NotifyMuteDuration, string> = {
+    hour: "Mute for 1 hour",
+    eight_hours: "Mute for 8 hours",
+    tomorrow_morning: "Mute until tomorrow 08:00",
+};
+
+/** The time alone today, with the weekday otherwise. */
+export function muteTime(at: number, now: number): string {
+    const date = new Date(at);
+    const sameDay = new Date(now).toDateString() === date.toDateString();
+    return date.toLocaleString(undefined, {
+        ...(sameDay ? {} : { weekday: "short" }),
+        hour: "2-digit",
+        minute: "2-digit",
+    });
+}
+
+/** One line for an overrides row: the level and the running mute, e.g. "Needs me · muted until 14:00". */
+export function convoNotifySummary(state: ConvoNotifyState, now: number): string {
+    const parts: string[] = [];
+    if (state.level) parts.push(NOTIFY_CONVO_LEVEL_TITLES[state.level]);
+    if (state.mutedUntil !== null) parts.push(`muted until ${muteTime(state.mutedUntil, now)}`);
+    const text = parts.join(" · ");
+    return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 // ── Classification (journal src/push.js classify + src/notify.js eventKey) ────────────────────
@@ -304,7 +502,19 @@ interface ChannelLike {
 
 interface NotifyApi {
     notifySettings(): Promise<unknown>;
+    updateNotify(body: Record<string, unknown>): Promise<unknown>;
     coordinator(): Promise<unknown>;
+}
+
+/** What the notification settings screen and the chat header's bell show. */
+export interface NotifySettingsState {
+    /** The journal's last answer with the writes still in flight on top. Undefined until read;
+     *  null on a journal without notification settings. */
+    view: NotifyView | null | undefined;
+    /** The last failed write or read. Cleared by the next success. */
+    error: string | null;
+    /** The clock mutes are judged by: moves when a running mute ends. */
+    now: number;
 }
 
 /** Everything the notifier touches outside itself; tests pass fakes. */
@@ -384,6 +594,14 @@ export class DesktopNotifier {
     // Preferences when storage refuses to save them: they last until the page reloads.
     private memoryPrefs: { enabled?: boolean; sound?: boolean } = {};
     private lastConnection?: string;
+    // Writes still in flight, replayed over `view` (the journal's last answer) so overlapping
+    // writes never take each other back and a frame or GET landing mid-write keeps them showing.
+    private pending: Array<{ id: number; change: NotifyChange }> = [];
+    private nextWriteId = 0;
+    private settingsError: string | null = null;
+    private readonly settingsListeners = new Set<() => void>();
+    private settingsSnapshot: NotifySettingsState;
+    private expiryTimer?: ReturnType<typeof setTimeout>;
 
     public constructor(
         private readonly client: MatronJournalClient,
@@ -391,6 +609,7 @@ export class DesktopNotifier {
     ) {
         this.env = { ...defaultEnvironment(), ...env };
         this.snapshot = this.computeSnapshot();
+        this.settingsSnapshot = { view: undefined, error: null, now: this.env.now() };
     }
 
     public readonly subscribe = (listener: () => void): (() => void) => {
@@ -399,6 +618,59 @@ export class DesktopNotifier {
     };
 
     public readonly getSnapshot = (): DesktopNotificationsState => this.snapshot;
+
+    public readonly subscribeSettings = (listener: () => void): (() => void) => {
+        this.settingsListeners.add(listener);
+        return () => this.settingsListeners.delete(listener);
+    };
+
+    public readonly getSettingsSnapshot = (): NotifySettingsState => this.settingsSnapshot;
+
+    /** GET /notify again — on opening the settings screen, as well as on every connect. */
+    public refreshSettings(): Promise<void> {
+        return this.loadSettings();
+    }
+
+    /** Shows `change` at once, then PUTs it. The answer becomes the confirmed state; a failure
+     *  takes back just this change. */
+    public async changeSettings(change: NotifyChange): Promise<void> {
+        const session = this.client.getSnapshot().session;
+        if (!session) return;
+        if (change.kind === "event" && change.event === "prompts") return;
+        const sessionEpoch = this.sessionEpoch;
+        const id = this.nextWriteId++;
+        this.pending.push({ id, change });
+        this.emitSettings();
+        try {
+            const answer = parseNotifyView(await this.env.api(session).updateNotify(notifyChangeBody(change)));
+            if (sessionEpoch !== this.sessionEpoch) return;
+            this.pending = this.pending.filter((write) => write.id !== id);
+            if (answer) {
+                this.view = answer;
+                this.settingsEpoch += 1;
+            }
+            this.settingsError = null;
+        } catch (error) {
+            if (sessionEpoch !== this.sessionEpoch) return;
+            this.pending = this.pending.filter((write) => write.id !== id);
+            const reason = error instanceof Error && error.message ? ` — ${error.message}` : "";
+            this.settingsError = `Couldn't save notification settings${reason}`;
+        }
+        this.emitSettings();
+    }
+
+    /** A conversation's own level (null = follow the mode); any mute stays. */
+    public setConvoLevel(convoId: string, level: NotifyConvoLevel | null): Promise<void> {
+        return this.changeSettings({ kind: "convo_level", convoId, level });
+    }
+
+    public muteConvo(convoId: string, duration: NotifyMuteDuration): Promise<void> {
+        return this.changeSettings({ kind: "convo_mute", convoId, until: muteEnd(duration, this.env.now()) });
+    }
+
+    public unmuteConvo(convoId: string): Promise<void> {
+        return this.changeSettings({ kind: "convo_mute", convoId, until: null });
+    }
 
     /** Starts watching the client; the returned function stops. Safe to call more than once. */
     public start(): () => void {
@@ -506,6 +778,8 @@ export class DesktopNotifier {
         this.open.clear();
         if (this.env.document && this.baseTitle !== undefined) this.env.document.title = this.baseTitle;
         this.lastBadge = -1;
+        if (this.expiryTimer !== undefined) clearTimeout(this.expiryTimer);
+        this.expiryTimer = undefined;
     }
 
     // ── Client state: title, badge, session, connection ──
@@ -525,11 +799,15 @@ export class DesktopNotifier {
             this.settingsEpoch += 1;
             this.sessionEpoch += 1;
             this.lastConnection = undefined;
+            this.pending = [];
+            this.settingsError = null;
+            this.emitSettings();
         }
-        // The `notify` frame is never replayed, so each (re)connect reads the settings again.
+        // The `notify` frame is never replayed, so each (re)connect reads the settings again. Read
+        // even with desktop notifications off: Settings and the chat header edit them.
         if (session && state.connection !== this.lastConnection) {
             this.lastConnection = state.connection;
-            if (state.connection === "online" && this.snapshot.enabled) void this.loadSettings();
+            if (state.connection === "online") void this.loadSettings();
         }
     }
 
@@ -563,14 +841,19 @@ export class DesktopNotifier {
             // A live frame landed meanwhile and holds the newer synced part, but frames never carry
             // this device's level: take that from the answer.
             if (answer && this.view) this.view = { ...this.view, device_level: answer.device_level };
+            this.emitSettings();
             return;
         }
         if (notify.status === "fulfilled") {
             this.view = answer;
+            this.settingsError = null;
         } else if (notify.reason instanceof JournalApiError && notify.reason.status === 404) {
             // A journal without notification settings: the fallback rules apply.
             this.view = null;
+        } else if (this.view === undefined) {
+            this.settingsError = "Couldn't load notification settings";
         }
+        this.emitSettings();
     }
 
     private async loadCoordinator(): Promise<void> {
@@ -599,6 +882,7 @@ export class DesktopNotifier {
         // The frame is the synced part only: this device's level stays as the last GET left it.
         this.view = { ...settings, device_level: this.view?.device_level ?? "all" };
         this.settingsEpoch += 1;
+        this.emitSettings();
     }
 
     private trackSessionState(event: JournalEvent): void {
@@ -628,10 +912,14 @@ export class DesktopNotifier {
         if (previous?.parent_convo_id || typeof event.payload.parent_convo_id === "string") return;
         const cls = classifyEvent(event, this.stateBefore(event, previous));
         if (!cls) return;
-        const key = eventKey(cls, { isCoordinator: event.convo_id === this.coordinatorId, isRoom: false });
+        const key = eventKey(cls, {
+            isCoordinator: event.convo_id === this.coordinatorId,
+            isRoom: isJoinedRoom(previous),
+        });
         // Settings not read yet (or the read failed): only what needs the user, which every preset sends.
+        const view = this.shownView();
         const allowed =
-            this.view === undefined ? NEEDS_ME.has(key) : shouldNotify(key, event.type, event.convo_id, this.view, now);
+            view === undefined ? NEEDS_ME.has(key) : shouldNotify(key, event.type, event.convo_id, view, now);
         if (!allowed) return;
         if (this.isOnScreen(event.convo_id)) return;
         this.show(event, previous, cls);
@@ -718,6 +1006,37 @@ export class DesktopNotifier {
         } catch {
             // A closed channel: nothing to tell.
         }
+    }
+
+    // ── Notification settings snapshot ──
+
+    private shownView(): NotifyView | null | undefined {
+        const confirmed = this.view;
+        if (!confirmed) return confirmed;
+        return this.pending.reduce((view, write) => applyNotifyChange(view, write.change), confirmed);
+    }
+
+    private emitSettings(): void {
+        const now = this.env.now();
+        this.settingsSnapshot = { view: this.shownView(), error: this.settingsError, now };
+        this.scheduleMuteExpiry(now);
+        for (const listener of this.settingsListeners) listener();
+    }
+
+    /** Wakes when the soonest running mute ends, so the bell-slash goes away on time. */
+    private scheduleMuteExpiry(now: number): void {
+        if (this.expiryTimer !== undefined) clearTimeout(this.expiryTimer);
+        this.expiryTimer = undefined;
+        const ends = (this.settingsSnapshot.view?.convos ?? [])
+            .map((row) => row.mute_until)
+            .filter((end): end is number => end !== null && end > now);
+        if (ends.length === 0 || this.starts === 0) return;
+        // Capped: a timer longer than a 32-bit millisecond count fires at once.
+        const delay = Math.min(Math.min(...ends) - now + 50, 2 ** 31 - 1);
+        this.expiryTimer = setTimeout(() => {
+            this.expiryTimer = undefined;
+            this.emitSettings();
+        }, delay);
     }
 
     // ── Preferences and the Settings snapshot ──
