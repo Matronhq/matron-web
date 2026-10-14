@@ -709,7 +709,7 @@ export function AddAgentSheet({
 
 // ── Link a Device ────────────────────────────────────────────────────────────────────────────
 
-type QrFactory = typeof import("qrcode-generator").default;
+type QrFactory = typeof import("qrcode-generator");
 let qrFactory: Promise<QrFactory> | undefined;
 /** The QR encoder is only needed by this sheet, so it stays out of the app's first download. */
 function loadQrFactory(): Promise<QrFactory> {
