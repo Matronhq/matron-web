@@ -879,6 +879,22 @@ textarea {
 
 .mj_RoomListItem_wrapper {
     position: relative;
+    /* Rows scrolled out of view skip style, layout and paint, so a sidebar of a thousand
+       conversations costs about what the visible rows cost. `auto` keeps each row's real
+       height once it has been laid out. */
+    content-visibility: auto;
+    contain-intrinsic-size: auto 52px;
+}
+
+/* The same for transcript rows: a long conversation otherwise re-lays out every loaded row
+   whenever the streaming bubble grows. The newest rows always render, so their real heights
+   are known when the timeline pins itself to the bottom; only rows well above the tail are
+   skipped until they scroll into view. */
+.mx_RoomView_MessageList > .mx_EventTile:nth-last-child(n + 40) {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 96px;
+    /* content-visibility clips painting at the row's edge; leave room for the bubble shadow. */
+    overflow-clip-margin: 4px;
 }
 
 /* Row-menu trigger: invisible + non-interactive for pointer users (who open the menu via
