@@ -270,9 +270,14 @@ describe("sign-in styles", () => {
         for (const [, sheet] of SHEETS) {
             expect(sheet).not.toMatch(/\.mx_[A-Za-z]|-{2}cpd-/);
         }
-        const components = readFileSync("src/journal/components.tsx", "utf8");
         // The one remaining mx_ string is the earlier sidebar-width storage key, read for migration.
-        expect(components.replace('"mx_lhs_size"', "")).not.toMatch(/\bmx_[A-Za-z]/);
+        const sources = readdirSync("src/journal", { recursive: true, encoding: "utf8" }).filter((file) =>
+            /\.tsx?$/.test(file),
+        );
+        for (const file of sources) {
+            const source = readFileSync(`src/journal/${file}`, "utf8").replaceAll('"mx_lhs_size"', "");
+            expect(`${file}: ${/\bmx_[A-Za-z]/.test(source)}`).toBe(`${file}: false`);
+        }
     });
 });
 

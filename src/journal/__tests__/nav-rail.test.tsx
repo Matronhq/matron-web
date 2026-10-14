@@ -215,4 +215,15 @@ describe("left panel width with the nav rail", () => {
         expect(localStorage.getItem("matron_sidebar_width")).toBe("600");
         expect(localStorage.getItem("mx_lhs_size")).toBeNull();
     });
+
+    it("keeps the current width when both storage keys hold one", async () => {
+        localStorage.clear();
+        localStorage.setItem("matron_sidebar_width", "300");
+        localStorage.setItem("mx_lhs_size", "600");
+        await act(async () => root.render(<MatronApp client={signedInClient([convo("c1")])} />));
+        const panel = container.querySelector<HTMLElement>(".mj_Sidebar_outerWrapper")!;
+        expect(panel.style.getPropertyValue("--mj-left-panel-width")).toBe("300px");
+        expect(localStorage.getItem("matron_sidebar_width")).toBe("300");
+        expect(localStorage.getItem("mx_lhs_size")).toBeNull();
+    });
 });
