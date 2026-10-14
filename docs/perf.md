@@ -73,4 +73,8 @@ CI runs the `ci` dataset on every pull request and fails if a number goes over
 `scripts/perf/budget.json`. The job summary shows every number beside its limit, and
 `perf-results.json` is attached to the run. When a change makes a number clearly better, lower its
 limit in the same pull request so the gain can't quietly slip back. Raise a limit only with a
-reason in the pull request description.
+reason in the pull request description. A budgeted metric that a run fails to measure counts as a
+breach.
+
+The job runs the journal at a pinned commit (see `.github/workflows/perf.yml`), so a journal change
+can't break it unannounced. Move the pin forward in a pull request of its own.

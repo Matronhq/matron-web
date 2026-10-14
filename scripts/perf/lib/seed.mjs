@@ -244,6 +244,7 @@ export async function seed(journal, { scale = "full", seed: seedValue = 1, log =
     }
     log(`${projects.length} projects, ${missions.length} missions`);
     const items = [];
+    const itemsPerConvo = new Map();
     for (let i = 0; i < size.items; i++) {
         // Most items sit in mission conversations, so mission pages carry dozens of them.
         const convo = r.chance(0.8) ? r.pick(missionConvos) : r.pick(conversations);
@@ -269,6 +270,7 @@ export async function seed(journal, { scale = "full", seed: seedValue = 1, log =
             }).catch(() => undefined);
         }
         items.push({ id: item.id, num: item.num });
+        itemsPerConvo.set(convo.id, (itemsPerConvo.get(convo.id) ?? 0) + 1);
         if (i % 500 === 0) log(`items ${i}/${size.items}`);
     }
     log(`${items.length} items`);
@@ -286,7 +288,10 @@ export async function seed(journal, { scale = "full", seed: seedValue = 1, log =
         events: published,
         longConversations: longIds,
         ordinaryConversations: conversations.filter((c) => !longIds.includes(c.id)).map((c) => c.id),
-        biggestMission: missions[0],
+        // Items filed in a mission's conversation belong to that mission.
+        biggestMission: missions.reduce((best, m) =>
+            (itemsPerConvo.get(m.convo) ?? 0) > (itemsPerConvo.get(best.convo) ?? 0) ? m : best,
+        ),
         largest: sorted[0].id,
         projects: projects.length,
         missions: missions.length,

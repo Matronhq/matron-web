@@ -301,7 +301,7 @@ async function warmLoad(browser, env) {
     const runs = [];
     for (let i = 0; i < RUNS; i++) {
         const cdp = await context.newCDPSession(page);
-        await cdp.send("Performance.enable");
+        await cdp.send("Performance.enable", { timeDomain: "threadTicks" });
         const t0 = Date.now();
         await page.reload();
         await settled(page, (sel) => document.querySelectorAll(sel).length > 0, ROWS);
@@ -428,6 +428,11 @@ async function longTranscript(browser, env) {
     };
 }
 
+/** The journal answers a refused frame with an error frame and nothing else; fail loudly on one. */
+function assertAccepted(agent, what) {
+    if (agent.errors.length) throw new Error(`journal refused ${what}: ${JSON.stringify(agent.errors)}`);
+}
+
 async function measureAppend(page, env, convoId) {
     const agent = await env.agentFor(convoId);
     const before = await page.locator(TILES).count();
@@ -435,6 +440,7 @@ async function measureAppend(page, env, convoId) {
     const t0 = Date.now();
     agent.send({ op: "publish", convo_id: convoId, type: "text", payload: { body: "One more line." }, idem_key: key });
     await settled(page, ({ sel, before }) => document.querySelectorAll(sel).length > before, { sel: TILES, before });
+    assertAccepted(agent, "the appended message");
     return Date.now() - t0;
 }
 
@@ -555,6 +561,7 @@ async function streaming(browser, env) {
             }, 40);
         });
         const wall = (Date.now() - t0) / 1000;
+        assertAccepted(agent, "the streamed frames");
         const after = await metrics(cdp);
         const lt = await longTaskStats(page, lt0);
         const frames = (await page.evaluate(() => window.__perf.frames)) - frames0;
@@ -633,8 +640,13 @@ function checkBudget(result, budget) {
     for (const [scenario, limits] of Object.entries(budget)) {
         if (scenario.startsWith("_")) continue;
         for (const [metric, limit] of Object.entries(limits)) {
+            if (!result.scenarios[scenario]) continue; // not run (--only)
             const value = metric.split(".").reduce((o, k) => o?.[k], result.scenarios[scenario]);
-            if (value === undefined) continue;
+            if (typeof value !== "number" || !Number.isFinite(value)) {
+                // A renamed or unmeasured metric must not pass silently.
+                breaches.push(`${scenario}.${metric} was not measured`);
+                continue;
+            }
             const ok = limit.min !== undefined ? value >= limit.min : value <= limit.max;
             if (!ok)
                 breaches.push(
