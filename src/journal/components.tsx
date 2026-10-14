@@ -43,6 +43,7 @@ import {
     jumpToLastOwnShortcutLabel,
     landingSeq,
 } from "./jump-to-message";
+import { FindInChatBar, useFindInChatShortcut } from "./find-in-chat";
 import { GoToNumberDialog, goToNumberShortcutLabel, NumberSearchResult, useGoToNumberShortcut } from "./goto-number";
 import { PinDialog, type PinDialogTarget } from "./PinDialogs";
 import { pinGlyph, successorHintText } from "./pins";
@@ -1913,7 +1914,7 @@ function ConversationListView({
                                         query={query}
                                         search={state.messageSearch}
                                         now={renderNow}
-                                        onSelect={(hit) => void client.focusMessage(hit.convo_id, hit.seq)}
+                                        onSelect={(hit) => client.openSearchHit(hit)}
                                     />
                                 </div>
                             </nav>
@@ -6143,6 +6144,11 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
 
     // The field is modal, so the shortcut stays off while the upload sheet holds the app inert.
     useGoToNumberShortcut(client, !state.stagedUploads);
+    // Ctrl/⌘F finds in the conversation on screen; with none open the browser keeps the key.
+    useFindInChatShortcut(
+        client,
+        Boolean(state.selectedConversationId) && !state.trackerView?.open && !state.stagedUploads,
+    );
 
     return (
         <MarkdownPreviewContext.Provider value={markdownPreview.context}>
@@ -6205,6 +6211,9 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                                         state={state}
                                         mode={childMode ? "child" : "parent"}
                                     />
+                                    {state.chatSearch?.conversationId === state.selectedConversationId && (
+                                        <FindInChatBar client={client} search={state.chatSearch} />
+                                    )}
                                     <Timeline client={client} state={state} isReadOnly={childMode} />
                                     {childMode ? (
                                         <ReadOnlyHint />

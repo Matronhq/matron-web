@@ -1195,6 +1195,79 @@ textarea {
     outline-offset: 2px;
 }
 
+/* Find in chat: a strip over the timeline, under the header and subagent strip. */
+.mj_FindInChat {
+    display: flex;
+    min-width: 0;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: var(--cpd-space-2x);
+    border-bottom: 1px solid var(--cpd-color-border-disabled);
+    background: var(--cpd-color-bg-canvas-default);
+    padding: 6px 14px;
+}
+
+.mj_FindInChat_glyph {
+    flex: 0 0 auto;
+    color: var(--cpd-color-icon-secondary);
+}
+
+.mj_FindInChat_input {
+    min-width: 0;
+    flex: 1 1 auto;
+    border: 0;
+    background: transparent;
+    color: var(--cpd-color-text-primary);
+    font: inherit;
+    font-size: var(--cpd-font-size-sm);
+    outline: none;
+    padding: 4px 0;
+}
+
+.mj_FindInChat_input::placeholder {
+    color: var(--cpd-color-text-placeholder);
+}
+
+.mj_FindInChat_position {
+    min-width: 72px;
+    flex: 0 0 auto;
+    color: var(--cpd-color-text-secondary);
+    font-size: var(--cpd-font-size-xs);
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    white-space: nowrap;
+}
+
+.mj_FindInChat_button {
+    display: inline-flex;
+    width: 28px;
+    height: 28px;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--cpd-color-text-primary);
+    cursor: pointer;
+    font-size: var(--cpd-font-size-md);
+}
+
+.mj_FindInChat_button:hover:not(:disabled) {
+    background: var(--cpd-color-bg-subtle-primary);
+}
+
+.mj_FindInChat_button:disabled {
+    color: var(--cpd-color-icon-tertiary);
+    cursor: default;
+}
+
+.mj_FindInChat_button:focus-visible {
+    outline: 2px solid var(--cpd-color-icon-accent-primary);
+    outline-offset: 1px;
+}
+
 /* "Jump to my last message": sits in the top corner of the timeline once the reader has scrolled
    away from the tail, the same shape as the jump-to-bottom button in the bottom corner. */
 .mj_JumpToLastOwn {

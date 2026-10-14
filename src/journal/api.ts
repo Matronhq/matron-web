@@ -689,6 +689,27 @@ export class JournalApi {
     }
 
     /**
+     * Find in chat: every message in one conversation matching `query`, newest first
+     * (`GET /search?mode=recent&convo_id=…`). Hits carry only convo_id/seq/ts/sender. A journal
+     * scoped to one conversation returns up to 500; one that predates the mode ignores it and
+     * answers its ranked list (up to 50, best match first), so callers order by seq themselves.
+     */
+    public searchConversation(
+        conversationId: string,
+        query: string,
+        limit = 500,
+        signal?: AbortSignal,
+    ): Promise<{ hits?: unknown }> {
+        const params = new URLSearchParams({
+            q: query,
+            limit: String(limit),
+            mode: "recent",
+            convo_id: conversationId,
+        });
+        return this.json<{ hits?: unknown }>(`/search?${params.toString()}`, { signal });
+    }
+
+    /**
      * GET /lookup — which of `user`'s tracker rows carries number `num` (item, mission, milestone
      * or project). 404 when there is none, or the caller may not see it.
      */
