@@ -77,6 +77,7 @@ import {
     DarkThemeIcon,
     StarFilledIcon,
     StarIcon,
+    StopIcon,
     UnarchiveIcon,
     UploadTrayIcon,
     CheckCircleIcon,
@@ -4605,6 +4606,68 @@ function PendingAttachment({
     );
 }
 
+/**
+ * The floating "stop the current turn" control, top-trailing over the timeline. Shown while
+ * the durable run-state says a turn is running; a tap sends the bridge's `!esc` interrupt —
+ * exactly what typing `!esc` in the composer sends — without touching the draft. The send
+ * lands in the timeline as an ordinary own-message, so that echo is the feedback; a second
+ * tap while the first is still being queued is dropped rather than sending `!esc` twice.
+ * Mounted keyed by conversation, so the linger after a turn and the in-flight latch both
+ * belong to one conversation and never carry over to another.
+ */
+function StopTurnButton({
+    client,
+    conversationId,
+    running,
+}: {
+    client: MatronJournalClient;
+    conversationId: string;
+    running: boolean;
+}): React.ReactElement | null {
+    const visible = useMinDisplayDuration(running);
+    const sending = useRef(false);
+    if (!visible) return null;
+    return (
+        <button
+            className="mj_StopTurn"
+            type="button"
+            aria-label="Stop the current turn"
+            title="Stop the current turn — sends !esc"
+            onClick={() => {
+                if (sending.current) return;
+                sending.current = true;
+                void client
+                    .sendMessage("!esc", conversationId)
+                    .catch((error) => console.warn("Stop command failed to send:", error))
+                    .finally(() => {
+                        sending.current = false;
+                    });
+            }}
+        >
+            <StopIcon />
+        </button>
+    );
+}
+
+const MIN_DISPLAY_MS = 500;
+
+/**
+ * Holds a brief `active` flag true for MIN_DISPLAY_MS after it last was, so a short turn
+ * doesn't flash the control on and off.
+ */
+function useMinDisplayDuration(active: boolean): boolean {
+    const [held, setHeld] = useState(active);
+    useEffect(() => {
+        if (active) {
+            setHeld(true);
+            return;
+        }
+        const timer = setTimeout(() => setHeld(false), MIN_DISPLAY_MS);
+        return () => clearTimeout(timer);
+    }, [active]);
+    return active || held;
+}
+
 function Timeline({
     client,
     state,
@@ -4946,6 +5009,14 @@ function Timeline({
                     </ol>
                 </div>
             </div>
+            {!isReadOnly && state.selectedConversationId && (
+                <StopTurnButton
+                    key={state.selectedConversationId}
+                    client={client}
+                    conversationId={state.selectedConversationId}
+                    running={sessionRunning}
+                />
+            )}
             {!isFollowingTail && (
                 <button
                     className="mj_JumpToBottom"
