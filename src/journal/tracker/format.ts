@@ -27,11 +27,17 @@ export function needsUser(item: Pick<TrackerItem, "state" | "awaiting">): boolea
 /**
  * Whether the item belongs on For you's Done tab, as the journal's `state=done` view decides it: a
  * question, decision or notice that is closed, or open but answered (the user acted on it and it no
- * longer waits on them). Tasks are the agents' work list.
+ * longer waits on them). Tasks are the agents' work list. Only an agent's item counts while open: one the user filed
+ * is work they handed out, not something they answered.
  */
-export function inDone(item: Pick<TrackerItem, "kind" | "state" | "awaiting" | "last_user_input_at">): boolean {
+export function inDone(
+    item: Pick<TrackerItem, "kind" | "state" | "awaiting" | "last_user_input_at" | "created_by">,
+): boolean {
     if (item.kind === "task") return false;
-    return item.state === "closed" || (item.awaiting !== "user" && item.last_user_input_at != null);
+    return (
+        item.state === "closed" ||
+        (item.created_by === "agent" && item.awaiting !== "user" && item.last_user_input_at != null)
+    );
 }
 
 /** The Done tab's order (the journal's `sort=acted`): the user's own last action on the item, else
