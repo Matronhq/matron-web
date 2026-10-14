@@ -451,3 +451,55 @@ describe("bare matron://item links", () => {
         expect(container.textContent).toBe("see matron://item/5");
     });
 });
+
+describe("https /u/<name>/<n> links to this deployment", () => {
+    async function render(text: string, onTrackerLink: TrackerLinkHandler): Promise<HTMLDivElement> {
+        const container = document.createElement("div");
+        document.body.append(container);
+        const root = createRoot(container);
+        rendered.push({ container, root });
+        await act(async () => {
+            root.render(React.createElement(MarkdownBody, { text, label: "test-message", onTrackerLink }));
+        });
+        return container;
+    }
+
+    test("an own-origin link opens in-app; a modified click is left to the browser", async () => {
+        const url = `${window.location.origin}/u/alice/412`;
+        const onTrackerLink = jest.fn();
+        const container = await render(`see [#412](${url}) and ${url}`, onTrackerLink);
+
+        const links = container.querySelectorAll<HTMLAnchorElement>("a.mj_TrackerLink");
+        expect(links).toHaveLength(2);
+        expect(links[0].getAttribute("target")).toBeNull();
+        await act(async () => links[0].click());
+        expect(onTrackerLink).toHaveBeenCalledWith("link", url);
+
+        onTrackerLink.mockClear();
+        const modified = new MouseEvent("click", { bubbles: true, cancelable: true, metaKey: true });
+        await act(async () => links[1].dispatchEvent(modified));
+        expect(onTrackerLink).not.toHaveBeenCalled();
+        expect(modified.defaultPrevented).toBe(false);
+    });
+
+    test("without an in-app handler it is an ordinary external link", async () => {
+        const url = `${window.location.origin}/u/alice/412`;
+        const container = document.createElement("div");
+        document.body.append(container);
+        const root = createRoot(container);
+        rendered.push({ container, root });
+        await act(async () => {
+            root.render(React.createElement(MarkdownBody, { text: `[#412](${url})`, label: "test-message" }));
+        });
+        const link = container.querySelector("a");
+        expect(link?.getAttribute("href")).toBe(url);
+        expect(link?.getAttribute("target")).toBe("_blank");
+    });
+
+    test("the same path on another host stays an external link", async () => {
+        const onTrackerLink = jest.fn();
+        const container = await render("[#412](https://elsewhere.example/u/alice/412)", onTrackerLink);
+        expect(container.querySelector("a.mj_TrackerLink")).toBeNull();
+        expect(container.querySelector("a")?.getAttribute("target")).toBe("_blank");
+    });
+});

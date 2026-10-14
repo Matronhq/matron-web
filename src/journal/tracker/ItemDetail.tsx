@@ -22,6 +22,7 @@ import { createPortal } from "react-dom";
 import { JOURNAL_ATTACHMENTS_MAX } from "../api";
 import { type MatronJournalClient, type TrackerCommentOutcome, voiceNoteFile } from "../client";
 import { ChevronLeftIcon, CloseIcon, KebabIcon, PlusCircleIcon, SendIcon } from "../icons";
+import { parseOwnTrackerUrl } from "../link-path";
 import { parseTrackerHref } from "../markdown";
 import { MediaViewer, MediaViewerContext, type MediaViewerContextValue } from "../media-viewer";
 import type {
@@ -199,7 +200,8 @@ function CommentRow({
 /**
  * One `item.links[]` chip. The protocol lets a link carry any URL, including the in-app
  * `matron://` scheme, so this applies the SAME guard the markdown renderer does (parseTrackerHref):
- * a valid `matron://item/<N>` opens that item in-app; http(s) opens in a new tab; anything else
+ * a valid `matron://item/<N>` opens that item in-app, as does an https `/u/<name>/<n>` link to this
+ * deployment (parseOwnTrackerUrl); other http(s) opens in a new tab; anything else
  * (an unknown scheme, a malformed item link, javascript:) renders as inert text — a custom or
  * unsafe scheme is never handed to the browser as a live href.
  */
@@ -212,6 +214,21 @@ function LinkChip({
 }): React.ReactElement {
     const label = link.title?.trim() || link.url;
     const tracker = parseTrackerHref(link.url);
+    if (!tracker && parseOwnTrackerUrl(link.url)) {
+        return (
+            <a
+                className="mj_TrackerLinkChip mj_TrackerLink"
+                href={link.url}
+                onClick={(event) => {
+                    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+                    event.preventDefault();
+                    onTrackerLink("link", link.url);
+                }}
+            >
+                {label}
+            </a>
+        );
+    }
     if (tracker) {
         return (
             <a

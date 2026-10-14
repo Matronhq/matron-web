@@ -18,6 +18,7 @@ import {
 import { JournalConnection } from "./connection";
 import { effectiveUnread, makeIdSetStore, type IdSetStore } from "./conversation-flags";
 import { JournalDatabase } from "./database";
+import { parseOwnTrackerUrl, parseTrackerLinkPath, type TrackerLinkPath } from "./link-path";
 import {
     DEFAULT_PIN_LIMIT,
     markPinImportDone,
@@ -359,6 +360,8 @@ export function voiceNoteFile(blob: Blob): File {
 
 export class MatronJournalClient {
     private state = blankState();
+    // The `/u/<name>/<n>` link the page was opened at, until the first sign-in opens it.
+    private pathLink: TrackerLinkPath | null = parseTrackerLinkPath(window.location.pathname);
     private readonly listeners = new Set<() => void>();
     private api?: JournalApi;
     // Monotonic guard so only the latest message-search request writes its results — an earlier
@@ -1815,6 +1818,15 @@ export class MatronJournalClient {
     // call site so a valid link is always activatable (F6) — never rendered inert or stripped.
     // A project link opens that project's page (openTrackerProject).
     public openTrackerLink(kind: MatronLinkKind, target: number | string): void {
+        if (kind === "link") {
+            if (typeof target !== "string") return;
+            const link = parseOwnTrackerUrl(target);
+            const user = this.state.session?.username;
+            // Another user's number would open the wrong row here, so it opens as a web page.
+            if (link && user && link.user.toLowerCase() === user.toLowerCase()) void this.openLinkedNumber(link.num);
+            else window.open(target, "_blank", "noopener,noreferrer");
+            return;
+        }
         if (kind === "convo") {
             if (typeof target === "string" && target) void this.selectConversation(target, { suppressNotFound: true });
             return;
@@ -3281,6 +3293,33 @@ export class MatronJournalClient {
             onState: (connection, error) => this.patch({ connection, connectionError: error }),
         });
         this.connection.start();
+        void this.openPathLink();
+    }
+
+    /**
+     * Opens the `/u/<name>/<n>` link the page was loaded at, once, after the first sign-in. Only
+     * the signed-in user's own numbers open: the tracker shows that user's rows, so another user's
+     * number would open the wrong row. A number that names nothing says so.
+     */
+    public async openPathLink(): Promise<void> {
+        const link = this.pathLink;
+        const user = this.state.session?.username;
+        if (!link || !user) return;
+        this.pathLink = null;
+        if (link.user.toLowerCase() !== user.toLowerCase()) return;
+        await this.openLinkedNumber(link.num);
+    }
+
+    /** Looks the signed-in user's number up and opens it; a number that names nothing says so. */
+    private async openLinkedNumber(num: number): Promise<void> {
+        const user = this.state.session?.username;
+        const outcome = await this.lookupNumber(num);
+        if (this.state.session?.username !== user) return;
+        if (outcome.status === "found" && this.openNumberHit(outcome.hit, num)) return;
+        this.patch({
+            controlError:
+                outcome.status === "none" ? `Nothing numbered #${num} is visible to you.` : `Couldn't open #${num}.`,
+        });
     }
 
     private setArchived(conversationId: string, archived: boolean): void {

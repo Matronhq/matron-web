@@ -35,6 +35,7 @@ import remarkParse from "remark-parse";
 import { unified } from "unified";
 
 import { copyText } from "./clipboard";
+import { parseOwnTrackerUrl } from "./link-path";
 import type { MatronLinkKind, TrackerLinkHandler } from "./types";
 
 export const MARKDOWN_MAX = 200_000;
@@ -263,9 +264,11 @@ export function parseTrackerHref(href: string): { kind: "item" | "mission"; num:
  * parseTrackerHref accepts, plus `matron://project/<N>` (same number rule) and
  * `matron://convo/<id>` — the Coordinator's briefings link conversations heavily. A conversation
  * id is one path segment of id characters (letters, digits, `_ . : ~ -`, or %-escapes that decode
- * to them); nothing else may follow it. Anything non-conforming returns null.
+ * to them); nothing else may follow it. An https `/u/<name>/<n>` link to this deployment's own
+ * origin is a `link` (parseOwnTrackerUrl), so it opens in-app too. Anything else returns null.
  */
 export function parseMatronHref(href: string): { kind: MatronLinkKind; target: number | string } | null {
+    if (parseOwnTrackerUrl(href)) return { kind: "link", target: href };
     const tracker = parseTrackerHref(href);
     if (tracker) return { kind: tracker.kind, target: tracker.num };
     const project = /^matron:\/\/project\/([0-9]+)$/.exec(href);
@@ -475,6 +478,9 @@ function documentComponentsFor(source: string): Components {
     };
 }
 
+const isModifiedClick = (event: React.MouseEvent): boolean =>
+    event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey;
+
 function componentsFor(source: string, onTrackerLink?: TrackerLinkHandler): Components {
     return {
         pre(props) {
@@ -490,7 +496,9 @@ function componentsFor(source: string, onTrackerLink?: TrackerLinkHandler): Comp
         },
         a({ node: _node, href, children, ...props }) {
             const tracker = href !== undefined ? parseMatronHref(href) : null;
-            if (tracker) {
+            // An https link is a working web link where there is no in-app handler; only the
+            // custom scheme has to render inert.
+            if (tracker && (onTrackerLink || tracker.kind !== "link")) {
                 // With a handler, a matron:// link becomes a real in-app link (tap opens the
                 // tracker surface). Without one it renders inert — never navigate the browser to
                 // the custom scheme.
@@ -501,6 +509,9 @@ function componentsFor(source: string, onTrackerLink?: TrackerLinkHandler): Comp
                         href={href}
                         className="mj_TrackerLink"
                         onClick={(clickEvent) => {
+                            // A modified click on an https link keeps the browser's own meaning
+                            // (new tab, new window).
+                            if (tracker.kind === "link" && isModifiedClick(clickEvent)) return;
                             clickEvent.preventDefault();
                             onTrackerLink(tracker.kind, tracker.target);
                         }}

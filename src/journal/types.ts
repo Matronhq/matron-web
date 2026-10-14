@@ -636,9 +636,12 @@ export interface UserSettings {
     notices: boolean;
 }
 
-/** The in-app `matron://` deep links the markdown renderer activates (markdown.tsx parseMatronHref). */
-export type MatronLinkKind = "item" | "mission" | "project" | "convo";
-/** `target` is the #num for item/mission/project and the conversation id for convo. */
+/**
+ * The in-app links the markdown renderer activates (markdown.tsx parseMatronHref): the `matron://`
+ * deep links, and `link` for an https `/u/<name>/<n>` link to this deployment (link-path.ts).
+ */
+export type MatronLinkKind = "item" | "mission" | "project" | "convo" | "link";
+/** `target` is the #num for item/mission/project, the conversation id for convo, the URL for link. */
 export type TrackerLinkHandler = (kind: MatronLinkKind, target: number | string) => void;
 
 // ── Coordinator briefings (journal /briefings, spec 2026-10-04 latest briefing) ─────────────────
