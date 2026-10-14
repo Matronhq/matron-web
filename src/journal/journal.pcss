@@ -2695,6 +2695,44 @@ li.mj_AttachmentChip_error {
     outline-offset: 2px;
 }
 
+/* pick_many: options are toggles (a leading check box, ticked = accent), and the separate
+   Send below them is the card's one filled primary. */
+.mj_PromptOptions button.mj_PromptOption_toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding-left: 10px;
+}
+
+.mj_PromptOption_check {
+    display: inline-flex;
+    flex: 0 0 auto;
+    width: 14px;
+    height: 14px;
+    box-sizing: border-box;
+    align-items: center;
+    justify-content: center;
+    border: 1.5px solid var(--cpd-color-border-interactive-primary);
+    border-radius: 4px;
+}
+
+.mj_PromptOption_check svg {
+    width: 11px;
+    height: 11px;
+}
+
+.mj_PromptOptions button.mj_PromptOption_toggle[aria-pressed="true"] {
+    border-color: var(--cpd-color-border-accent);
+    color: var(--cpd-color-text-action-accent);
+}
+
+.mj_PromptOptions button.mj_PromptOption_toggle[aria-pressed="true"] .mj_PromptOption_check {
+    border-color: var(--cpd-color-bg-accent);
+    background: var(--cpd-color-bg-accent);
+    color: var(--cpd-color-text-on-accent);
+}
+
+.mj_PromptOptions_send button:disabled,
 .mj_PromptText button:disabled {
     cursor: default;
     opacity: 0.5;

@@ -267,6 +267,24 @@ const events: JournalEvent[] = [
         type: "spawn_outcome",
         payload: { request_id: "spawn-fixture-1", outcome: "started", room_id: "s1", child_convo_id: "s1" },
     },
+    {
+        // Multi-select question (mode: pick_many): options toggle, one Send answers with them all.
+        seq: 16,
+        convo_id: "c1",
+        ts: T + 840,
+        sender: "agent:claude",
+        type: "prompt",
+        payload: {
+            question: "Which checks should I run before the deploy?",
+            mode: "pick_many",
+            options: [
+                { id: "opt_a", label: "Lint", value: "Lint" },
+                { id: "opt_b", label: "Unit tests", value: "Unit tests" },
+                { id: "opt_c", label: "Visual screenshots", value: "Visual screenshots" },
+                { id: "opt_d", label: "Smoke test on staging", value: "Smoke test on staging" },
+            ],
+        },
+    },
 ];
 
 const client = new MatronJournalClient();

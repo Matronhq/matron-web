@@ -3193,6 +3193,8 @@ function PromptCard({
     isReadOnly?: boolean;
 }): React.ReactElement {
     const [freeText, setFreeText] = useState("");
+    // Indexes of the options ticked on a pick_many question; nothing is sent until Send.
+    const [picked, setPicked] = useState<ReadonlySet<number>>(() => new Set());
     const [locallyAnswered, setLocallyAnswered] = useState(false);
     const [confirmationTimedOut, setConfirmationTimedOut] = useState(false);
     const [nowMs, setNowMs] = useState(() => Date.now());
@@ -3213,6 +3215,9 @@ function PromptCard({
         }
         return { label: String(option), value: String(option) };
     });
+    // A multi-select question (`mode: "pick_many"`): options toggle, and one Send answers with
+    // every ticked option's value, in option order, joined by ", " — the reply the other apps send.
+    const pickMany = !permission && event.payload.mode === "pick_many" && options.length > 0;
     const resolved = answered || (!permission && locallyAnswered);
     const expiresAt =
         typeof event.payload.expires_at === "number" && Number.isFinite(event.payload.expires_at)
@@ -3260,9 +3265,24 @@ function PromptCard({
     // "Allow"; for a generic question the first option whose label reads affirmative
     // (send/yes/continue/confirm/ok/approve). Chosen by SEMANTICS, not position, so a
     // reordered payload never fills "Always allow" / "Deny" / "Cancel".
-    const affirmativeIndex = options.findIndex((option) =>
-        permission ? option.label.trim().toLocaleLowerCase() === "allow" : PROMPT_AFFIRMATIVE.test(option.label.trim()),
-    );
+    // A multi-select question's one primary is its Send button, never an option.
+    const affirmativeIndex = pickMany
+        ? -1
+        : options.findIndex((option) =>
+              permission
+                  ? option.label.trim().toLocaleLowerCase() === "allow"
+                  : PROMPT_AFFIRMATIVE.test(option.label.trim()),
+          );
+    const togglePicked = (index: number): void =>
+        setPicked((current) => {
+            const next = new Set(current);
+            if (!next.delete(index)) next.add(index);
+            return next;
+        });
+    const sendPicked = (): void => {
+        const values = options.filter((_option, index) => picked.has(index)).map((option) => option.value);
+        if (values.length > 0) answer(values.join(", "));
+    };
 
     return (
         <div className={permission ? "mj_PromptCard mj_PromptCard_permission" : "mj_PromptCard"}>
@@ -3278,7 +3298,38 @@ function PromptCard({
                 </span>
                 <span className="mj_PromptQuestion">{question}</span>
             </div>
-            {!isReadOnly && !resolved && options.length > 0 && (
+            {!isReadOnly && !resolved && pickMany && (
+                <>
+                    <div className="mj_PromptOptions mj_PromptOptions_pickMany" role="group">
+                        {options.map((option, index) => (
+                            <button
+                                key={`${option.label}:${option.value}`}
+                                type="button"
+                                className="mj_PromptOption_toggle"
+                                aria-pressed={picked.has(index)}
+                                disabled={pending}
+                                onClick={() => togglePicked(index)}
+                            >
+                                <span className="mj_PromptOption_check" aria-hidden="true">
+                                    {picked.has(index) && <PromptCheckGlyph />}
+                                </span>
+                                {option.label}
+                            </button>
+                        ))}
+                    </div>
+                    <div className="mj_PromptOptions mj_PromptOptions_send">
+                        <button
+                            type="button"
+                            className="mj_PromptOption_affirmative"
+                            disabled={pending || picked.size === 0}
+                            onClick={sendPicked}
+                        >
+                            Send
+                        </button>
+                    </div>
+                </>
+            )}
+            {!isReadOnly && !resolved && !pickMany && options.length > 0 && (
                 <div className="mj_PromptOptions">
                     {options.map((option, index) => (
                         <button
