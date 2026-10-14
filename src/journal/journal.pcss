@@ -2855,6 +2855,58 @@ li.mj_AttachmentChip_error {
     filter: brightness(1.08);
 }
 
+/* "Approved by the Coordinator — <reason>" on a spawn card the Coordinator answered, and its
+   Stop session button once the session it let start is running. */
+.mj_CoordinatorBadge {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+    color: var(--cpd-color-text-secondary);
+    font: 400 13px/18px var(--cpd-font-family-ui);
+}
+
+.mj_CoordinatorBadge_line {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    min-width: 0;
+}
+
+.mj_CoordinatorBadge_glyph {
+    flex: none;
+    margin-top: 2px;
+    font-size: 14px;
+}
+
+.mj_CoordinatorBadge_stop {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 10px;
+}
+
+.mj_CoordinatorBadge_stopButton {
+    min-height: 30px;
+    box-sizing: border-box;
+    border: 1px solid var(--cpd-color-text-critical-primary);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--cpd-color-text-critical-primary);
+    cursor: pointer;
+    padding: 0 14px;
+    font: 600 12.5px/16px var(--cpd-font-family-ui);
+}
+
+.mj_CoordinatorBadge_stopButton:hover {
+    background: color-mix(in srgb, var(--cpd-color-text-critical-primary) 10%, transparent);
+}
+
+.mj_CoordinatorBadge_error {
+    color: var(--cpd-color-text-critical-primary);
+    font: 400 12px/16px var(--cpd-font-family-ui);
+}
+
 /* agent_chat consent card — same .mj_PromptCard chrome and detail rows as the spawn card;
    the accent border + label mark it as a consent ask rather than a question. */
 .mj_PromptCard_chat {

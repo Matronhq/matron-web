@@ -22,6 +22,7 @@ import { createPortal } from "react-dom";
 import { AgentSpawnCard, type AgentSpawnDecision, isAnswerableAgentSpawn } from "../agent-spawn-card";
 import { JOURNAL_ATTACHMENTS_MAX } from "../api";
 import { type MatronJournalClient, type TrackerCommentOutcome, voiceNoteFile } from "../client";
+import { stopSpawnedSession } from "../coordinator-consent";
 import { ChevronLeftIcon, CloseIcon, KebabIcon, PlusCircleIcon, SendIcon } from "../icons";
 import { parseOwnTrackerUrl } from "../link-path";
 import { parseTrackerHref } from "../markdown";
@@ -181,13 +182,15 @@ function SpawnConsentCard({
     closed,
     onAnswer,
     onOpenRoom,
+    onStopSession,
 }: {
     rows: SpawnConsentRows;
     closed: boolean;
     onAnswer: (decision: AgentSpawnDecision, signal?: AbortSignal) => Promise<void>;
     onOpenRoom: (roomId: string) => void;
+    onStopSession: (convoId: string) => void;
 }): React.ReactElement {
-    const { request, outcome } = rows;
+    const { request, outcome, coordinatorDecision } = rows;
     if (request) {
         const answerable = isAnswerableAgentSpawn(request.payload);
         return (
@@ -195,10 +198,12 @@ function SpawnConsentCard({
                 <AgentSpawnCard
                     event={request}
                     outcome={outcome}
+                    coordinatorDecision={coordinatorDecision}
                     isReadOnly={!answerable}
                     settled={closed}
                     onAnswer={answerable ? onAnswer : undefined}
                     onOpen={onOpenRoom}
+                    onStopSession={onStopSession}
                 />
             </div>
         );
@@ -702,6 +707,9 @@ export function ItemDetail({
         client.closeTrackerView();
         void client.selectConversation(roomId, { suppressNotFound: true });
     };
+    const stopSpawnSession = (convoId: string): void => {
+        void stopSpawnedSession(convoId, (target) => client.sendMessage("/stop", target));
+    };
 
     const urgent = needsUser(item);
     const hasUserReply = useMemo(() => comments.some((comment) => comment.author === "user"), [comments]);
@@ -1121,6 +1129,7 @@ export function ItemDetail({
                         closed={item.state === "closed"}
                         onAnswer={answerSpawn}
                         onOpenRoom={openSpawnRoom}
+                        onStopSession={stopSpawnSession}
                     />
                 ) : null}
 

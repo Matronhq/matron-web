@@ -521,3 +521,88 @@ describe("agent_chat card", () => {
         expect(rendered.container.querySelector(".mj_PromptCard")).toBeNull();
     });
 });
+
+describe("agent_chat card answered by the Coordinator", () => {
+    let rendered: { container: HTMLDivElement; root: Root } | undefined;
+
+    afterEach(async () => {
+        if (rendered) {
+            await act(async () => rendered?.root.unmount());
+            rendered.container.remove();
+            rendered = undefined;
+        }
+    });
+
+    const decisionEvent = (decision: string, seq: number): JournalEvent => ({
+        seq,
+        convo_id: "c1",
+        ts: 1700000200,
+        sender: "journal",
+        type: "consent_decision",
+        payload: {
+            kind: "chat",
+            room_id: "room-1",
+            target_device_id: 12,
+            decision,
+            by: "coordinator",
+            convo_id: "c1",
+            reason: "Both boxes work on the same project",
+        },
+    });
+
+    async function renderTimeline(events: JournalEvent[]): Promise<Element> {
+        const container = document.createElement("div");
+        document.body.append(container);
+        const root = createRoot(container);
+        await act(async () => {
+            root.render(React.createElement(MatronApp, { client: signedInClient({ events }) }));
+        });
+        rendered = { container, root };
+        return container.querySelector(".mj_PromptCard_chat")!;
+    }
+
+    it("settles the card with the Coordinator's decision and reason", async () => {
+        const card = await renderTimeline([chatCardEvent(), decisionEvent("approve", 41)]);
+
+        expect(card.querySelector(".mj_PromptOptions")).toBeNull();
+        expect(card.querySelector(".mj_PromptResolved_allowed .mj_Answered")?.textContent).toBe(
+            "Approved by the Coordinator — Both boxes work on the same project",
+        );
+    });
+
+    it("keeps the Coordinator's decision over a later close saying the ask lapsed", async () => {
+        const card = await renderTimeline([
+            chatCardEvent(),
+            consentMarker("created", { consent_ask: "room-1/12" }),
+            decisionEvent("decline", 42),
+            consentMarker("closed", { consent_ask: "room-1/12", consent_outcome: "expired" }, 43),
+        ]);
+
+        expect(card.querySelector(".mj_PromptResolved_denied .mj_Answered")?.textContent).toBe(
+            "Declined by the Coordinator — Both boxes work on the same project",
+        );
+    });
+
+    it("says the Coordinator decided from the closing marker alone, without a reason", async () => {
+        const card = await renderTimeline([
+            chatCardEvent(),
+            consentMarker("created", { consent_ask: "room-1/12" }),
+            consentMarker(
+                "closed",
+                { consent_ask: "room-1/12", consent_outcome: "approved", decided_by: "coordinator" },
+                42,
+            ),
+        ]);
+
+        expect(card.querySelector(".mj_Answered")?.textContent).toBe("Approved by the Coordinator");
+    });
+
+    it("reads an older journal's Coordinator closing note", () => {
+        const resolutions = readAgentChatResolutions([
+            chatCardEvent(),
+            consentMarker("created"),
+            consentMarker("closed", { comment: { body: "Declined by the Coordinator — not this week." } }, 42),
+        ]);
+        expect(resolutions.get("c1:40")).toEqual({ kind: "answered", approved: false, byCoordinator: true });
+    });
+});

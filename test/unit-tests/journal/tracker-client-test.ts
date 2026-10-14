@@ -1985,6 +1985,23 @@ describe("MatronJournalClient spawnConsentRows", () => {
         expect(messages).not.toHaveBeenCalled();
     });
 
+    it("carries the Coordinator's decision on the card, from the conversation's own consent_decision", async () => {
+        const decision: JournalEvent = {
+            seq: 11,
+            convo_id: "c1",
+            ts: 1,
+            sender: "journal",
+            type: "consent_decision",
+            payload: { kind: "spawn", request_id: "sp_1", decision: "approve", by: "coordinator", reason: "Fine" },
+        };
+        const { client } = withStore([card("sp_1", 10), decision, outcome("sp_1", "started", 12)]);
+
+        const rows = await client.spawnConsentRows("c1", "sp_1");
+
+        expect(rows.request?.seq).toBe(10);
+        expect(rows.coordinatorDecision).toEqual({ kind: "spawn", approved: true, reason: "Fine", askId: "sp_1" });
+    });
+
     it("ignores a generic permission request that happens to carry the id", async () => {
         const { client } = withStore([{ ...card("sp_1"), payload: { kind: "tool", request_id: "sp_1" } }]);
 

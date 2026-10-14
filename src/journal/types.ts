@@ -5,6 +5,8 @@ SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
 Please see LICENSE files in the repository root for full details.
 */
 
+import type { CoordinatorDecision } from "./coordinator-consent";
+
 export const MESSAGE_EVENT_TYPES = new Set([
     "text",
     "tool_output",
@@ -613,6 +615,9 @@ export interface ClientState {
     userSettingsUnsupported?: boolean;
     /** The last failed settings save; cleared by the next save. */
     userSettingsError?: string;
+    /** Settings → Coordinator: whether the Coordinator may answer chat and spawn asks (`consent`
+     *  on GET /coordinator). `enabled` undefined = not known yet, or a journal without the switch. */
+    coordinatorConsent?: { enabled?: boolean; error?: string };
 }
 
 // ── New-chat defaults (journal GET/PUT /defaults) ───────────────────────────────────────────────
@@ -1402,6 +1407,8 @@ export interface SpawnConsentRows {
     request: JournalEvent | null;
     /** The ask's `spawn_outcome` payload; null while it has none. */
     outcome: EventPayload | null;
+    /** The Coordinator's answer to the card, when it gave one (spawnConsentRowsIn). */
+    coordinatorDecision?: CoordinatorDecision;
 }
 
 /**

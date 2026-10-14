@@ -14,6 +14,7 @@ import {
 } from "../../../src/journal/client";
 import { isMediaExpiredError, JournalApi, JournalApiError } from "../../../src/journal/api";
 import { JournalConnection } from "../../../src/journal/connection";
+import { sessionStopState, stopSpawnedSession } from "../../../src/journal/coordinator-consent";
 import { JournalDatabase } from "../../../src/journal/database";
 import { TextDecoder as NodeTextDecoder, TextEncoder as NodeTextEncoder } from "node:util";
 import {
@@ -236,6 +237,16 @@ describe("MatronJournalClient state handling", () => {
         expect(state.readHighWater.size).toBe(0);
         expect(state.readTimers.size).toBe(0);
         expect(jest.getTimerCount()).toBe(0);
+    });
+
+    it("forgets every Stop session tap on logout, so the next account starts clean", async () => {
+        const client = new MatronJournalClient();
+        await stopSpawnedSession("child-1", jest.fn().mockResolvedValue(true));
+        expect(sessionStopState("child-1")).toEqual({ kind: "sent" });
+
+        await client.logout();
+
+        expect(sessionStopState("child-1")).toEqual({ kind: "idle" });
     });
 
     it("aborts the snapshot transport when the startup backfill watchdog expires", async () => {

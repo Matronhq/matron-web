@@ -606,9 +606,17 @@ export class JournalApi {
         return this.json<unknown>("/notify");
     }
 
-    /** GET /coordinator — `{convo_id}`, the user's Coordinator conversation (null for none). Unvalidated. */
+    /**
+     * GET /coordinator — `{convo_id, consent}`: the user's Coordinator conversation (null for none)
+     * and whether the Coordinator may answer chat and spawn asks. Unvalidated.
+     */
     public async coordinator(): Promise<unknown> {
         return this.json<unknown>("/coordinator");
+    }
+
+    /** PUT /coordinator {consent} — the Coordinator consent-approval switch. Unvalidated `{convo_id, consent}`. */
+    public async putCoordinatorConsent(consent: boolean): Promise<unknown> {
+        return this.json<unknown>("/coordinator", { method: "PUT", body: { consent } });
     }
 
     // ── New-chat defaults (journal /defaults; Bearer-auth, per user) ──

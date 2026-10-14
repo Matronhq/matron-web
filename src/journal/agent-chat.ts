@@ -150,8 +150,9 @@ export function unanswerableAgentRequestNotice(payload: EventPayload): string {
         : "Agent request that can't be answered here";
 }
 
-/** How a card has been settled: decided (on any device) or no longer awaiting an answer. */
-export type AgentChatResolution = { kind: "answered"; approved: boolean } | { kind: "expired" };
+/** How a card has been settled: decided (on any device, or by the Coordinator) or no longer
+    awaiting an answer. */
+export type AgentChatResolution = { kind: "answered"; approved: boolean; byCoordinator?: true } | { kind: "expired" };
 
 export function agentChatCardKey(event: Pick<JournalEvent, "convo_id" | "seq">): string {
     return `${event.convo_id}:${event.seq}`;
@@ -169,15 +170,22 @@ const LAPSED_NOTE_OPENINGS = ["Expired", "The room was closed", "Closed — "];
 export function agentChatResolutionFromClose(marker: EventPayload): AgentChatResolution | undefined {
     const consentAsk = asString(marker.consent_ask);
     const outcome = asString(marker.consent_outcome);
-    if (consentAsk || outcome) {
-        if (outcome === "approved") return { kind: "answered", approved: true };
-        if (outcome === "denied") return { kind: "answered", approved: false };
-        return outcome ? { kind: "expired" } : undefined;
-    }
     const comment = marker.comment;
     const note = comment && typeof comment === "object" ? asString((comment as EventPayload).body) : "";
-    if (note.startsWith("Approved")) return { kind: "answered", approved: true };
-    if (note.startsWith("Declined")) return { kind: "answered", approved: false };
+    // The Coordinator's answer: `decided_by` from a journal that names it, else its closing note.
+    const byCoordinator =
+        asString(marker.decided_by) === "coordinator" ||
+        note.startsWith("Approved by the Coordinator") ||
+        note.startsWith("Declined by the Coordinator");
+    const answered = (approved: boolean): AgentChatResolution =>
+        byCoordinator ? { kind: "answered", approved, byCoordinator: true } : { kind: "answered", approved };
+    if (consentAsk || outcome) {
+        if (outcome === "approved") return answered(true);
+        if (outcome === "denied") return answered(false);
+        return outcome ? { kind: "expired" } : undefined;
+    }
+    if (note.startsWith("Approved")) return answered(true);
+    if (note.startsWith("Declined")) return answered(false);
     if (LAPSED_NOTE_OPENINGS.some((opening) => note.startsWith(opening))) return { kind: "expired" };
     return undefined;
 }

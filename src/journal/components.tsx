@@ -59,6 +59,12 @@ import { SentMessageHistory } from "./sent-history";
 import { effectiveUnread } from "./conversation-flags";
 import { chipHeadline, chipLabel, isEarlierLink, linkLine, missionSections } from "./conversation-missions";
 import { type RowContextMenu, useRowContextMenu } from "./context-menu";
+import {
+    coordinatorBadgeText,
+    type CoordinatorDecision,
+    readCoordinatorDecisions,
+    stopSpawnedSession,
+} from "./coordinator-consent";
 import { CoordinatorEventNotice, isUnrenderableNoticeEvent } from "./coordinator-notices";
 import { dateTimeFormat } from "./date-format";
 import { GoToNumberDialog, goToNumberShortcutLabel, NumberSearchResult, useGoToNumberShortcut } from "./goto-number";
@@ -3986,6 +3992,7 @@ function AgentChatRequestCard({
     event,
     request,
     resolution,
+    coordinatorDecision,
     answersScope,
     isReadOnly = false,
     onAnswer = noopAgentChatAnswer,
@@ -3993,6 +4000,9 @@ function AgentChatRequestCard({
     event: JournalEvent;
     request: AgentChatRequest;
     resolution?: AgentChatResolution;
+    /** The Coordinator's answer to this card, when it gave one: it settles the card, and its
+        reason goes on the outcome line. */
+    coordinatorDecision?: CoordinatorDecision;
     /** Where this session's answers are remembered (agentChatAnswersScope). */
     answersScope?: string;
     isReadOnly?: boolean;
@@ -4029,7 +4039,10 @@ function AgentChatRequestCard({
         };
     }, [flightKey, follow]);
 
-    const settled = resolution ?? rememberedResolution(remembered);
+    // A Coordinator decision outranks everything: a later close of its consent item cannot undo it.
+    const settled: AgentChatResolution | undefined = coordinatorDecision
+        ? { kind: "answered", approved: coordinatorDecision.approved, byCoordinator: true }
+        : (resolution ?? rememberedResolution(remembered));
 
     const handleAnswer = (decision: AgentChatDecision): void => {
         if (settled || agentChatAnswersInFlight.has(flightKey)) return;
@@ -4128,7 +4141,7 @@ function AgentChatRequestCard({
                     >
                         {settled.approved ? <PromptCheckGlyph /> : <PromptDeniedGlyph />}
                     </span>
-                    <span className="mj_Answered">{settled.approved ? "Approved" : "Declined"}</span>
+                    <span className="mj_Answered">{agentChatOutcomeText(settled, coordinatorDecision)}</span>
                 </div>
             )}
             {settled?.kind === "expired" && (
@@ -4139,6 +4152,15 @@ function AgentChatRequestCard({
             )}
         </div>
     );
+}
+
+function agentChatOutcomeText(
+    settled: Extract<AgentChatResolution, { kind: "answered" }>,
+    coordinatorDecision: CoordinatorDecision | undefined,
+): string {
+    if (coordinatorDecision) return coordinatorBadgeText(coordinatorDecision);
+    if (settled.byCoordinator) return settled.approved ? "Approved by the Coordinator" : "Declined by the Coordinator";
+    return settled.approved ? "Approved" : "Declined";
 }
 
 function PromptPeopleGlyph(): React.ReactElement {
@@ -4879,6 +4901,7 @@ function isSuppressedTrackerEvent(event: JournalEvent): boolean {
 
 const EMPTY_SPAWN_OUTCOMES: ReadonlyMap<string, EventPayload> = new Map();
 const EMPTY_AGENT_CHAT_RESOLUTIONS: ReadonlyMap<string, AgentChatResolution> = new Map();
+const EMPTY_COORDINATOR_DECISIONS: ReadonlyMap<string, CoordinatorDecision> = new Map();
 
 // A permission-decision reply is a prompt_reply targeting a permission_request
 // card. The card already renders the decision inline (answered/allowed/denied
@@ -4899,6 +4922,7 @@ export function EventContent({
     answeredPromptReplies,
     spawnOutcomes = EMPTY_SPAWN_OUTCOMES,
     agentChatResolutions = EMPTY_AGENT_CHAT_RESOLUTIONS,
+    coordinatorDecisions = EMPTY_COORDINATOR_DECISIONS,
     itemCards = EMPTY_ITEM_CARD_FOLD,
     isReadOnly = false,
     resolvedAction,
@@ -4908,6 +4932,8 @@ export function EventContent({
     answeredPromptReplies: ReadonlyMap<string, { choice?: string }>;
     spawnOutcomes?: ReadonlyMap<string, EventPayload>;
     agentChatResolutions?: ReadonlyMap<string, AgentChatResolution>;
+    /** The Coordinator's answers, keyed by card (readCoordinatorDecisions). */
+    coordinatorDecisions?: ReadonlyMap<string, CoordinatorDecision>;
     itemCards?: ItemCardFold;
     isReadOnly?: boolean;
     resolvedAction?: (itemId: string) => "send" | "cancel" | undefined;
@@ -4982,6 +5008,7 @@ export function EventContent({
                         event={event}
                         request={request}
                         resolution={agentChatResolutions.get(agentChatCardKey(event))}
+                        coordinatorDecision={coordinatorDecisions.get(agentChatCardKey(event))}
                         answersScope={agentChatAnswersScope(client.getSnapshot().session)}
                         isReadOnly={isReadOnly}
                         onAnswer={(decision) =>
@@ -5002,6 +5029,7 @@ export function EventContent({
                         key={`${event.convo_id}:${event.seq}`}
                         event={event}
                         outcome={(requestId ? spawnOutcomes.get(requestId) : undefined) ?? null}
+                        coordinatorDecision={coordinatorDecisions.get(agentChatCardKey(event))}
                         isReadOnly={isReadOnly || !answerable}
                         onAnswer={
                             answerable
@@ -5009,6 +5037,9 @@ export function EventContent({
                                 : undefined
                         }
                         onOpen={(roomId) => void client.selectConversation(roomId, { suppressNotFound: true })}
+                        onStopSession={(convoId) =>
+                            void stopSpawnedSession(convoId, (target) => client.sendMessage("/stop", target))
+                        }
                     />
                 );
             }
@@ -5104,6 +5135,7 @@ function EventRow({
     answeredPromptReplies,
     spawnOutcomes,
     agentChatResolutions,
+    coordinatorDecisions,
     itemCards,
     isReadOnly = false,
     resolvedAction,
@@ -5116,6 +5148,7 @@ function EventRow({
     answeredPromptReplies: ReadonlyMap<string, { choice?: string }>;
     spawnOutcomes?: ReadonlyMap<string, EventPayload>;
     agentChatResolutions?: ReadonlyMap<string, AgentChatResolution>;
+    coordinatorDecisions?: ReadonlyMap<string, CoordinatorDecision>;
     itemCards?: ItemCardFold;
     isReadOnly?: boolean;
     resolvedAction: (itemId: string) => "send" | "cancel" | undefined;
@@ -5176,6 +5209,7 @@ function EventRow({
                             answeredPromptReplies={answeredPromptReplies}
                             spawnOutcomes={spawnOutcomes}
                             agentChatResolutions={agentChatResolutions}
+                            coordinatorDecisions={coordinatorDecisions}
                             itemCards={itemCards}
                             isReadOnly={isReadOnly}
                             resolvedAction={resolvedAction}
@@ -5593,6 +5627,8 @@ function Timeline({
     // Agent-chat cards settled by the timeline itself (the consent item's closing marker): a
     // decision made on another device, or the ask lapsing.
     const agentChatResolutions = useMemo(() => readAgentChatResolutions(state.events), [state.events]);
+    // The Coordinator's answers to chat and spawn cards (`consent_decision`), for their badges.
+    const coordinatorDecisions = useMemo(() => readCoordinatorDecisions(state.events), [state.events]);
     const releasedActions = useMemo(() => {
         const actions = new Map<string, "send" | "cancel">();
         for (const event of state.events) {
@@ -5748,6 +5784,7 @@ function Timeline({
                                             answeredPromptReplies={answeredPromptReplies}
                                             spawnOutcomes={spawnOutcomes}
                                             agentChatResolutions={agentChatResolutions}
+                                            coordinatorDecisions={coordinatorDecisions}
                                             itemCards={itemCards}
                                             isReadOnly={isReadOnly}
                                             resolvedAction={resolvedAction}

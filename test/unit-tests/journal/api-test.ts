@@ -788,6 +788,16 @@ describe("JournalApi box defaults", () => {
         expect(JSON.parse(fetchMock.mock.calls[0][1].body as string)).toEqual({ default_agent: "codex" });
     });
 
+    it("PUTs only {consent} to /coordinator, never the conversation", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ convo_id: "c9", consent: false }));
+        const api = new JournalApi("https://journal.example", "token");
+
+        await expect(api.putCoordinatorConsent(false)).resolves.toEqual({ convo_id: "c9", consent: false });
+        expect(String(fetchMock.mock.calls[0][0])).toBe("https://journal.example/coordinator");
+        expect(fetchMock.mock.calls[0][1]).toEqual(expect.objectContaining({ method: "PUT" }));
+        expect(JSON.parse(fetchMock.mock.calls[0][1].body as string)).toEqual({ consent: false });
+    });
+
     it.each([
         ["bad_agent", "The journal did not accept that agent."],
         ["bad_model", "The journal did not accept that model."],

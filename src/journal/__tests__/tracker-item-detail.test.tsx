@@ -10,6 +10,7 @@ import { createRoot, type Root } from "react-dom/client";
 
 import { JournalApiError } from "../api";
 import type { MatronJournalClient } from "../client";
+import { resetSessionStops } from "../coordinator-consent";
 import type {
     JournalEvent,
     SpawnConsentRows,
@@ -35,6 +36,7 @@ interface FakeClient {
     loadItem: jest.Mock;
     spawnConsentRows: jest.Mock;
     answerSpawnConsent: jest.Mock;
+    sendMessage: jest.Mock;
 }
 
 function fakeClient(): FakeClient {
@@ -52,6 +54,7 @@ function fakeClient(): FakeClient {
         loadItem: jest.fn().mockResolvedValue(undefined),
         spawnConsentRows: jest.fn().mockResolvedValue({ request: null, outcome: null }),
         answerSpawnConsent: jest.fn().mockResolvedValue(undefined),
+        sendMessage: jest.fn().mockResolvedValue(true),
     };
 }
 
@@ -1513,6 +1516,79 @@ describe("ItemDetail spawn consent", () => {
         const done = await render(client, consentItem());
         await openMenu(done.container);
         expect(menuLabels(done.container)).toEqual(["Dismiss"]);
+    });
+
+    describe("answered by the Coordinator", () => {
+        const decision = { kind: "spawn" as const, approved: true, reason: "Fine", askId: "sp_1" };
+
+        afterEach(() => resetSessionStops());
+
+        it("carries the badge and offers no Approve / Deny before the session starts", async () => {
+            const client = fakeClient();
+            client.spawnConsentRows.mockResolvedValue(rows({ coordinatorDecision: decision }));
+            const { container } = await render(client, consentItem());
+
+            const card = container.querySelector(".mj_TrackerConsent .mj_PromptCard_spawn")!;
+            expect(card.querySelector(".mj_CoordinatorBadge_text")?.textContent).toBe(
+                "Approved by the Coordinator — Fine",
+            );
+            expect(card.querySelector(".mj_PromptResolved_approved")?.textContent).toBe(
+                "Approved — starting the session",
+            );
+            expect(button(container, "Approve")).toBeUndefined();
+            expect(button(container, "Deny")).toBeUndefined();
+            expect(button(container, "Stop session")).toBeUndefined();
+        });
+
+        it("names the Coordinator over a closed item's plain settle", async () => {
+            const client = fakeClient();
+            client.spawnConsentRows.mockResolvedValue(rows({ coordinatorDecision: { ...decision, approved: false } }));
+            const { container } = await render(client, consentItem({ state: "closed", awaiting: null }));
+
+            expect(container.querySelector(".mj_TrackerConsent .mj_CoordinatorBadge_text")?.textContent).toBe(
+                "Declined by the Coordinator — Fine",
+            );
+            expect(container.querySelector(".mj_TrackerConsent .mj_PromptResolved_declined")?.textContent).toBe(
+                "Denied",
+            );
+            expect(container.querySelector(".mj_TrackerConsent .mj_PromptResolved_expired")).toBeNull();
+        });
+
+        it("stops the spawned session, not the conversation that asked", async () => {
+            const client = fakeClient();
+            client.spawnConsentRows.mockResolvedValue(
+                rows({
+                    coordinatorDecision: decision,
+                    outcome: { request_id: "sp_1", outcome: "started", room_id: "room_9", child_convo_id: "child-9" },
+                }),
+            );
+            const { container } = await render(client, consentItem({ state: "closed", awaiting: null }));
+
+            expect(
+                container.querySelector(".mj_TrackerConsent .mj_PromptResolved_started .mj_Answered")?.textContent,
+            ).toBe("Started");
+            await act(async () => button(container, "Stop session")!.click());
+
+            expect(client.sendMessage).toHaveBeenCalledTimes(1);
+            expect(client.sendMessage).toHaveBeenCalledWith("/stop", "child-9");
+            expect(container.querySelector(".mj_TrackerConsent .mj_CoordinatorBadge_sent")?.textContent).toBe(
+                "Stop sent to the session",
+            );
+        });
+
+        it("offers no Stop session for a spawn the Coordinator declined", async () => {
+            const client = fakeClient();
+            client.spawnConsentRows.mockResolvedValue(
+                rows({
+                    coordinatorDecision: { ...decision, approved: false },
+                    outcome: { request_id: "sp_1", outcome: "started", child_convo_id: "child-9" },
+                }),
+            );
+            const { container } = await render(client, consentItem({ state: "closed", awaiting: null }));
+
+            expect(container.querySelector(".mj_TrackerConsent .mj_CoordinatorBadge")).not.toBeNull();
+            expect(button(container, "Stop session")).toBeUndefined();
+        });
     });
 
     it("draws no spawn card for an agent-chat consent item", async () => {

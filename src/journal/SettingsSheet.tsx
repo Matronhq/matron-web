@@ -19,6 +19,9 @@ Please see LICENSE files in the repository root for full details.
  * Seen button instead of leaving them in chat). The sheet asks the client to load it on open; the
  * switch is hidden until the value is known and on a journal without settings (GET /settings 404).
  *
+ * Coordinator: the journal's consent-approval switch (`consent` on GET/PUT /coordinator), hidden
+ * on a journal that does not return it.
+ *
  * Notifications: desktop notifications in this browser while a tab is open (notifications.ts).
  * Turning them on asks the browser for permission, so it must happen on the click itself.
  */
@@ -313,6 +316,50 @@ function BoxesDefaults({ client }: { client: MatronJournalClient }): React.React
     );
 }
 
+// Coordinator: the journal's consent-approval switch. On, the Coordinator may answer chat and spawn
+// asks for the user (each card then says so, with its reason). Hidden until the journal answers,
+// and on a journal without the switch.
+function CoordinatorConsent({ client }: { client: MatronJournalClient }): React.ReactElement | null {
+    const state = useSyncExternalStore(client.subscribe, () => client.getSnapshot().coordinatorConsent);
+
+    useEffect(() => void client.loadCoordinatorConsent(), [client]);
+
+    if (state?.enabled === undefined) return null;
+    const enabled = state.enabled;
+    return (
+        <section className="mj_SettingsSheet_group" aria-labelledby="mj-settings-coordinator">
+            <h3 id="mj-settings-coordinator" className="mj_SettingsSheet_groupTitle">
+                Coordinator
+            </h3>
+            <div className="mj_SettingsSheet_rows">
+                <div className="mj_SettingsSheet_row mj_SettingsSheet_switchRow">
+                    <span className="mj_SettingsSheet_switchText">
+                        <span id="mj-settings-coordinator-consent">Let the Coordinator approve chats and spawns</span>
+                        <span id="mj-settings-coordinator-consent-help" className="mj_SettingsSheet_help">
+                            Each request it answers says so on its card, with the reason.
+                        </span>
+                    </span>
+                    <button
+                        type="button"
+                        role="switch"
+                        className="mj_SettingsSheet_switch"
+                        data-setting="coordinator-consent"
+                        aria-checked={enabled}
+                        aria-labelledby="mj-settings-coordinator-consent"
+                        aria-describedby="mj-settings-coordinator-consent-help"
+                        onClick={() => void client.setCoordinatorConsent(!enabled)}
+                    />
+                </div>
+            </div>
+            {state.error ? (
+                <p className="mj_SettingsSheet_error" role="alert">
+                    Couldn't save: {state.error}
+                </p>
+            ) : null}
+        </section>
+    );
+}
+
 const PERMISSION_HELP: Record<DesktopNotificationsState["permission"], string> = {
     unsupported: "This browser can't show notifications.",
     default: "Your browser will ask to allow notifications from Matron.",
@@ -524,6 +571,7 @@ export function SettingsSheet({
                 <DesktopNotifications client={client} />
                 <NewChatDefaults client={client} />
                 <BoxesDefaults client={client} />
+                <CoordinatorConsent client={client} />
                 {notices !== undefined && onNoticesChange ? (
                     <section className="mj_SettingsSheet_group" aria-labelledby="mj-settings-foryou">
                         <h3 id="mj-settings-foryou" className="mj_SettingsSheet_groupTitle">

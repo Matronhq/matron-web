@@ -11,9 +11,16 @@ Please see LICENSE files in the repository root for full details.
  * inside that item's detail. Its own module so both surfaces render the one card.
  */
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { JournalApiError } from "./api";
+import {
+    coordinatorBadgeText,
+    type CoordinatorDecision,
+    sessionStopState,
+    subscribeSessionStops,
+} from "./coordinator-consent";
+import { ShieldCheckIcon, ShieldXIcon } from "./icons";
 import { asString, type EventPayload, type JournalEvent, spawnOutcomeKind, type SpawnOutcomeKind } from "./types";
 
 function formatTime(timestamp: number): string {
@@ -109,13 +116,17 @@ function spawnRunsLabel(payload: EventPayload): string {
 export function AgentSpawnCard({
     event,
     outcome,
+    coordinatorDecision,
     isReadOnly = false,
     settled = false,
     onAnswer = noopAgentSpawnAnswer,
     onOpen = noopAgentSpawnOpen,
+    onStopSession,
 }: {
     event: JournalEvent;
     outcome: EventPayload | null;
+    /** The Coordinator's answer to this card, when it gave one. */
+    coordinatorDecision?: CoordinatorDecision;
     isReadOnly?: boolean;
     /**
      * The ask has stopped waiting for an answer although no `spawn_outcome` is here yet: the
@@ -128,6 +139,8 @@ export function AgentSpawnCard({
     settled?: boolean;
     onAnswer?: (decision: AgentSpawnDecision, signal?: AbortSignal) => Promise<void>;
     onOpen?: (roomId: string) => void;
+    /** Stops the session a Coordinator-approved spawn started. Omitted: no Stop session button. */
+    onStopSession?: (convoId: string) => void;
 }): React.ReactElement {
     const payload = event.payload;
     const task = asString(payload.task);
@@ -141,6 +154,14 @@ export function AgentSpawnCard({
     const resolved = outcome !== null;
     const kind = resolved ? spawnOutcomeKind(outcome) : undefined;
     const roomId = resolved ? asString(outcome.room_id) : "";
+    // Answered by the Coordinator, the session not started yet: the card is answered, so it must
+    // not offer Approve / Deny again. The decision says how, which is more than `settled` knows, so
+    // it outranks it. The spawn_outcome, once it lands, still says how it ended.
+    const coordinatorAnswered = !resolved && coordinatorDecision !== undefined;
+    // Stop session: only for a session the Coordinator let start, once the journal names it.
+    const childConvoId = resolved && kind === "started" ? asString(outcome.child_convo_id) : "";
+    const stoppableConvoId =
+        !isReadOnly && onStopSession && coordinatorDecision?.approved && childConvoId ? childConvoId : undefined;
 
     const [phase, setPhase] = useState<AgentSpawnLocalPhase>("idle");
     // The decision of the latest attempt the server accepted, if any. Only `settled` reads it.
@@ -176,7 +197,7 @@ export function AgentSpawnCard({
     }, []);
 
     const handleAnswer = (decision: AgentSpawnDecision): void => {
-        if (resolved || settled || phaseRef.current === "sending") return;
+        if (resolved || settled || coordinatorAnswered || phaseRef.current === "sending") return;
         const attemptId = ++attemptIdRef.current;
         abortRef.current?.abort();
         const controller = new AbortController();
@@ -200,7 +221,7 @@ export function AgentSpawnCard({
     };
 
     useEffect(() => {
-        if (phase !== "sending" || resolved || settled) return;
+        if (phase !== "sending" || resolved || settled || coordinatorAnswered) return;
         const attemptId = attemptIdRef.current;
         const timer = setTimeout(() => {
             if (attemptId !== attemptIdRef.current) return; // superseded by a newer attempt
@@ -210,20 +231,24 @@ export function AgentSpawnCard({
             }
         }, PROMPT_REPLY_CONFIRMATION_TIMEOUT_MS);
         return (): void => clearTimeout(timer);
-    }, [phase, resolved, settled]);
+    }, [phase, resolved, settled, coordinatorAnswered]);
 
-    const open = !resolved && !settled;
+    // Still waiting on this card: neither a durable outcome, the item flow, nor the Coordinator
+    // has answered it.
+    const open = !resolved && !settled && !coordinatorAnswered;
     const pending = open && phase === "sending";
     const retryable = open && phase === "retryable";
-    const gone = !resolved && phase === "gone";
+    const gone = !resolved && !coordinatorAnswered && phase === "gone";
     // Settled with no outcome: this card's own accepted answer stands; otherwise the ask was
     // answered elsewhere (or expired), the same fact a 409 reports. An in-flight send never
     // survives a settled ask, so it cannot spin on after the item closed.
-    const answeredHere = !resolved && settled && accepted !== null && !gone;
-    const alreadyAnswered = !resolved && !gone && !answeredHere && (phase === "already-answered" || settled);
+    // A Coordinator decision outranks both: it names who answered and how.
+    const answeredHere = !resolved && !coordinatorAnswered && settled && accepted !== null && !gone;
+    const alreadyAnswered =
+        !resolved && !coordinatorAnswered && !gone && !answeredHere && (phase === "already-answered" || settled);
     // Hides the action row for the same reasons a durable resolution does — nothing more to
     // tap — even though these are local-only, never journaled.
-    const pseudoResolved = resolved || alreadyAnswered || gone || answeredHere;
+    const pseudoResolved = resolved || coordinatorAnswered || alreadyAnswered || gone || answeredHere;
 
     return (
         <div className="mj_PromptCard mj_PromptCard_spawn">
@@ -264,6 +289,13 @@ export function AgentSpawnCard({
                 )}
             </div>
             <pre className="mj_SpawnTask">{task}</pre>
+            {coordinatorDecision && (
+                <CoordinatorConsentBadge
+                    decision={coordinatorDecision}
+                    stoppableConvoId={stoppableConvoId}
+                    onStopSession={onStopSession}
+                />
+            )}
             {/* A read-only card (sub-chat transcript viewer) never shows live Approve/Deny — it
                 mirrors PromptCard's own isReadOnly gate (§ Task-1-review scope A). */}
             {!isReadOnly && !pseudoResolved && (
@@ -305,6 +337,18 @@ export function AgentSpawnCard({
                     <span className="mj_Answered">That request is no longer on the server.</span>
                 </div>
             )}
+            {coordinatorAnswered && (
+                <div
+                    className={`mj_PromptResolved ${coordinatorDecision.approved ? "mj_PromptResolved_approved" : "mj_PromptResolved_declined"}`}
+                >
+                    <span className="mj_PromptGlyph" aria-hidden="true" />
+                    <span className="mj_Answered">
+                        {coordinatorDecision.approved
+                            ? "Approved — starting the session"
+                            : SPAWN_OUTCOME_CARD_LABELS.declined}
+                    </span>
+                </div>
+            )}
             {answeredHere && (
                 <div
                     className={`mj_PromptResolved ${
@@ -327,6 +371,60 @@ export function AgentSpawnCard({
                         <button type="button" className="mj_SpawnOpenButton" onClick={() => onOpen(roomId)}>
                             Open
                         </button>
+                    )}
+                </div>
+            )}
+        </div>
+    );
+}
+
+// "Approved by the Coordinator — <reason>" on a spawn card the Coordinator answered, with Stop
+// session once the session it let start is running: the one tap that overrules the Coordinator.
+function CoordinatorConsentBadge({
+    decision,
+    stoppableConvoId,
+    onStopSession,
+}: {
+    decision: CoordinatorDecision;
+    stoppableConvoId?: string;
+    onStopSession?: (convoId: string) => void;
+}): React.ReactElement {
+    const stop = useSyncExternalStore(subscribeSessionStops, () =>
+        stoppableConvoId ? sessionStopState(stoppableConvoId) : undefined,
+    );
+    const text = coordinatorBadgeText(decision);
+    return (
+        <div className="mj_CoordinatorBadge" data-decision={decision.approved ? "approve" : "decline"}>
+            <span className="mj_CoordinatorBadge_line" title={text}>
+                {decision.approved ? (
+                    <ShieldCheckIcon className="mj_CoordinatorBadge_glyph" aria-hidden="true" />
+                ) : (
+                    <ShieldXIcon className="mj_CoordinatorBadge_glyph" aria-hidden="true" />
+                )}
+                <span className="mj_CoordinatorBadge_text">{text}</span>
+            </span>
+            {stoppableConvoId && onStopSession && stop && (
+                <div className="mj_CoordinatorBadge_stop">
+                    {stop.kind === "idle" || stop.kind === "failed" ? (
+                        <>
+                            <button
+                                type="button"
+                                className="mj_CoordinatorBadge_stopButton"
+                                data-action="stop-session"
+                                onClick={() => onStopSession(stoppableConvoId)}
+                            >
+                                Stop session
+                            </button>
+                            {stop.kind === "failed" && (
+                                <span className="mj_CoordinatorBadge_error" role="alert">
+                                    {stop.message}
+                                </span>
+                            )}
+                        </>
+                    ) : stop.kind === "sending" ? (
+                        <span className="mj_Muted">Stopping…</span>
+                    ) : (
+                        <span className="mj_CoordinatorBadge_sent">Stop sent to the session</span>
                     )}
                 </div>
             )}
