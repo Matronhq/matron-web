@@ -106,6 +106,15 @@ describe("isAgentRoomTitle", () => {
 });
 
 describe("startedSessionIntents", () => {
+    it("says whether an ask is waiting on a particular box, until its window passes", () => {
+        const intents = startedSessionIntents();
+        intents.noteBox(null, 0);
+        expect(intents.awaitsKnownBox(0)).toBe(false);
+        intents.noteBox(4, 0);
+        expect(intents.awaitsKnownBox(30_000)).toBe(true);
+        expect(intents.awaitsKnownBox(61_000)).toBe(false);
+    });
+
     it("claims a conversation a start named, once", () => {
         const intents = startedSessionIntents();
         intents.noteBox(4, 0);

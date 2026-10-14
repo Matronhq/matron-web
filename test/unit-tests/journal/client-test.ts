@@ -4813,6 +4813,59 @@ describe("New marker on sessions that arrive unasked", () => {
         expect(client.getSnapshot().newConversationIds.size).toBe(0);
     });
 
+    it("waits for the titled meta before judging a session whose first frame is its status", async () => {
+        // The real order for a new session: session_status (no title, no box yet), then the meta.
+        const bare = { ...BORN, title: "", agent_device_id: null };
+        const { client, state } = liveClient(bare);
+        state.state = {
+            ...state.state,
+            conversations: CONVERSATIONS.map((conversation) =>
+                conversation.id === "c1" ? { ...conversation, agent_device_id: 4 } : conversation,
+            ),
+        };
+        await client.sendMessage("/start ~/code");
+        await state.handleJournal({ ...firstFrame(), type: "session_status", payload: { state: "running" } });
+        expect(client.getSnapshot().newConversationIds.size).toBe(0);
+
+        (state.database!.conversations as jest.Mock).mockResolvedValue([...CONVERSATIONS, BORN]);
+        await state.handleJournal({
+            ...firstFrame(),
+            seq: 31,
+            type: "convo_meta",
+            payload: { title: BORN.title, parent_convo_id: null, agent_device_id: 4 },
+        });
+        // It answered the /start sent to its box: the user's own, never New.
+        expect(client.getSnapshot().newConversationIds.size).toBe(0);
+    });
+
+    it("never marks a room whose title lands after its first frame", async () => {
+        const { client, state } = liveClient({ ...BORN, title: "", agent_device_id: null });
+        await state.handleJournal({ ...firstFrame(), type: "session_status", payload: { state: "running" } });
+        const room = { ...BORN, title: "↔️ box-a ↔ box-b" };
+        (state.database!.conversations as jest.Mock).mockResolvedValue([...CONVERSATIONS, room]);
+        await state.handleJournal({
+            ...firstFrame(),
+            seq: 31,
+            type: "convo_meta",
+            payload: { title: room.title, parent_convo_id: null, agent_device_id: 4 },
+        });
+        expect(client.getSnapshot().newConversationIds.size).toBe(0);
+    });
+
+    it("marks an unasked session once its titled meta lands", async () => {
+        const { client, state } = liveClient({ ...BORN, title: "", agent_device_id: null });
+        await state.handleJournal({ ...firstFrame(), type: "session_status", payload: { state: "running" } });
+        expect(client.getSnapshot().newConversationIds.size).toBe(0);
+        (state.database!.conversations as jest.Mock).mockResolvedValue([...CONVERSATIONS, BORN]);
+        await state.handleJournal({
+            ...firstFrame(),
+            seq: 31,
+            type: "convo_meta",
+            payload: { title: BORN.title, parent_convo_id: null, agent_device_id: 4 },
+        });
+        expect(client.getSnapshot().newConversationIds).toEqual(new Set(["c3"]));
+    });
+
     it("still marks a session born on another box after a /start", async () => {
         const { client, state } = liveClient({ ...BORN, agent_device_id: 5 });
         state.state = {

@@ -88,6 +88,8 @@ export interface StartedSessionIntents {
     forgetBox(box: number | null): void;
     /** Whether a conversation just born answers one of the asks above, consuming the ask if so. */
     claim(conversation: Pick<Conversation, "id" | "agent_device_id" | "title">, now: number): boolean;
+    /** Whether an ask is still waiting for a session on a particular box. */
+    awaitsKnownBox(now: number): boolean;
 }
 
 /**
@@ -120,6 +122,10 @@ export function startedSessionIntents(): StartedSessionIntents {
             if (index < 0) return false;
             asks.splice(index, 1);
             return true;
+        },
+        awaitsKnownBox(now) {
+            asks = asks.filter((ask) => now - ask.at <= START_INTENT_WINDOW_MS);
+            return asks.some((ask) => ask.box !== null);
         },
     };
 }
