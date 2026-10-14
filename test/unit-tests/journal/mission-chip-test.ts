@@ -393,6 +393,42 @@ describe("conversation missions in the client", () => {
         expect(client.getSnapshot().conversationMissions).toEqual({ convoId: "c1", links: [ALSO_NEW] });
     });
 
+    it("never publishes or caches a load that was in flight when a marker landed", async () => {
+        jest.useFakeTimers();
+        let resolveFirst!: (links: ConversationMissionLink[]) => void;
+        let resolveSecond!: (links: ConversationMissionLink[]) => void;
+        const fetch = jest
+            .fn()
+            .mockReturnValueOnce(new Promise((resolve) => (resolveFirst = resolve)))
+            .mockReturnValueOnce(new Promise((resolve) => (resolveSecond = resolve)));
+        const { client, internals } = signedIn(fetch);
+        const first = client.loadConversationMissions("c1");
+        internals.handleTrackerMarker(marker("c1"));
+        // The pre-join answer lands before the marker's refetch has even started.
+        resolveFirst([]);
+        await first;
+        expect(client.getSnapshot().conversationMissions).toBeUndefined();
+        expect(internals.conversationMissionsCache.has("c1")).toBe(false);
+        jest.advanceTimersByTime(250);
+        resolveSecond([CURRENT]);
+        await jest.runAllTimersAsync();
+        expect(client.getSnapshot().conversationMissions).toEqual({ convoId: "c1", links: [CURRENT] });
+    });
+
+    it("keeps the newest answer cached when an older request for the same conversation lands last", async () => {
+        let resolveFirst!: (links: ConversationMissionLink[]) => void;
+        const fetch = jest
+            .fn()
+            .mockReturnValueOnce(new Promise((resolve) => (resolveFirst = resolve)))
+            .mockResolvedValueOnce([CURRENT]);
+        const { client, internals } = signedIn(fetch);
+        const first = client.loadConversationMissions("c1");
+        await client.loadConversationMissions("c1");
+        resolveFirst([]);
+        await first;
+        expect(internals.conversationMissionsCache.get("c1")).toEqual([CURRENT]);
+    });
+
     it("shows a conversation's last missions at once on returning to it, then refreshes them", async () => {
         let resolveThird!: (links: ConversationMissionLink[]) => void;
         const fetch = jest

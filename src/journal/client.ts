@@ -415,6 +415,9 @@ export class MatronJournalClient {
     // The last missions fetched per conversation, so returning to one shows its chip at once
     // (and the header does not jump) while the fresh fetch runs. Cleared with the session.
     private readonly conversationMissionsCache = new Map<string, ConversationMissionLink[]>();
+    // The generation of the newest load per conversation: only that load may write its cache entry,
+    // so a slower, older request cannot put back what a newer one replaced.
+    private readonly conversationMissionsCacheGen = new Map<string, number>();
     // Pending marker-driven refetch of the chip's missions: a burst of `mission` markers (a
     // reconnect replay; `left` then `current_changed`) costs one GET.
     private conversationMissionsRefetchTimer?: number;
@@ -2649,6 +2652,7 @@ export class MatronJournalClient {
         const api = this.api;
         if (!api) return;
         const gen = ++this.conversationMissionsGen;
+        this.conversationMissionsCacheGen.set(convoId, gen);
         const cached = this.conversationMissionsCache.get(convoId);
         if (cached && this.state.conversationMissions?.convoId !== convoId) {
             this.patch({ conversationMissions: { convoId, links: cached } });
@@ -2656,13 +2660,15 @@ export class MatronJournalClient {
         try {
             const links = await api.conversationMissions(convoId);
             if (this.api !== api) return;
-            this.conversationMissionsCache.set(convoId, links);
+            if (this.conversationMissionsCacheGen.get(convoId) === gen)
+                this.conversationMissionsCache.set(convoId, links);
             if (this.conversationMissionsGen !== gen) return;
             this.patch({ conversationMissions: { convoId, links } });
         } catch (error) {
             if (this.api !== api) return;
             const missing = error instanceof JournalApiError && error.status === 404;
-            if (missing) this.conversationMissionsCache.set(convoId, []);
+            if (missing && this.conversationMissionsCacheGen.get(convoId) === gen)
+                this.conversationMissionsCache.set(convoId, []);
             if (this.conversationMissionsGen !== gen) return;
             if (missing) this.patch({ conversationMissions: { convoId, links: [] } });
         }
@@ -3037,8 +3043,13 @@ export class MatronJournalClient {
         // The header chip of the conversation on screen follows the mission markers that concern it
         // (see missionMarkerConcernsChip) whether or not the pane is open — also while its first load
         // is in flight (the newer load supersedes it) or after a failed one.
-        if (event.type === "mission" && this.missionMarkerConcernsChip(event))
+        if (event.type === "mission" && this.missionMarkerConcernsChip(event)) {
+            // A load already in flight predates the marker: it may neither publish nor cache.
+            this.conversationMissionsGen += 1;
+            if (this.state.selectedConversationId)
+                this.conversationMissionsCacheGen.delete(this.state.selectedConversationId);
             this.scheduleConversationMissionsRefetch();
+        }
         if (!this.state.trackerView?.open) return;
         // The open item's `working` block follows the conversation that owns it: a turn starting
         // or ending there changes what the thread's indicator should say, and no item marker
@@ -4062,6 +4073,7 @@ export class MatronJournalClient {
             window.clearTimeout(this.conversationMissionsRefetchTimer);
         this.conversationMissionsRefetchTimer = undefined;
         this.conversationMissionsCache.clear();
+        this.conversationMissionsCacheGen.clear();
         if (this.trackerItemWorkingRefetchTimer !== undefined) window.clearTimeout(this.trackerItemWorkingRefetchTimer);
         this.trackerItemWorkingRefetchTimer = undefined;
         if (this.briefingExpiryTimer !== undefined) window.clearTimeout(this.briefingExpiryTimer);
