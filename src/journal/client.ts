@@ -34,6 +34,7 @@ import {
     readCachedPins,
     writeCachedPins,
 } from "./pins";
+import { SeenTracker } from "./seen-tracker";
 import { mergeSessionStatus } from "./status";
 import { appendFeedPage, kindsWithMore } from "./tracker/projectActivity";
 import { doneSortKey, inDone } from "./tracker/format";
@@ -425,6 +426,9 @@ export class MatronJournalClient {
     private searchAbort?: AbortController;
     private database?: JournalDatabase;
     private connection?: JournalConnection;
+    // Read state: which timeline rows and tracker items were actually on screen, reported as
+    // `seen` / `item_seen` over the socket. Separate from read_marker and the unread badge.
+    public readonly seen = new SeenTracker({ send: (op) => this.connection?.send(op) ?? false });
     private readonly history = new Map<string, ConversationHistoryState>();
     // The latest-history-page fetch a spawn consent item made per conversation, keyed
     // `${sessionGen}:${convoId}`: in flight (later reads wait on it) or done (a card that is not in
@@ -670,6 +674,7 @@ export class MatronJournalClient {
         this.dismissedAttachments.clear();
         this.pendingFiles.clear();
         this.transientAttachmentErrors.clear();
+        this.seen.reset();
         this.connection?.stop();
         this.connection = undefined;
         if (this.storageListener) {
@@ -4031,6 +4036,10 @@ export class MatronJournalClient {
             return;
         }
         if (frame.kind === "control" && frame.op === "error") {
+            // Read-state reports are fire-and-forget with no reply (a conversation or item the
+            // journal refuses, e.g. one removed meanwhile). Advisory, as on the other apps: never
+            // an error banner for something the user didn't do.
+            if (frame.ref === "seen" || frame.ref === "item_seen") return;
             this.patch({ connectionError: frame.detail || `Journal operation failed: ${frame.code ?? "unknown"}` });
         }
     }

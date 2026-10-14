@@ -9,6 +9,14 @@ Please see LICENSE files in the repository root for full details.
 
 import type { Mission, MissionDetail, Project, ProjectDetail, TrackerComment, TrackerItem } from "../types";
 
+/** The read-state tracker a component reaches through `client.seen`; a fake client's stand-in. */
+export interface FakeSeen {
+    setItemOnScreen: jest.Mock;
+    removeItem: jest.Mock;
+}
+
+export const fakeSeen = (): FakeSeen => ({ setItemOnScreen: jest.fn(), removeItem: jest.fn() });
+
 export function trackerItem(over: Partial<TrackerItem> = {}): TrackerItem {
     return {
         id: "it_1",

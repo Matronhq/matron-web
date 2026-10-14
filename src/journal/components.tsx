@@ -124,6 +124,7 @@ import { notificationsFor, unreadTotal as countUnread } from "./notifications";
 import { SettingsSheet } from "./SettingsSheet";
 import { displayTitle, TaggedTitle } from "./SessionTag";
 import { groupByDay } from "./sidebar-groups";
+import { observeSeenRows } from "./seen-tracker";
 import { createLongPressController, type LongPressController } from "./longPress";
 import { MarkdownBody, markdownToPlainText } from "./markdown";
 import {
@@ -5520,6 +5521,7 @@ function Timeline({
     isReadOnly?: boolean;
 }): React.ReactElement {
     const scrollRef = useRef<HTMLDivElement>(null);
+    const listRef = useRef<HTMLOListElement>(null);
     const pendingScrollFrame = useRef<number | undefined>(undefined);
     const selectedConversationId = useRef(state.selectedConversationId);
     const [isFollowingTail, setFollow] = useState(true);
@@ -5723,6 +5725,17 @@ function Timeline({
         isFollowingTail,
     ]);
 
+    // Read state: report which rows were on screen. A layout effect, so a conversation switch
+    // re-binds before any row of the new conversation can be counted under the old one. A
+    // read-only subagent transcript reports nothing.
+    const seenConversationId = isReadOnly ? undefined : state.selectedConversationId;
+    useLayoutEffect(() => {
+        const root = scrollRef.current;
+        const list = listRef.current;
+        if (!seenConversationId || !root || !list) return;
+        return observeSeenRows({ tracker: client.seen, convoId: seenConversationId, root, list });
+    }, [client, seenConversationId]);
+
     const loadEarlierMessages = (): void => {
         const node = scrollRef.current;
         if (node) {
@@ -5747,7 +5760,7 @@ function Timeline({
     const timelineMain = (
         <main className="mj_ChatView_timeline" data-testid="timeline">
             <div className="mj_ChatView_messagePanel mj_AutoHideScrollbar" ref={scrollRef} onScroll={onScroll}>
-                <ol className="mj_ChatView_messageList" aria-live="polite">
+                <ol className="mj_ChatView_messageList" aria-live="polite" ref={listRef}>
                     {state.hasOlderHistory && (
                         <li className="mj_HistoryRow">
                             <button
