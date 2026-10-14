@@ -267,6 +267,115 @@ const events: JournalEvent[] = [
         type: "spawn_outcome",
         payload: { request_id: "spawn-fixture-1", outcome: "started", room_id: "s1", child_convo_id: "s1" },
     },
+    // Coordinator notices: one quiet line each, never the raw-JSON fallback. The rolling
+    // `summary` event is bookkeeping and never occupies a row.
+    {
+        seq: 16,
+        convo_id: "c1",
+        ts: T + 800,
+        sender: "journal",
+        type: "coordinator",
+        payload: { role: "assigned" },
+    },
+    {
+        seq: 17,
+        convo_id: "c1",
+        ts: T + 810,
+        sender: "journal",
+        type: "consent_decision",
+        payload: {
+            kind: "spawn",
+            decision: "approve",
+            request_id: "spawn-fixture-1",
+            reason: "Test triage on box-a follows the box rules",
+        },
+    },
+    {
+        seq: 18,
+        convo_id: "c1",
+        ts: T + 820,
+        sender: "journal",
+        type: "routine",
+        payload: { routine_id: "r-1", name: "morning-sweep", action: "fired", outcome: "applied now" },
+    },
+    {
+        seq: 19,
+        convo_id: "c1",
+        ts: T + 830,
+        sender: "journal",
+        type: "routine",
+        payload: { routine_id: "r-2", name: "evening-sweep", action: "fired", outcome: "failed agent_unreachable" },
+    },
+    {
+        seq: 20,
+        convo_id: "c1",
+        ts: T + 835,
+        sender: "journal",
+        type: "summary",
+        payload: { text: "Rolling summary of this conversation" },
+    },
+    {
+        // File events as the bridge and the native apps send them: the name rides in `name`
+        // (the media-send key), not the older `filename`.
+        seq: 21,
+        convo_id: "c1",
+        ts: T + 840,
+        sender: "agent:claude",
+        type: "file",
+        payload: { blob_ref: "fixture-log", name: "deploy-2026-07-25.log", content_type: "text/plain", size: 18_432 },
+    },
+    {
+        seq: 22,
+        convo_id: "c1",
+        ts: T + 860,
+        sender: "agent:claude",
+        type: "file",
+        payload: { blob_ref: "fixture-pdf", name: "rollback-runbook.pdf", size: 96_256 },
+    },
+    // Tracker item markers. Each item shows ONE card, at its latest created/closed marker, in its
+    // latest state: #41 was asked, answered and closed, so only the closing "Closed · Answered"
+    // card shows (no stale "Needs you" card above it); #42 was filed for the agent and then handed
+    // to the user in a reply, so its one card now reads "Needs you".
+    {
+        seq: 23,
+        convo_id: "c1",
+        ts: T + 870,
+        sender: "journal",
+        type: "item",
+        payload: { item_id: "it_41", num: 41, kind: "question", title: "Which region should the staging bucket use?", action: "created", by: "agent", awaiting: "user" },
+    },
+    {
+        seq: 24,
+        convo_id: "c1",
+        ts: T + 875,
+        sender: "journal",
+        type: "item",
+        payload: { item_id: "it_42", num: 42, kind: "task", title: "Rotate the staging deploy key", action: "created", by: "agent", awaiting: "agent" },
+    },
+    {
+        seq: 25,
+        convo_id: "c1",
+        ts: T + 880,
+        sender: "journal",
+        type: "item",
+        payload: { item_id: "it_41", num: 41, kind: "question", title: "Which region should the staging bucket use?", action: "commented", by: "user", awaiting: "agent", comment: { id: "cm_1", body: "Same region as production." } },
+    },
+    {
+        seq: 26,
+        convo_id: "c1",
+        ts: T + 890,
+        sender: "journal",
+        type: "item",
+        payload: { item_id: "it_41", num: 41, kind: "question", title: "Which region should the staging bucket use?", action: "closed", by: "agent", resolution: "answered", comment: { id: "cm_2", body: "Created the bucket in the production region." } },
+    },
+    {
+        seq: 27,
+        convo_id: "c1",
+        ts: T + 900,
+        sender: "journal",
+        type: "item",
+        payload: { item_id: "it_42", num: 42, kind: "task", title: "Rotate the staging deploy key", action: "commented", by: "agent", awaiting: "user", comment: { id: "cm_3", body: "Needs an admin to approve the new key." } },
+    },
 ];
 
 const client = new MatronJournalClient();
@@ -626,8 +735,19 @@ if (trackerMode === "inbox" || trackerMode === "item") {
                 : workingParam === "queued"
                   ? { state: "queued", since: now - 2_000, until: now + 10 * 60_000 }
                   : null;
+        // ?actions=offered|chosen: the item's own one-tap answers under its body, untapped or with
+        // the user's choice marked (the item then waits on the agent).
+        const actionsParam = fixtureParams.get("actions");
+        const itemActions =
+            actionsParam === "offered" || actionsParam === "chosen"
+                ? {
+                      actions: ["Confirm the order", "Discuss first"],
+                      chosen_action: actionsParam === "chosen" ? "Confirm the order" : null,
+                      awaiting: actionsParam === "chosen" ? "agent" : "user",
+                  }
+                : {};
         tracker.trackerItem = {
-            item: { ...items[0], working },
+            item: { ...items[0], working, ...itemActions },
             comments: [
                 {
                     id: "cm_1",

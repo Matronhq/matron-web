@@ -28,6 +28,16 @@ export function awaitsSeen(item: Pick<TrackerItem, "kind" | "state">): boolean {
     return item.kind === "notice" && item.state === "open";
 }
 
+/**
+ * The item's own one-tap answers to draw under its body: all of them while the item is open, none
+ * once it is closed (a closed item takes a reply, not a button press). A journal that predates item
+ * actions sends no `actions`; an open notice from one still offers its Seen button.
+ */
+export function offeredItemActions(item: Pick<TrackerItem, "kind" | "state" | "actions">): string[] {
+    if (item.state !== "open") return [];
+    return item.actions ?? (item.kind === "notice" ? ["Seen"] : []);
+}
+
 /** The origin conversation's title as carried on the item, or null when the journal did not send
  *  one (an older journal, a deleted or untitled conversation). Narrowed with typeof because the
  *  field crosses a JSON boundary: a non-string must degrade to "no title", not throw in a render. */
