@@ -3357,50 +3357,51 @@ export class MatronJournalClient {
     /**
      * "Move to project…": files the mission into another open project, then refetches what shows
      * it — the mission page when it is the one shown, the missions and projects lists when loaded,
-     * and the open project page (which it may just have left).
+     * and the open project page (which it may just have left). Resolves to why it did not move, for
+     * the sheet (which stays open over the pane's banner) to show, or null once moved.
      */
-    public async moveTrackerMission(missionId: string, projectId: string): Promise<boolean> {
+    public async moveTrackerMission(missionId: string, projectId: string): Promise<string | null> {
         const api = this.api;
-        if (!api) return false;
+        if (!api) return "Not signed in.";
         try {
             await api.patchMission(missionId, { project: projectId }, crypto.randomUUID());
         } catch (error) {
-            if (this.api === api) this.patch({ trackerError: projectFilingFailure(error, "move") });
-            return false;
+            return projectFilingFailure(error, "move");
         }
-        if (this.api !== api) return true;
+        if (this.api !== api) return null;
         await Promise.all([
             this.isSelectedTrackerMission(missionId) ? this.loadMission(missionId) : undefined,
             this.state.missions ? this.loadMissions() : undefined,
             this.state.projects ? this.loadProjects() : undefined,
             this.state.trackerProject ? this.loadProject(this.state.trackerProject.project.num) : undefined,
         ]);
-        return true;
+        return null;
     }
 
     /**
      * "Merge into…": the journal moves every mission of `sourceId` to `intoId` and closes the
      * source as merged. The page follows its missions to the project they went into, when the
      * source's page is still the one shown. The journal lets the user merge, and of the agents
-     * only the Coordinator; a refusal shows on the tracker's banner and the page stays.
+     * only the Coordinator. Resolves to why it did not merge, for the sheet to show (the page
+     * stays), or null once merged.
      */
-    public async mergeTrackerProject(sourceId: string, intoId: string): Promise<boolean> {
+    public async mergeTrackerProject(sourceId: string, intoId: string): Promise<string | null> {
         const api = this.api;
-        if (!api || sourceId === intoId) return false;
+        if (!api) return "Not signed in.";
+        if (sourceId === intoId) return "A project cannot merge into itself.";
         let into: Project;
         try {
             ({ project: into } = await api.mergeProject(sourceId, intoId));
         } catch (error) {
-            if (this.api === api) this.patch({ trackerError: projectFilingFailure(error, "merge") });
-            return false;
+            return projectFilingFailure(error, "merge");
         }
-        if (this.api !== api) return true;
+        if (this.api !== api) return null;
         const shown = this.state.trackerProject?.project;
         if (shown?.id === sourceId && this.state.trackerView?.selectedProjectId === shown.num) {
             this.openTrackerProject(into.num);
         }
         await Promise.all([this.loadProjects(), this.state.missions ? this.loadMissions() : undefined]);
-        return true;
+        return null;
     }
 
     // WS invalidation for tracker markers (`item` / `mission` / `milestone` journal frames).

@@ -103,7 +103,7 @@ function LooseMissionRow({
 }: {
     mission: Mission;
     onOpen: (num: number) => void;
-    rowProps: { onContextMenu?: (event: React.MouseEvent) => void };
+    rowProps: Record<string, unknown>;
 }): React.ReactElement {
     return (
         <button type="button" className="mj_ProjectMission" onClick={() => onOpen(mission.num)} {...rowProps}>
@@ -142,8 +142,8 @@ export function ProjectsDashboard({
     onOpenMission?: (num: number) => void;
     /** "New project": resolves to why it failed, or null once made. Without it there is no button. */
     onCreateProject?: (title: string, body: string) => Promise<string | null>;
-    /** A mission row's right-click "Move to project…". Resolves true once moved. */
-    onMoveMission?: (missionId: string, projectId: string) => Promise<boolean>;
+    /** A mission row's right-click "Move to project…". Resolves to why it did not, or null once moved. */
+    onMoveMission?: (missionId: string, projectId: string) => Promise<string | null>;
     /** Injectable for tests. */
     now?: number;
 }): React.ReactElement {

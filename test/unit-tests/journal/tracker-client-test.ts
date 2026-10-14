@@ -2293,7 +2293,7 @@ describe("MatronJournalClient project filing", () => {
             project: jest.fn().mockResolvedValue(detail(1)),
         };
 
-        await expect(client.moveTrackerMission("ms_1", "pj_2")).resolves.toBe(true);
+        await expect(client.moveTrackerMission("ms_1", "pj_2")).resolves.toBeNull();
 
         expect(state.api.patchMission).toHaveBeenCalledWith("ms_1", { project: "pj_2" }, expect.any(String));
         expect(state.api.mission).toHaveBeenCalledWith("ms_1");
@@ -2312,9 +2312,9 @@ describe("MatronJournalClient project filing", () => {
                 ),
         };
 
-        await expect(client.moveTrackerMission("ms_1", "pj_2")).resolves.toBe(false);
-
-        expect(client.getSnapshot().trackerError).toBe("That project is closed, so nothing can move into it.");
+        await expect(client.moveTrackerMission("ms_1", "pj_2")).resolves.toBe(
+            "That project is closed, so nothing can move into it.",
+        );
     });
 
     it("names the mission, not a project, when the mission itself has closed", async () => {
@@ -2332,18 +2332,17 @@ describe("MatronJournalClient project filing", () => {
                 ),
         };
 
-        await expect(client.moveTrackerMission("ms_1", "pj_2")).resolves.toBe(false);
-        expect(client.getSnapshot().trackerError).toBe("This mission is closed, so it stays where it is.");
-
-        await expect(client.mergeTrackerProject("pj_1", "pj_2")).resolves.toBe(false);
-        expect(client.getSnapshot().trackerError).toBe("This project is already closed.");
+        await expect(client.moveTrackerMission("ms_1", "pj_2")).resolves.toBe(
+            "This mission is closed, so it stays where it is.",
+        );
+        await expect(client.mergeTrackerProject("pj_1", "pj_2")).resolves.toBe("This project is already closed.");
     });
 
     it("never asks the journal to merge a project into itself", async () => {
         const { client, state } = makeClient();
         state.api = { mergeProject: jest.fn() };
 
-        await expect(client.mergeTrackerProject("pj_1", "pj_1")).resolves.toBe(false);
+        await expect(client.mergeTrackerProject("pj_1", "pj_1")).resolves.toBe("A project cannot merge into itself.");
         expect(state.api.mergeProject).not.toHaveBeenCalled();
     });
 
@@ -2361,7 +2360,7 @@ describe("MatronJournalClient project filing", () => {
             projects: jest.fn().mockResolvedValue({ projects: [project(2)] }),
         };
 
-        await expect(client.mergeTrackerProject("pj_1", "pj_2")).resolves.toBe(true);
+        await expect(client.mergeTrackerProject("pj_1", "pj_2")).resolves.toBeNull();
 
         expect(state.api.mergeProject).toHaveBeenCalledWith("pj_1", "pj_2");
         expect(state.api.projects).toHaveBeenCalled();
@@ -2380,9 +2379,9 @@ describe("MatronJournalClient project filing", () => {
                 ),
         };
 
-        await expect(client.mergeTrackerProject("pj_1", "pj_2")).resolves.toBe(false);
-
-        expect(client.getSnapshot().trackerError).toBe("Only you or your Coordinator can merge projects.");
+        await expect(client.mergeTrackerProject("pj_1", "pj_2")).resolves.toBe(
+            "Only you or your Coordinator can merge projects.",
+        );
         expect(client.getSnapshot().trackerView?.selectedProjectId).toBe(1);
     });
 });

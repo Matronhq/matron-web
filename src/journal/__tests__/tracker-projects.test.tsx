@@ -413,7 +413,7 @@ describe("Project filing", () => {
     });
 
     it("merges a project into another after a confirmation naming both", async () => {
-        const onMerge = jest.fn().mockResolvedValue(true);
+        const onMerge = jest.fn().mockResolvedValue(null);
         const other = trackerProject({ id: "pj_2", num: 2, title: "Spring launch" });
         const closed = trackerProject({ id: "pj_3", num: 3, title: "Old", state: "closed" });
         await mount(
@@ -446,7 +446,7 @@ describe("Project filing", () => {
     });
 
     it("goes back to the choice when the chosen target closes before the merge is confirmed", async () => {
-        const onMerge = jest.fn().mockResolvedValue(true);
+        const onMerge = jest.fn().mockResolvedValue(null);
         const other = trackerProject({ id: "pj_2", num: 2, title: "Spring launch" });
         const third = trackerProject({ id: "pj_3", num: 3, title: "Autumn launch" });
         const container = document.createElement("div");
@@ -478,7 +478,7 @@ describe("Project filing", () => {
     });
 
     it("closes the merge sheet when the page swaps to another project", async () => {
-        const onMerge = jest.fn().mockResolvedValue(true);
+        const onMerge = jest.fn().mockResolvedValue(null);
         const other = trackerProject({ id: "pj_2", num: 2, title: "Spring launch" });
         const third = trackerProject({ id: "pj_3", num: 3, title: "Autumn launch" });
         const container = document.createElement("div");
@@ -533,7 +533,7 @@ describe("Project filing", () => {
     });
 
     it("moves a mission from its row's right-click menu, its own project ticked", async () => {
-        const onMove = jest.fn().mockResolvedValue(true);
+        const onMove = jest.fn().mockResolvedValue(null);
         const container = await mount(
             <ProjectPage
                 detail={trackerProjectDetail({
@@ -559,5 +559,96 @@ describe("Project filing", () => {
         await press(byText('[role="dialog"] [role="listitem"]', "Spring launch"));
         expect(onMove).toHaveBeenCalledWith("ms_1", "pj_2");
         expect(document.querySelector('[role="dialog"]')).toBeNull();
+    });
+    it("keeps a refused move's sheet open with the reason, and hands focus back to the row on Escape", async () => {
+        const onMove = jest.fn().mockResolvedValue("That project is closed, so nothing can move into it.");
+        const container = await mount(
+            <ProjectPage
+                detail={trackerProjectDetail({
+                    missions: [{ ...trackerMission({ num: 1706, title: "Unify", project_id: "pj_1" }) }],
+                })}
+                projects={[trackerProject(), trackerProject({ id: "pj_2", num: 2, title: "Spring launch" })]}
+                onBack={jest.fn()}
+                onOpenMission={jest.fn()}
+                onOpenItem={jest.fn()}
+                onMoveMission={onMove}
+            />,
+        );
+        const row = container.querySelector<HTMLElement>(".mj_ProjectMission")!;
+        // The context-menu key: no pointer position, so the menu opens at the row.
+        await act(async () => {
+            row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+        });
+        const item = byText('[role="menuitem"]', "Move to project…")!;
+        expect(document.activeElement).toBe(item);
+        await act(async () => {
+            item.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+        });
+        expect(document.querySelector('[role="menu"]')).toBeNull();
+        expect(document.activeElement).toBe(row);
+
+        await act(async () => {
+            row.dispatchEvent(
+                new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 5, clientY: 5 }),
+            );
+        });
+        await press(byText('[role="menuitem"]', "Move to project…"));
+        await press(byText('[role="dialog"] [role="listitem"]', "Spring launch"));
+        expect(document.querySelector('[role="dialog"] [role="alert"]')?.textContent).toBe(
+            "That project is closed, so nothing can move into it.",
+        );
+    });
+
+    it("closes a row's move sheet when the page swaps to another project", async () => {
+        const container = document.createElement("div");
+        document.body.append(container);
+        const root = createRoot(container);
+        const other = trackerProject({ id: "pj_2", num: 2, title: "Spring launch" });
+        const page = (shown: ReturnType<typeof trackerProject>): React.ReactElement => (
+            <ProjectPage
+                detail={trackerProjectDetail({
+                    project: shown,
+                    missions: [{ ...trackerMission({ num: 1706, title: "Unify", project_id: shown.id }) }],
+                })}
+                projects={[trackerProject(), other]}
+                onBack={jest.fn()}
+                onOpenMission={jest.fn()}
+                onOpenItem={jest.fn()}
+                onMoveMission={jest.fn()}
+            />
+        );
+        await act(async () => root.render(page(trackerProject())));
+        const row = container.querySelector(".mj_ProjectMission")!;
+        await act(async () => {
+            row.dispatchEvent(
+                new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 5, clientY: 5 }),
+            );
+        });
+        await press(byText('[role="menuitem"]', "Move to project…"));
+        expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+        await act(async () => root.render(page(other)));
+        expect(document.querySelector('[role="dialog"]')).toBeNull();
+    });
+
+    it("shows a refused merge in the sheet, back at the choice", async () => {
+        const onMerge = jest.fn().mockResolvedValue("Only you or your Coordinator can merge projects.");
+        await mount(
+            <ProjectPage
+                detail={trackerProjectDetail()}
+                projects={[trackerProject(), trackerProject({ id: "pj_2", num: 2, title: "Spring launch" })]}
+                onBack={jest.fn()}
+                onOpenMission={jest.fn()}
+                onOpenItem={jest.fn()}
+                onMerge={onMerge}
+            />,
+        );
+        await press(document.querySelector('[aria-label="Project actions"]'));
+        await press(byText('[role="menuitem"]', "Merge into…"));
+        await press(byText('[role="dialog"] [role="listitem"]', "Spring launch"));
+        await press(byText('[role="dialog"] button', "Merge"));
+        expect(document.querySelector('[role="dialog"] h2')?.textContent).toBe("Merge into…");
+        expect(document.querySelector('[role="dialog"] [role="alert"]')?.textContent).toBe(
+            "Only you or your Coordinator can merge projects.",
+        );
     });
 });

@@ -533,7 +533,7 @@ describe("MissionDetail move to project", () => {
         trackerProject({ id, num: Number(id.slice(3)), title, state });
 
     it("moves an open mission to another open project from its header", async () => {
-        const moveTrackerMission = jest.fn().mockResolvedValue(true);
+        const moveTrackerMission = jest.fn().mockResolvedValue(null);
         const client = { getSnapshot: jest.fn().mockReturnValue({ trackerView: {} }), moveTrackerMission };
         const { container } = await mount(
             <MissionDetail

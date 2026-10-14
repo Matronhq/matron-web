@@ -112,10 +112,10 @@ export function ProjectPage({
     onLoadMore?: () => void;
     /** Every known project: the merge and move choices are its open ones. */
     projects?: Project[];
-    /** "Merge into…": this project into another; resolves true once merged. Without it, no menu. */
-    onMerge?: (projectId: string, intoId: string) => Promise<boolean>;
-    /** A mission row's "Move to project…"; resolves true once moved. */
-    onMoveMission?: (missionId: string, projectId: string) => Promise<boolean>;
+    /** "Merge into…": this project into another; resolves to why it did not, or null once merged. Without it, no menu. */
+    onMerge?: (projectId: string, intoId: string) => Promise<string | null>;
+    /** A mission row's "Move to project…"; resolves to why it did not, or null once moved. */
+    onMoveMission?: (missionId: string, projectId: string) => Promise<string | null>;
     /** Injectable for tests. */
     now?: number;
 }): React.ReactElement {
@@ -129,7 +129,7 @@ export function ProjectPage({
     // place (a merge made elsewhere follows to the survivor); the sheet then closes rather than
     // offer to merge a project the user did not pick.
     const [mergingId, setMergingId] = useState<string | null>(null);
-    const rowMove = useRowMove(projects, onMoveMission);
+    const rowMove = useRowMove(projects, onMoveMission, project.id);
     const merges = mergeTargets(project, projects);
     const rows = activityRows(detail, limit);
     const relative = (ms: number): string => formatRelativeTime(ms, now);

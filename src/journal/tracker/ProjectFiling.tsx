@@ -11,10 +11,10 @@ Please see LICENSE files in the repository root for full details.
  * writes are the host's, through the client.
  */
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
-import { clampToViewport } from "../context-menu";
+import { useRowContextMenu } from "../context-menu";
 import { CheckIcon } from "../icons";
 import { SheetHead, useSheetLifecycle } from "../PinDialogs";
 import type { Project } from "../types";
@@ -119,7 +119,8 @@ export function NewProjectSheet({
 
 /**
  * "Move to project…": every open project, the mission's own ticked and not choosable. No "Not in
- * a project": every mission has a project, and the journal refuses taking one out.
+ * a project": every mission has a project, and the journal refuses taking one out. A refusal shows
+ * in the sheet, which stays open over the pane.
  */
 export function MoveToProjectSheet({
     missionLabel,
@@ -131,20 +132,23 @@ export function MoveToProjectSheet({
     missionLabel: string;
     currentProjectId: string | null | undefined;
     targets: readonly Project[];
-    /** Resolves true once the mission has moved. */
-    onMove: (projectId: string) => Promise<boolean>;
+    /** Resolves to why it did not move, or null once moved. */
+    onMove: (projectId: string) => Promise<string | null>;
     onClose: () => void;
 }): React.ReactElement {
     const [moving, setMoving] = useState(false);
+    const [error, setError] = useState<string | null>(null);
     const mountedRef = useSheetLifecycle(onClose);
 
     const move = async (projectId: string): Promise<void> => {
         if (moving) return;
         setMoving(true);
-        const ok = await onMove(projectId);
+        setError(null);
+        const failure = await onMove(projectId);
         if (!mountedRef.current) return;
         setMoving(false);
-        if (ok) onClose();
+        if (failure) setError(failure);
+        else onClose();
     };
 
     return createPortal(
@@ -171,6 +175,11 @@ export function MoveToProjectSheet({
                         );
                     })}
                 </div>
+                {error ? (
+                    <p className="mj_UploadConfirm_error" role="alert">
+                        {error}
+                    </p>
+                ) : null}
                 <div className="mj_UploadConfirm_actions">
                     <button type="button" onClick={onClose}>
                         Cancel
@@ -184,7 +193,8 @@ export function MoveToProjectSheet({
 
 /**
  * "Merge into…": pick the project, then confirm. Its missions move there and this project closes,
- * so the confirmation names both ends, as the Mac's does.
+ * so the confirmation names both ends, as the Mac's does. A refusal goes back to the choice with
+ * the reason shown in the sheet.
  */
 export function MergeProjectSheet({
     project,
@@ -194,12 +204,13 @@ export function MergeProjectSheet({
 }: {
     project: Project;
     targets: readonly Project[];
-    /** Resolves true once merged. */
-    onMerge: (intoId: string) => Promise<boolean>;
+    /** Resolves to why it did not merge, or null once merged. */
+    onMerge: (intoId: string) => Promise<string | null>;
     onClose: () => void;
 }): React.ReactElement {
     const [chosenId, setChosenId] = useState<string | null>(null);
     const [merging, setMerging] = useState(false);
+    const [error, setError] = useState<string | null>(null);
     // The confirmation reads the target from the live list: one that closed or was merged away
     // meanwhile drops out of it, and the sheet goes back to the choice instead of naming it.
     const chosen = chosenId == null ? null : (targets.find((target) => target.id === chosenId) ?? null);
@@ -210,12 +221,23 @@ export function MergeProjectSheet({
     const merge = async (): Promise<void> => {
         if (!chosen || merging) return;
         setMerging(true);
-        const ok = await onMerge(chosen.id);
+        setError(null);
+        const failure = await onMerge(chosen.id);
         if (!mountedRef.current) return;
         setMerging(false);
-        if (ok) onClose();
-        else setChosenId(null);
+        if (!failure) {
+            onClose();
+            return;
+        }
+        setError(failure);
+        setChosenId(null);
     };
+
+    const errorNote = error ? (
+        <p className="mj_UploadConfirm_error" role="alert">
+            {error}
+        </p>
+    ) : null;
 
     return createPortal(
         <div
@@ -258,12 +280,16 @@ export function MergeProjectSheet({
                                     type="button"
                                     role="listitem"
                                     className="mj_ProjectSheet_target"
-                                    onClick={() => setChosenId(target.id)}
+                                    onClick={() => {
+                                        setError(null);
+                                        setChosenId(target.id);
+                                    }}
                                 >
                                     <span className="mj_ProjectSheet_targetTitle">{target.title}</span>
                                 </button>
                             ))}
                         </div>
+                        {errorNote}
                         <div className="mj_UploadConfirm_actions">
                             <button type="button" onClick={onClose}>
                                 Cancel
@@ -277,108 +303,70 @@ export function MergeProjectSheet({
     );
 }
 
-/**
- * A mission row's right-click menu (the Mac's row context menu): one "Move to project…" entry,
- * at the pointer. Escape, a click elsewhere or a scroll closes it.
- */
-export function RowMoveMenu({
-    left,
-    top,
-    disabled,
-    onChoose,
-    onClose,
-}: {
-    left: number;
-    top: number;
-    /** No other open project to move to. */
-    disabled: boolean;
-    onChoose: () => void;
-    onClose: () => void;
-}): React.ReactElement {
-    const ref = useRef<HTMLDivElement>(null);
-    useEffect(() => {
-        ref.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
-        const away = (event: Event): void => {
-            if (!ref.current?.contains(event.target as Node)) onClose();
-        };
-        const key = (event: KeyboardEvent): void => {
-            if (event.key === "Escape") onClose();
-        };
-        document.addEventListener("mousedown", away);
-        document.addEventListener("scroll", onClose, true);
-        document.addEventListener("keydown", key);
-        return () => {
-            document.removeEventListener("mousedown", away);
-            document.removeEventListener("scroll", onClose, true);
-            document.removeEventListener("keydown", key);
-        };
-    }, [onClose]);
-    return createPortal(
-        <div
-            ref={ref}
-            className="mj_TrackerMenu_list mj_RowMoveMenu"
-            role="menu"
-            style={clampToViewport(left, top, 180, 44, window.innerWidth, window.innerHeight)}
-        >
-            <button
-                type="button"
-                role="menuitem"
-                className="mj_TrackerMenu_item"
-                disabled={disabled}
-                onClick={() => {
-                    onClose();
-                    onChoose();
-                }}
-            >
-                Move to project…
-            </button>
-        </div>,
-        document.body,
-    );
-}
+type MoveRow = { id: string; num: number; project_id?: string | null };
 
 /**
- * The right-click move flow for a list of mission rows: `rowProps(mission)` goes on each row; the
- * returned `layer` renders the menu and the sheet. Without `onMove` rows get no menu.
+ * The right-click move flow for a list of mission rows (the Mac's row context menu), on the
+ * app's shared row menu: right-click, the context-menu key or a long press opens one "Move to
+ * project…" entry, and Escape hands focus back to the row. `rowProps(mission)` goes on each row;
+ * the returned `layer` renders the menu and the sheet. `scope` names the list (the project page's
+ * project): a sheet opened under another scope is not shown, so a page swapped in place never
+ * offers to move a mission from the project that went away. Without `onMove` rows get no menu.
  */
 export function useRowMove(
     projects: readonly Project[] | undefined,
-    onMove: ((missionId: string, projectId: string) => Promise<boolean>) | undefined,
+    onMove: ((missionId: string, projectId: string) => Promise<string | null>) | undefined,
+    scope: string | null = null,
 ): {
-    rowProps: (mission: { id: string; num: number; project_id?: string | null }) => {
-        onContextMenu?: (event: React.MouseEvent) => void;
-    };
+    rowProps: (mission: MoveRow) => Record<string, unknown>;
     layer: React.ReactNode;
 } {
-    type Target = { id: string; num: number; project_id?: string | null };
-    const [menu, setMenu] = useState<{ mission: Target; left: number; top: number } | null>(null);
-    const [sheet, setSheet] = useState<Target | null>(null);
+    const menu = useRowContextMenu<MoveRow>();
+    const rows = useRef(new Map<string, HTMLElement>());
+    const [sheet, setSheet] = useState<{ mission: MoveRow; scope: string | null } | null>(null);
     const targets = moveTargets(projects);
-    const closeMenu = React.useCallback(() => setMenu(null), []);
     if (!onMove) return { rowProps: () => ({}), layer: null };
-    const rowProps = (mission: Target): { onContextMenu: (event: React.MouseEvent) => void } => ({
-        onContextMenu: (event) => {
-            event.preventDefault();
-            setMenu({ mission, left: event.clientX, top: event.clientY });
+    const rowProps = (mission: MoveRow): Record<string, unknown> => ({
+        ref: (node: HTMLElement | null) => {
+            if (node) rows.current.set(mission.id, node);
+            else rows.current.delete(mission.id);
         },
+        ...menu.rowHandlers(mission, () => rows.current.get(mission.id) ?? null),
     });
+    const target = menu.state?.target;
     const layer = (
         <>
-            {menu ? (
-                <RowMoveMenu
-                    left={menu.left}
-                    top={menu.top}
-                    disabled={!targets.some((project) => project.id !== menu.mission.project_id)}
-                    onChoose={() => setSheet(menu.mission)}
-                    onClose={closeMenu}
-                />
-            ) : null}
-            {sheet ? (
+            {menu.state && target
+                ? createPortal(
+                      <div
+                          ref={menu.menuRef}
+                          className="mj_TrackerMenu_list mj_RowMoveMenu"
+                          role="menu"
+                          style={{ left: menu.state.left, top: menu.state.top }}
+                          onKeyDown={menu.menuKeyDown}
+                      >
+                          <button
+                              type="button"
+                              role="menuitem"
+                              className="mj_TrackerMenu_item"
+                              disabled={!targets.some((project) => project.id !== target.project_id)}
+                              onClick={() => {
+                                  menu.close();
+                                  setSheet({ mission: target, scope });
+                              }}
+                          >
+                              Move to project…
+                          </button>
+                      </div>,
+                      document.body,
+                  )
+                : null}
+            {sheet && sheet.scope === scope ? (
                 <MoveToProjectSheet
-                    missionLabel={`#${sheet.num}`}
-                    currentProjectId={sheet.project_id}
+                    missionLabel={`#${sheet.mission.num}`}
+                    currentProjectId={sheet.mission.project_id}
                     targets={targets}
-                    onMove={(projectId) => onMove(sheet.id, projectId)}
+                    onMove={(projectId) => onMove(sheet.mission.id, projectId)}
                     onClose={() => setSheet(null)}
                 />
             ) : null}

@@ -135,7 +135,7 @@ export function TrackerPane({
     useEffect(() => {
         if (projectsWanted && !projectsLoaded) void client.loadProjects();
     }, [client, projectsWanted, projectsLoaded]);
-    const moveMission = (missionId: string, projectId: string): Promise<boolean> =>
+    const moveMission = (missionId: string, projectId: string): Promise<string | null> =>
         client.moveTrackerMission(missionId, projectId);
 
     const body = ((): React.ReactElement => {
