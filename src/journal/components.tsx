@@ -1837,21 +1837,23 @@ function ConversationListView({
                         )}
                         {/* Mac order: New, then what needs you, then unread. Announced via the row's
                             aria-label, like the collapsed-children chip above. */}
-                        <span className="mj_ConversationListBadges">
-                            {isNew && (
-                                <span className="mj_ConversationListNew" aria-hidden="true">
-                                    New
-                                </span>
-                            )}
-                            <NeedsYouBadge count={needsYou} />
-                            {conversation.unread_count > 0 ? (
-                                <span className="mj_UnreadBadge" aria-label={`${conversation.unread_count} unread`}>
-                                    {conversation.unread_count}
-                                </span>
-                            ) : overrideUnread ? (
-                                <span className="mj_UnreadDot" aria-hidden />
-                            ) : null}
-                        </span>
+                        {(isNew || needsYou > 0 || conversation.unread_count > 0 || overrideUnread) && (
+                            <span className="mj_ConversationListBadges">
+                                {isNew && (
+                                    <span className="mj_ConversationListNew" aria-hidden="true">
+                                        New
+                                    </span>
+                                )}
+                                <NeedsYouBadge count={needsYou} />
+                                {conversation.unread_count > 0 ? (
+                                    <span className="mj_UnreadBadge" aria-label={`${conversation.unread_count} unread`}>
+                                        {conversation.unread_count}
+                                    </span>
+                                ) : overrideUnread ? (
+                                    <span className="mj_UnreadDot" aria-hidden />
+                                ) : null}
+                            </span>
+                        )}
                     </span>
                 </button>
                 {/* The row menu opens via right-click / long-press for pointer + touch. This
