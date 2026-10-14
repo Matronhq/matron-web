@@ -14,6 +14,9 @@ import {
     type DeviceDTO,
     type DevicesResponse,
     endpointUrl,
+    type LinkStart,
+    type LinkStatus,
+    type PairPreview,
     type LoginResponse,
     type MatronConfig,
     type MessagesResponse,
@@ -317,7 +320,8 @@ function parseDevice(raw: unknown): DeviceParseResult {
     if (typeof device.kind !== "string") reasons.push("invalid_kind");
     if (typeof device.connected !== "boolean") reasons.push("invalid_connected");
     if (device.name !== undefined && typeof device.name !== "string") reasons.push("invalid_name");
-    if (device.last_seen_at !== undefined && typeof device.last_seen_at !== "number") {
+    // null: a device that has never connected (an agent box enrolled but not yet online).
+    if (device.last_seen_at !== undefined && device.last_seen_at !== null && typeof device.last_seen_at !== "number") {
         reasons.push("invalid_last_seen_at");
     }
     if (typeof device.is_self !== "boolean") reasons.push("invalid_is_self");
@@ -332,9 +336,12 @@ function parseDevice(raw: unknown): DeviceParseResult {
             device_id: device.device_id,
             kind: device.kind,
             name: device.name,
-            last_seen_at: device.last_seen_at,
+            last_seen_at: device.last_seen_at ?? undefined,
             connected: device.connected,
             is_self: device.is_self,
+            ...(typeof device.tag_char === "string" || device.tag_char === null ? { tag_char: device.tag_char } : {}),
+            ...(typeof device.created_at === "number" ? { created_at: device.created_at } : {}),
+            ...(typeof device.lag === "number" ? { lag: device.lag } : {}),
             ...(status ? { status } : {}),
             ...(defaults ? { defaults } : {}),
         } as DeviceDTO,
@@ -731,6 +738,87 @@ export class JournalApi {
         const state = parseBoxDefaultsState(raw);
         if (!state) throw new JournalApiError("The journal server returned malformed box defaults.", 200);
         return state;
+    }
+
+    // ── Device admin (Settings → Devices; client tokens only, 404 = not yours or gone) ──
+
+    /** POST /devices/:id/rename — the journal trims and sanitises the name and caps it at 40. */
+    public async renameDevice(deviceId: number, name: string): Promise<void> {
+        await this.json<unknown>(`/devices/${encodeURIComponent(String(deviceId))}/rename`, {
+            method: "POST",
+            body: { name },
+        });
+    }
+
+    /** POST /devices/:id/tag — set the tag character, or clear it back to automatic with null. */
+    public async setDeviceTag(deviceId: number, tagChar: string | null): Promise<void> {
+        await this.json<unknown>(`/devices/${encodeURIComponent(String(deviceId))}/tag`, {
+            method: "POST",
+            body: { tag_char: tagChar },
+        });
+    }
+
+    /** POST /devices/:id/revoke — immediate and permanent; revoking this device signs it out. */
+    public async revokeDevice(deviceId: number): Promise<void> {
+        await this.json<unknown>(`/devices/${encodeURIComponent(String(deviceId))}/revoke`, {
+            method: "POST",
+            body: {},
+        });
+    }
+
+    /** POST /pair/preview — who is asking to pair with a box's code. 404: unknown, expired or used. */
+    public async pairPreview(pairCode: string): Promise<PairPreview> {
+        const raw = await this.json<Record<string, unknown>>("/pair/preview", {
+            method: "POST",
+            body: { pair_code: pairCode },
+        });
+        if (typeof raw?.requester_ip !== "string" || typeof raw.expires_in !== "number") {
+            throw new JournalApiError("The journal server returned a malformed pair preview.", 200);
+        }
+        return { requester_ip: raw.requester_ip, expires_in: raw.expires_in };
+    }
+
+    /** POST /pair/approve — bind the box's code to this user; 409 when already approved. */
+    public async pairApprove(pairCode: string, agentName: string, tagChar: string | null): Promise<void> {
+        await this.json<unknown>("/pair/approve", {
+            method: "POST",
+            body: { pair_code: pairCode, agent_name: agentName, ...(tagChar ? { tag_char: tagChar } : {}) },
+        });
+    }
+
+    /** POST /link/start — mint (or replace) this device's sign-in code for a second device. */
+    public async linkStart(): Promise<LinkStart> {
+        const raw = await this.json<Record<string, unknown>>("/link/start", { method: "POST", body: {} });
+        if (typeof raw?.link_code !== "string" || typeof raw.expires_in !== "number") {
+            throw new JournalApiError("The journal server returned a malformed link code.", 200);
+        }
+        return { link_code: raw.link_code, expires_in: raw.expires_in };
+    }
+
+    /** POST /link/status — 404 when this device has no live code (expired or resolved). */
+    public async linkStatus(): Promise<LinkStatus> {
+        const raw = await this.json<Record<string, unknown>>("/link/status", { method: "POST", body: {} });
+        const expiresIn = typeof raw?.expires_in === "number" ? raw.expires_in : 0;
+        if (raw?.status === "waiting") return { status: "waiting", expires_in: expiresIn };
+        if (raw?.status === "claimed" && typeof raw.device_name === "string" && typeof raw.requester_ip === "string") {
+            return {
+                status: "claimed",
+                device_name: raw.device_name,
+                requester_ip: raw.requester_ip,
+                expires_in: expiresIn,
+            };
+        }
+        throw new JournalApiError("The journal server returned a malformed link status.", 200);
+    }
+
+    /** POST /link/approve — 409: nothing claimed yet or already resolved; 404: expired. */
+    public async linkApprove(linkCode: string): Promise<void> {
+        await this.json<unknown>("/link/approve", { method: "POST", body: { link_code: linkCode } });
+    }
+
+    /** POST /link/deny — 404: expired. */
+    public async linkDeny(linkCode: string): Promise<void> {
+        await this.json<unknown>("/link/deny", { method: "POST", body: { link_code: linkCode } });
     }
 
     // ── Pinned desk chats (journal /pins; every route answers with the whole list) ──

@@ -12,8 +12,9 @@ Please see LICENSE files in the repository root for full details.
  * New chats holds the user's default model and effort (journal GET/PUT /defaults), which every
  * bridge applies to a chat started without a choice of its own.
  * Boxes holds each agent box's own defaults (journal PUT /devices/:id/defaults): the agent, model
- * and effort a session started there gets when nobody names them. Web has no Devices screen, so
- * the per-box editor lives here.
+ * and effort a session started there gets when nobody names them.
+ * Devices (DevicesSettings.tsx) is the Mac's Devices tab: rename, tag and revoke each device, and
+ * the Add Agent and Link a Device pairing flows.
  *
  * For you: the journal's per-user `notices` setting (agents file things to read as items with a
  * Seen button instead of leaving them in chat). The sheet asks the client to load it on open; the
@@ -29,6 +30,7 @@ Please see LICENSE files in the repository root for full details.
 import React, { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import type { MatronJournalClient } from "./client";
+import { DevicesSettings } from "./DevicesSettings";
 import { type DesktopNotificationsState, notificationsFor } from "./notifications";
 import { getSnapshot, setTheme, subscribe, type ThemePref } from "./theme";
 import type { BoxDefaults, BoxDefaultsState, DefaultsState, Session, UserDefaultKey } from "./types";
@@ -568,6 +570,7 @@ export function SettingsSheet({
                         ))}
                     </div>
                 </section>
+                <DevicesSettings client={client} session={session} />
                 <DesktopNotifications client={client} />
                 <NewChatDefaults client={client} />
                 <BoxesDefaults client={client} />
