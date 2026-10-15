@@ -471,6 +471,58 @@ describe("the subagent pane: focus, keyboard and switching", () => {
     });
 });
 
+describe("the subagent pane and the Markdown preview, and Escape", () => {
+    const MD_FILE: JournalEvent = {
+        seq: 1,
+        convo_id: LINT.id,
+        ts: 1_782_000_000_000,
+        sender: "agent:claude",
+        type: "file",
+        payload: { blob_ref: "notes-md", name: "notes.md", size: 120, content_type: "text/markdown" },
+    };
+
+    it("stays beside the chat when a Markdown preview opens beside it", async () => {
+        const client = signedInClient([PARENT, LINT], "parent");
+        jest.spyOn(client, "conversationEvents").mockResolvedValue([MD_FILE]);
+        layOut(1400, 300);
+        const container = await renderClient(client);
+        await act(async () => client.openSubChat(LINT.id));
+        await act(async () =>
+            container
+                .querySelector<HTMLButtonElement>('.mj_SubChatPane button[aria-label="Preview notes.md"]')
+                ?.click(),
+        );
+        expect(container.querySelector(".mj_MdPreview")).not.toBeNull();
+        const pane = container.querySelector("aside.mj_SubChatPane");
+        expect(pane?.classList.contains("mj_SubChatPane_covering")).toBe(false);
+        expect(container.querySelector(".mj_ChatView_wrapper")?.hasAttribute("inert")).toBe(false);
+    });
+
+    it("goes back to the chat on Escape while it covers the chat", async () => {
+        const client = signedInClient([PARENT, LINT], "parent");
+        jest.spyOn(client, "conversationEvents").mockResolvedValue([]);
+        layOut(1000, 300);
+        await renderClient(client);
+        await act(async () => client.openSubChat(LINT.id));
+        await act(async () => {
+            document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+        });
+        expect(client.getSnapshot().subChatPane).toBeUndefined();
+    });
+
+    it("leaves Escape alone beside the chat", async () => {
+        const client = signedInClient([PARENT, LINT], "parent");
+        jest.spyOn(client, "conversationEvents").mockResolvedValue([]);
+        layOut(1400, 300);
+        await renderClient(client);
+        await act(async () => client.openSubChat(LINT.id));
+        await act(async () => {
+            document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+        });
+        expect(client.getSnapshot().subChatPane).toEqual({ parentId: "parent", childId: LINT.id });
+    });
+});
+
 describe("the slot beside the chat, shared with the Tasks pane", () => {
     const panes = (container: HTMLElement): { subchat: number; tasks: number } => ({
         subchat: container.querySelectorAll("aside.mj_SubChatPane").length,

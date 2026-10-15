@@ -30,13 +30,16 @@ export interface SubChatRow {
     content: React.ReactNode;
 }
 
-/** Where the chat area is on screen: from the chat's left edge to the app's right edge, less a
- *  Markdown preview open at that edge. */
+/** Where the chat area is on screen: from the chat's left edge to the app's right edge. */
 export interface ChatArea {
     left: number;
     top: number;
     bottom: number;
     width: number;
+    /** `width` less a Markdown preview open at the right edge: the room the chat and the pane
+     *  share beside it. Only the pane's width is limited by it; whether the pane covers the chat
+     *  is decided from `width`, so opening a preview never flips the pane over the preview. */
+    room: number;
 }
 
 /**
@@ -63,18 +66,21 @@ export function useChatArea(
             // A Markdown preview open beside them takes its own room from the chat and the pane.
             const preview = appNode.querySelector(".mj_MdPreview");
             const previewWidth = preview ? preview.getBoundingClientRect().width : 0;
+            const width = Math.round(appRect.right - chatRect.left);
             const next = {
                 left: Math.round(chatRect.left),
                 top: Math.round(chatRect.top),
                 bottom: Math.round(chatRect.bottom),
-                width: Math.round(appRect.right - chatRect.left - previewWidth),
+                width,
+                room: Math.round(width - previewWidth),
             };
             setArea((previous) =>
                 previous &&
                 previous.left === next.left &&
                 previous.top === next.top &&
                 previous.bottom === next.bottom &&
-                previous.width === next.width
+                previous.width === next.width &&
+                previous.room === next.room
                     ? previous
                     : next,
             );
@@ -96,6 +102,10 @@ export function useChatArea(
 export function paneCoversChat(area: ChatArea | undefined): boolean {
     return area !== undefined && area.width < SIDE_BY_SIDE_MIN_WIDTH;
 }
+
+// Overlays that own Escape while they are open; the covering pane defers to them.
+const PANE_ESCAPE_OWNERS =
+    ".mj_MediaViewer_scrim, .mj_MediaBrowser_scrim, .mj_EventSource_scrim, .mj_UploadConfirm_scrim, .mj_NewSessionSheet, .mj_SettingsScrim, .mj_HeaderMenu, [role='menu']";
 
 function isNearBottom(node: HTMLElement): boolean {
     return node.scrollHeight - node.scrollTop - node.clientHeight < 80;
@@ -206,9 +216,22 @@ export function SubChatPane({
     useEffect(() => {
         if (covering) closeRef.current?.focus();
     }, [covering]);
+    // Covering the chat, the pane is a page on top of it: Escape goes back, unless an overlay on
+    // top (the media viewer, a menu) owns the press.
+    useEffect(() => {
+        if (!covering) return undefined;
+        const onKey = (event: KeyboardEvent): void => {
+            if (event.key !== "Escape" || event.defaultPrevented) return;
+            if (document.querySelector(PANE_ESCAPE_OWNERS)) return;
+            event.preventDefault();
+            client.closeSubChat();
+        };
+        document.addEventListener("keydown", onKey);
+        return () => document.removeEventListener("keydown", onKey);
+    }, [covering, client]);
 
     const [width, setWidth] = useState(SIDE_PANE_MIN_WIDTH);
-    const areaWidth = area?.width;
+    const areaWidth = area?.room;
     const shownWidth = areaWidth === undefined ? width : clampSidePaneWidth(width, areaWidth);
     const stopDragging = useRef<() => void>(() => undefined);
     useEffect(() => () => stopDragging.current(), []);
