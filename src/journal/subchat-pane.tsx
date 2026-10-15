@@ -30,7 +30,8 @@ export interface SubChatRow {
     content: React.ReactNode;
 }
 
-/** Where the chat area is on screen: from the chat's left edge to the app's right edge. */
+/** Where the chat area is on screen: from the chat's left edge to the app's right edge, less a
+ *  Markdown preview open at that edge. */
 export interface ChatArea {
     left: number;
     top: number;
@@ -59,11 +60,14 @@ export function useChatArea(
             if (!appNode || !chatNode) return;
             const appRect = appNode.getBoundingClientRect();
             const chatRect = chatNode.getBoundingClientRect();
+            // A Markdown preview open beside them takes its own room from the chat and the pane.
+            const preview = appNode.querySelector(".mj_MdPreview");
+            const previewWidth = preview ? preview.getBoundingClientRect().width : 0;
             const next = {
                 left: Math.round(chatRect.left),
                 top: Math.round(chatRect.top),
                 bottom: Math.round(chatRect.bottom),
-                width: Math.round(appRect.right - chatRect.left),
+                width: Math.round(appRect.right - chatRect.left - previewWidth),
             };
             setArea((previous) =>
                 previous &&
