@@ -233,12 +233,15 @@ import {
     normalizeServerUrl,
 } from "./types";
 import {
+    useVoiceNoteBarVisible,
     useVoiceRecorder,
     VoiceErrorBanner,
     VoiceMicButton,
+    VoiceNoteBar,
     type VoiceRecordingContext,
     VoiceRecordingBar,
 } from "./voice-recorder";
+import { voiceNoteSessionFor } from "./voice-note-session";
 
 const NAV_VIEW = { projects: "missions", decisions: "inbox", memories: "memories" } as const;
 const NAV_KEY_FOR_VIEW: Record<"missions" | "inbox" | "memories", NavKey> = {
@@ -6317,6 +6320,24 @@ function SlashCommandPalette({
     );
 }
 
+/**
+ * A conversation's voice note finished while no composer is mounted (stopped from the app-wide bar
+ * on another page): it goes out on its own. Resolves to why it didn't, for the bar's Retry row.
+ */
+async function sendVoiceNoteAway(
+    client: MatronJournalClient,
+    blob: Blob,
+    { contextKey, sessionGen }: VoiceRecordingContext,
+): Promise<string | null> {
+    try {
+        const outcome = await client.sendVoiceNote(blob, contextKey, sessionGen);
+        if (outcome === "sent" || outcome === "persisted-terminal") return null;
+        return outcome === "skipped" ? "This conversation can't take it now." : "Couldn't save the recording.";
+    } catch {
+        return "Couldn't save the recording.";
+    }
+}
+
 function Composer({
     client,
     state,
@@ -6383,7 +6404,19 @@ function Composer({
             })
             .catch(failed);
     };
-    const voice = useVoiceRecorder({ contextKey: convoId, client, onRecorded: onVoiceRecorded });
+    const deliverVoiceNoteAway = (blob: Blob, context: VoiceRecordingContext): Promise<string | null> =>
+        sendVoiceNoteAway(client, blob, context);
+    // The note outlives this composer: it keeps recording across conversation switches and pages,
+    // and one finished while no composer is mounted goes out on its own, the draft left in place.
+    const voiceConversation = state.conversations.find((conversation) => conversation.id === convoId);
+    const voice = useVoiceRecorder({
+        contextKey: convoId,
+        client,
+        onRecorded: onVoiceRecorded,
+        kind: "conversation",
+        title: voiceConversation ? displayTitle(voiceConversation) : "this conversation",
+        deliverAway: deliverVoiceNoteAway,
+    });
     const { voiceState } = voice;
 
     // Mirror the store's canonical per-convo durability flag into React state, but only for the
@@ -7152,6 +7185,16 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
     const appContent = useRef<HTMLDivElement>(null);
     // Desktop notifications and the unread count in the title / app badge, while signed in.
     useEffect(() => notificationsFor(client).start(), [client]);
+    // A voice note outlives every page but not the signed-in app: leaving it releases the microphone.
+    useEffect(() => () => voiceNoteSessionFor(client).reset(), [client]);
+    const voiceNoteBarVisible = useVoiceNoteBarVisible(client);
+    const openVoiceNoteTarget = useCallback(
+        (kind: string, contextKey: string): void => {
+            if (kind === "conversation") void client.selectConversation(contextKey);
+            else if (kind === "item") client.openTrackerItem(Number(contextKey));
+        },
+        [client],
+    );
     const drafts = useMemo(() => makeDraftStore(state.session), [state.session]);
     const sendingConvos = useRef<Set<string>>(new Set());
     const draftRevisions = useRef<Map<string, number>>(new Map());
@@ -7253,7 +7296,7 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                         <div />
                     </div>
                     <div
-                        className={`mj_ChatView_wrapper ${state.trackerView?.open || state.selectedConversationId ? "" : "mj_Chat_mobileHidden"}`}
+                        className={`mj_ChatView_wrapper ${state.trackerView?.open || state.selectedConversationId ? "" : "mj_Chat_mobileHidden"}${voiceNoteBarVisible ? " mj_ChatView_wrapper_voiceNote" : ""}`}
                     >
                         {state.trackerView?.open ? (
                             <TrackerPane client={client} state={state} />
@@ -7333,6 +7376,7 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                                 </div>
                             </main>
                         )}
+                        <VoiceNoteBar client={client} onOpen={openVoiceNoteTarget} />
                     </div>
                     {state.chatTasks?.open && state.selectedConversationId && !childMode && !state.trackerView?.open ? (
                         <ChatTasksPane
