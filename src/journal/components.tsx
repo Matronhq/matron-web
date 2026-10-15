@@ -122,6 +122,7 @@ import {
     ArrowUpCircleIcon,
     ProjectsIcon,
 } from "./icons";
+import { COORDINATOR_NEW_CHAT_MODEL, CoordinatorChooserSheet, RoutinesSheet } from "./CoordinatorSheets";
 import { NAV_RAIL_WIDTH, NavRail, type NavKey } from "./NavRail";
 import { isAgentRoomTitle, needsYouByConversation, projectsNeedsYou } from "./needs-you";
 import { notificationsFor, unreadTotal as countUnread } from "./notifications";
@@ -698,16 +699,26 @@ function BoxUsage({ status, now }: { status: BoxStatus | undefined; now: number 
 export function NewSessionSheet({
     client,
     onClose,
+    title = "New session",
+    initialModel,
+    onCreated,
 }: {
     client: MatronJournalClient;
     onClose: () => void;
+    title?: string;
+    /** A model picked up front (the Coordinator chooser's new chat); dropped on a box without it. */
+    initialModel?: string;
+    /** Called with the new conversation once the box created it, after it is opened. */
+    onCreated?: (convoId: string) => void;
 }): React.ReactElement {
     const [sheetState, setSheetState] = useState<SheetState>({ step: "loading-agents" });
     const boxStatuses = useSyncExternalStore(client.subscribe, () => client.getSnapshot().boxStatuses);
     const now = useMinuteClock();
     const [workdir, setWorkdir] = useState("");
     const [browserTools, setBrowserTools] = useState(false);
-    const [picks, setPicks] = useState<SheetPicks>(NO_PICKS);
+    const [picks, setPicks] = useState<SheetPicks>(() =>
+        initialModel ? { ...NO_PICKS, model: initialModel } : NO_PICKS,
+    );
     const [showBack, setShowBack] = useState(false);
     const sheetStateRef = useRef(sheetState);
     const agentsRef = useRef<DeviceDTO[]>([]);
@@ -852,6 +863,7 @@ export function NewSessionSheet({
             dismissedRef.current = true;
             onClose();
             void client.selectConversation(outcome.convoId, { fromRpcCreate: true });
+            onCreated?.(outcome.convoId);
             return;
         }
         if (outcome.kind === "uncertain") {
@@ -877,7 +889,7 @@ export function NewSessionSheet({
             <div className="mj_UploadConfirm mj_NewSessionSheet">
                 <div className="mj_NewSessionSheet_head">
                     <h2 className="mj_UploadConfirm_title" id="mj-new-session-title">
-                        New session
+                        {title}
                     </h2>
                     <button type="button" className="mj_NewSessionSheet_close" aria-label="Close" onClick={dismiss}>
                         <svg
@@ -1305,6 +1317,16 @@ function ConversationListView({
     const [tab, setTab] = useState<"active" | "favorites" | "archived">("active");
     const [accountOpen, setAccountOpen] = useState(false);
     const [newSessionOpen, setNewSessionOpen] = useState(false);
+    // The Coordinator's sheets (chooser, its new chat, Routines), one at a time. Opened from
+    // Settings, they take its place and give it back when they close, as the Mac's sit over it.
+    // "assigning": the new chat exists and PUT /coordinator is in flight; nothing shows.
+    const [coordinatorSheet, setCoordinatorSheet] = useState<{
+        kind: "chooser" | "new-chat" | "assigning" | "routines";
+        fromSettings: boolean;
+        error?: string;
+    } | null>(null);
+    const coordinatorSheetRef = useRef(coordinatorSheet);
+    coordinatorSheetRef.current = coordinatorSheet;
     const [pinDialog, setPinDialog] = useState<PinDialogTarget>();
     const [conversationMenu, setConversationMenu] = useState<{ conversationId: string; left: number; top: number }>();
     const conversationMenuRef = useRef(conversationMenu);
@@ -1609,6 +1631,13 @@ function ConversationListView({
     // The Projects badge: what needs the user across the missions (the Mac's Missions total).
     const projectsNeedsYouTotal = projectsNeedsYou(state.inboxItems, state.missions);
     const closeSettings = useCallback(() => setAccountOpen(false), []);
+    const closeCoordinatorSheet = (): void => {
+        if (coordinatorSheet?.fromSettings) setAccountOpen(true);
+        setCoordinatorSheet(null);
+    };
+    const coordinatorConversation = state.coordinatorConvoId
+        ? state.conversations.find((conversation) => conversation.id === state.coordinatorConvoId)
+        : undefined;
     const renderNow = Date.now();
     const pinnedRows = journalPins ? [] : visibleRows.filter((conversation) => state.pinnedIds.has(conversation.id));
     const unpinnedRows = journalPins
@@ -1966,6 +1995,23 @@ function ConversationListView({
                             memoryName: null,
                         });
                 }}
+                coordinator={{
+                    selected:
+                        !state.trackerView?.open &&
+                        !!state.coordinatorConvoId &&
+                        state.selectedConversationId === state.coordinatorConvoId,
+                    unread: coordinatorConversation?.unread_count ?? 0,
+                    onOpen: () => {
+                        setAccountOpen(false);
+                        closeConversationMenu();
+                        void client.openCoordinator().then((opened) => {
+                            // A new coordinator chat being assigned is the answer on its way: its own
+                            // result (Settings back, or the chooser with the error) lands instead.
+                            if (opened || coordinatorSheetRef.current?.kind === "assigning") return;
+                            setCoordinatorSheet({ kind: "chooser", fromSettings: false });
+                        });
+                    },
+                }}
                 footer={
                     // Mac: theme and account live in the Settings sheet; the rail foot keeps one
                     // Settings button carrying the connection dot.
@@ -2201,6 +2247,14 @@ function ConversationListView({
                     noticesError={state.userSettingsError}
                     onLoadSettings={() => void client.loadSettings()}
                     onNoticesChange={(value) => void client.setNoticesSetting(value)}
+                    onChooseCoordinator={() => {
+                        setAccountOpen(false);
+                        setCoordinatorSheet({ kind: "chooser", fromSettings: true });
+                    }}
+                    onOpenRoutines={() => {
+                        setAccountOpen(false);
+                        setCoordinatorSheet({ kind: "routines", fromSettings: true });
+                    }}
                     onSignOut={() => {
                         setAccountOpen(false);
                         void client.logout();
@@ -2209,6 +2263,43 @@ function ConversationListView({
                 />
             )}
             {newSessionOpen && <NewSessionSheet client={client} onClose={() => setNewSessionOpen(false)} />}
+            {coordinatorSheet?.kind === "chooser" && (
+                <CoordinatorChooserSheet
+                    client={client}
+                    state={state}
+                    initialError={coordinatorSheet.error}
+                    onClose={closeCoordinatorSheet}
+                    onNewChat={() => setCoordinatorSheet({ ...coordinatorSheet, kind: "new-chat", error: undefined })}
+                />
+            )}
+            {coordinatorSheet?.kind === "new-chat" && (
+                <NewSessionSheet
+                    client={client}
+                    title="New coordinator chat"
+                    initialModel={COORDINATOR_NEW_CHAT_MODEL}
+                    // Closing the new chat goes back to the chooser. A created chat closes it too,
+                    // and onCreated runs in the same batch: it replaces the chooser with
+                    // "assigning", so the chooser never shows while the new chat becomes the
+                    // Coordinator. The answer lands only if nothing else opened meanwhile.
+                    onClose={() => setCoordinatorSheet({ ...coordinatorSheet, kind: "chooser", error: undefined })}
+                    onCreated={(convoId) => {
+                        const fromSettings = coordinatorSheet.fromSettings;
+                        const assigning = { kind: "assigning" as const, fromSettings };
+                        setCoordinatorSheet(assigning);
+                        void client.setCoordinator(convoId).then((error) => {
+                            if (coordinatorSheetRef.current !== assigning) return;
+                            if (error) {
+                                // The chat started but did not become the Coordinator: say so in the chooser.
+                                setCoordinatorSheet({ kind: "chooser", fromSettings, error });
+                                return;
+                            }
+                            setCoordinatorSheet(null);
+                            if (fromSettings) setAccountOpen(true);
+                        });
+                    }}
+                />
+            )}
+            {coordinatorSheet?.kind === "routines" && <RoutinesSheet client={client} onClose={closeCoordinatorSheet} />}
             {pinDialog && (
                 <PinDialog client={client} state={state} target={pinDialog} onClose={() => setPinDialog(undefined)} />
             )}
@@ -2489,6 +2580,8 @@ const CONVERSATION_LIST_IGNORED_STATE = new Set<keyof ClientState>([
     "hasOlderHistory",
     "sendTick",
     "dragActive",
+    // The Routines sheet reads its own state from the client; the list never does.
+    "routines",
     "composerAttachments",
     "chatTasks",
     "focusTarget",

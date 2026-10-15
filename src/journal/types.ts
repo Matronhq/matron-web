@@ -6,6 +6,7 @@ Please see LICENSE files in the repository root for full details.
 */
 
 import type { CoordinatorDecision } from "./coordinator-consent";
+import type { Routine } from "./routines";
 
 export const MESSAGE_EVENT_TYPES = new Set([
     "text",
@@ -303,6 +304,8 @@ export interface JournalControlFrame {
     pins?: unknown;
     /** `hello_ok` and the `settings` op carry the user's journal settings (unvalidated JSON). */
     settings?: unknown;
+    /** hello_ok: the user's Coordinator conversation (null for none); absent on an older journal. */
+    coordinator_convo_id?: unknown;
 }
 
 export interface JournalRpcFrame {
@@ -717,6 +720,24 @@ export interface ClientState {
     /** Settings → Coordinator: whether the Coordinator may answer chat and spawn asks (`consent`
      *  on GET /coordinator). `enabled` undefined = not known yet, or a journal without the switch. */
     coordinatorConsent?: { enabled?: boolean; error?: string };
+    /** The user's Coordinator conversation (GET/PUT /coordinator `convo_id`, `hello_ok`
+     *  `coordinator_convo_id`). Undefined = not known yet; null = none set. */
+    coordinatorConvoId?: string | null;
+    /** Settings → Coordinator → Routines. Undefined = never loaded this session. */
+    routines?: RoutinesState;
+}
+
+/** The Routines sheet's view of GET /routines and the writes in flight. */
+export interface RoutinesState {
+    /** Sorted by name. Undefined until the first load lands. */
+    list?: Routine[];
+    /** GET /routines answered 404: the journal predates routines. */
+    unsupported?: boolean;
+    loading?: boolean;
+    /** The last load's failure. A failed load never clears `list`. */
+    error?: string;
+    /** Routines with a pause/resume or run request in flight. */
+    busyIds?: ReadonlySet<string>;
 }
 
 // ── New-chat defaults (journal GET/PUT /defaults) ───────────────────────────────────────────────
