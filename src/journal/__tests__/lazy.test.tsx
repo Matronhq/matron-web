@@ -8,7 +8,7 @@ Please see LICENSE files in the repository root for full details.
 import React, { act, Component, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
-import { SheetFrame } from "../deferred-ui";
+import { ChatTasksFrame, SheetFrame, TrackerFrame } from "../deferred-ui";
 import { deferred, preloadDeferredUi } from "../lazy";
 
 function Greeting({ name }: { name: string }): React.ReactElement {
@@ -193,6 +193,14 @@ describe("SheetFrame", () => {
         });
         expect(onClose).toHaveBeenCalledTimes(1);
 
+        // Tab stays on the opener rather than moving to the page behind the scrim.
+        const tab = new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true });
+        act(() => {
+            document.dispatchEvent(tab);
+        });
+        expect(tab.defaultPrevented).toBe(true);
+        expect(onClose).toHaveBeenCalledTimes(1);
+
         act(() => dialog.click());
         expect(onClose).toHaveBeenCalledTimes(1);
         act(() => document.querySelector<HTMLElement>(".mj_SettingsScrim")!.click());
@@ -201,5 +209,36 @@ describe("SheetFrame", () => {
         act(() => root.render(frame(true)));
         expect(document.querySelector('[role="alert"]')?.textContent).toMatch(/Couldn't load/);
         opener.remove();
+    });
+});
+
+describe("pane frames", () => {
+    let container: HTMLDivElement;
+    let root: Root;
+
+    beforeEach(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+        container = document.createElement("div");
+        document.body.append(container);
+        root = createRoot(container);
+    });
+
+    afterEach(() => {
+        act(() => root.unmount());
+        container.remove();
+    });
+
+    it.each([
+        ["tasks", "Close tasks and decisions", ChatTasksFrame],
+        ["tracker", "Close tracker", TrackerFrame],
+    ])("the %s frame can be closed on its own and says when loading failed", (_name, label, Frame) => {
+        const close = jest.fn();
+        act(() => root.render(<Frame close={close} failed={false} />));
+        expect(container.querySelector('[role="alert"]')).toBeNull();
+        act(() => container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!.click());
+        expect(close).toHaveBeenCalledTimes(1);
+
+        act(() => root.render(<Frame close={close} failed />));
+        expect(container.querySelector('[role="alert"]')?.textContent).toMatch(/Couldn't load/);
     });
 });
