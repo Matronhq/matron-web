@@ -2527,6 +2527,91 @@ export class MatronJournalClient {
         if (this.state.goToNumberOpen) this.patch({ goToNumberOpen: false });
     }
 
+    // ── Subagent side pane and media browser ────────────────────────────────
+
+    /**
+     * Opens a subagent from a Subtask line or a subagent pill. With its parent on screen it opens
+     * in the pane beside the parent (switching the pane if another subagent is there); from
+     * anywhere else, such as a sibling subagent opened on its own, it opens as the conversation.
+     */
+    public openSubChat(childId: string): void {
+        const child = this.state.conversations.find((conversation) => conversation.id === childId);
+        const parentId = child?.parent_convo_id;
+        if (parentId && parentId === this.state.selectedConversationId && !this.state.trackerView?.open) {
+            const open = this.state.subChatPane;
+            // One pane beside the chat: the subagent takes the slot from the Tasks pane.
+            const tasks = this.state.chatTasks;
+            if (open?.parentId !== parentId || open.childId !== childId || tasks?.open) {
+                this.patch({
+                    subChatPane: { parentId, childId },
+                    ...(tasks?.open ? { chatTasks: { ...tasks, open: false } } : {}),
+                });
+            }
+            return;
+        }
+        void this.selectConversation(childId, { suppressNotFound: true });
+    }
+
+    /** Resolves once the open conversation's history page in flight has landed, or once another
+     *  conversation is on screen. */
+    private historyLoadSettled(conversationId: string): Promise<void> {
+        return new Promise((resolve) => {
+            const check = (): void => {
+                if (this.state.loadingHistory && this.state.selectedConversationId === conversationId) return;
+                unsubscribe();
+                resolve();
+            };
+            const unsubscribe = this.subscribe(check);
+            check();
+        });
+    }
+
+    public closeSubChat(): void {
+        if (this.state.subChatPane) this.patch({ subChatPane: undefined });
+    }
+
+    /**
+     * Every stored event of a conversation, oldest first: what the side pane and the media browser
+     * show for a conversation other than (or as well as) the one on screen. When its history was
+     * never loaded, the newest page is fetched first, as opening the conversation would. Never
+     * throws: a failed fetch still returns what is stored.
+     */
+    public async conversationEvents(conversationId: string): Promise<JournalEvent[]> {
+        const db = this.database;
+        if (!db) return [];
+        const api = this.api;
+        if (conversationId === this.state.selectedConversationId) {
+            // The conversation on screen pages its own history: wait for (or start) its first
+            // page there, so the transcript, its "Load earlier" state and its scroll anchor stay
+            // in step, rather than fetching the same page beside it.
+            if (this.state.loadingHistory) await this.historyLoadSettled(conversationId);
+            else if (api && !this.history.get(conversationId)?.initialized) await this.loadOlderHistory();
+            return this.database === db ? db.events(conversationId) : [];
+        }
+        if (api && !this.history.get(conversationId)?.initialized) {
+            try {
+                const response = await api.messages(conversationId, undefined, HISTORY_PAGE_SIZE);
+                if (this.database !== db) return [];
+                await db.putHistory(response.events);
+                if (!this.history.get(conversationId)?.initialized) {
+                    const known = this.state.conversations.find((candidate) => candidate.id === conversationId);
+                    const emptyWithKnownHistory = response.events.length === 0 && (known?.last_seq ?? 0) > 0;
+                    this.history.set(conversationId, {
+                        initialized: !emptyWithKnownHistory,
+                        oldestSeq: response.events.reduce<number | undefined>(
+                            (current, event) => (current === undefined ? event.seq : Math.min(current, event.seq)),
+                            undefined,
+                        ),
+                        hasMore: emptyWithKnownHistory || response.events.length === HISTORY_PAGE_SIZE,
+                    });
+                }
+            } catch {
+                // Offline or refused: show what is stored.
+            }
+        }
+        return db.events(conversationId);
+    }
+
     /**
      * Asks the journal what the signed-in user's number `num` is. Never throws: a 404 is `none`
      * (no such number), anything else that goes wrong is `failed`. The payload is checked field
@@ -3731,7 +3816,11 @@ export class MatronJournalClient {
 
     /** Opens or closes the pane (toggles without an argument). It stays open across chats. */
     public toggleChatTasks(open = !this.state.chatTasks?.open): void {
-        this.patch({ chatTasks: { ...this.state.chatTasks, open, actionError: undefined } });
+        // One pane beside the chat: opening Tasks closes the subagent pane.
+        this.patch({
+            chatTasks: { ...this.state.chatTasks, open, actionError: undefined },
+            ...(open && this.state.subChatPane ? { subChatPane: undefined } : {}),
+        });
     }
 
     /** "This chat" or "All" for the conversation on screen; another conversation starts on its own. */

@@ -678,6 +678,9 @@ export interface ClientState {
     trackerView?: TrackerViewState;
     /** The "Go to number" field is open (the shortcut and both header buttons set it). */
     goToNumberOpen?: boolean;
+    /** The subagent open in the pane beside its parent chat (see chatSidePane). It belongs to
+     *  `parentId`: it shows only while that chat is on screen. */
+    subChatPane?: { parentId: string; childId: string };
     missions?: Mission[];
     inboxItems?: TrackerItem[];
     /** For you's Done tab: closed questions, decisions and notices, newest first. Undefined until

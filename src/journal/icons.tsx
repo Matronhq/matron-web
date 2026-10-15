@@ -657,6 +657,39 @@ export function ShieldXIcon(props: IconProps): React.ReactElement {
     );
 }
 
+export function MediaBrowserIcon(props: IconProps): React.ReactElement {
+    // The conversation's Media / Files / Links browser: a photo over a second, offset frame.
+    return (
+        <Icon {...props}>
+            <rect x="7" y="3" width="14" height="12" rx="2" />
+            <path d="M17 19H5a2 2 0 0 1-2-2V8" />
+            <circle cx="11.5" cy="7.5" r="1.3" />
+            <path d="m8 14 4-4 3 3 2-2 4 4" />
+        </Icon>
+    );
+}
+
+export function BranchIcon(props: IconProps): React.ReactElement {
+    // A subagent: one line splitting into two.
+    return (
+        <Icon {...props}>
+            <path d="M6 3v12" />
+            <circle cx="6" cy="18" r="2.5" />
+            <circle cx="18" cy="6" r="2.5" />
+            <path d="M18 8.5a9 9 0 0 1-9 9" />
+        </Icon>
+    );
+}
+
+export function LinkIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            <path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1" />
+            <path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" />
+        </Icon>
+    );
+}
+
 export function BellIcon(props: IconProps): React.ReactElement {
     return (
         <Icon {...props}>

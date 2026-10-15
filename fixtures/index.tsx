@@ -1715,8 +1715,149 @@ function toneWav(seconds = 2, rate = 8000): Blob {
     for (let i = 0; i < samples; i++) view.setInt16(44 + i * 2, Math.sin((i / rate) * 2 * Math.PI * 440) * 8000, true);
     return new Blob([view.buffer], { type: "audio/wav" });
 }
+// A generated "photo" (a gradient with a few shapes) for the media browser's thumbnails.
+function fixturePhoto(seed: number): Promise<Blob> {
+    const canvas = document.createElement("canvas");
+    canvas.width = 320;
+    canvas.height = 240;
+    const ctx = canvas.getContext("2d")!;
+    const hue = (seed * 47) % 360;
+    const gradient = ctx.createLinearGradient(0, 0, 320, 240);
+    gradient.addColorStop(0, `hsl(${hue} 60% 62%)`);
+    gradient.addColorStop(1, `hsl(${(hue + 60) % 360} 55% 38%)`);
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, 320, 240);
+    ctx.fillStyle = "rgb(255 255 255 / 35%)";
+    for (let i = 0; i < 4; i++) {
+        ctx.beginPath();
+        ctx.arc(((seed + 1) * 70 * (i + 1)) % 320, ((seed + 3) * 40 * (i + 2)) % 240, 18 + i * 9, 0, Math.PI * 2);
+        ctx.fill();
+    }
+    return new Promise((resolve) => canvas.toBlob((blob) => resolve(blob!), "image/png"));
+}
+
+// ?subchats=1: a "Subtask" line in the deploy chat that opens its subagent, which has a transcript
+// of its own for the pane beside the chat. ?media=1: photos, files and links for the media
+// browser. ?pane=1 opens the subagent pane on load.
+const subagentEvents: JournalEvent[] = [];
+if (fixtureParams.get("subchats") === "1") {
+    conversations.push({
+        id: "s3",
+        title: "audit auth call sites",
+        agent_device_id: 1,
+        session_state: "running",
+        last_seq: 3,
+        unread_count: 0,
+        snippet: "11 of 14 handlers checked",
+        created_at: 2,
+        parent_convo_id: "c1",
+        read_up_to_seq: 3,
+    });
+    const at = events[events.length - 1].ts;
+    events.push(
+        {
+            seq: 900,
+            convo_id: "c1",
+            ts: at + 60_000,
+            sender: "agent:claude",
+            type: "text",
+            payload: { body: "Checking every handler before the swap." },
+        },
+        {
+            seq: 901,
+            convo_id: "c1",
+            ts: at + 61_000,
+            sender: "agent:claude",
+            type: "text",
+            payload: { body: "🔀 Subtask: audit auth call sites" },
+        },
+        {
+            seq: 902,
+            convo_id: "c1",
+            ts: at + 62_000,
+            sender: "agent:claude",
+            type: "text",
+            payload: { body: "🔀 Subtask: docs sweep" },
+        },
+    );
+    subagentEvents.push(
+        {
+            seq: 1,
+            convo_id: "s3",
+            ts: at + 61_500,
+            sender: "agent:claude",
+            type: "text",
+            payload: { body: "Listing every route that reads the session cookie." },
+        },
+        {
+            seq: 2,
+            convo_id: "s3",
+            ts: at + 62_500,
+            sender: "agent:claude",
+            type: "tool_output",
+            payload: {
+                command: "rg -l 'requireSession' src/routes",
+                exit_code: 0,
+                snippet: "src/routes/admin.ts\nsrc/routes/export.ts\nsrc/routes/upload.ts",
+            },
+        },
+        {
+            seq: 3,
+            convo_id: "s3",
+            ts: at + 63_500,
+            sender: "agent:claude",
+            type: "text",
+            payload: {
+                body: "11 of 14 handlers checked. `export.ts` skips the check on its **HEAD** route — flagging it for the parent.",
+            },
+        },
+    );
+}
+if (fixtureParams.get("media") === "1") {
+    const at = events[0].ts;
+    for (let i = 0; i < 7; i++) {
+        events.push({
+            seq: 800 + i,
+            convo_id: "c1",
+            ts: at + i * 3_600_000,
+            sender: i % 3 ? "agent:claude" : "user:operator",
+            type: "image",
+            payload: { blob_ref: `fixture-photo-${i}`, content_type: "image/png", caption: `Screenshot ${i + 1}` },
+        });
+    }
+    events.push(
+        {
+            seq: 810,
+            convo_id: "c1",
+            ts: at + 8 * 3_600_000,
+            sender: "agent:claude",
+            type: "text",
+            payload: {
+                body: "Release notes are up: https://example.com/releases/1.12 — and the status page is https://status.example.com.",
+            },
+        },
+        {
+            seq: 811,
+            convo_id: "c1",
+            ts: at + 9 * 3_600_000,
+            sender: "user:operator",
+            type: "text",
+            payload: { body: "Compare with [last week's run](https://example.com/runs/412)." },
+        },
+    );
+    events.sort((left, right) => left.ts - right.ts);
+}
+{
+    const stub = client as unknown as Record<string, unknown>;
+    stub.conversationEvents = async (convoId: string): Promise<JournalEvent[]> =>
+        convoId === "s3" ? subagentEvents : convoId === "c1" ? events : [];
+    if (fixtureParams.get("pane") === "1") state.subChatPane = { parentId: "c1", childId: "s3" };
+}
+
 const realMediaUrl = client.mediaUrl.bind(client);
 client.mediaUrl = async (mediaId: string): Promise<string> => {
+    const photo = /^fixture-photo-(\d+)$/.exec(mediaId);
+    if (photo) return URL.createObjectURL(await fixturePhoto(Number(photo[1])));
     if (mediaId === "fixture-voice") return URL.createObjectURL(toneWav());
     if (mediaId === "fixture-gone") throw new JournalApiError("Not found", 404);
     return realMediaUrl(mediaId);
