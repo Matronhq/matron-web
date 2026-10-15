@@ -6015,6 +6015,8 @@ function Timeline({
         cancelPendingScrollFrame();
         historyScrollAnchor.current = undefined;
         historyScrollRestored.current = false;
+        // A jump wins over a remembered place still waiting to be restored.
+        pendingPlace.current = undefined;
         setFollow(false);
         if (!rowFor()) reveal(index);
 
