@@ -524,4 +524,24 @@ describe("room membership existing-client backfill", () => {
         internals(client).connection?.stop();
         internals(client).database?.close();
     });
+
+    it("drops the backfill when the session ends before it runs", async () => {
+        (await seedExistingClient()).close();
+        await sealLegacyBackfill();
+        await forgetMembershipBackfill();
+        const snapshotRequest = jest.spyOn(JournalApi.prototype, "snapshot").mockResolvedValue({
+            seq: 5,
+            capabilities: ["session_outcome"],
+            conversations: [conversation("c1", { participants: [1, 2], participant_convos: ["a", "b"] })],
+        });
+        jest.spyOn(JournalDatabase.prototype, "backfillDone").mockResolvedValue(true);
+        jest.useFakeTimers({ doNotFake: ["queueMicrotask"] });
+        const client = new MatronJournalClient();
+
+        await internals(client).startSession(SESSION);
+        await client.logout();
+        for (let i = 0; i < 50; i += 1) await jest.advanceTimersByTimeAsync(200);
+        expect(snapshotRequest).not.toHaveBeenCalled();
+        expect(client.getSnapshot().conversations).toEqual([]);
+    });
 });

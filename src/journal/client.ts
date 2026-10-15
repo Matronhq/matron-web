@@ -4777,16 +4777,34 @@ export class MatronJournalClient {
     private async backfillRoomMembership(): Promise<void> {
         const database = this.database;
         const api = this.api;
+        const gen = this.sessionGen;
+        const current = (): boolean => this.sessionGen === gen && this.database === database;
         if (!database || !api || typeof database.roomMembershipBackfillDue !== "function") return;
         try {
             if (!(await database.roomMembershipBackfillDue())) return;
             await new Promise((resolve) => window.setTimeout(resolve, MEMBERSHIP_BACKFILL_DELAY_MS));
             // A full snapshot meanwhile (a resync) already brought the membership.
-            if (this.database !== database || !(await database.roomMembershipBackfillDue())) return;
+            if (!current() || !(await database.roomMembershipBackfillDue())) return;
             const snapshot = await api.snapshot();
-            if (this.database !== database) return;
+            if (!current()) return;
             await database.backfillRoomMembership(snapshot);
-            if (this.database === database) await this.refreshConversations();
+            if (!current()) return;
+            const stored = new Map((await database.conversations()).map((row) => [row.id, row]));
+            if (!current()) return;
+            // Only the membership changed: copy it onto the rows on screen, leaving the rest of
+            // each row as the live sync has it.
+            this.patch({
+                conversations: this.state.conversations.map((row) => {
+                    const membership = stored.get(row.id);
+                    return membership?.participant_convos === undefined
+                        ? row
+                        : {
+                              ...row,
+                              participants: membership.participants,
+                              participant_convos: membership.participant_convos,
+                          };
+                }),
+            });
         } catch (error) {
             console.warn("matron: room membership backfill deferred", error);
         }
