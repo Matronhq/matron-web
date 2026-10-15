@@ -366,6 +366,12 @@ export class VoiceNoteSession {
         this.emit();
     }
 
+    private addFailure(blob: Blob, start: VoiceNoteStart, sessionGen: number, message: string): void {
+        const id = this.nextFailureId++;
+        this.failedNotes.set(id, { blob, start, sessionGen });
+        this.failures = [...this.failures, { id, target: start, message }];
+    }
+
     private forget(id: number): void {
         this.failedNotes.delete(id);
         this.failures = this.failures.filter((failure) => failure.id !== id);
@@ -422,8 +428,23 @@ export class VoiceNoteSession {
         const wantSend = this.disposition === "send";
         const start = this.target;
         const capturedSessionGen = this.recordingSessionGen;
+        // Nobody asked it to stop: the browser ended it (the microphone was unplugged or its
+        // permission withdrawn). What was captured is kept for Retry / Discard, never sent unasked.
+        const interrupted = !this.stopInFlight && this.voiceState === "recording";
         this.releaseResources();
         this.waveformActive = false;
+
+        if (interrupted) {
+            this.sendInFlight = false;
+            if (!blob || !start || this.client.sessionGeneration !== capturedSessionGen) {
+                this.fail("The microphone stopped.");
+                return;
+            }
+            this.setIdle();
+            this.addFailure(blob, start, capturedSessionGen, "The microphone stopped before it was sent.");
+            this.emit();
+            return;
+        }
 
         if (wantSend && !blob) {
             this.errorMessage = "Recording failed to save.";
@@ -455,16 +476,16 @@ export class VoiceNoteSession {
 
     /**
      * A persistent note sent away from its place (or retried from the bar) goes out through its
-     * fallback, and a failure there is kept for Retry. One sent from its own place goes through a
-     * mounted surface of its kind, which reports its own failures, or the fallback when none is.
+     * fallback, and a failure there is kept for Retry. One sent from its own place goes through the
+     * surface still showing that place, which reports its own failures, or the fallback when it has
+     * moved on (switched place between Stop and the recorder finalizing, or unmounted).
      * Any other note goes through the surface that started it.
      */
     private deliver(blob: Blob, start: VoiceNoteStart, sessionGen: number, away: boolean): void {
         const context = { contextKey: start.contextKey, sessionGen };
         let deliver = start.deliver;
         if (start.persistent) {
-            const surfaces = [...this.surfaces.values()].filter((surface) => surface.kind === start.kind);
-            const surface = surfaces.find((candidate) => candidate.key === start.key) ?? surfaces[0];
+            const surface = [...this.surfaces.values()].find((candidate) => candidate.key === start.key);
             deliver = (away ? undefined : surface?.deliver) ?? start.deliverAway ?? start.deliver;
         }
         const outcome = deliver(blob, context);
@@ -477,11 +498,7 @@ export class VoiceNoteSession {
             if (resetGen !== this.resetGen) return;
             this.sendsInFlight -= 1;
             if (this.sendsInFlight === 0) this.sending = null;
-            if (message) {
-                const id = this.nextFailureId++;
-                this.failedNotes.set(id, { blob, start, sessionGen });
-                this.failures = [...this.failures, { id, target: start, message }];
-            }
+            if (message) this.addFailure(blob, start, sessionGen, message);
             this.emit();
         };
         outcome.then(settle, () => settle("Couldn't save the recording."));
@@ -561,6 +578,20 @@ export class VoiceNoteSession {
             };
             this.visibilityHandler = reconcileDurationCap;
             document.addEventListener("visibilitychange", reconcileDurationCap);
+
+            // A track that ends (device unplugged, permission withdrawn) ends the recording; most
+            // browsers stop the recorder themselves, this covers those that leave it hanging.
+            for (const track of stream.getTracks()) {
+                track.addEventListener?.("ended", () => {
+                    if (rid !== this.recordingId || this.finalized || recorder.state === "inactive") return;
+                    this.watchdogTimer = setTimeout(() => this.finalize(rid, localChunks), 3000);
+                    try {
+                        recorder.stop();
+                    } catch {
+                        this.finalize(rid, localChunks);
+                    }
+                });
+            }
 
             recorder.start(1000);
             this.voiceState = "recording";

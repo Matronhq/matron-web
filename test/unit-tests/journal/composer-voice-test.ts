@@ -85,8 +85,13 @@ function internals(client: MatronJournalClient): ClientInternals {
     return client as unknown as ClientInternals;
 }
 
-class MockTrack {
+class MockTrack extends EventTarget {
     public readonly stop = jest.fn();
+
+    /** The device went away (unplugged, permission withdrawn). */
+    public end(): void {
+        this.dispatchEvent(new Event("ended"));
+    }
 }
 
 class MockStream {
@@ -1163,6 +1168,72 @@ describe("Voice note across conversations", () => {
         expect(harness.latest.state).toBe("inactive");
         expect(sendVoiceNote).not.toHaveBeenCalled();
         expect(indicatorText(container)).toBeNull();
+    });
+
+    it("keeps a note whose microphone went away for Retry or Discard, sending nothing unasked", async () => {
+        const client = makeClient();
+        const sendVoiceNote = jest.spyOn(client, "sendVoiceNote").mockResolvedValue("sent");
+        const { container } = await renderComposer(false, client);
+        harness.queue({ finalChunk: "PART" });
+        await advance(0);
+        const appTimers = jest.getTimerCount();
+        const recorder = await startRecording(container);
+        await select(client, "B");
+
+        await act(async () => harness.streams[0].track.end());
+        await advance(0);
+
+        expect(recorder.state).toBe("inactive");
+        expect(harness.streams[0].track.stop).toHaveBeenCalled();
+        expect(sendVoiceNote).not.toHaveBeenCalled();
+        expect(indicatorText(container)).toContain("A: The microphone stopped before it was sent.");
+        // No recorder, tick, cap or watchdog timer left behind.
+        expect(jest.getTimerCount()).toBe(appTimers);
+
+        await act(async () => {
+            [...container.querySelectorAll<HTMLButtonElement>(".mj_VoiceNoteIndicator_textAction")]
+                .find((candidate) => candidate.textContent === "Retry")
+                ?.click();
+        });
+        await advance(0);
+
+        expect(sendVoiceNote).toHaveBeenCalledTimes(1);
+        expect(sendVoiceNote.mock.calls[0][1]).toBe("A");
+        expect(sendVoiceNote.mock.calls[0][0].size).toBe("PART".length);
+    });
+
+    it("keeps a note for Retry when its composer moved on before the recorder finished and the send failed", async () => {
+        harness.queue({ autoStopEvents: false, finalChunk: "NOTE" });
+        const client = makeClient();
+        jest.spyOn(client, "sendVoiceNote").mockResolvedValue("persist-failed");
+        const { container } = await renderComposer(false, client);
+        const recorder = await startRecording(container);
+
+        await click(container, "Stop and send voice message");
+        await select(client, "B");
+        await act(async () => recorder.dispatchFinalEvents());
+        await advance(0);
+
+        // Not B's composer error, which would offer nothing to retry.
+        expect(voiceError(container)).toBeNull();
+        expect(indicatorText(container)).toContain("Voice note didn't send");
+    });
+
+    it("announces the recording time once a minute, not every second", async () => {
+        const { client, container } = await renderComposer();
+        await startRecording(container);
+        const live = (): string | undefined =>
+            [...container.querySelectorAll('[aria-live="polite"]')]
+                .map((region) => region.textContent ?? "")
+                .find((text) => text.includes("Recording") || text.includes("recording"));
+
+        await advance(5000);
+        expect(live()).toBe("Recording");
+        await advance(60_000);
+        expect(live()).toBe("Recording, 1 minute");
+
+        await select(client, "B");
+        expect(live()).toBe("Voice note recording for A, 1 minute");
     });
 
     it("releases the microphone when the page goes away", async () => {
