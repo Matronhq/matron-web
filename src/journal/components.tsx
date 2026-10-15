@@ -251,7 +251,7 @@ import {
     VoiceRecordingBar,
 } from "./voice-recorder";
 import { voiceNoteSessionFor } from "./voice-note-session";
-import { useWindowedList } from "./windowing";
+import { type ListPlace, useWindowedList } from "./windowing";
 
 const NAV_VIEW = { projects: "missions", decisions: "inbox", memories: "memories" } as const;
 const NAV_KEY_FOR_VIEW: Record<"missions" | "inbox" | "memories", NavKey> = {
@@ -5949,6 +5949,22 @@ function isAnchorableTimelineRow(key: string): boolean {
     return !key.includes(":d-");
 }
 
+/** Scrolling up to within this many screens of the oldest loaded message loads the page before it. */
+const AUTO_LOAD_HISTORY_SCREENS = 2;
+/** How long after the reader's last wheel, touch, key or pointer input a scroll still counts as theirs. */
+const SCROLL_INPUT_MS = 2000;
+
+/** Where the reader left each conversation, for this signed-in client; at the bottom when absent. */
+const readingPlaces = new WeakMap<MatronJournalClient, Map<string, ListPlace>>();
+function placesFor(client: MatronJournalClient): Map<string, ListPlace> {
+    let places = readingPlaces.get(client);
+    if (!places) {
+        places = new Map();
+        readingPlaces.set(client, places);
+    }
+    return places;
+}
+
 function Timeline({
     client,
     state,
@@ -5962,7 +5978,10 @@ function Timeline({
     const listRef = useRef<HTMLOListElement>(null);
     const pendingScrollFrame = useRef<number | undefined>(undefined);
     const selectedConversationId = useRef(state.selectedConversationId);
-    const [isFollowingTail, setFollow] = useState(true);
+    // Opening a conversation goes to its bottom, or back to where the reader left it (see below).
+    const [isFollowingTail, setFollow] = useState(
+        () => !(state.selectedConversationId && placesFor(client).has(state.selectedConversationId)),
+    );
     const [sourceEvent, setSourceEvent] = useState<JournalEvent>();
     const menu = useRowContextMenu<JournalEvent>();
     const sourceOpenerRef = useRef<HTMLElement | null>(null);
@@ -6130,29 +6149,84 @@ function Timeline({
         cancelAnimationFrame(pendingScrollFrame.current);
         pendingScrollFrame.current = undefined;
     }, []);
+    const lastScrollTop = useRef(0);
+    const lastScrollHeight = useRef(0);
+    // When the reader last did something that scrolls the transcript (a wheel, a touch, a key, the
+    // scrollbar); scrolling within SCROLL_INPUT_MS of it, momentum included, is theirs.
+    const lastScrollInput = useRef(-Infinity);
+    useEffect(() => {
+        const node = scrollRef.current;
+        if (!node) return;
+        const mark = (): void => {
+            lastScrollInput.current = performance.now();
+        };
+        const inputs = ["wheel", "touchmove", "keydown", "pointerdown"] as const;
+        for (const type of inputs) node.addEventListener(type, mark, { passive: true });
+        return () => {
+            for (const type of inputs) node.removeEventListener(type, mark);
+        };
+    }, []);
+    // A remembered place waiting for its conversation's rows to arrive (see the restore below).
+    const pendingPlace = useRef<{ conversationId: string; place: ListPlace } | undefined>(undefined);
     const onScroll = (): void => {
         const node = scrollRef.current;
         if (!node) return;
         windowed.onScroll();
+        // Scrolling up towards the oldest loaded message fetches the page before it, so the reader
+        // never has to stop at the "Load earlier messages" button. Only the reader's own scrolling
+        // counts: the app moves scrollTop too (restoring a place, keeping the anchor, jumping), and
+        // so does the browser when the content changes height (switching conversation, rows
+        // arriving).
+        const scrolledUp =
+            node.scrollTop < lastScrollTop.current &&
+            node.scrollHeight === lastScrollHeight.current &&
+            performance.now() - lastScrollInput.current < SCROLL_INPUT_MS;
+        lastScrollTop.current = node.scrollTop;
+        lastScrollHeight.current = node.scrollHeight;
+        if (
+            scrolledUp &&
+            state.events[0]?.convo_id === state.selectedConversationId &&
+            node.scrollTop < node.clientHeight * AUTO_LOAD_HISTORY_SCREENS &&
+            state.hasOlderHistory &&
+            !state.loadingHistory &&
+            !pendingPlace.current
+        ) {
+            loadEarlierMessages();
+        }
         cancelPendingScrollFrame();
         const queuedConversationId = state.selectedConversationId;
         pendingScrollFrame.current = requestAnimationFrame(() => {
             pendingScrollFrame.current = undefined;
-            if (selectedConversationId.current !== queuedConversationId) return;
-            setFollow(isNearBottom(node.scrollTop, node.scrollHeight, node.clientHeight));
+            // While a remembered place is still being restored, the scroll is ours, not the reader's.
+            if (selectedConversationId.current !== queuedConversationId || pendingPlace.current) return;
+            const nearBottom = isNearBottom(node.scrollTop, node.scrollHeight, node.clientHeight);
+            setFollow(nearBottom);
+            // Remember where the reader is in this conversation, for when they come back to it.
+            if (!queuedConversationId) return;
+            const place = nearBottom ? null : windowed.place();
+            if (place) placesFor(client).set(queuedConversationId, place);
+            else placesFor(client).delete(queuedConversationId);
         });
     };
 
-    // Before paint, so the first frame of the new conversation already follows its tail.
+    // Opening a conversation goes to its bottom, or back to where the reader left it.
     useLayoutEffect(() => {
-        setFollow(true);
-        return cancelPendingScrollFrame;
-    }, [state.selectedConversationId, cancelPendingScrollFrame]);
+        const id = state.selectedConversationId;
+        setFollow(!(id && placesFor(client).has(id)));
+    }, [client, state.selectedConversationId]);
 
+    useEffect(() => cancelPendingScrollFrame, [state.selectedConversationId, cancelPendingScrollFrame]);
+
+    // A send goes to the bottom. Only a new send: on mount the timeline opens at the bottom anyway,
+    // or at the remembered place.
+    const seenSendTick = useRef(state.sendTick);
     useEffect(() => {
+        if (seenSendTick.current === state.sendTick) return;
+        seenSendTick.current = state.sendTick;
         cancelPendingScrollFrame();
         historyScrollAnchor.current = undefined;
         historyScrollRestored.current = false;
+        pendingPlace.current = undefined;
         setFollow(true);
         scrollToBottom();
     }, [state.sendTick, cancelPendingScrollFrame, scrollToBottom]);
@@ -6205,6 +6279,29 @@ function Timeline({
         anchorable: isAnchorableTimelineRow,
         resetKey: state.selectedConversationId,
     });
+
+    // Put the reader back at the remembered place once the conversation's rows are here. If the
+    // row isn't among them (its history is no longer stored), open at the bottom as usual.
+    const restoringFor = useRef<string | undefined>(undefined);
+    const { restorePlace } = windowed;
+    useLayoutEffect(() => {
+        const conversationId = state.selectedConversationId;
+        if (restoringFor.current !== conversationId) {
+            restoringFor.current = conversationId;
+            const place = conversationId ? placesFor(client).get(conversationId) : undefined;
+            pendingPlace.current = conversationId && place ? { conversationId, place } : undefined;
+        }
+        // Wait for the render that has stopped following the tail, or the hook pins to the bottom.
+        const pending = pendingPlace.current;
+        if (!pending || isFollowingTail || state.events[0]?.convo_id !== pending.conversationId) return;
+        pendingPlace.current = undefined;
+        if (restorePlace(pending.place)) {
+            lastScrollTop.current = scrollRef.current?.scrollTop ?? 0;
+            return;
+        }
+        placesFor(client).delete(pending.conversationId);
+        setFollow(true);
+    }, [client, state.selectedConversationId, state.events, rowKeys, restorePlace, isFollowingTail]);
 
     // Read state: report which rows were on screen. A layout effect, so a conversation switch
     // re-binds before any row of the new conversation can be counted under the old one. A
@@ -6273,6 +6370,8 @@ function Timeline({
         cancelPendingScrollFrame();
         historyScrollAnchor.current = undefined;
         historyScrollRestored.current = false;
+        // A jump wins over a remembered place still waiting to be restored.
+        pendingPlace.current = undefined;
         setFollow(false);
         if (!rowFor()) reveal(index);
 
@@ -6490,6 +6589,7 @@ function Timeline({
                     className="mj_JumpToBottom"
                     aria-label="Jump to bottom"
                     onClick={() => {
+                        pendingPlace.current = undefined;
                         setFollow(true);
                         scrollToBottom();
                     }}

@@ -51,10 +51,12 @@ function List({
     keys,
     followTail,
     resetKey,
+    onWindowed,
 }: {
     keys: string[];
     followTail: boolean;
     resetKey?: string;
+    onWindowed?: (windowed: ReturnType<typeof useWindowedList>) => void;
 }): React.ReactElement {
     const scrollRef = useRef<HTMLDivElement>(null);
     const windowed = useWindowedList({
@@ -65,6 +67,7 @@ function List({
         anchorable: () => true,
         resetKey,
     });
+    onWindowed?.(windowed);
     return React.createElement(
         "div",
         { ref: scrollRef, className: "scroller", onScroll: windowed.onScroll },
@@ -222,5 +225,34 @@ describe("useWindowedList", () => {
         act(() => root.render(React.createElement(List, { keys: rows(1000, "b"), followTail: true, resetKey: "b" })));
         expect(mounted().at(-1)).toBe("b999");
         expect(scroller().scrollTop).toBe(scroller().scrollHeight - VIEWPORT);
+    });
+
+    it("goes back to a remembered place after showing another list", () => {
+        withLayout();
+        let windowed: ReturnType<typeof useWindowedList> | undefined;
+        const onWindowed = (latest: ReturnType<typeof useWindowedList>): void => {
+            windowed = latest;
+        };
+        const keys = rows(300);
+        act(() => root.render(React.createElement(List, { keys, followTail: true, onWindowed })));
+        act(() => {
+            scroller().scrollTop = 12_345;
+            scroller().dispatchEvent(new Event("scroll", { bubbles: true }));
+        });
+        act(() => root.render(React.createElement(List, { keys, followTail: false, onWindowed })));
+        const place = windowed!.place();
+        expect(place).not.toBeNull();
+        const before = topOf(place!.key);
+
+        act(() => root.render(React.createElement(List, { keys: rows(50, "other"), followTail: true, onWindowed })));
+        expect(windowed!.place()).toBeNull();
+        expect(mounted()).not.toContain(place!.key);
+
+        act(() => root.render(React.createElement(List, { keys, followTail: false, onWindowed })));
+        act(() => {
+            expect(windowed!.restorePlace(place!)).toBe(true);
+        });
+        expect(topOf(place!.key)).toBe(before);
+        expect(windowed!.restorePlace({ key: "missing", offset: 0 })).toBe(false);
     });
 });

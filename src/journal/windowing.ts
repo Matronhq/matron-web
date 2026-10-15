@@ -102,6 +102,16 @@ interface WindowedList {
     onScroll: () => void;
     /** Scroll row `index` into the upper third of the viewport and mount it. */
     reveal: (index: number) => void;
+    /** Where the reader is, to come back to later; null at the tail. */
+    place: () => ListPlace | null;
+    /** Go back to a place from `place()`. False when its row is not in the list. */
+    restorePlace: (place: ListPlace) => boolean;
+}
+
+/** A reading position: a row, and how far below the viewport's top its top edge sits. */
+export interface ListPlace {
+    key: string;
+    offset: number;
 }
 
 /**
@@ -214,8 +224,10 @@ export function useWindowedList({
         return changed;
     }, [mountedRows, hasLayout, estimate]);
 
-    // The row the reader is looking at (the first one reaching into the viewport) and its distance
-    // from the viewport's top. Mounting rows, measuring them and prepending history all move the
+    // The row the reader is looking at and its distance from the viewport's top: the first row that
+    // starts inside the viewport, so a row above it changing height (older history arriving next to
+    // it, an image loading) doesn't move what the reader sees. A row taller than the viewport, with
+    // none starting inside it, is used when there is nothing else. Mounting rows, measuring them and prepending history all move the
     // content; restoring the anchor keeps the reader's place. Scroll anchoring is off on the
     // scroller, because the browser would otherwise correct the same shift a second time.
     const captureAnchor = useCallback((): void => {
@@ -232,13 +244,12 @@ export function useWindowedList({
             const row = rows[index];
             if (row.offsetTop >= viewportBottom) return;
             if (row.offsetTop + row.offsetHeight <= scrollTop) continue;
-            if (!anchorable(renderedKeys.current[rendered.current.start + index])) continue;
-            anchor.current = {
-                key: renderedKeys.current[rendered.current.start + index],
-                offset: row.offsetTop - scrollTop,
-                scrollTop,
-            };
-            return;
+            const key = renderedKeys.current[rendered.current.start + index];
+            if (!anchorable(key)) continue;
+            const partial = row.offsetTop < scrollTop;
+            if (partial && anchor.current) continue;
+            anchor.current = { key, offset: row.offsetTop - scrollTop, scrollTop };
+            if (!partial) return;
         }
     }, [scrollRef, mountedRows, hasLayout, anchorable]);
 
@@ -367,5 +378,29 @@ export function useWindowedList({
         [scrollRef, estimate, settle, rerender],
     );
 
-    return { range, beforeRef, afterRef, onScroll, reveal };
+    const place = useCallback((): ListPlace | null => {
+        if (followTailRef.current || !anchor.current) return null;
+        return { key: anchor.current.key, offset: anchor.current.offset };
+    }, []);
+
+    const restorePlace = useCallback(
+        ({ key, offset }: ListPlace): boolean => {
+            const scroller = scrollRef.current;
+            const before = beforeRef.current;
+            const index = renderedKeys.current.indexOf(key);
+            if (!scroller || !before || index < 0) return false;
+            // Placed from the recorded heights; once the row is mounted, the anchor puts it exactly.
+            const rowOffsetsNow = rowOffsets(renderedKeys.current, (row) => heights.current.get(row) ?? estimate(row));
+            const { start } = rendered.current;
+            const rowTop = before.offsetTop + before.offsetHeight + rowOffsetsNow[index] - rowOffsetsNow[start];
+            scroller.scrollTop = Math.max(0, rowTop - offset);
+            anchor.current = { key, offset, scrollTop: scroller.scrollTop };
+            if (settle()) rerender();
+            else restoreAnchor(scroller.scrollTop);
+            return true;
+        },
+        [scrollRef, estimate, settle, rerender, restoreAnchor],
+    );
+
+    return { range, beforeRef, afterRef, onScroll, reveal, place, restorePlace };
 }
