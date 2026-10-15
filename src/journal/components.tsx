@@ -5625,9 +5625,9 @@ function EventRow({
     lastInSection?: boolean;
     rowHandlers: RowContextMenu<JournalEvent>["rowHandlers"];
 }): React.ReactElement {
-    const own = event.sender.startsWith("user:");
-    // A bridge notice row is its own one-line row: no sender header, no grouping.
+    // A bridge notice row is its own one-line row: no sender header, no grouping, never an own bubble.
     const noticeRow = isSystemNoticeEvent(event);
+    const own = !noticeRow && event.sender.startsWith("user:");
     const liRef = useRef<HTMLLIElement>(null);
     const handlers = rowHandlers(event, () => liRef.current);
     return (
