@@ -5617,6 +5617,8 @@ function isAnchorableTimelineRow(key: string): boolean {
 
 /** Scrolling up to within this many screens of the oldest loaded message loads the page before it. */
 const AUTO_LOAD_HISTORY_SCREENS = 2;
+/** How long after the reader's last wheel, touch, key or pointer input a scroll still counts as theirs. */
+const SCROLL_INPUT_MS = 2000;
 
 /** Where the reader left each conversation, for this signed-in client; at the bottom when absent. */
 const readingPlaces = new WeakMap<MatronJournalClient, Map<string, ListPlace>>();
@@ -5815,6 +5817,21 @@ function Timeline({
     }, []);
     const lastScrollTop = useRef(0);
     const lastScrollHeight = useRef(0);
+    // When the reader last did something that scrolls the transcript (a wheel, a touch, a key, the
+    // scrollbar); scrolling within SCROLL_INPUT_MS of it, momentum included, is theirs.
+    const lastScrollInput = useRef(-Infinity);
+    useEffect(() => {
+        const node = scrollRef.current;
+        if (!node) return;
+        const mark = (): void => {
+            lastScrollInput.current = performance.now();
+        };
+        const inputs = ["wheel", "touchmove", "keydown", "pointerdown"] as const;
+        for (const type of inputs) node.addEventListener(type, mark, { passive: true });
+        return () => {
+            for (const type of inputs) node.removeEventListener(type, mark);
+        };
+    }, []);
     // A remembered place waiting for its conversation's rows to arrive (see the restore below).
     const pendingPlace = useRef<{ conversationId: string; place: ListPlace } | undefined>(undefined);
     const onScroll = (): void => {
@@ -5823,9 +5840,13 @@ function Timeline({
         windowed.onScroll();
         // Scrolling up towards the oldest loaded message fetches the page before it, so the reader
         // never has to stop at the "Load earlier messages" button. Only the reader's own scrolling
-        // counts: when the content changes height (switching conversation, rows arriving) the
-        // browser moves scrollTop too.
-        const scrolledUp = node.scrollTop < lastScrollTop.current && node.scrollHeight === lastScrollHeight.current;
+        // counts: the app moves scrollTop too (restoring a place, keeping the anchor, jumping), and
+        // so does the browser when the content changes height (switching conversation, rows
+        // arriving).
+        const scrolledUp =
+            node.scrollTop < lastScrollTop.current &&
+            node.scrollHeight === lastScrollHeight.current &&
+            performance.now() - lastScrollInput.current < SCROLL_INPUT_MS;
         lastScrollTop.current = node.scrollTop;
         lastScrollHeight.current = node.scrollHeight;
         if (
