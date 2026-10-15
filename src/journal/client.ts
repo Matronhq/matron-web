@@ -225,6 +225,9 @@ const RPC_CREATE_WATCHDOG_MS = 10_000;
 // How long a marker-driven refetch waits, so a burst of markers costs one GET.
 const MARKER_REFETCH_DELAY_MS = 250;
 const BACKFILL_SNAPSHOT_TIMEOUT_MS = 10_000;
+// How long after start-up the one-off room-membership backfill reads its snapshot, so it never
+// competes with the first paint and the first history read.
+const MEMBERSHIP_BACKFILL_DELAY_MS = 5_000;
 const TOOL_STREAM_DISPLAY_BYTES = 65_536;
 const MARK_ALL_READ_ERROR = "Some conversations couldn't be updated — device storage is full or unavailable.";
 export const PREFERENCES_UNAVAILABLE_ERROR = "Couldn't load saved preferences — device storage unavailable.";
@@ -2524,6 +2527,91 @@ export class MatronJournalClient {
         if (this.state.goToNumberOpen) this.patch({ goToNumberOpen: false });
     }
 
+    // ── Subagent side pane and media browser ────────────────────────────────
+
+    /**
+     * Opens a subagent from a Subtask line or a subagent pill. With its parent on screen it opens
+     * in the pane beside the parent (switching the pane if another subagent is there); from
+     * anywhere else, such as a sibling subagent opened on its own, it opens as the conversation.
+     */
+    public openSubChat(childId: string): void {
+        const child = this.state.conversations.find((conversation) => conversation.id === childId);
+        const parentId = child?.parent_convo_id;
+        if (parentId && parentId === this.state.selectedConversationId && !this.state.trackerView?.open) {
+            const open = this.state.subChatPane;
+            // One pane beside the chat: the subagent takes the slot from the Tasks pane.
+            const tasks = this.state.chatTasks;
+            if (open?.parentId !== parentId || open.childId !== childId || tasks?.open) {
+                this.patch({
+                    subChatPane: { parentId, childId },
+                    ...(tasks?.open ? { chatTasks: { ...tasks, open: false } } : {}),
+                });
+            }
+            return;
+        }
+        void this.selectConversation(childId, { suppressNotFound: true });
+    }
+
+    /** Resolves once the open conversation's history page in flight has landed, or once another
+     *  conversation is on screen. */
+    private historyLoadSettled(conversationId: string): Promise<void> {
+        return new Promise((resolve) => {
+            const check = (): void => {
+                if (this.state.loadingHistory && this.state.selectedConversationId === conversationId) return;
+                unsubscribe();
+                resolve();
+            };
+            const unsubscribe = this.subscribe(check);
+            check();
+        });
+    }
+
+    public closeSubChat(): void {
+        if (this.state.subChatPane) this.patch({ subChatPane: undefined });
+    }
+
+    /**
+     * Every stored event of a conversation, oldest first: what the side pane and the media browser
+     * show for a conversation other than (or as well as) the one on screen. When its history was
+     * never loaded, the newest page is fetched first, as opening the conversation would. Never
+     * throws: a failed fetch still returns what is stored.
+     */
+    public async conversationEvents(conversationId: string): Promise<JournalEvent[]> {
+        const db = this.database;
+        if (!db) return [];
+        const api = this.api;
+        if (conversationId === this.state.selectedConversationId) {
+            // The conversation on screen pages its own history: wait for (or start) its first
+            // page there, so the transcript, its "Load earlier" state and its scroll anchor stay
+            // in step, rather than fetching the same page beside it.
+            if (this.state.loadingHistory) await this.historyLoadSettled(conversationId);
+            else if (api && !this.history.get(conversationId)?.initialized) await this.loadOlderHistory();
+            return this.database === db ? db.events(conversationId) : [];
+        }
+        if (api && !this.history.get(conversationId)?.initialized) {
+            try {
+                const response = await api.messages(conversationId, undefined, HISTORY_PAGE_SIZE);
+                if (this.database !== db) return [];
+                await db.putHistory(response.events);
+                if (!this.history.get(conversationId)?.initialized) {
+                    const known = this.state.conversations.find((candidate) => candidate.id === conversationId);
+                    const emptyWithKnownHistory = response.events.length === 0 && (known?.last_seq ?? 0) > 0;
+                    this.history.set(conversationId, {
+                        initialized: !emptyWithKnownHistory,
+                        oldestSeq: response.events.reduce<number | undefined>(
+                            (current, event) => (current === undefined ? event.seq : Math.min(current, event.seq)),
+                            undefined,
+                        ),
+                        hasMore: emptyWithKnownHistory || response.events.length === HISTORY_PAGE_SIZE,
+                    });
+                }
+            } catch {
+                // Offline or refused: show what is stored.
+            }
+        }
+        return db.events(conversationId);
+    }
+
     /**
      * Asks the journal what the signed-in user's number `num` is. Never throws: a 404 is `none`
      * (no such number), anything else that goes wrong is `failed`. The payload is checked field
@@ -3728,7 +3816,11 @@ export class MatronJournalClient {
 
     /** Opens or closes the pane (toggles without an argument). It stays open across chats. */
     public toggleChatTasks(open = !this.state.chatTasks?.open): void {
-        this.patch({ chatTasks: { ...this.state.chatTasks, open, actionError: undefined } });
+        // One pane beside the chat: opening Tasks closes the subagent pane.
+        this.patch({
+            chatTasks: { ...this.state.chatTasks, open, actionError: undefined },
+            ...(open && this.state.subChatPane ? { subChatPane: undefined } : {}),
+        });
     }
 
     /** "This chat" or "All" for the conversation on screen; another conversation starts on its own. */
@@ -4762,6 +4854,49 @@ export class MatronJournalClient {
         });
         this.connection.start();
         void this.openPathLink();
+        void this.backfillRoomMembership();
+    }
+
+    /**
+     * Once per browser: a store that synced before room membership was kept reads one snapshot,
+     * a few seconds after start-up, and copies each room's membership onto its rows, so the
+     * chat header's Rooms control works without waiting for the next full snapshot. Leaves the
+     * live sync alone; a failure just tries again on the next start.
+     */
+    private async backfillRoomMembership(): Promise<void> {
+        const database = this.database;
+        const api = this.api;
+        const gen = this.sessionGen;
+        const current = (): boolean => this.sessionGen === gen && this.database === database;
+        if (!database || !api || typeof database.roomMembershipBackfillDue !== "function") return;
+        try {
+            if (!(await database.roomMembershipBackfillDue())) return;
+            await new Promise((resolve) => window.setTimeout(resolve, MEMBERSHIP_BACKFILL_DELAY_MS));
+            // A full snapshot meanwhile (a resync) already brought the membership.
+            if (!current() || !(await database.roomMembershipBackfillDue())) return;
+            const snapshot = await api.snapshot();
+            if (!current()) return;
+            await database.backfillRoomMembership(snapshot);
+            if (!current()) return;
+            const stored = new Map((await database.conversations()).map((row) => [row.id, row]));
+            if (!current()) return;
+            // Only the membership changed: copy it onto the rows on screen, leaving the rest of
+            // each row as the live sync has it.
+            this.patch({
+                conversations: this.state.conversations.map((row) => {
+                    const membership = stored.get(row.id);
+                    return membership?.participant_convos === undefined
+                        ? row
+                        : {
+                              ...row,
+                              participants: membership.participants,
+                              participant_convos: membership.participant_convos,
+                          };
+                }),
+            });
+        } catch (error) {
+            console.warn("matron: room membership backfill deferred", error);
+        }
     }
 
     /**

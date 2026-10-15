@@ -881,6 +881,8 @@ export function ItemDetail({
         contextKey: String(item.num),
         client,
         onRecorded: (blob) => void sendVoiceNote(blob),
+        kind: "item",
+        title: item.title || `#${item.num}`,
     });
 
     // A tap on a comment's button is a comment whose body is the label, addressed to the asking
