@@ -31,6 +31,8 @@ export interface VoiceRecorder {
     voiceState: VoiceState;
     voiceSupported: boolean;
     elapsedLabel: string;
+    /** The elapsed time for the live region: whole minutes, empty in the first minute. */
+    spokenElapsed: string;
     waveformActive: boolean;
     /** The error to show while `voiceState` is "error". */
     errorMessage: string | null;
@@ -51,6 +53,15 @@ function elapsedLabelOf(elapsedMs: number): string {
     const minutes = Math.floor(elapsedMs / 60_000);
     const seconds = Math.floor((elapsedMs % 60_000) / 1000);
     return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
+/**
+ * The recording time as a screen reader hears it: whole minutes only, so a live region speaks once
+ * a minute rather than every second.
+ */
+function spokenElapsedOf(elapsedMs: number): string {
+    const minutes = Math.floor(elapsedMs / 60_000);
+    return minutes === 0 ? "" : `, ${minutes} ${minutes === 1 ? "minute" : "minutes"}`;
 }
 
 /** What `snapshot` means for the surface showing `key`: its own note's state, or its own error. */
@@ -247,6 +258,7 @@ export function useVoiceRecorder({
         voiceState,
         voiceSupported: session.supported,
         elapsedLabel: elapsedLabelOf(mine ? snapshot.elapsedMs : 0),
+        spokenElapsed: spokenElapsedOf(mine ? snapshot.elapsedMs : 0),
         waveformActive,
         errorMessage: mine ? snapshot.errorMessage : localError,
         stopInFlight: mine && snapshot.stopInFlight,
@@ -281,7 +293,7 @@ export function VoiceRecordingBar({
                 {recorder.elapsedLabel}
             </span>
             <span className="mj_ScreenReaderOnly" aria-live="polite">
-                Recording, {recorder.elapsedLabel}
+                Recording{recorder.spokenElapsed}
             </span>
             <button
                 className="mj_VoiceRecording_action"
@@ -412,6 +424,10 @@ export function VoiceNoteBar({
                             <span className="mj_VoiceNoteIndicator_subtitle">For {live.title}</span>
                         </span>
                     </button>
+                    <span className="mj_ScreenReaderOnly" aria-live="polite">
+                        Voice note recording for {live.title}
+                        {spokenElapsedOf(snapshot.elapsedMs)}
+                    </span>
                     <button
                         className="mj_VoiceNoteIndicator_action"
                         type="button"

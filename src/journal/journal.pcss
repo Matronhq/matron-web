@@ -4280,6 +4280,16 @@ button.mj_File {
         display: none;
     }
 
+    .mj_Chat_mobileHidden.mj_ChatView_wrapper_voiceNote > .mj_VoiceNoteBar {
+        padding-bottom: calc(var(--mj-space-2x) + env(safe-area-inset-bottom, 0px));
+    }
+
+    /* The list scrolls clear of the pinned bar: its last rows can still be reached. */
+    .mj_App:has(> .mj_Chat_mobileHidden.mj_ChatView_wrapper_voiceNote) > .mj_Sidebar_outerWrapper {
+        box-sizing: border-box;
+        padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+    }
+
     .mj_BackButton {
         display: inline-flex;
         position: absolute;
