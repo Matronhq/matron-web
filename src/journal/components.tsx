@@ -401,6 +401,24 @@ export function formatRelativeDay(timestamp: number, now: number = Date.now()): 
     ).format(then);
 }
 
+// formatRelativeDay for the sidebar, which labels every row on each render: a label depends only
+// on the timestamp and today's date, so labels are kept until the day changes.
+const relativeDayLabels = { day: NaN, labels: new Map<number, string>() };
+export function relativeDayLabel(timestamp: number, now: number): string {
+    const today = new Date(now);
+    const day = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+    if (day !== relativeDayLabels.day) {
+        relativeDayLabels.day = day;
+        relativeDayLabels.labels.clear();
+    }
+    let label = relativeDayLabels.labels.get(timestamp);
+    if (label === undefined) {
+        label = formatRelativeDay(timestamp, now);
+        relativeDayLabels.labels.set(timestamp, label);
+    }
+    return label;
+}
+
 // True when two epoch-ms timestamps fall on the same local calendar day.
 export function sameCalendarDay(a: number, b: number): boolean {
     const left = new Date(a);
@@ -1322,6 +1340,202 @@ export function MessageSearchResults({
     );
 }
 
+/** What a sidebar row does when used; one stable object for the whole list, so a row's props
+ *  only change when what it shows changes. */
+interface ConversationRowActions {
+    open(conversationId: string, event: React.MouseEvent): void;
+    contextMenu(conversationId: string, event: React.MouseEvent<HTMLButtonElement>): void;
+    pointerDown(conversationId: string, event: React.PointerEvent<HTMLButtonElement>): void;
+    pointerMove(event: React.PointerEvent): void;
+    pointerUp(event: React.PointerEvent): void;
+    pointerCancel(event: React.PointerEvent): void;
+    menuTrigger(conversationId: string, element: HTMLButtonElement | null): void;
+    menuButton(conversationId: string, event: React.MouseEvent<HTMLButtonElement>): void;
+}
+
+interface ConversationRowProps {
+    conversation: Conversation;
+    isSubagent: boolean;
+    /** A journal pin row: the pin's glyph + label lead, the conversation's title goes secondary. */
+    pin?: ConvoPin;
+    selected: boolean;
+    unread: boolean;
+    overrideUnread: boolean;
+    pinned: boolean;
+    favorite: boolean;
+    menuOpen: boolean;
+    needsYou: number;
+    isNew: boolean;
+    timestamp: string;
+    collapsedCount: number;
+    collapsedUnread: boolean;
+    agents: ClientState["agents"];
+    actions: ConversationRowActions;
+}
+
+/** One sidebar row. Memoised: the list re-renders on every state change it does not ignore, and
+ *  with a thousand rows re-rendering each one is most of the cost of switching conversation. */
+const ConversationRow = React.memo(function ConversationRow({
+    conversation,
+    isSubagent,
+    pin,
+    selected,
+    unread,
+    overrideUnread,
+    pinned,
+    favorite,
+    menuOpen,
+    needsYou,
+    isNew,
+    timestamp,
+    collapsedCount,
+    collapsedUnread,
+    agents,
+    actions,
+}: ConversationRowProps): React.ReactElement {
+    const name = pin ? pin.label : conversationTitle(conversation);
+    const outcomeStatus = isSubagent ? accessibleOutcome(classifyOutcome(conversation)) : undefined;
+    return (
+        <div className="mj_ConversationListItem_wrapper" role="listitem">
+            <button
+                className={`mj_ConversationListItem${selected ? " mj_ConversationListItem_selected" : ""}${isSubagent ? " mj_ConversationListItem_sub" : ""}`}
+                type="button"
+                aria-current={selected ? "page" : undefined}
+                aria-label={`Open ${isSubagent ? "subagent" : "room"} ${name}${outcomeStatus ? `, ${outcomeStatus}` : ""}, last activity ${timestamp}${isNew ? ", new session" : ""}${
+                    needsYou > 0 ? `, ${needsYou} ${needsYou === 1 ? "item needs" : "items need"} you` : ""
+                }${overrideUnread ? ", marked unread" : ""}${
+                    collapsedCount > 0
+                        ? `, ${collapsedCount} subagent${collapsedCount === 1 ? "" : "s"} hidden${collapsedUnread ? " (unread)" : ""}`
+                        : ""
+                }`}
+                onClick={(event) => actions.open(conversation.id, event)}
+                onContextMenu={(event) => actions.contextMenu(conversation.id, event)}
+                onPointerDown={(event) => actions.pointerDown(conversation.id, event)}
+                onPointerMove={actions.pointerMove}
+                onPointerUp={actions.pointerUp}
+                onPointerCancel={actions.pointerCancel}
+            >
+                {/* §118 leading-glyph precedence. Subagent rows identify the worker and its
+                    live/terminal outcome. Parent rows keep the shipped pin-or-status behaviour
+                    (star renders separately before the meta). */}
+                {isSubagent ? (
+                    <span className="mj_ConversationListWorkerGlyphs" aria-hidden="true">
+                        <WorkerMark
+                            conversation={conversation}
+                            className="mj_WorkerMark mj_ConversationListWorkerMark"
+                        />
+                        <OutcomeGlyph
+                            conversation={conversation}
+                            className="mj_ConversationListOutcomeGlyph"
+                            spinnerClassName="mj_ConversationListSubSpinner"
+                        />
+                    </span>
+                ) : pin ? (
+                    <span className="mj_ConversationListPinGlyph mj_PinGlyph" aria-hidden="true">
+                        {pinGlyph(pin)}
+                    </span>
+                ) : pinned ? (
+                    <span className="mj_ConversationListPinGlyph">
+                        <PinIcon aria-hidden />
+                    </span>
+                ) : (
+                    <span
+                        className={`mj_ConversationListStatus mj_ConversationListStatus_${
+                            conversation.session_state === "running" ? "running" : "idle"
+                        }`}
+                        aria-hidden="true"
+                    />
+                )}
+                <span className={`mj_ConversationListText${unread ? " mj_ConversationListText_unread" : ""}`}>
+                    <span className="mj_ConversationListName" title={name} data-testid="conversation-name">
+                        {isSubagent && (
+                            <span className="mj_ConversationListSubArrow" aria-hidden="true">
+                                ↳{" "}
+                            </span>
+                        )}
+                        {pin ? pin.label : <TaggedTitle conversation={conversation} agents={agents} />}
+                    </span>
+                    <span
+                        className="mj_ConversationListMeta"
+                        title={pin ? displayTitle(conversation) : conversation.snippet}
+                    >
+                        {pin ? (
+                            <>
+                                <span className="mj_ConversationListSnippet">
+                                    <TaggedTitle conversation={conversation} agents={agents} />
+                                </span>
+                                <span className="mj_ConversationListDot"> · </span>
+                            </>
+                        ) : (
+                            conversation.snippet && (
+                                <>
+                                    <span className="mj_ConversationListSnippet">{conversation.snippet}</span>
+                                    <span className="mj_ConversationListDot"> · </span>
+                                </>
+                            )
+                        )}
+                        <span className="mj_ConversationListTime">{timestamp}</span>
+                    </span>
+                </span>
+                {favorite && (
+                    <span className="mj_ConversationListStarGlyph">
+                        <StarFilledIcon aria-hidden />
+                    </span>
+                )}
+                <span className="mj_ConversationListTrailing">
+                    {collapsedCount > 0 && (
+                        // Decorative: the hidden-child count + unread state are announced via the
+                        // containing row button's aria-label (a nested label here would be silent to AT).
+                        <span
+                            className={`mj_ConversationListCollapsedSubs${
+                                collapsedUnread ? " mj_ConversationListCollapsedSubs_unread" : ""
+                            }`}
+                            aria-hidden="true"
+                        >
+                            <ChevronLeftIcon aria-hidden />
+                            {collapsedCount}
+                            {collapsedUnread && <span className="mj_UnreadDot" aria-hidden />}
+                        </span>
+                    )}
+                    {/* Mac order: New, then what needs you, then unread. Announced via the row's
+                        aria-label, like the collapsed-children chip above. */}
+                    {(isNew || needsYou > 0 || conversation.unread_count > 0 || overrideUnread) && (
+                        <span className="mj_ConversationListBadges">
+                            {isNew && (
+                                <span className="mj_ConversationListNew" aria-hidden="true">
+                                    New
+                                </span>
+                            )}
+                            <NeedsYouBadge count={needsYou} />
+                            {conversation.unread_count > 0 ? (
+                                <span className="mj_UnreadBadge" aria-label={`${conversation.unread_count} unread`}>
+                                    {conversation.unread_count}
+                                </span>
+                            ) : overrideUnread ? (
+                                <span className="mj_UnreadDot" aria-hidden />
+                            ) : null}
+                        </span>
+                    )}
+                </span>
+            </button>
+            {/* The row menu opens via right-click / long-press for pointer + touch. This
+                trigger is invisible to mouse users (no hover reveal) but appears on
+                keyboard focus, so keyboard/AT users keep a discoverable, operable route. */}
+            <button
+                className="mj_ConversationMenu_trigger"
+                type="button"
+                aria-haspopup="menu"
+                aria-expanded={menuOpen}
+                aria-label="Conversation options"
+                ref={(element) => actions.menuTrigger(conversation.id, element)}
+                onClick={(event) => actions.menuButton(conversation.id, event)}
+            >
+                <KebabIcon />
+            </button>
+        </div>
+    );
+});
+
 function ConversationListView({
     client,
     state,
@@ -1633,10 +1847,70 @@ function ConversationListView({
         if (conversationMenu && !menuConversation) closeConversationMenu();
     }, [conversationMenu, menuConversation, closeConversationMenu]);
 
-    const openAtElement = (conversationId: string, anchor: HTMLElement, opener: HTMLElement = anchor): void => {
-        const rect = anchor.getBoundingClientRect();
-        openConversationMenuRef.current(conversationId, rect.right, rect.bottom, opener);
-    };
+    const openAtElement = useCallback(
+        (conversationId: string, anchor: HTMLElement, opener: HTMLElement = anchor): void => {
+            const rect = anchor.getBoundingClientRect();
+            openConversationMenuRef.current(conversationId, rect.right, rect.bottom, opener);
+        },
+        [],
+    );
+    // Built once: every handler reads refs or stable callbacks, so the memoised rows never see a
+    // new actions object.
+    const rowActions = useMemo<ConversationRowActions>(
+        () => ({
+            open(conversationId, event) {
+                if (longPressFiredRef.current) {
+                    longPressFiredRef.current = false;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    return;
+                }
+                void client.selectConversation(conversationId);
+            },
+            contextMenu(conversationId, event) {
+                event.preventDefault();
+                const keyboardTriggered = event.clientX === 0 && event.clientY === 0;
+                if (keyboardTriggered) {
+                    const trigger = menuTriggerRefs.current.get(conversationId);
+                    openAtElement(conversationId, trigger ?? event.currentTarget, event.currentTarget);
+                    return;
+                }
+                openConversationMenuRef.current(conversationId, event.clientX, event.clientY, event.currentTarget);
+            },
+            pointerDown(conversationId, event) {
+                if (event.pointerType !== "touch") return;
+                longPressTargetRef.current = { conversationId, row: event.currentTarget };
+                longPressFiredRef.current = false;
+                longPressControllerRef.current?.onPointerDown(event.clientX, event.clientY);
+                listenForLongPressScroll();
+            },
+            pointerMove(event) {
+                if (event.pointerType !== "touch") return;
+                longPressControllerRef.current?.onPointerMove(event.clientX, event.clientY);
+                if (!longPressControllerRef.current?.isPending && !longPressControllerRef.current?.didFire) {
+                    longPressScrollCleanupRef.current();
+                }
+            },
+            pointerUp(event) {
+                if (event.pointerType !== "touch") return;
+                longPressControllerRef.current?.onPointerUp();
+                longPressTargetRef.current = undefined;
+                longPressScrollCleanupRef.current();
+            },
+            pointerCancel(event) {
+                if (event.pointerType === "touch") cancelLongPress();
+            },
+            menuTrigger(conversationId, element) {
+                if (element) menuTriggerRefs.current.set(conversationId, element);
+                else menuTriggerRefs.current.delete(conversationId);
+            },
+            menuButton(conversationId, event) {
+                event.stopPropagation();
+                openAtElement(conversationId, event.currentTarget);
+            },
+        }),
+        [client, openAtElement, listenForLongPressScroll, cancelLongPress],
+    );
 
     // Nav rail: which section is current, and the unread total it badges (archived rows excluded;
     // a row marked unread by hand counts once, like its own badge dot).
@@ -1717,10 +1991,6 @@ function ConversationListView({
     ): React.ReactElement => {
         const selected = state.selectedConversationId === conversation.id;
         const overrideUnread = state.unreadOverrideIds.has(conversation.id) && conversation.unread_count === 0;
-        const unread = effectiveUnread(conversation, state.unreadOverrideIds);
-        const name = pin ? pin.label : conversationTitle(conversation);
-        const outcomeStatus = isSubagent ? accessibleOutcome(classifyOutcome(conversation)) : undefined;
-        const relativeTimestamp = formatRelativeDay(conversation.last_ts ?? conversation.created_at, renderNow);
         // Items this conversation raised that wait on the user, and the "New" marker on a session
         // that arrived unasked and has not been opened (a room's title, or a child's parent link,
         // can land after the mark).
@@ -1759,190 +2029,25 @@ function ConversationListView({
             effectiveUnread(child, state.unreadOverrideIds),
         );
         return (
-            <div className="mj_ConversationListItem_wrapper" role="listitem" key={conversation.id}>
-                <button
-                    className={`mj_ConversationListItem${selected ? " mj_ConversationListItem_selected" : ""}${isSubagent ? " mj_ConversationListItem_sub" : ""}`}
-                    type="button"
-                    aria-current={selected ? "page" : undefined}
-                    aria-label={`Open ${isSubagent ? "subagent" : "room"} ${name}${outcomeStatus ? `, ${outcomeStatus}` : ""}, last activity ${relativeTimestamp}${isNew ? ", new session" : ""}${
-                        needsYou > 0 ? `, ${needsYou} ${needsYou === 1 ? "item needs" : "items need"} you` : ""
-                    }${overrideUnread ? ", marked unread" : ""}${
-                        collapsedSubagentCount > 0
-                            ? `, ${collapsedSubagentCount} subagent${collapsedSubagentCount === 1 ? "" : "s"} hidden${collapsedSubagentUnread ? " (unread)" : ""}`
-                            : ""
-                    }`}
-                    onClick={(event) => {
-                        if (longPressFiredRef.current) {
-                            longPressFiredRef.current = false;
-                            event.preventDefault();
-                            event.stopPropagation();
-                            return;
-                        }
-                        void client.selectConversation(conversation.id);
-                    }}
-                    onContextMenu={(event) => {
-                        event.preventDefault();
-                        const keyboardTriggered = event.clientX === 0 && event.clientY === 0;
-                        if (keyboardTriggered) {
-                            const trigger = menuTriggerRefs.current.get(conversation.id);
-                            openAtElement(conversation.id, trigger ?? event.currentTarget, event.currentTarget);
-                            return;
-                        }
-                        openConversationMenuRef.current(
-                            conversation.id,
-                            event.clientX,
-                            event.clientY,
-                            event.currentTarget,
-                        );
-                    }}
-                    onPointerDown={(event) => {
-                        if (event.pointerType !== "touch") return;
-                        longPressTargetRef.current = { conversationId: conversation.id, row: event.currentTarget };
-                        longPressFiredRef.current = false;
-                        longPressControllerRef.current?.onPointerDown(event.clientX, event.clientY);
-                        listenForLongPressScroll();
-                    }}
-                    onPointerMove={(event) => {
-                        if (event.pointerType !== "touch") return;
-                        longPressControllerRef.current?.onPointerMove(event.clientX, event.clientY);
-                        if (!longPressControllerRef.current?.isPending && !longPressControllerRef.current?.didFire) {
-                            longPressScrollCleanupRef.current();
-                        }
-                    }}
-                    onPointerUp={(event) => {
-                        if (event.pointerType !== "touch") return;
-                        longPressControllerRef.current?.onPointerUp();
-                        longPressTargetRef.current = undefined;
-                        longPressScrollCleanupRef.current();
-                    }}
-                    onPointerCancel={(event) => {
-                        if (event.pointerType === "touch") cancelLongPress();
-                    }}
-                >
-                    {/* §118 leading-glyph precedence. Subagent rows identify the worker and its
-                        live/terminal outcome. Parent rows keep the shipped pin-or-status behaviour
-                        (star renders separately before the meta). */}
-                    {isSubagent ? (
-                        <span className="mj_ConversationListWorkerGlyphs" aria-hidden="true">
-                            <WorkerMark
-                                conversation={conversation}
-                                className="mj_WorkerMark mj_ConversationListWorkerMark"
-                            />
-                            <OutcomeGlyph
-                                conversation={conversation}
-                                className="mj_ConversationListOutcomeGlyph"
-                                spinnerClassName="mj_ConversationListSubSpinner"
-                            />
-                        </span>
-                    ) : pin ? (
-                        <span className="mj_ConversationListPinGlyph mj_PinGlyph" aria-hidden="true">
-                            {pinGlyph(pin)}
-                        </span>
-                    ) : isPinned(conversation.id) ? (
-                        <span className="mj_ConversationListPinGlyph">
-                            <PinIcon aria-hidden />
-                        </span>
-                    ) : (
-                        <span
-                            className={`mj_ConversationListStatus mj_ConversationListStatus_${
-                                conversation.session_state === "running" ? "running" : "idle"
-                            }`}
-                            aria-hidden="true"
-                        />
-                    )}
-                    <span className={`mj_ConversationListText${unread ? " mj_ConversationListText_unread" : ""}`}>
-                        <span className="mj_ConversationListName" title={name} data-testid="conversation-name">
-                            {isSubagent && (
-                                <span className="mj_ConversationListSubArrow" aria-hidden="true">
-                                    ↳{" "}
-                                </span>
-                            )}
-                            {pin ? pin.label : <TaggedTitle conversation={conversation} agents={state.agents} />}
-                        </span>
-                        <span
-                            className="mj_ConversationListMeta"
-                            title={pin ? displayTitle(conversation) : conversation.snippet}
-                        >
-                            {pin ? (
-                                <>
-                                    <span className="mj_ConversationListSnippet">
-                                        <TaggedTitle conversation={conversation} agents={state.agents} />
-                                    </span>
-                                    <span className="mj_ConversationListDot"> · </span>
-                                </>
-                            ) : (
-                                conversation.snippet && (
-                                    <>
-                                        <span className="mj_ConversationListSnippet">{conversation.snippet}</span>
-                                        <span className="mj_ConversationListDot"> · </span>
-                                    </>
-                                )
-                            )}
-                            <span className="mj_ConversationListTime">{relativeTimestamp}</span>
-                        </span>
-                    </span>
-                    {state.favoriteIds.has(conversation.id) && (
-                        <span className="mj_ConversationListStarGlyph">
-                            <StarFilledIcon aria-hidden />
-                        </span>
-                    )}
-                    <span className="mj_ConversationListTrailing">
-                        {collapsedSubagentCount > 0 && (
-                            // Decorative: the hidden-child count + unread state are announced via the
-                            // containing row button's aria-label (a nested label here would be silent to AT).
-                            <span
-                                className={`mj_ConversationListCollapsedSubs${
-                                    collapsedSubagentUnread ? " mj_ConversationListCollapsedSubs_unread" : ""
-                                }`}
-                                aria-hidden="true"
-                            >
-                                <ChevronLeftIcon aria-hidden />
-                                {collapsedSubagentCount}
-                                {collapsedSubagentUnread && <span className="mj_UnreadDot" aria-hidden />}
-                            </span>
-                        )}
-                        {/* Mac order: New, then what needs you, then unread. Announced via the row's
-                            aria-label, like the collapsed-children chip above. */}
-                        {(isNew || needsYou > 0 || conversation.unread_count > 0 || overrideUnread) && (
-                            <span className="mj_ConversationListBadges">
-                                {isNew && (
-                                    <span className="mj_ConversationListNew" aria-hidden="true">
-                                        New
-                                    </span>
-                                )}
-                                <NeedsYouBadge count={needsYou} />
-                                {conversation.unread_count > 0 ? (
-                                    <span className="mj_UnreadBadge" aria-label={`${conversation.unread_count} unread`}>
-                                        {conversation.unread_count}
-                                    </span>
-                                ) : overrideUnread ? (
-                                    <span className="mj_UnreadDot" aria-hidden />
-                                ) : null}
-                            </span>
-                        )}
-                    </span>
-                </button>
-                {/* The row menu opens via right-click / long-press for pointer + touch. This
-                    trigger is invisible to mouse users (no hover reveal) but appears on
-                    keyboard focus, so keyboard/AT users keep a discoverable, operable route. */}
-                <button
-                    className="mj_ConversationMenu_trigger"
-                    type="button"
-                    aria-haspopup="menu"
-                    aria-expanded={conversationMenu?.conversationId === conversation.id}
-                    aria-label="Conversation options"
-                    ref={(element) => {
-                        if (element) menuTriggerRefs.current.set(conversation.id, element);
-                        else menuTriggerRefs.current.delete(conversation.id);
-                    }}
-                    onClick={(event) => {
-                        event.stopPropagation();
-                        openAtElement(conversation.id, event.currentTarget);
-                    }}
-                >
-                    <KebabIcon />
-                </button>
-            </div>
+            <ConversationRow
+                key={conversation.id}
+                conversation={conversation}
+                isSubagent={isSubagent}
+                pin={pin}
+                selected={selected}
+                unread={effectiveUnread(conversation, state.unreadOverrideIds)}
+                overrideUnread={overrideUnread}
+                pinned={isPinned(conversation.id)}
+                favorite={state.favoriteIds.has(conversation.id)}
+                menuOpen={conversationMenu?.conversationId === conversation.id}
+                needsYou={needsYou}
+                isNew={isNew}
+                timestamp={relativeDayLabel(conversation.last_ts ?? conversation.created_at, renderNow)}
+                collapsedCount={collapsedSubagentCount}
+                collapsedUnread={collapsedSubagentUnread}
+                agents={state.agents}
+                actions={rowActions}
+            />
         );
     };
 

@@ -396,6 +396,38 @@ describe("MatronJournalClient state handling", () => {
         expect(localStorage.getItem(selectionKey!)).toBeNull();
     });
 
+    it("asks the journal for a new conversation's history without waiting for the local read", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const localRead = deferred<JournalEvent[]>();
+        const event: JournalEvent = {
+            seq: 7,
+            convo_id: "c2",
+            ts: 1,
+            sender: "agent:box-a",
+            type: "text",
+            payload: { body: "hello" },
+        } as JournalEvent;
+        const messages = jest.fn().mockResolvedValue({ events: [event] });
+        const database = fakeDatabase({
+            events: jest.fn().mockReturnValueOnce(localRead.promise).mockResolvedValue([event]),
+        });
+        state.state = signedInState(client);
+        state.database = database;
+        state.api = { messages };
+
+        const selecting = client.selectConversation("c2");
+        await Promise.resolve();
+        // The request is out while the local read is still pending.
+        expect(messages).toHaveBeenCalledWith("c2", undefined, expect.any(Number));
+        localRead.resolve([]);
+        await selecting;
+
+        // The older, empty local read doesn't overwrite the history that arrived first.
+        expect(client.getSnapshot().events).toEqual([event]);
+        expect(client.getSnapshot().loadingHistory).toBe(false);
+    });
+
     it("clears a history error after a successful retry", async () => {
         const client = new MatronJournalClient();
         const state = internals(client);
