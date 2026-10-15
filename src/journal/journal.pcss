@@ -1467,6 +1467,80 @@ textarea {
     outline-offset: 2px;
 }
 
+/* Find in chat: a strip over the timeline, under the header and subagent strip. */
+.mj_FindInChat {
+    display: flex;
+    min-width: 0;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: var(--mj-space-2x);
+    border-bottom: 1px solid var(--mj-color-border-disabled);
+    background: var(--mj-color-bg-canvas-default);
+    padding: 6px 14px;
+}
+
+.mj_FindInChat_glyph {
+    flex: 0 0 auto;
+    color: var(--mj-color-icon-secondary);
+}
+
+.mj_FindInChat_input {
+    min-width: 0;
+    flex: 1 1 auto;
+    border: 0;
+    background: transparent;
+    color: var(--mj-color-text-primary);
+    font: inherit;
+    /* The sidebar search field's size. */
+    font-size: 13px;
+    outline: none;
+    padding: 4px 0;
+}
+
+.mj_FindInChat_input::placeholder {
+    color: var(--mj-color-text-placeholder);
+}
+
+.mj_FindInChat_position {
+    min-width: 72px;
+    flex: 0 0 auto;
+    color: var(--mj-color-text-secondary);
+    font-size: var(--mj-font-size-xs);
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    white-space: nowrap;
+}
+
+.mj_FindInChat_button {
+    display: inline-flex;
+    width: 28px;
+    height: 28px;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--mj-color-text-primary);
+    cursor: pointer;
+    font-size: var(--mj-font-size-md);
+}
+
+.mj_FindInChat_button:hover:not(:disabled) {
+    background: var(--mj-color-bg-subtle-primary);
+}
+
+.mj_FindInChat_button:disabled {
+    color: var(--mj-color-icon-tertiary);
+    cursor: default;
+}
+
+.mj_FindInChat_button:focus-visible {
+    outline: 2px solid var(--mj-color-icon-accent-primary);
+    outline-offset: 1px;
+}
+
 /* Floating Stop control: the Jump-to-bottom pill's shape and tint, on the opposite
    end of the same trailing edge. */
 .mj_StopTurn {
@@ -1500,6 +1574,71 @@ textarea {
 .mj_StopTurn:focus-visible {
     outline: 2px solid var(--mj-color-icon-accent-primary);
     outline-offset: 2px;
+}
+
+/* "Jump to my last message": once the reader has scrolled away from the tail. It takes the Stop
+   control's slot, or sits just below it while a turn is running, on the same trailing edge. */
+.mj_JumpToLastOwn {
+    position: absolute;
+    z-index: 2;
+    top: var(--mj-space-2x);
+    right: var(--mj-space-4x);
+    display: inline-flex;
+    width: 36px;
+    height: 36px;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: var(--mj-color-bg-canvas-default);
+    box-shadow: var(--mj-shadow-float);
+    color: var(--mj-color-text-primary);
+    cursor: pointer;
+}
+
+.mj_StopTurn ~ .mj_JumpToLastOwn {
+    top: calc(var(--mj-space-2x) * 2 + 36px);
+}
+
+.mj_JumpToLastOwn svg {
+    width: 18px;
+    height: 18px;
+}
+
+.mj_JumpToLastOwn:hover {
+    background: var(--mj-color-bg-subtle-primary);
+}
+
+.mj_JumpToLastOwn:focus-visible {
+    outline: 2px solid var(--mj-color-icon-accent-primary);
+    outline-offset: 2px;
+}
+
+/* The row a jump landed on (a search hit, a milestone, my last message): a tint that fades out. */
+.mj_EventTile.mj_EventTile_focused {
+    border-radius: var(--mj-radius-bubble);
+    animation: mj-focus-flash 2s ease-out forwards;
+}
+
+@keyframes mj-focus-flash {
+    0%,
+    40% {
+        background: var(--mj-color-bg-accent-tint);
+        box-shadow: 0 0 0 4px var(--mj-color-bg-accent-tint);
+    }
+    100% {
+        background: transparent;
+        box-shadow: 0 0 0 4px transparent;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .mj_EventTile.mj_EventTile_focused {
+        animation: none;
+        background: var(--mj-color-bg-accent-tint);
+        box-shadow: 0 0 0 4px var(--mj-color-bg-accent-tint);
+    }
 }
 
 .mj_EventTile[data-layout="bubble"] .mj_EventTile_line > a {

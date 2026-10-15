@@ -370,6 +370,10 @@ export class JournalDatabase {
             if (conversation.parent_convo_id == null && incomingParent) {
                 conversation.parent_convo_id = incomingParent;
             }
+            // The owning box rides the meta (the journal always stamps the connection's device), so a
+            // conversation born live knows its box before the next snapshot.
+            const box = event.payload.agent_device_id;
+            if (typeof box === "number" && Number.isFinite(box)) conversation.agent_device_id = box;
         } else if (event.type === "session_status" && typeof event.payload.state === "string") {
             conversation.session_state = event.payload.state;
             if (hasValidSessionOutcome(event.payload.session_outcome)) {

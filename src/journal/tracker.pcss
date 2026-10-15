@@ -2352,6 +2352,116 @@ button.mj_TrackerCard {
     margin-top: 16px;
 }
 
+/* — Filing: "New project", the quiet fold, the move and merge sheets, a row's move menu. — */
+.mj_ProjectsFilter .mj_ProjectsNew {
+    flex: none;
+    margin-left: auto;
+    white-space: nowrap;
+}
+
+.mj_TrackerEmpty .mj_ProjectsNew {
+    align-self: center;
+    margin-top: 12px;
+}
+
+.mj_ProjectsQuiet {
+    margin-top: 16px;
+}
+
+.mj_ProjectsQuietToggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    border: 0;
+    background: transparent;
+    padding: 4px 0;
+    color: var(--mj-color-text-primary);
+    font: 600 15px/20px var(--mj-font-family-ui);
+    cursor: pointer;
+}
+
+.mj_ProjectsQuietToggle_chevron {
+    display: inline-block;
+    width: 10px;
+    color: var(--mj-color-text-secondary);
+    transition: transform 0.15s ease;
+}
+
+.mj_ProjectsQuietToggle[aria-expanded="true"] .mj_ProjectsQuietToggle_chevron {
+    transform: rotate(90deg);
+}
+
+.mj_ProjectsQuiet_rows {
+    margin-top: 8px;
+}
+
+.mj_ProjectSheet textarea {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    border: 1px solid var(--mj-color-border-interactive-secondary);
+    border-radius: var(--mj-radius-field);
+    background: var(--mj-color-bg-canvas-default);
+    color: var(--mj-color-text-primary);
+    padding: 8px 12px;
+    font: 400 13.5px/20px var(--mj-font-family-ui);
+    resize: vertical;
+}
+
+.mj_ProjectSheet textarea:focus {
+    border-color: var(--mj-color-border-interactive-primary);
+    outline: none;
+}
+
+.mj_ProjectSheet .mj_ProjectSheet_note {
+    margin: 6px 0 0;
+    color: var(--mj-color-text-secondary);
+    font: 400 12px/16px var(--mj-font-family-ui);
+}
+
+.mj_NewSessionSheet [role="listitem"].mj_ProjectSheet_target {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.mj_NewSessionSheet [role="listitem"].mj_ProjectSheet_target[aria-current="true"] {
+    opacity: 1;
+    color: var(--mj-color-text-secondary);
+}
+
+.mj_ProjectSheet_targetTitle {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_UploadConfirm_actions button.mj_UploadConfirm_send.mj_ProjectSheet_danger {
+    background: var(--mj-color-text-critical-primary);
+    color: #fff;
+}
+
+.mj_TrackerMenu_list.mj_RowMoveMenu {
+    position: fixed;
+    right: auto;
+    z-index: 1000;
+}
+
+.mj_TrackerMenu_item:disabled {
+    color: var(--mj-color-text-tertiary);
+    cursor: default;
+}
+
+.mj_TrackerMenu_item:disabled:hover {
+    background: transparent;
+}
+
+.mj_TrackerMissionHead_move {
+    margin-left: auto;
+}
+
 /* — Coordinator briefing: a full-width card heading the Projects dashboard, a sibling of the
    project cards (same border, radius, canvas fill, shadow and type ramp). — */
 .mj_BriefingCardSlot {
@@ -2505,4 +2615,136 @@ button.mj_TrackerCard {
 .mj_CoordinatorNotice_glyph {
     flex: none;
     font-size: 14px;
+}
+
+/* — The chat's Tasks & decisions pane (beside the conversation) — */
+.mj_ChatTasksToggle {
+    position: relative;
+    flex: 0 0 auto;
+}
+.mj_ChatTasksToggle_open {
+    background: var(--mj-state-hover);
+    color: var(--mj-color-text-primary);
+}
+.mj_ChatTasksToggle .mj_TrackerNeedsYouBadge {
+    position: absolute;
+    top: -7px;
+    right: -12px;
+    height: 16px;
+    padding: 0 4px;
+    font-size: 10px;
+    pointer-events: none;
+}
+.mj_ChatTasksToggle .mj_TrackerNeedsYouBadge svg {
+    width: 10px;
+    height: 10px;
+}
+
+.mj_ChatTasks {
+    display: flex;
+    flex: 0 0 auto;
+    flex-direction: column;
+    box-sizing: border-box;
+    width: min(400px, 40vw);
+    min-width: 300px;
+    height: 100%;
+    min-height: 0;
+    border-left: 1px solid var(--mj-color-border-interactive-secondary);
+    background: var(--mj-color-bg-chat-canvas, var(--mj-color-bg-canvas-default));
+}
+.mj_ChatTasks_header {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: var(--mj-space-2x);
+    padding: var(--mj-space-2x) var(--mj-space-3x);
+    border-bottom: 1px solid var(--mj-color-border-subtle);
+}
+.mj_ChatTasks_title {
+    flex: 1 1 auto;
+    margin: 0;
+    font: var(--mj-font-body-strong);
+    color: var(--mj-color-text-primary);
+}
+.mj_ChatTasks_toolbar {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: var(--mj-space-2x);
+    padding: 0 var(--mj-space-3x);
+}
+.mj_ChatTasks_scope {
+    margin-right: auto;
+}
+.mj_ChatTasks_new:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+.mj_ChatTasks_banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--mj-space-2x);
+}
+.mj_ChatTasks_form {
+    display: flex;
+    flex: 0 0 auto;
+    flex-direction: column;
+    gap: var(--mj-space-2x);
+    margin: 0 var(--mj-space-3x) var(--mj-space-2x);
+    padding: var(--mj-space-3x);
+    border: 1px solid var(--mj-color-border-subtle);
+    border-radius: var(--mj-radius-md);
+    background: var(--mj-color-bg-canvas-raised, var(--mj-color-bg-canvas-default));
+}
+.mj_ChatTasks_kind {
+    align-self: flex-start;
+}
+.mj_ChatTasks_details {
+    min-height: 64px;
+    resize: vertical;
+}
+.mj_ChatTasks_body {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto;
+    padding-bottom: var(--mj-space-6x);
+    scrollbar-color: var(--mj-scrollbar) transparent;
+}
+.mj_ChatTasks_task {
+    position: relative;
+}
+.mj_ChatTasks_task[draggable="true"] {
+    cursor: grab;
+}
+.mj_ChatTasks_task_dragging {
+    opacity: 0.4;
+}
+.mj_ChatTasks_task_dropBefore::before,
+.mj_ChatTasks_task_dropAfter::after {
+    position: absolute;
+    left: var(--mj-space-4x);
+    right: var(--mj-space-4x);
+    height: 2px;
+    border-radius: 1px;
+    background: var(--mj-color-text-action-accent);
+    content: "";
+    pointer-events: none;
+}
+.mj_ChatTasks_task_dropBefore::before {
+    top: -1px;
+}
+.mj_ChatTasks_task_dropAfter::after {
+    bottom: -1px;
+}
+
+@media (max-width: 700px) {
+    .mj_ChatTasks {
+        position: fixed;
+        z-index: 40;
+        inset: 0;
+        width: 100%;
+        min-width: 0;
+        border-left: 0;
+    }
 }

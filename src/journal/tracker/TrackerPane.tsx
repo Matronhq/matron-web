@@ -127,9 +127,16 @@ export function TrackerPane({
               (state.trackerProject?.project.num === missionProjectNum ? state.trackerProject.project : null));
     const missionProjectKnown = missionProjectNum == null || missionProject != null;
     const projectsLoaded = state.projects !== undefined;
+    // A project or mission page opened straight from a link needs the list too: its move and merge
+    // choices are the open projects.
+    const filingTargetsWanted =
+        view === "missions" && !state.projectsUnsupported && (selectedProjectId != null || selectedMissionId != null);
+    const projectsWanted = !missionProjectKnown || filingTargetsWanted;
     useEffect(() => {
-        if (!missionProjectKnown && !projectsLoaded) void client.loadProjects();
-    }, [client, missionProjectKnown, projectsLoaded]);
+        if (projectsWanted && !projectsLoaded) void client.loadProjects();
+    }, [client, projectsWanted, projectsLoaded]);
+    const moveMission = (missionId: string, projectId: string): Promise<string | null> =>
+        client.moveTrackerMission(missionId, projectId);
 
     const body = ((): React.ReactElement => {
         // Render a cached detail ONLY when it belongs to the current selection. A detail loaded for
@@ -205,6 +212,7 @@ export function TrackerPane({
                         onBack={backFromMission}
                         onOpenRoot={() => switchView("missions")}
                         onOpenProject={backToProject}
+                        projects={state.projectsUnsupported ? undefined : state.projects}
                     />
                 </>
             );
@@ -280,6 +288,9 @@ export function TrackerPane({
                             onOpenMission={(num) => client.openTrackerView({ view: "missions", missionId: num })}
                             onOpenItem={(num) => client.openTrackerItem(num, { keepProject: true })}
                             onLoadMore={() => void client.loadMoreProjectActivity()}
+                            projects={state.projects}
+                            onMerge={(projectId, intoId) => client.mergeTrackerProject(projectId, intoId)}
+                            onMoveMission={moveMission}
                         />
                     </>
                 );
@@ -386,6 +397,11 @@ export function TrackerPane({
                         unfiled={state.missions ?? []}
                         onOpenProject={(num) => client.openTrackerProject(num)}
                         onOpenMission={(num) => client.openTrackerMission(num)}
+                        onCreateProject={async (title, body) => {
+                            const out = await client.createTrackerProject(title, body);
+                            return "error" in out ? out.error : null;
+                        }}
+                        onMoveMission={moveMission}
                     />
                 </>
             ) : (

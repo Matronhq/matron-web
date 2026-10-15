@@ -96,6 +96,7 @@ describe("Settings sheet (Mac grouped form)", () => {
         expect([...dialog.querySelectorAll(".mj_SettingsSheet_groupTitle")].map((el) => el.textContent)).toEqual([
             "Account",
             "Appearance",
+            "Devices",
             "Notifications",
             "New chats",
         ]);
@@ -358,7 +359,7 @@ describe("Settings sheet: Coordinator consent approval", () => {
         await openSettings(withApi({ coordinator: jest.fn().mockResolvedValue({ convo_id: "c9" }) }));
 
         expect(toggle()).toBeNull();
-        expect(document.querySelector(".mj_SettingsSheet")?.textContent).not.toContain("Coordinator");
+        expect(document.querySelector(".mj_SettingsSheet")?.textContent).not.toContain("Let the Coordinator approve");
     });
 
     it("hides the switch when GET /coordinator fails", async () => {
@@ -645,7 +646,7 @@ describe("Settings sheet: Boxes defaults", () => {
             [...document.querySelectorAll(".mj_SettingsSheet .mj_SettingsSheet_groupTitle")].map(
                 (el) => el.textContent,
             ),
-        ).toEqual(["Account", "Appearance", "Notifications", "New chats", "Boxes"]);
+        ).toEqual(["Account", "Appearance", "Devices", "Notifications", "New chats", "Boxes"]);
         expect(box(10).querySelector(".mj_SettingsSheet_boxName")?.textContent).toBe("elm");
         expect(optionValues(10, "agent")).toEqual(["", "claude", "codex"]);
         expect([...field(10, "agent").options].map((option) => option.textContent)).toEqual([
