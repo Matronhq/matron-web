@@ -126,7 +126,7 @@ import { COORDINATOR_NEW_CHAT_MODEL, CoordinatorChooserSheet, RoutinesSheet } fr
 import { NAV_RAIL_WIDTH, NavRail, type NavKey } from "./NavRail";
 import { isAgentRoomTitle, needsYouByConversation, projectsNeedsYou } from "./needs-you";
 import { notificationsFor, unreadTotal as countUnread } from "./notifications";
-import { ConvoNotifyBell, RoomsControl } from "./ChatHeaderRooms";
+import { ConvoNotifyBell, OverflowRoomsAndNotify, RoomsControl } from "./ChatHeaderRooms";
 import { useDismissablePopover } from "./use-dismissable-popover";
 import { SettingsSheet } from "./SettingsSheet";
 import { displayTitle, TaggedTitle } from "./SessionTag";
@@ -2627,23 +2627,27 @@ const USAGE_COLLAPSE_WIDE_PX = 960;
 const USAGE_WIDE_METER_COUNT = 4; // >4 meters ⇒ 3rd column ⇒ use the wide threshold
 const TITLE_COLLAPSE_PX = 560;
 
-export function useAdaptiveHeader(
-    bodyEl: HTMLElement | null,
-    meterCount = 0,
-): {
+export interface HeaderCollapse {
     usageCollapsed: boolean;
     titleCollapsed: boolean;
-} {
+    /** Rooms · n and the bell live in the ⋯ menu and Compact keeps only its icon. */
+    controlsFolded: boolean;
+}
+
+const EXPANDED_HEADER: HeaderCollapse = { usageCollapsed: false, titleCollapsed: false, controlsFolded: false };
+
+export function useAdaptiveHeader(bodyEl: HTMLElement | null, meterCount = 0): HeaderCollapse {
     const usageCollapsePx = meterCount > USAGE_WIDE_METER_COUNT ? USAGE_COLLAPSE_WIDE_PX : USAGE_COLLAPSE_PX;
-    const [collapse, setCollapse] = useState({ usageCollapsed: false, titleCollapsed: false });
+    const foldPx = meterCount > USAGE_WIDE_METER_COUNT ? CONTROLS_FOLD_WIDE_PX : CONTROLS_FOLD_PX;
+    const [collapse, setCollapse] = useState<HeaderCollapse>(EXPANDED_HEADER);
     const collapseRef = useRef(collapse);
 
     useEffect(() => {
         if (bodyEl == null || typeof ResizeObserver === "undefined") {
-            if (collapseRef.current.usageCollapsed || collapseRef.current.titleCollapsed) {
-                const expanded = { usageCollapsed: false, titleCollapsed: false };
-                collapseRef.current = expanded;
-                setCollapse(expanded);
+            const current = collapseRef.current;
+            if (current.usageCollapsed || current.titleCollapsed || current.controlsFolded) {
+                collapseRef.current = EXPANDED_HEADER;
+                setCollapse(EXPANDED_HEADER);
             }
             return;
         }
@@ -2658,11 +2662,13 @@ export function useAdaptiveHeader(
                 frame = null;
                 const usageCollapsed = latestWidth < usageCollapsePx;
                 const titleCollapsed = latestWidth < TITLE_COLLAPSE_PX;
+                const controlsFolded = latestWidth < foldPx;
                 if (
                     collapseRef.current.usageCollapsed !== usageCollapsed ||
-                    collapseRef.current.titleCollapsed !== titleCollapsed
+                    collapseRef.current.titleCollapsed !== titleCollapsed ||
+                    collapseRef.current.controlsFolded !== controlsFolded
                 ) {
-                    const next = { usageCollapsed, titleCollapsed };
+                    const next = { usageCollapsed, titleCollapsed, controlsFolded };
                     collapseRef.current = next;
                     setCollapse(next);
                 }
@@ -2674,10 +2680,19 @@ export function useAdaptiveHeader(
             observer.disconnect();
             if (frame != null) cancelAnimationFrame(frame);
         };
-    }, [bodyEl, usageCollapsePx]);
+    }, [bodyEl, usageCollapsePx, foldPx]);
 
     return collapse;
 }
+
+// Below these pane widths the controls beside the title fold: Rooms · n and the bell move into
+// the ⋯ menu and Compact keeps only its icon, so the title keeps about 240px. Measured with every
+// control showing (usage grid with reset times, Compact, Rooms · n, Tasks, Media, the bell, ⋯).
+// The full four-meter grid shows from USAGE_COLLAPSE_PX and needs about 810px of controls
+// inline; the six-meter grid shows from USAGE_COLLAPSE_WIDE_PX and needs about 160px more. The
+// Mac shrinks its mission chip instead and never folds, but its title row has no usage grid.
+const CONTROLS_FOLD_PX = 1060;
+const CONTROLS_FOLD_WIDE_PX = 1200;
 
 function useMinuteClock(now?: number): number {
     const [clockNow, setClockNow] = useState(Date.now);
@@ -3090,16 +3105,23 @@ export function HeaderShell({
     );
 }
 
+// The items a header menu's arrow keys walk: actions, and the level choices' radio items.
+const MENU_ITEM_SELECTOR = '[role="menuitem"], [role="menuitemradio"]';
+
 // Header "⋯" overflow: the selected conversation's actions (same set as the sidebar
 // row menu), opened by click only (never hover — these mutate state).
 function HeaderOverflowMenu({
     client,
     conversation,
     state,
+    extras,
 }: {
     client: MatronJournalClient;
     conversation: Conversation;
     state: ClientState;
+    /** Sections shown above the actions (the folded Rooms and bell); `pick` closes the menu,
+     *  runs the choice and gives focus back to the ⋯ button. */
+    extras?: (pick: (run: () => void) => void) => React.ReactNode;
 }): React.ReactElement {
     const [open, setOpen] = useState(false);
     const openerRef = useRef<HTMLButtonElement>(null);
@@ -3111,7 +3133,7 @@ function HeaderOverflowMenu({
     const close = useCallback(() => setOpen(false), []);
     useDismissablePopover(open, close, { openerRef, panelRef });
     useLayoutEffect(() => {
-        if (open) panelRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+        if (open) panelRef.current?.querySelector<HTMLElement>(MENU_ITEM_SELECTOR)?.focus();
     }, [open]);
     useEffect(
         () => () => {
@@ -3169,13 +3191,11 @@ function HeaderOverflowMenu({
             </button>
             {open && (
                 <div
-                    className="mj_HeaderMenu mj_ConversationMenu"
+                    className={`mj_HeaderMenu mj_ConversationMenu${extras ? " mj_ConversationMenu_withSections" : ""}`}
                     role="menu"
                     ref={panelRef}
                     onKeyDown={(event) => {
-                        const items = Array.from(
-                            event.currentTarget.querySelectorAll<HTMLElement>('[role="menuitem"]'),
-                        );
+                        const items = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(MENU_ITEM_SELECTOR));
                         const currentIndex = items.findIndex((item) => item === document.activeElement);
                         if (event.key === "ArrowDown" || event.key === "ArrowUp") {
                             event.preventDefault();
@@ -3195,6 +3215,7 @@ function HeaderOverflowMenu({
                         }
                     }}
                 >
+                    {extras?.(act)}
                     {state.journalPins ? (
                         journalPinned ? (
                             <>
@@ -3484,9 +3505,11 @@ function ChatHeader({
 }: {
     client: MatronJournalClient;
     state: ClientState;
-    collapse?: { usageCollapsed: boolean; titleCollapsed: boolean };
+    /** `controlsFolded`: too narrow for every control beside the title (useAdaptiveHeader). */
+    collapse?: { usageCollapsed: boolean; titleCollapsed: boolean; controlsFolded?: boolean };
 }): React.ReactElement {
     const conversation = client.selectedConversation();
+    const controlsFolded = collapse.controlsFolded === true;
     const title = conversation ? displayTitle(conversation) : "Conversation";
     const status = state.sessionStatus;
     const runState = conversation?.session_state;
@@ -3538,7 +3561,7 @@ function ChatHeader({
             rightControls={
                 status?.context && (
                     <button
-                        className="mj_CompactButton"
+                        className={`mj_CompactButton${controlsFolded ? " mj_CompactButton_iconOnly" : ""}`}
                         type="button"
                         aria-label="Compact conversation"
                         title="Compact the conversation — sends /compact"
@@ -3548,8 +3571,8 @@ function ChatHeader({
                                 .catch((error) => console.warn("Compact command failed to send:", error))
                         }
                     >
-                        <CompactIcon />
-                        <span>Compact</span>
+                        <CompactIcon aria-hidden />
+                        {!controlsFolded && <span>Compact</span>}
                     </button>
                 )
             }
@@ -3558,19 +3581,38 @@ function ChatHeader({
                 // remounts (and closes) it, instead of silently retargeting the actions.
                 conversation && (
                     <>
-                        <RoomsControl
-                            key={`rooms-${conversation.id}`}
-                            client={client}
-                            state={state}
-                            conversation={conversation}
-                        />
+                        {!controlsFolded && (
+                            <RoomsControl
+                                key={`rooms-${conversation.id}`}
+                                client={client}
+                                state={state}
+                                conversation={conversation}
+                            />
+                        )}
                         <ChatTasksButton client={client} state={state} convoId={conversation.id} />
-                        <ConvoNotifyBell key={`notify-${conversation.id}`} client={client} convoId={conversation.id} />
+                        <ConvoNotifyBell
+                            key={`notify-${conversation.id}`}
+                            client={client}
+                            convoId={conversation.id}
+                            onlyWhenSilenced={controlsFolded}
+                        />
                         <HeaderOverflowMenu
                             key={conversation.id}
                             client={client}
                             conversation={conversation}
                             state={state}
+                            extras={
+                                controlsFolded
+                                    ? (pick) => (
+                                          <OverflowRoomsAndNotify
+                                              client={client}
+                                              state={state}
+                                              conversation={conversation}
+                                              onPick={pick}
+                                          />
+                                      )
+                                    : undefined
+                            }
                         />
                     </>
                 )

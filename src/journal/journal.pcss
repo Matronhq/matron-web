@@ -667,6 +667,38 @@ textarea {
     font: 400 12px/16px var(--mj-font-family-ui);
 }
 
+/* A narrow header folds Rooms and the bell into the "⋯" menu, above the actions. */
+.mj_HeaderMenu.mj_ConversationMenu_withSections {
+    width: min(320px, calc(100vw - var(--mj-space-4x)));
+}
+
+.mj_OverflowSection {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 4px 0;
+}
+
+.mj_OverflowSection .mj_OverflowSection_label {
+    padding: 0 var(--mj-space-2x) 2px;
+    color: var(--mj-color-text-tertiary);
+    font: 600 11px/16px var(--mj-font-family-ui);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.mj_OverflowSection_separator {
+    flex: none;
+    height: 1px;
+    margin: 4px 0;
+    background: var(--mj-color-border-subtle);
+}
+
+.mj_CompactButton.mj_CompactButton_iconOnly {
+    width: 28px;
+    padding: 0;
+}
+
 /* Session run-state in the subtitle — teal while running (v3 mock), muted otherwise. */
 .mj_HeaderState {
     color: var(--mj-color-text-secondary);

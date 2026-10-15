@@ -154,7 +154,9 @@ function AdaptiveProbe({
     meterCount?: number;
 }): React.ReactElement {
     onRender?.();
-    return React.createElement("output", null, JSON.stringify(useAdaptiveHeader(el, meterCount)));
+    // The usage and title bands; the controls fold has its own test.
+    const { usageCollapsed, titleCollapsed } = useAdaptiveHeader(el, meterCount);
+    return React.createElement("output", null, JSON.stringify({ usageCollapsed, titleCollapsed }));
 }
 
 async function mountAdaptiveProbe(
@@ -367,14 +369,49 @@ describe("useAdaptiveHeader", () => {
         expect(probe.container.textContent).toBe('{"usageCollapsed":true,"titleCollapsed":false}');
     });
 
+    it("folds the controls beside the title below 1060, or 1200 with the six-meter grid", async () => {
+        function FoldProbe({ el, meterCount }: { el: HTMLElement; meterCount: number }): React.ReactElement {
+            return React.createElement("output", null, String(useAdaptiveHeader(el, meterCount).controlsFolded));
+        }
+        const mountFold = async (meterCount: number): Promise<MountedProbe> => {
+            const container = document.createElement("div");
+            document.body.append(container);
+            const root = createRoot(container);
+            const mounted = { container, root };
+            mountedProbes.push(mounted);
+            await act(async () => root.render(React.createElement(FoldProbe, { el, meterCount })));
+            return mounted;
+        };
+        const el = document.createElement("div");
+
+        const four = await mountFold(4);
+        const fourObserver = observers[observers.length - 1];
+        resize(fourObserver, el, 1100);
+        await flushFrames();
+        expect(four.container.textContent).toBe("false");
+        resize(fourObserver, el, 858);
+        await flushFrames();
+        expect(four.container.textContent).toBe("true");
+
+        const six = await mountFold(6);
+        const sixObserver = observers[observers.length - 1];
+        resize(sixObserver, el, 1100);
+        await flushFrames();
+        expect(six.container.textContent).toBe("true");
+        resize(sixObserver, el, 1250);
+        await flushFrames();
+        expect(six.container.textContent).toBe("false");
+    });
+
     it("coalesces resize callbacks into one frame and renders only when flags flip", async () => {
         const el = document.createElement("div");
         const onRender = jest.fn();
         await mountAdaptiveProbe(el, onRender);
         const observer = observers[0];
 
-        resize(observer, el, 900);
-        resize(observer, el, 850);
+        // Both wide enough for every band to stay expanded (above the 1060 controls fold).
+        resize(observer, el, 1200);
+        resize(observer, el, 1150);
         expect(frames.size).toBe(1);
         await flushFrames();
         expect(onRender).toHaveBeenCalledTimes(1);

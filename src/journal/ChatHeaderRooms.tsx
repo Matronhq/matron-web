@@ -334,15 +334,20 @@ export function NotifyMenuItems({
 export function ConvoNotifyBell({
     client,
     convoId,
+    onlyWhenSilenced = false,
 }: {
     client: MatronJournalClient;
     convoId: string;
+    /** On a narrow header the bell lives in the ⋯ menu; a silenced chat still shows its
+     *  bell-slash here, so the header never hides that nothing from it notifies. */
+    onlyWhenSilenced?: boolean;
 }): React.ReactElement | null {
     const notifier = notificationsFor(client);
     const settings = useSyncExternalStore(notifier.subscribeSettings, notifier.getSettingsSnapshot);
     const { open, setOpen, close, openerRef, panelRef } = useHeaderMenu();
     if (!settings.view) return null;
     const silenced = convoNotifyState(settings.view, convoId, settings.now).silenced;
+    if (onlyWhenSilenced && !silenced && !open) return null;
     const label = silenced ? "Notifications off for this conversation" : "Notifications";
     return (
         <div
@@ -376,8 +381,19 @@ export function ConvoNotifyBell({
                         convoId={convoId}
                         onPick={(run) => {
                             close();
-                            openerRef.current?.focus();
+                            const opener = openerRef.current;
+                            opener?.focus();
+                            const controls = opener?.closest(".mj_HeaderControls");
                             run();
+                            // A narrow header drops the bell once the chat notifies again: focus
+                            // goes to the ⋯ button, which now holds the choices.
+                            if (onlyWhenSilenced) {
+                                requestAnimationFrame(() => {
+                                    if (!opener?.isConnected) {
+                                        controls?.querySelector<HTMLElement>(".mj_HeaderOverflowTrigger")?.focus();
+                                    }
+                                });
+                            }
                         }}
                     />
                 </div>

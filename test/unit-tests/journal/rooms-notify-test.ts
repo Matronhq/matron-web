@@ -465,6 +465,81 @@ describe("chat header rooms and bell", () => {
         stop();
     });
 
+    describe("on a narrow header", () => {
+        // Every header ResizeObserver reports a 900px pane: below the fold width, above the
+        // usage and title collapse widths.
+        beforeEach(() => {
+            class NarrowObserver {
+                public constructor(private readonly callback: ResizeObserverCallback) {}
+                public observe(target: Element): void {
+                    this.callback(
+                        [{ target, borderBoxSize: [{ inlineSize: 900, blockSize: 60 }] } as never],
+                        this as never,
+                    );
+                }
+                public disconnect(): void {}
+            }
+            globalThis.ResizeObserver = NarrowObserver as unknown as typeof ResizeObserver;
+        });
+        afterEach(() => {
+            delete (globalThis as { ResizeObserver?: unknown }).ResizeObserver;
+        });
+
+        it("folds Rooms and the bell into the ⋯ menu", async () => {
+            const client = signedIn(conversations);
+            const select = jest.spyOn(client, "selectConversation").mockResolvedValue(undefined);
+            const { container, root } = await render(React.createElement(MatronApp, { client }));
+            await act(flush);
+            await act(async () => new Promise((resolve) => requestAnimationFrame(() => resolve(undefined))));
+            const header = container.querySelector(".mj_ChatHeader")!;
+            expect(header.querySelector(".mj_RoomsControl")).toBeNull();
+            expect(header.querySelector(".mj_NotifyBell")).toBeNull();
+
+            const overflow = header.querySelector<HTMLButtonElement>(".mj_HeaderOverflowTrigger")!;
+            await act(async () => overflow.click());
+            const menu = header.querySelector<HTMLElement>(".mj_ConversationMenu")!;
+            expect(menu.querySelector('[role="group"][aria-label="Agent chat rooms"]')?.textContent).toMatch(
+                /^Rooms · 2/,
+            );
+            const items = [...menu.querySelectorAll<HTMLElement>('[role="menuitem"], [role="menuitemradio"]')];
+            // The first room takes focus; the arrow keys walk the level choices too.
+            expect(document.activeElement).toBe(items[0]);
+            const allLevel = menu.querySelector<HTMLElement>('[data-level="all"]')!;
+            items[1].focus();
+            await act(async () => {
+                items[1].dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+            });
+            expect(document.activeElement).toBe(allLevel);
+
+            await act(async () => allLevel.click());
+            expect(putNotify).toHaveBeenCalledWith({ convo: { convo_id: "me", level: "all" } });
+            expect(header.querySelector(".mj_ConversationMenu")).toBeNull();
+
+            await act(async () => overflow.click());
+            await act(async () =>
+                header
+                    .querySelector<HTMLButtonElement>('.mj_OverflowSection [aria-label^="Waiting, Quiet room"]')!
+                    .click(),
+            );
+            expect(select).toHaveBeenCalledWith("r-quiet");
+            await act(async () => root.unmount());
+        });
+
+        it("keeps the bell-slash in the header while the chat is silenced", async () => {
+            getNotify.mockResolvedValue(view({ convos: [{ convo_id: "me", level: "none", mute_until: null }] }));
+            const client = signedIn(conversations);
+            const { container, root } = await render(React.createElement(MatronApp, { client }));
+            await act(flush);
+            await act(async () => new Promise((resolve) => requestAnimationFrame(() => resolve(undefined))));
+            const header = container.querySelector(".mj_ChatHeader")!;
+            expect(header.querySelector(".mj_RoomsControl")).toBeNull();
+            expect(header.querySelector(".mj_NotifyBell_trigger")?.getAttribute("aria-label")).toBe(
+                "Notifications off for this conversation",
+            );
+            await act(async () => root.unmount());
+        });
+    });
+
     it("draws no rooms control for a chat in no room", async () => {
         const client = signedIn([convo("me")]);
         const { container, root } = await render(
