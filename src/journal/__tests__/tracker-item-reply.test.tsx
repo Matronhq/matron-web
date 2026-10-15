@@ -17,7 +17,7 @@ import { createRoot, type Root } from "react-dom/client";
 import type { MatronJournalClient, TrackerCommentOutcome } from "../client";
 import type { TrackerAttachment } from "../types";
 import { ItemDetail } from "../tracker/ItemDetail";
-import { trackerItem } from "./tracker-fixtures";
+import { fakeSeen, type FakeSeen, trackerItem } from "./tracker-fixtures";
 
 interface Deferred<T> {
     promise: Promise<T>;
@@ -33,6 +33,7 @@ function deferred<T>(): Deferred<T> {
 }
 
 interface FakeClient {
+    seen: FakeSeen;
     sessionGeneration: number;
     getSnapshot: jest.Mock;
     postTrackerComment: jest.Mock;
@@ -53,6 +54,7 @@ const uploaded = (file: File): TrackerAttachment => ({
 
 function fakeClient(): FakeClient {
     return {
+        seen: fakeSeen(),
         sessionGeneration: 1,
         getSnapshot: jest.fn().mockReturnValue({ selectedConversationId: "c1", conversations: [] }),
         postTrackerComment: jest.fn().mockResolvedValue({ ok: true }),

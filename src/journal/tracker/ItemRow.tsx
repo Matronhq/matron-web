@@ -40,6 +40,7 @@ export function ItemRow({
     onOpen,
     onSeen,
     seenBusy = false,
+    describedBy,
 }: {
     item: TrackerItem;
     scope?: "chat" | "all";
@@ -52,6 +53,8 @@ export function ItemRow({
     onSeen?: (num: number) => void;
     /** The Seen tap is in flight: the button is disabled. */
     seenBusy?: boolean;
+    /** Id of an extra description for the row button (e.g. a keyboard hint). */
+    describedBy?: string;
 }): React.ReactElement {
     const notice = item.kind === "notice";
     // A notice awaiting the user is still in "Needs you", but it is not the urgent orange state.
@@ -89,6 +92,7 @@ export function ItemRow({
                 notice ? " mj_TrackerItemRow_notice" : ""
             }${showSeen ? " mj_TrackerItemRow_withSeen" : ""}`}
             aria-label={label}
+            aria-describedby={describedBy}
             onClick={() => onOpen(item.num)}
         >
             <span className="mj_TrackerItemRow_glyph" aria-hidden="true">

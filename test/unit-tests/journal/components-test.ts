@@ -27,7 +27,14 @@ import {
     MatronApp,
 } from "../../../src/journal/components";
 import { makeRecentFoldersStore } from "../../../src/journal/slash-palette";
-import type { ClientState, Conversation, JournalEvent, PendingMessage, Session } from "../../../src/journal/types";
+import type {
+    ClientState,
+    Conversation,
+    JournalEvent,
+    PendingMessage,
+    Session,
+    TrackerItem,
+} from "../../../src/journal/types";
 
 jest.mock("../../../res/matron-logo-simple.svg", () => "matron-logo.svg");
 
@@ -56,6 +63,7 @@ interface ClientInternals {
     state: ClientState;
     database?: unknown;
     pendingFiles: Map<string, File>;
+    patch(update: Partial<ClientState>): void;
 }
 
 function internals(client: MatronJournalClient): ClientInternals {
@@ -201,6 +209,112 @@ describe("usage limit accessibility", () => {
         expect(progressbar?.parentElement?.hasAttribute("aria-label")).toBe(false);
     });
 
+    it("shows the effort level beside the model and the account email in the header subtitle", async () => {
+        const client = signedInClient();
+        internals(client).state = {
+            ...client.getSnapshot(),
+            sessionStatus: {
+                model: "claude-sonnet",
+                effort: "high",
+                workdir: "/srv/app",
+                email: "alice@example.com",
+            },
+        };
+
+        rendered = await renderClient(client);
+
+        const meta = rendered.container.querySelector(".mj_ChatHeader .mj_HeaderMeta");
+        expect(meta?.querySelector(".mj_HeaderModel")?.textContent).toBe("claude-sonnet · high");
+        expect(meta?.querySelector(".mj_HeaderEmail")?.textContent).toBe("alice@example.com");
+        // Order as on the Mac: workdir, then the account it runs under.
+        const segments = [...(meta?.children ?? [])].map((element) => element.className.split(" ")[0]);
+        expect(segments.indexOf("mj_HeaderEmail")).toBe(segments.indexOf("mj_HeaderWorkdir") + 1);
+    });
+
+    it("leaves the model alone when no effort level is known, and drops the email when absent", async () => {
+        const client = signedInClient();
+        internals(client).state = { ...client.getSnapshot(), sessionStatus: { model: "claude-sonnet" } };
+
+        rendered = await renderClient(client);
+
+        expect(rendered.container.querySelector(".mj_HeaderModel")?.textContent).toBe("claude-sonnet");
+        expect(rendered.container.querySelector(".mj_HeaderEmail")).toBeNull();
+    });
+
+    it("offers to compact a conversation past the context threshold, sending /compact once", async () => {
+        const client = signedInClient();
+        internals(client).state = {
+            ...client.getSnapshot(),
+            sessionStatus: { context: { tokens: 512_300, window: 1_000_000, pct: 51 } },
+        };
+        let release: (sent: boolean) => void = () => {};
+        const sendMessage = jest
+            .spyOn(client, "sendMessage")
+            .mockImplementation(() => new Promise<boolean>((resolve) => (release = resolve)));
+
+        rendered = await renderClient(client);
+
+        const nudge = button(rendered.container, "Large conversation, 512 thousand tokens, compact it");
+        expect(nudge.textContent).toContain("Large conversation (512k)");
+        expect(nudge.textContent).toContain("Compact");
+        await act(async () => nudge.click());
+        // A second click while the first is still sending does not queue another /compact.
+        await act(async () => nudge.click());
+        expect(sendMessage).toHaveBeenCalledTimes(1);
+        expect(sendMessage).toHaveBeenCalledWith("/compact", client.getSnapshot().selectedConversationId);
+        await act(async () => release(true));
+        await act(async () => nudge.click());
+        expect(sendMessage).toHaveBeenCalledTimes(2);
+    });
+
+    it("sends one /compact for a double-click, even once the first send has been queued", async () => {
+        const client = signedInClient();
+        internals(client).state = {
+            ...client.getSnapshot(),
+            sessionStatus: { context: { tokens: 512_300, window: 1_000_000, pct: 51 } },
+        };
+        const sendMessage = jest.spyOn(client, "sendMessage").mockResolvedValue(true);
+
+        rendered = await renderClient(client);
+
+        const nudge = rendered.container.querySelector<HTMLButtonElement>(".mj_CompactNudge")!;
+        await act(async () => nudge.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 })));
+        await act(async () => nudge.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 2 })));
+        expect(sendMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not nudge in a read-only subagent transcript", async () => {
+        const result = await renderComposerAppWithChild("p1", "k1");
+        rendered = result;
+        const large = { context: { tokens: 512_300, window: 1_000_000, pct: 51 } };
+        act(() =>
+            (result.client as unknown as { patch(update: Partial<ClientState>): void }).patch({
+                sessionStatus: large,
+            }),
+        );
+        expect(result.container.querySelector(".mj_CompactNudge")).not.toBeNull();
+        act(() =>
+            (result.client as unknown as { patch(update: Partial<ClientState>): void }).patch({
+                selectedConversationId: "k1",
+                sessionStatus: large,
+            }),
+        );
+        expect(result.container.querySelector(".mj_ReadOnlyHint")).not.toBeNull();
+        expect(result.container.querySelector(".mj_CompactNudge")).toBeNull();
+    });
+
+    it("does not nudge at or below the context threshold", async () => {
+        const client = signedInClient();
+        internals(client).state = {
+            ...client.getSnapshot(),
+            sessionStatus: { context: { tokens: 400_000, window: 1_000_000, pct: 40 } },
+        };
+
+        rendered = await renderClient(client);
+
+        expect(rendered.container.querySelector(".mj_CompactNudge")).toBeNull();
+    });
+
     it("fills only the semantic affirmative in a permission card, whatever the option order", async () => {
         const client = signedInClient({
             events: [
@@ -258,6 +372,36 @@ describe("usage limit accessibility", () => {
             item.textContent?.trim(),
         );
         expect(labels).toEqual(["Pin", "Add to Favorites", "Mark as unread", "Archive"]);
+    });
+
+    it("opens the Tasks & decisions pane from the header, badged with this chat's items that need the user", async () => {
+        const client = signedInClient();
+        const waiting = (id: string, convo: string): unknown => ({
+            id,
+            num: Number(id.slice(3)),
+            kind: "question",
+            state: "open",
+            awaiting: "user",
+            origin_convo_id: convo,
+        });
+        internals(client).state = {
+            ...client.getSnapshot(),
+            inboxItems: [waiting("it_1", "c1"), waiting("it_2", "c1"), waiting("it_3", "c2")],
+        } as ClientState;
+        rendered = await renderClient(client);
+
+        const toggle = button(rendered.container, "Tasks and decisions, 2 need you");
+        expect(toggle.getAttribute("aria-pressed")).toBe("false");
+        expect(toggle.querySelector(".mj_TrackerNeedsYouBadge_count")?.textContent).toBe("2");
+        expect(rendered.container.querySelector(".mj_ChatTasks")).toBeNull();
+
+        await act(async () => toggle.click());
+
+        expect(rendered.container.querySelector('aside[aria-label="Tasks and decisions"]')).not.toBeNull();
+        expect(toggle.getAttribute("aria-pressed")).toBe("true");
+
+        await act(async () => button(rendered!.container, "Close tasks and decisions").click());
+        expect(rendered.container.querySelector(".mj_ChatTasks")).toBeNull();
     });
 });
 
@@ -2332,61 +2476,162 @@ describe("attachment composer", () => {
         expect(stageFiles).toHaveBeenCalledWith([screenshot]);
     });
 
-    it("paste while the modal is open appends exactly once (composer handler inert)", async () => {
+    it("puts pasted files in the tray above the field, and removes one with its button", async () => {
         const client = signedInClient();
-        const stageFiles = jest.spyOn(client, "stageFiles");
         rendered = await renderClient(client);
-        await act(async () => client.stageFiles([new File(["a"], "a.txt", { type: "text/plain" })]));
-        stageFiles.mockClear();
+        const textarea = rendered.container.querySelector<HTMLTextAreaElement>("textarea")!;
+        const paste = new Event("paste", { bubbles: true, cancelable: true });
+        const files = [
+            new File(["image"], "screenshot.png", { type: "image/png" }),
+            new File(["notes"], "notes.txt", { type: "text/plain" }),
+        ];
+        Object.defineProperty(paste, "clipboardData", { value: { files } });
 
-        const textareaEl = rendered.container.querySelector<HTMLTextAreaElement>(".mj_ComposerInput_input")!;
-        const pasted = new File(["p"], "p.png", { type: "image/png" });
-        await act(async () => {
-            textareaEl.dispatchEvent(
-                Object.assign(new Event("paste", { bubbles: true }), { clipboardData: { files: [pasted] } }),
+        await act(async () => textarea.dispatchEvent(paste));
+
+        const tray = rendered.container.querySelector(".mj_Composer .mj_AttachmentTray")!;
+        expect(tray.getAttribute("aria-label")).toBe("Attachments");
+        const chips = [...tray.querySelectorAll('[role="listitem"]')];
+        expect(chips.map((chip) => chip.getAttribute("aria-label"))).toEqual([
+            "Image attachment, screenshot.png, 5 B",
+            "File attachment, notes.txt, 5 B",
+        ]);
+        // The tray alone is something to send.
+        expect(button(rendered.container, "Send message").disabled).toBe(false);
+
+        await act(async () => button(rendered!.container, "Remove screenshot.png").click());
+        expect(client.getSnapshot().composerAttachments.c1.map((item) => item.file.name)).toEqual(["notes.txt"]);
+        // The button left with its chip; focus stays in the composer rather than falling to the page.
+        expect(document.activeElement).toBe(textarea);
+    });
+
+    it("sends the tray with the typed text as one turn, clearing the field", async () => {
+        const app = await renderComposerApp(["c1"], signedInClient());
+        const { container, client } = app;
+        rendered = app;
+        const sendStagedFiles = jest
+            .spyOn(client, "sendStagedFiles")
+            .mockResolvedValue({ outcome: "sent", captionDelivered: true });
+        await act(async () => client.stageFiles([new File(["x"], "notes.txt", { type: "text/plain" })]));
+
+        await typeInComposer(container, "please read this");
+        await pressEnter(container);
+
+        expect(sendStagedFiles).toHaveBeenCalledWith("c1", "please read this");
+        expect(composerValue(container)).toBe("");
+    });
+
+    it("puts the text back when it didn't go out with the files", async () => {
+        const app = await renderComposerApp(["c1"], signedInClient());
+        const { container, client } = app;
+        rendered = app;
+        jest.spyOn(client, "sendStagedFiles").mockResolvedValue({ outcome: "failed", captionDelivered: false });
+        await act(async () => client.stageFiles([new File(["x"], "notes.txt", { type: "text/plain" })]));
+
+        await typeInComposer(container, "please read this");
+        await pressEnter(container);
+
+        expect(composerValue(container)).toBe("please read this");
+    });
+
+    it("shows upload progress, and a failed file's reason with a retry that sends again", async () => {
+        const client = signedInClient();
+        const file = (name: string): File => new File(["x"], name, { type: "text/plain" });
+        internals(client).state = {
+            ...client.getSnapshot(),
+            composerAttachments: {
+                c1: [
+                    { id: "a", file: file("a.txt"), state: "uploading", progress: 0.42 },
+                    { id: "b", file: file("b.txt"), state: "queued" },
+                ],
+            },
+        };
+        rendered = await renderClient(client);
+
+        const chips = [...rendered.container.querySelectorAll(".mj_StagedAttachment")];
+        expect(chips[0].getAttribute("aria-label")).toBe("File attachment, a.txt, 1 B, uploading, 42 percent");
+        expect(chips[0].querySelector<HTMLElement>(".mj_StagedAttachment_progressFill")!.style.width).toBe("42%");
+        expect(chips[1].getAttribute("aria-label")).toContain("waiting to upload");
+        // Nothing in a send in flight can be removed, and the send waits for it.
+        expect(rendered.container.querySelector('[aria-label="Remove a.txt"]')).toBeNull();
+        expect(button(rendered.container, "Send message").disabled).toBe(true);
+
+        const sendStagedFiles = jest
+            .spyOn(client, "sendStagedFiles")
+            .mockResolvedValue({ outcome: "sent", captionDelivered: false });
+        await act(async () =>
+            internals(client).patch({
+                composerAttachments: {
+                    c1: [
+                        { id: "a", file: file("a.txt"), state: "failed", error: "File too large." },
+                        { id: "b", file: file("b.txt"), state: "staged" },
+                    ],
+                },
+            }),
+        );
+        expect(rendered.container.querySelector(".mj_StagedAttachment_failed")?.textContent).toContain(
+            "File too large.",
+        );
+        expect(rendered.container.querySelector('.mj_AttachmentTray_status[role="status"]')?.textContent).toBe(
+            "a.txt was not sent: File too large.",
+        );
+        await act(async () => button(rendered!.container, "Retry sending a.txt").click());
+        expect(sendStagedFiles).toHaveBeenCalledWith("c1", "");
+    });
+
+    it("shows a failed image as a named chip with its reason instead of a bare thumbnail", async () => {
+        const client = signedInClient();
+        const createObjectURL = jest.fn(() => "blob:preview");
+        const revokeObjectURL = jest.fn();
+        Object.assign(URL, { createObjectURL, revokeObjectURL });
+        const image = new File(["image"], "photo.png", { type: "image/png" });
+        internals(client).state = {
+            ...client.getSnapshot(),
+            composerAttachments: { c1: [{ id: "a", file: image, state: "staged" }] },
+        };
+        try {
+            rendered = await renderClient(client);
+            expect(rendered.container.querySelector(".mj_StagedAttachment_thumb")?.getAttribute("src")).toBe(
+                "blob:preview",
             );
-        });
-        expect(stageFiles).toHaveBeenCalledTimes(1);
-        expect(client.getSnapshot().stagedUploads!.total).toBe(2);
+
+            await act(async () =>
+                internals(client).patch({
+                    composerAttachments: { c1: [{ id: "a", file: image, state: "failed", error: "Server busy." }] },
+                }),
+            );
+            const chip = rendered.container.querySelector(".mj_StagedAttachment_failed")!;
+            expect(chip.querySelector(".mj_StagedAttachment_thumb")).toBeNull();
+            expect(chip.textContent).toContain("photo.png");
+            expect(chip.textContent).toContain("Server busy.");
+            expect(chip.getAttribute("aria-label")).toContain("Image attachment, photo.png");
+
+            const { root, container } = rendered;
+            await act(async () => root.unmount());
+            container.remove();
+            rendered = undefined;
+            expect(revokeObjectURL).toHaveBeenCalledWith("blob:preview");
+        } finally {
+            delete (URL as { createObjectURL?: unknown }).createObjectURL;
+            delete (URL as { revokeObjectURL?: unknown }).revokeObjectURL;
+        }
     });
 
-    it("ignores a paste the composer already consumed (defaultPrevented) instead of double-staging", async () => {
+    it("holds the send while the tray has a file that can never upload", async () => {
         const client = signedInClient();
+        const oversized = new File(["x"], "huge.bin", { type: "application/octet-stream" });
+        Object.defineProperty(oversized, "size", { value: BROWSER_MEMORY_SAFETY_MAX_BYTES + 1 });
         rendered = await renderClient(client);
-        // Open the upload dialog so its document-level paste listener is mounted.
-        await act(async () => client.stageFiles([new File(["a"], "a.txt", { type: "text/plain" })]));
-        const stageFiles = jest.spyOn(client, "stageFiles");
-        stageFiles.mockClear();
+        const sendStagedFiles = jest.spyOn(client, "sendStagedFiles");
 
-        // The bootstrap paste the composer consumed arrives at the dialog's listener with
-        // defaultPrevented already set (composer called preventDefault()). In a real browser
-        // this is the SAME event that opened the dialog, reaching a listener mounted mid-dispatch;
-        // jsdom can't reproduce that synchronous-mount race, but the guard is what prevents the
-        // second stage, so assert it directly: a defaultPrevented paste must stage nothing.
-        const consumed = Object.assign(new Event("paste", { bubbles: true, cancelable: true }), {
-            clipboardData: { files: [new File(["p"], "p.png", { type: "image/png" })] },
-        });
-        consumed.preventDefault();
-        await act(async () => document.dispatchEvent(consumed));
+        await act(async () => client.stageFiles([oversized]));
 
-        expect(stageFiles).not.toHaveBeenCalled();
-    });
-
-    it("file drop while the modal is open prevents navigation and stages nothing extra", async () => {
-        const client = signedInClient();
-        rendered = await renderClient(client);
-        await act(async () => client.stageFiles([new File(["a"], "a.txt", { type: "text/plain" })]));
-        const stageFiles = jest.spyOn(client, "stageFiles");
-
-        const scrim = rendered.container.querySelector<HTMLElement>(".mj_UploadConfirm_scrim")!;
-        const dragOver = fileDragEvent("dragover", new File(["d"], "d.txt", { type: "text/plain" }));
-        await act(async () => scrim.dispatchEvent(dragOver));
-        expect(dragOver.defaultPrevented).toBe(true);
-
-        const drop = fileDragEvent("drop", new File(["d"], "d.txt", { type: "text/plain" }));
-        await act(async () => scrim.dispatchEvent(drop));
-        expect(drop.defaultPrevented).toBe(true);
-        expect(stageFiles).not.toHaveBeenCalled();
+        const chip = rendered.container.querySelector(".mj_StagedAttachment_failed")!;
+        expect(chip.textContent).toContain("Too large for this browser to upload.");
+        expect(chip.querySelector('[aria-label="Retry sending huge.bin"]')).toBeNull();
+        expect(button(rendered.container, "Send message").disabled).toBe(true);
+        await pressEnter(rendered.container);
+        expect(sendStagedFiles).not.toHaveBeenCalled();
     });
 
     it("renders uploading and sending attachments as chips rather than empty text bubbles", async () => {
@@ -3412,260 +3657,6 @@ describe("EventRow context menu and source sheet", () => {
     });
 });
 
-describe("UploadConfirmDialog", () => {
-    let rendered: { container: HTMLDivElement; root: Root } | undefined;
-
-    const stage = async (client: MatronJournalClient, files: File[]): Promise<void> => {
-        await act(async () => client.stageFiles(files));
-    };
-
-    beforeAll(() => {
-        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-        if (!URL.createObjectURL) URL.createObjectURL = () => "blob:preview";
-        if (!URL.revokeObjectURL) URL.revokeObjectURL = () => undefined;
-    });
-
-    afterEach(async () => {
-        if (rendered) {
-            await act(async () => rendered?.root.unmount());
-            rendered.container.remove();
-            rendered = undefined;
-        }
-        jest.restoreAllMocks();
-    });
-
-    it("renders preview + caption for an image and confirms with the typed caption on Send and on Enter", async () => {
-        const client = signedInClient();
-        const confirm = jest.spyOn(client, "confirmStagedFile").mockResolvedValue(undefined);
-        rendered = await renderClient(client);
-        await stage(client, [new File(["x"], "shot.png", { type: "image/png" })]);
-
-        const dialog = rendered.container.querySelector('[role="dialog"]');
-        expect(dialog).not.toBeNull();
-        expect(dialog!.getAttribute("aria-modal")).toBe("true");
-        expect(dialog!.querySelector("img")).not.toBeNull();
-        // v4 three-part flex card: fixed header / scrolling body / fixed footer.
-        const card = dialog!.querySelector(".mj_UploadConfirm_queue")!;
-        expect(card).not.toBeNull();
-        expect(card.querySelector(".mj_UploadConfirm_header")).not.toBeNull();
-        expect(card.querySelector(".mj_UploadConfirm_body")).not.toBeNull();
-        expect(card.querySelector(".mj_UploadConfirm_footer")).not.toBeNull();
-
-        const textarea = dialog!.querySelector<HTMLTextAreaElement>("textarea");
-        expect(document.activeElement).toBe(textarea);
-        expect(textarea!.maxLength).toBe(4096);
-        await act(async () => {
-            inputTextarea(textarea!, "look here");
-        });
-        const headId = client.getSnapshot().stagedUploads!.items[0].id;
-        await act(async () => button(dialog as HTMLElement, "Send").click());
-        expect(confirm).toHaveBeenCalledWith(headId, "look here");
-    });
-
-    it("single file: header has tray+plane glyphs, no count/strip, and the ✕ is honestly labeled 'Cancel upload' and truly clears the queue + closes the dialog", async () => {
-        const client = signedInClient();
-        rendered = await renderClient(client);
-        await stage(client, [new File(["only"], "solo.pdf", { type: "application/pdf" })]);
-
-        const dialog = rendered.container.querySelector<HTMLElement>('[role="dialog"]')!;
-        const header = dialog.querySelector(".mj_UploadConfirm_header")!;
-        expect(header.querySelector(".mj_UploadConfirm_uploadIcon")).not.toBeNull();
-        expect(dialog.querySelector(".mj_UploadConfirm_send svg")).not.toBeNull();
-        expect(dialog.querySelector(".mj_UploadConfirm_count")).toBeNull();
-        expect(dialog.querySelector(".mj_UploadConfirm_strip")).toBeNull();
-        expect(dialog.querySelector(".mj_UploadConfirm_previewPlaceholder")).not.toBeNull();
-
-        // The ✕ is destructive (clears the queue) — its accessible name must say so, not "Close".
-        const close = button(dialog, "Cancel upload");
-        expect(header.contains(close)).toBe(true);
-        expect(dialog.querySelector('button[aria-label="Close"]')).toBeNull();
-        // The footer "Cancel all" is multi-file only; a lone file dismisses via the ✕.
-        expect(dialog.querySelector('button[aria-label="Cancel all"]')).toBeNull();
-
-        // Real outcome: the whole staged queue is discarded and the dialog unmounts.
-        await act(async () => close.click());
-        expect(client.getSnapshot().stagedUploads).toBeUndefined();
-        expect(rendered.container.querySelector('[role="dialog"]')).toBeNull();
-    });
-
-    it("multi-file: the ✕ is labeled 'Cancel all uploads' and discards the ENTIRE queue (every file) + closes the dialog", async () => {
-        const client = signedInClient();
-        rendered = await renderClient(client);
-        await stage(client, [
-            new File(["a"], "a.txt", { type: "text/plain" }),
-            new File(["b"], "b.txt", { type: "text/plain" }),
-        ]);
-
-        const dialog = rendered.container.querySelector<HTMLElement>('[role="dialog"]')!;
-        expect(client.getSnapshot().stagedUploads!.items.length).toBe(2);
-        const close = button(dialog, "Cancel all uploads");
-        expect(dialog.querySelector('button[aria-label="Close"]')).toBeNull();
-
-        await act(async () => close.click());
-        expect(client.getSnapshot().stagedUploads).toBeUndefined();
-        expect(rendered.container.querySelector('[role="dialog"]')).toBeNull();
-    });
-
-    it("makes background keyboard controls inert and restores composer focus when the dialog closes", async () => {
-        const client = signedInClient();
-        rendered = await renderClient(client);
-        const composer = rendered.container.querySelector<HTMLTextAreaElement>(".mj_ComposerInput_input")!;
-        composer.focus();
-
-        await stage(client, [new File(["a"], "a.txt", { type: "text/plain" })]);
-
-        const appContent = rendered.container.querySelector<HTMLElement>(".mj_App")!;
-        const dialog = rendered.container.querySelector<HTMLElement>('[role="dialog"]')!;
-        expect(appContent.hasAttribute("inert")).toBe(true);
-        expect(rendered.container.querySelectorAll(".mj_App button, .mj_App textarea").length).toBeGreaterThan(0);
-        for (const control of rendered.container.querySelectorAll(".mj_App button, .mj_App textarea")) {
-            expect(control.closest("[inert]")).toBe(appContent);
-        }
-        expect(document.activeElement).toBe(dialog.querySelector<HTMLTextAreaElement>("textarea"));
-
-        await act(async () => button(dialog, "Skip").click());
-        expect(appContent.hasAttribute("inert")).toBe(false);
-        expect(document.activeElement).toBe(composer);
-    });
-
-    it("shows name+size (no img) for non-images, pages 'k of N', and isolates captions per page", async () => {
-        const client = signedInClient();
-        rendered = await renderClient(client);
-        await stage(client, [
-            new File(["a"], "a.txt", { type: "text/plain" }),
-            new File(["b"], "b.txt", { type: "text/plain" }),
-        ]);
-        const dialog = (): HTMLElement => rendered!.container.querySelector('[role="dialog"]')!;
-        expect(dialog().textContent).toContain("1 of 2");
-        expect(dialog().textContent).toContain("Send file");
-        expect(dialog().querySelector("img")).toBeNull();
-        expect(dialog().textContent).toContain("a.txt");
-
-        const textarea = dialog().querySelector<HTMLTextAreaElement>("textarea")!;
-        await act(async () => {
-            inputTextarea(textarea, "caption for a");
-        });
-        await act(async () => {
-            const headId = client.getSnapshot().stagedUploads!.items[0].id;
-            client.skipStagedFile(headId);
-        });
-        expect(dialog().textContent).toContain("2 of 2");
-        expect(dialog().querySelector<HTMLTextAreaElement>("textarea")!.value).toBe("");
-    });
-
-    it("keyboard contract: Enter confirms; Shift+Enter, IME-composing Enter, and keyCode-229 Enter do not; Escape skips", async () => {
-        const client = signedInClient();
-        const confirm = jest.spyOn(client, "confirmStagedFile").mockResolvedValue(undefined);
-        const skip = jest.spyOn(client, "skipStagedFile");
-        rendered = await renderClient(client);
-        await stage(client, [new File(["ok"], "ok.png", { type: "image/png" })]);
-        const textarea = (): HTMLTextAreaElement =>
-            rendered!.container.querySelector<HTMLElement>('[role="dialog"]')!.querySelector("textarea")!;
-        const key = (init: KeyboardEventInit & { keyCode?: number }) =>
-            act(async () => {
-                const event = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init });
-                if (init.keyCode) Object.defineProperty(event, "keyCode", { value: init.keyCode });
-                textarea().dispatchEvent(event);
-            });
-
-        await key({ key: "Enter", shiftKey: true });
-        expect(confirm).not.toHaveBeenCalled();
-        await key({ key: "Enter", isComposing: true } as KeyboardEventInit);
-        expect(confirm).not.toHaveBeenCalled();
-        await key({ key: "Enter", keyCode: 229 });
-        expect(confirm).not.toHaveBeenCalled();
-        await key({ key: "Enter" });
-        expect(confirm).toHaveBeenCalledTimes(1);
-        await key({ key: "Escape" });
-        expect(skip).toHaveBeenCalledTimes(1);
-    });
-
-    it("zero-byte and over-cap files disable Send AND the Enter path", async () => {
-        const client = signedInClient();
-        const confirm = jest.spyOn(client, "confirmStagedFile").mockResolvedValue(undefined);
-        rendered = await renderClient(client);
-        const empty = new File([], "empty.bin", { type: "application/octet-stream" });
-        const big = new File([""], "big.bin", { type: "application/octet-stream" });
-        Object.defineProperty(big, "size", { value: BROWSER_MEMORY_SAFETY_MAX_BYTES + 1 });
-        await stage(client, [empty, big]);
-
-        for (let page = 0; page < 2; page += 1) {
-            const dialog = rendered.container.querySelector<HTMLElement>('[role="dialog"]')!;
-            expect(dialog.querySelector<HTMLButtonElement>("button.mj_UploadConfirm_send")?.disabled).toBe(true);
-            const textarea = dialog.querySelector<HTMLTextAreaElement>("textarea")!;
-            await act(async () => {
-                textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-            });
-            expect(confirm).not.toHaveBeenCalled();
-            await act(async () => client.skipStagedFile(client.getSnapshot().stagedUploads!.items[0].id));
-        }
-    });
-
-    it("does not create or render a preview for an over-cap image", async () => {
-        const createObjectURL = jest.spyOn(URL, "createObjectURL");
-        const client = signedInClient();
-        rendered = await renderClient(client);
-        const bigImage = new File(["image"], "big.png", { type: "image/png" });
-        Object.defineProperty(bigImage, "size", { value: BROWSER_MEMORY_SAFETY_MAX_BYTES + 1 });
-
-        await stage(client, [bigImage]);
-
-        const dialog = rendered.container.querySelector<HTMLElement>('[role="dialog"]')!;
-        expect(createObjectURL).not.toHaveBeenCalled();
-        expect(dialog.querySelector("img")).toBeNull();
-        expect(dialog.textContent).toContain("too large");
-    });
-
-    it("shows the archived error state with Close, and pasted files append as pages", async () => {
-        const client = signedInClient();
-        rendered = await renderClient(client);
-        await stage(client, [new File(["a"], "a.txt", { type: "text/plain" })]);
-        const pasted = new File(["p"], "p.png", { type: "image/png" });
-        await act(async () => {
-            document.dispatchEvent(
-                Object.assign(new Event("paste", { bubbles: true }), {
-                    clipboardData: { files: [pasted] },
-                }),
-            );
-        });
-        expect(client.getSnapshot().stagedUploads!.total).toBe(2);
-
-        const state = internals(client) as ClientInternals & { api: unknown };
-        state.state.session = {
-            serverUrl: "https://journal.test",
-            token: "token",
-            deviceId: 1,
-            userId: 1,
-            username: "user",
-        };
-        state.database = {};
-        state.api = {};
-        const cancel = jest.spyOn(client, "cancelStagedFiles");
-        await act(async () => client.archiveConversation("c1"));
-        const headId = client.getSnapshot().stagedUploads!.items[0].id;
-        await act(async () => client.confirmStagedFile(headId, "x"));
-        const dialog = rendered.container.querySelector<HTMLElement>('[role="dialog"]')!;
-        expect(dialog.textContent).toContain("archived in another tab");
-        await act(async () => button(dialog, "Close").click());
-        expect(cancel).toHaveBeenCalled();
-    });
-
-    it("revokes object URLs on advance and on close", async () => {
-        const revoke = jest.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
-        jest.spyOn(URL, "createObjectURL").mockReturnValue("blob:preview");
-        const client = signedInClient();
-        rendered = await renderClient(client);
-        await stage(client, [
-            new File(["a"], "a.png", { type: "image/png" }),
-            new File(["b"], "b.png", { type: "image/png" }),
-        ]);
-        await act(async () => client.skipStagedFile(client.getSnapshot().stagedUploads!.items[0].id));
-        expect(revoke).toHaveBeenCalledWith("blob:preview");
-        await act(async () => client.cancelStagedFiles());
-        expect(revoke).toHaveBeenCalledTimes(2);
-    });
-});
-
 describe("conversation menu controls", () => {
     let rendered: { container: HTMLDivElement; root: Root } | undefined;
 
@@ -3847,6 +3838,110 @@ describe("conversation row affordances", () => {
         const row = rendered.container.querySelector<HTMLButtonElement>('button[aria-label^="Open room"]');
         expect(row?.getAttribute("aria-label")).toContain("marked unread");
         expect(rendered.container.querySelector(".mj_UnreadBadge")).toBeNull();
+    });
+});
+
+describe("needs-you and New badges in the conversation list and the rail", () => {
+    let rendered: { container: HTMLDivElement; root: Root } | undefined;
+
+    afterEach(async () => {
+        if (rendered) {
+            await act(async () => rendered?.root.unmount());
+            rendered.container.remove();
+            rendered = undefined;
+        }
+        jest.restoreAllMocks();
+    });
+
+    function awaiting(id: string, originConvoId: string, missionId: string | null = null): TrackerItem {
+        return {
+            id,
+            num: 1,
+            kind: "question",
+            state: "open",
+            awaiting: "user",
+            title: "Pick one",
+            origin_convo_id: originConvoId,
+            mission_id: missionId,
+        } as TrackerItem;
+    }
+
+    function patch(client: MatronJournalClient, update: Partial<ClientState>): void {
+        act(() => (client as unknown as { patch(update: Partial<ClientState>): void }).patch(update));
+    }
+
+    function row(container: HTMLElement, title: string): HTMLButtonElement {
+        const match = container.querySelector<HTMLButtonElement>(`button[aria-label^="Open room ${title},"]`);
+        if (!match) throw new Error(`Missing row: ${title}`);
+        return match;
+    }
+
+    const roomA = { ...CONVERSATION, id: "room-a", title: "Room A" };
+    const roomB = { ...CONVERSATION, id: "room-b", title: "Room B" };
+
+    it("counts the items a conversation raised that wait on the user, live as they change", async () => {
+        const client = signedInWithRooms([CONVERSATION, roomA, roomB]);
+        rendered = await renderClient(client);
+        expect(rendered.container.querySelector(".mj_ConversationListBadges .mj_TrackerNeedsYouBadge")).toBeNull();
+
+        patch(client, {
+            inboxItems: [
+                awaiting("i1", "room-a"),
+                awaiting("i2", "room-a"),
+                { ...awaiting("i3", "room-b"), awaiting: "agent" },
+            ],
+        });
+        const badge = row(rendered.container, "Room A").querySelector(".mj_TrackerNeedsYouBadge");
+        expect(badge?.textContent).toBe("2");
+        expect(row(rendered.container, "Room A").getAttribute("aria-label")).toContain("2 items need you");
+        expect(row(rendered.container, "Room B").querySelector(".mj_TrackerNeedsYouBadge")).toBeNull();
+
+        // Answering one drops the count on the row without anything else in the list changing.
+        patch(client, { inboxItems: [awaiting("i2", "room-a")] });
+        expect(row(rendered.container, "Room A").querySelector(".mj_TrackerNeedsYouBadge")?.textContent).toBe("1");
+        expect(row(rendered.container, "Room A").getAttribute("aria-label")).toContain("1 item needs you");
+    });
+
+    it("marks a session that arrived unasked as New until it is opened", async () => {
+        const client = signedInWithRooms([CONVERSATION, roomA, roomB]);
+        rendered = await renderClient(client);
+        patch(client, { newConversationIds: new Set(["room-a"]) });
+        expect(row(rendered.container, "Room A").querySelector(".mj_ConversationListNew")?.textContent).toBe("New");
+        expect(row(rendered.container, "Room A").getAttribute("aria-label")).toContain("new session");
+        expect(row(rendered.container, "Room B").querySelector(".mj_ConversationListNew")).toBeNull();
+
+        patch(client, { newConversationIds: new Set() });
+        expect(row(rendered.container, "Room A").querySelector(".mj_ConversationListNew")).toBeNull();
+    });
+
+    it("never shows New on an agent-chat room", async () => {
+        const room = { ...CONVERSATION, id: "room-c", title: "🔗 box-a and box-b" };
+        const client = signedInWithRooms([CONVERSATION, room]);
+        rendered = await renderClient(client);
+        patch(client, { newConversationIds: new Set(["room-c"]) });
+        expect(rendered.container.querySelector(".mj_ConversationListNew")).toBeNull();
+    });
+
+    it("drops New from a session whose parent link landed after it was marked", async () => {
+        const child = { ...CONVERSATION, id: "c1:codex:agent-1", title: "Worker", parent_convo_id: "c1" };
+        const client = signedInWithRooms([CONVERSATION, child]);
+        rendered = await renderClient(client);
+        patch(client, { newConversationIds: new Set([child.id]) });
+        expect(rendered.container.querySelector(".mj_ConversationListNew")).toBeNull();
+    });
+
+    it("badges Projects in the rail with what needs the user across the missions", async () => {
+        const client = signedInWithRooms([CONVERSATION]);
+        rendered = await renderClient(client);
+        const projects = (): HTMLButtonElement =>
+            rendered!.container.querySelector<HTMLButtonElement>('[data-nav="projects"]')!;
+        expect(projects().querySelector(".mj_NavRail_badge")).toBeNull();
+
+        patch(client, {
+            inboxItems: [awaiting("i1", "c1", "m1"), awaiting("i2", "c1", "m2"), awaiting("i3", "c1", null)],
+        });
+        expect(projects().querySelector(".mj_NavRail_badge")?.textContent).toBe("2");
+        expect(projects().getAttribute("aria-label")).toBe("Projects, 2 need you");
     });
 });
 
@@ -4255,5 +4350,97 @@ describe("tracker item cards in the timeline", () => {
         expect(rendered.container.querySelector(".mj_TrackerCard_needsyou")).not.toBeNull();
         expect(rendered.container.querySelector(".mj_TrackerCard_comment")).toBeNull();
         expect(rowTexts(rendered.container)).toEqual(["Needs you", "You reopened #7 · Pick a database"]);
+    });
+});
+
+describe("read state reporting", () => {
+    let rendered: { container: HTMLDivElement; root: Root } | undefined;
+    const observers: Array<{
+        root: Element | Document | null | undefined;
+        callback: IntersectionObserverCallback;
+        observed: Element[];
+    }> = [];
+    let originalObserver: unknown;
+
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    beforeEach(() => {
+        observers.length = 0;
+        originalObserver = (globalThis as Record<string, unknown>).IntersectionObserver;
+        class MockObserver {
+            private readonly entry;
+            public constructor(callback: IntersectionObserverCallback, options?: IntersectionObserverInit) {
+                this.entry = { root: options?.root, callback, observed: [] as Element[] };
+                observers.push(this.entry);
+            }
+            public observe(target: Element): void {
+                this.entry.observed.push(target);
+            }
+            public unobserve(target: Element): void {
+                this.entry.observed = this.entry.observed.filter((element) => element !== target);
+            }
+            public disconnect(): void {
+                this.entry.observed = [];
+            }
+        }
+        Object.defineProperty(globalThis, "IntersectionObserver", { value: MockObserver, configurable: true });
+        // Every element measures as the same 100px box, so every intersecting row counts as visible.
+        jest.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ top: 0, bottom: 100 } as DOMRect);
+    });
+
+    afterEach(async () => {
+        if (rendered) {
+            await act(async () => rendered?.root.unmount());
+            rendered.container.remove();
+            rendered = undefined;
+        }
+        jest.restoreAllMocks();
+        Object.defineProperty(globalThis, "IntersectionObserver", { value: originalObserver, configurable: true });
+    });
+
+    it("reports the selected conversation's on-screen rows to the client's tracker", async () => {
+        const client = signedInClient({ events: [textEvent(1, "one"), textEvent(2, "two")] });
+        const setVisible = jest.spyOn(client.seen, "setVisible").mockImplementation(() => {});
+        const removeSurface = jest.spyOn(client.seen, "removeSurface").mockImplementation(() => {});
+        rendered = await renderClient(client);
+
+        const timeline = observers.find((observer) =>
+            (observer.root as Element | undefined)?.classList?.contains("mj_ChatView_messagePanel"),
+        );
+        expect(timeline?.observed.map((row) => row.getAttribute("data-event-id"))).toEqual(["1", "2"]);
+        await act(async () => {
+            timeline!.callback(
+                timeline!.observed.map(
+                    (target) => ({ target, isIntersecting: true }) as unknown as IntersectionObserverEntry,
+                ),
+                {} as IntersectionObserver,
+            );
+        });
+        expect(setVisible).toHaveBeenLastCalledWith(expect.any(Symbol), "c1", [1, 2]);
+
+        await act(async () => rendered?.root.unmount());
+        rendered.container.remove();
+        rendered = undefined;
+        expect(removeSurface).toHaveBeenCalledWith(setVisible.mock.calls[0][0]);
+    });
+
+    it("reports nothing from a read-only subagent transcript", async () => {
+        const client = signedInClient({ events: [textEvent(1, "one")] });
+        internals(client).state = {
+            ...client.getSnapshot(),
+            conversations: [
+                { ...CONVERSATION, id: "p1", title: "Parent" },
+                { ...CONVERSATION, parent_convo_id: "p1" },
+            ],
+        };
+        rendered = await renderClient(client);
+        expect(rendered.container.textContent).toContain("Read-only — subagent transcript");
+        expect(
+            observers.some((observer) =>
+                (observer.root as Element | undefined)?.classList?.contains("mj_ChatView_messagePanel"),
+            ),
+        ).toBe(false);
     });
 });
