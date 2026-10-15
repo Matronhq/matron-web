@@ -5566,3 +5566,83 @@ button.mj_TrackerAttachmentChip_preview {
 .mj_SubChatPane_resizer:focus-visible::after {
     background: var(--mj-color-text-action-accent);
 }
+
+/* Bridge notice about an injected turn (payload.notice): one secondary-text line — chevron,
+   icon, summary, time — like the Coordinator notices; opening it shows the full text. */
+.mj_SystemNotice {
+    min-width: 0;
+    max-width: 100%;
+    color: var(--mj-color-text-secondary);
+    font: var(--mj-font-body-sm-regular);
+}
+
+.mj_SystemNotice summary {
+    display: flex;
+    align-items: center;
+    gap: var(--mj-space-1x);
+    padding: 2px 0;
+    cursor: pointer;
+    list-style: none;
+}
+
+.mj_SystemNotice summary::-webkit-details-marker {
+    display: none;
+}
+
+.mj_SystemNotice summary:hover .mj_SystemNotice_summary {
+    color: var(--mj-color-text-primary);
+}
+
+.mj_SystemNotice_chevron {
+    width: 12px;
+    height: 12px;
+    flex: 0 0 auto;
+    color: var(--mj-color-text-tertiary);
+    transform: rotate(-90deg);
+    transition: transform var(--mj-dur-fast) var(--mj-ease);
+}
+
+.mj_SystemNotice[open] .mj_SystemNotice_chevron {
+    transform: rotate(0deg);
+}
+
+.mj_SystemNotice_icon {
+    flex: none;
+    font-size: 14px;
+}
+
+.mj_SystemNotice_summary {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_SystemNotice_time {
+    flex: none;
+    margin-left: auto;
+    padding-left: var(--mj-space-1x);
+    color: var(--mj-color-text-tertiary);
+    font: var(--mj-font-body-xs-regular);
+}
+
+.mj_SystemNotice_body {
+    margin: var(--mj-space-1x) 0 var(--mj-space-1x) 18px;
+    padding-left: var(--mj-space-1x);
+    border-left: 2px solid var(--mj-color-border-subtle);
+    color: var(--mj-color-text-primary);
+}
+
+/* The full text keeps the bridge's line breaks (each agent-facing line on its own). */
+.mj_SystemNotice_body p {
+    white-space: pre-line;
+}
+
+/* A notice row sits tight against its neighbours, so a run of them reads as a list. */
+li.mj_EventTile[data-layout="bubble"].mj_EventTile_systemNotice {
+    margin-top: 2px;
+    margin-bottom: 2px;
+}
+.mj_EventTile_systemNotice[data-self="false"] .mj_EventTile_line {
+    padding: 0;
+}

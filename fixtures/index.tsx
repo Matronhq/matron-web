@@ -594,6 +594,57 @@ const events: JournalEvent[] = [
     },
 ];
 
+// ?notices swaps c1's thread for a Coordinator-style one: the bridge's tagged notices about the
+// turns it injected (payload.notice) between the agent's own replies.
+if (new URLSearchParams(window.location.search).has("notices")) {
+    const at = (
+        seq: number,
+        minutes: number,
+        payload: Record<string, unknown>,
+        sender = "agent:ash",
+    ): JournalEvent => ({
+        seq,
+        convo_id: "c1",
+        ts: T + minutes * 60_000,
+        sender,
+        type: "text",
+        payload: { from: "assistant", ...payload },
+    });
+    events.splice(
+        0,
+        events.length,
+        at(1, 0, { body: "Run the morning sweep when it fires.", from: "user" }, "user:operator"),
+        at(2, 1, {
+            body: "🔔 Routine morning-sweep: Morning status sweep",
+            notice: { kind: "routine", icon: "🔔", summary: "Routine morning-sweep: Morning status sweep" },
+        }),
+        at(3, 2, { body: "Sweep done: two missions moved, nothing waiting on you." }),
+        at(4, 5, {
+            body:
+                "🤝 A consent request is waiting for the user: \n" +
+                'chat ch_8f2 (tracker #12) — just now: alice — session "Release prep" [c_9] asks to chat with birch about "artwork render" (box awake)\n' +
+                "  why, in alice's words: needs the render settings before the export\n" +
+                '  consent_decide(kind: "chat", id: "ch_8f2", decision: approve|decline, reason: …)\n' +
+                "The user has the card too and may answer first. Decide with consent_decide if it follows your rules and give your reason; otherwise leave it, or decline with a reason. Say in one line what you did.",
+            notice: { kind: "consent", icon: "🤝", summary: "alice → birch chat · artwork render · #12" },
+        }),
+        at(5, 6, { body: "Approved alice's chat with birch: both boxes are ours and the topic is the release." }),
+        at(6, 9, {
+            body: '💬 "birch" in "ash ↔️ birch — disk": Disk clean-up done: 41 GB free, nothing in use was touched.',
+            notice: {
+                kind: "room",
+                icon: "💬",
+                summary: "birch: Disk clean-up done: 41 GB free, nothing in use was touched.",
+            },
+        }),
+        at(7, 10, {
+            body: "🚀 Spawn approved — started a session on birch (detached).",
+            notice: { kind: "spawn", icon: "🚀", summary: "Spawn approved — started a session on birch (detached)." },
+        }),
+        at(8, 11, { body: "Noted: the clean-up on birch finished and the new session is running." }),
+    );
+}
+
 // ?toolstream adds a running tool_stream tile with more output than its collapsed pane shows.
 const toolStreams: ClientState["toolStreams"] = {};
 if (new URLSearchParams(window.location.search).has("toolstream")) {
@@ -1598,7 +1649,9 @@ if (fixtureParams.get("badges") === "1") {
         return () => undefined;
     };
     stub.setRoutineEnabled = async (id: string, enabled: boolean) => {
-        setList(current().map((row) => (row.id === id ? { ...row, enabled, next_at: enabled ? row.next_at : null } : row)));
+        setList(
+            current().map((row) => (row.id === id ? { ...row, enabled, next_at: enabled ? row.next_at : null } : row)),
+        );
         return undefined;
     };
     stub.runRoutine = async () => null;
