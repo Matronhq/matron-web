@@ -490,6 +490,15 @@ export interface SessionStatus {
     // an explicit null once it tracks none, and absent from frames that say nothing about it
     // (see mergeSessionStatus). Held state is a string or absent.
     effort?: string | null;
+    // The session's arguments for /model and /effort, as the composer offers them. The bridge owns
+    // these lists (they differ per agent): absent says nothing, an empty list offers nothing.
+    model_options?: SessionStatusOption[];
+    effort_levels?: SessionStatusOption[];
+}
+
+export interface SessionStatusOption {
+    value: string;
+    label?: string;
 }
 
 export interface ToolStreamState {

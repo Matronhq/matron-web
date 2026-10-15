@@ -25,6 +25,7 @@ import {
     usageShortLabel,
     worstLimit,
 } from "../../../src/journal/status";
+import type { SessionStatusOption } from "../../../src/journal/types";
 
 describe("journal session status presentation", () => {
     it("matches the Apple client's compact token and limit labels", () => {
@@ -262,6 +263,29 @@ describe("journal session status presentation", () => {
         // An explicit null is the bridge disowning the level it was tracking.
         expect(mergeSessionStatus(held, { effort: null }).effort).toBeUndefined();
         expect(mergeSessionStatus(held, { effort: "low" }).effort).toBe("low");
+    });
+
+    it("keeps the /model and /effort offers until a frame replaces them, an empty list included", () => {
+        const offers = { model_options: [{ value: "opus", label: "Opus" }], effort_levels: [{ value: "high" }] };
+        const held = mergeSessionStatus({ model: "m" }, offers);
+        expect(mergeSessionStatus(held, { model: "m2" })).toMatchObject(offers);
+        // An empty list is the agent offering nothing (a switch to an agent without the list).
+        expect(mergeSessionStatus(held, { model_options: [], effort_levels: [] })).toMatchObject({
+            model_options: [],
+            effort_levels: [],
+        });
+    });
+
+    it("ignores a /model or /effort offer it cannot read, keeping the held list", () => {
+        const held = mergeSessionStatus(undefined, { model_options: [{ value: "opus", label: "Opus" }] });
+        const garbled = [{ label: "no value" }, { value: "" }] as unknown as SessionStatusOption[];
+        expect(mergeSessionStatus(held, { model_options: garbled }).model_options).toEqual(held.model_options);
+        const notAList = "opus" as unknown as SessionStatusOption[];
+        expect(mergeSessionStatus(held, { model_options: notAList }).model_options).toEqual(held.model_options);
+        // Readable entries survive, the unreadable ones are dropped.
+        expect(mergeSessionStatus(held, { model_options: [{ value: "haiku" }, ...garbled] }).model_options).toEqual([
+            { value: "haiku" },
+        ]);
     });
 
     it("nudges to compact only strictly above the absolute token threshold", () => {

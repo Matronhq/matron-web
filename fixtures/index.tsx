@@ -627,6 +627,21 @@ const state: ClientState = {
     sessionStatus: {
         model: "claude-sonnet",
         effort: "high",
+        // The composer's /model and /effort arguments, as the bridge offers them.
+        model_options: [
+            { value: "default", label: "Default" },
+            { value: "opus", label: "Opus" },
+            { value: "opus[1m]", label: "Opus 1M" },
+            { value: "sonnet", label: "Sonnet" },
+            { value: "haiku", label: "Haiku" },
+        ],
+        effort_levels: [
+            { value: "low", label: "Low" },
+            { value: "medium", label: "Medium" },
+            { value: "high", label: "High" },
+            { value: "xhigh", label: "X-High" },
+            { value: "max", label: "Max" },
+        ],
         workdir: "/srv/app/web",
         email: "alice@example.com",
         context: { tokens: 144_000, window: 200_000, pct: 72 },
@@ -1776,6 +1791,10 @@ const errorLog = (): File => new File([new Uint8Array(512)], "error-log.txt", { 
             },
         }),
     setTheme: (t: string) => document.documentElement.setAttribute("data-theme", t),
+    // Switch conversation (or none, for the home page) the way the client's own select would.
+    // A voice note recording in one conversation keeps going, with the app-wide bar elsewhere.
+    selectConversation: (id?: string) =>
+        patchState({ selectedConversationId: id, events: id === "c1" ? state.events : [], pendingMessages: [] }),
     // Drive the child (subagent) view: select the running child s1 of parent c1 → back chip +
     // ↳ header + ringed current pill. The fixture client has no database, so selectConversation
     // no-ops; patch the state directly (mirrors the client's own patch()).
