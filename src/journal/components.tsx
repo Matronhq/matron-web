@@ -6298,7 +6298,7 @@ function SlashCommandPalette({
     });
 
     return (
-        <div className="mj_SlashPalette" id={SLASH_LISTBOX_ID} role="listbox">
+        <div className="mj_SlashPalette" id={SLASH_LISTBOX_ID} role="listbox" aria-label="Suggestions">
             {suggestions.length > 0
                 ? suggestions.map((suggestion, index) =>
                       suggestion.kind === "argument" ? (
@@ -6503,6 +6503,18 @@ function Composer({
         setBodyDraft(applyCommand(command.trigger));
         setHighlighted(null);
         textarea.current?.focus();
+    };
+    // Tab and Enter pick the row at `index`. A status frame can shorten the argument list under a
+    // held highlight, so a row that is no longer there picks nothing (and Enter then sends).
+    const pickRow = (index: number): boolean => {
+        if (suggestions.length > 0) {
+            if (!suggestions[index]) return false;
+            selectSuggestion(suggestions[index]);
+        } else {
+            if (!commands[index]) return false;
+            selectCommand(commands[index]);
+        }
+        return true;
     };
     // A folder completes the line, so the palette closes on it; an argument leaves a space after
     // it, and the palette goes on to offer whatever the command still accepts.
@@ -6752,9 +6764,7 @@ function Composer({
                                             }
                                             if (event.key === "Tab") {
                                                 event.preventDefault();
-                                                const index = highlighted ?? 0;
-                                                if (suggestions.length > 0) selectSuggestion(suggestions[index]);
-                                                else selectCommand(commands[index]);
+                                                pickRow(highlighted ?? 0);
                                                 return;
                                             }
                                             if (event.key === "Escape") {
@@ -6763,10 +6773,13 @@ function Composer({
                                                 setHighlighted(null);
                                                 return;
                                             }
-                                            if (event.key === "Enter" && !event.shiftKey && highlighted !== null) {
+                                            if (
+                                                event.key === "Enter" &&
+                                                !event.shiftKey &&
+                                                highlighted !== null &&
+                                                pickRow(highlighted)
+                                            ) {
                                                 event.preventDefault();
-                                                if (suggestions.length > 0) selectSuggestion(suggestions[highlighted]);
-                                                else selectCommand(commands[highlighted]);
                                                 return;
                                             }
                                         }

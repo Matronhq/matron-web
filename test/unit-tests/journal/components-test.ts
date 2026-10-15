@@ -1696,6 +1696,24 @@ describe("slash command palette", () => {
         expect(composer().value).toBe("/model opus[1m] ");
     });
 
+    it("sends rather than picking when a status frame shortens the list under the highlight", async () => {
+        const client = signedInClient();
+        const sendMessage = jest.spyOn(client, "sendMessage").mockResolvedValue(true);
+        internals(client).state = {
+            ...client.getSnapshot(),
+            sessionStatus: { model_options: [{ value: "opus" }, { value: "sonnet" }] },
+        };
+        rendered = await renderClient(client);
+        await act(async () => inputTextarea(composer(), "/model "));
+        await keydown(composer(), "ArrowUp");
+        expect(options()[1].getAttribute("aria-selected")).toBe("true");
+
+        await act(async () => internals(client).patch({ sessionStatus: { model_options: [{ value: "opus" }] } }));
+        expect(options()).toHaveLength(1);
+        await keydown(composer(), "Enter");
+        expect(sendMessage).toHaveBeenCalledTimes(1);
+    });
+
     it("records only folder commands accepted by sendMessage", async () => {
         const store = makeRecentFoldersStore(SESSION);
         const client = signedInClient();

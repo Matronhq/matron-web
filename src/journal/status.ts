@@ -6,7 +6,7 @@ Please see LICENSE files in the repository root for full details.
 */
 
 import { dateTimeFormat } from "./date-format";
-import { type SessionStatus } from "./types";
+import { type SessionStatus, type SessionStatusOption } from "./types";
 
 export function normalizePercent(p: number): number | null {
     return Number.isFinite(p) ? Math.min(Math.max(p, 0), 100) : null;
@@ -236,6 +236,21 @@ function renderReset(resetTime: number, now: number): string {
     return `${weekday} ${hour}`;
 }
 
+// The /model and /effort offers are remote input. Absent (or anything that is not a list) says
+// nothing, and an empty list is the agent offering nothing. A non-empty list with no readable
+// entry is a garbled frame, not a statement, so it leaves the held list alone (as the desktop
+// app's decoder does).
+function mergeOptions(
+    update: SessionStatusOption[] | undefined,
+    current: SessionStatusOption[] | undefined,
+): SessionStatusOption[] | undefined {
+    if (!Array.isArray(update)) return current;
+    const parsed = update.filter(
+        (option): option is SessionStatusOption => typeof option?.value === "string" && option.value.trim() !== "",
+    );
+    return update.length === 0 || parsed.length > 0 ? parsed : current;
+}
+
 export function mergeSessionStatus(current: SessionStatus | undefined, update: SessionStatus): SessionStatus {
     return {
         model: update.model ?? current?.model,
@@ -247,8 +262,8 @@ export function mergeSessionStatus(current: SessionStatus | undefined, update: S
         // Effort is tri-state on the wire: a string sets it, an explicit null is the bridge
         // disowning the level it was tracking, and an absent key leaves the held value alone.
         effort: "effort" in update ? (update.effort ?? undefined) : current?.effort,
-        model_options: update.model_options ?? current?.model_options,
-        effort_levels: update.effort_levels ?? current?.effort_levels,
+        model_options: mergeOptions(update.model_options, current?.model_options),
+        effort_levels: mergeOptions(update.effort_levels, current?.effort_levels),
     };
 }
 

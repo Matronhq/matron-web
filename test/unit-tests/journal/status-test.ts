@@ -25,6 +25,7 @@ import {
     usageShortLabel,
     worstLimit,
 } from "../../../src/journal/status";
+import type { SessionStatusOption } from "../../../src/journal/types";
 
 describe("journal session status presentation", () => {
     it("matches the Apple client's compact token and limit labels", () => {
@@ -273,6 +274,18 @@ describe("journal session status presentation", () => {
             model_options: [],
             effort_levels: [],
         });
+    });
+
+    it("ignores a /model or /effort offer it cannot read, keeping the held list", () => {
+        const held = mergeSessionStatus(undefined, { model_options: [{ value: "opus", label: "Opus" }] });
+        const garbled = [{ label: "no value" }, { value: "" }] as unknown as SessionStatusOption[];
+        expect(mergeSessionStatus(held, { model_options: garbled }).model_options).toEqual(held.model_options);
+        const notAList = "opus" as unknown as SessionStatusOption[];
+        expect(mergeSessionStatus(held, { model_options: notAList }).model_options).toEqual(held.model_options);
+        // Readable entries survive, the unreadable ones are dropped.
+        expect(mergeSessionStatus(held, { model_options: [{ value: "haiku" }, ...garbled] }).model_options).toEqual([
+            { value: "haiku" },
+        ]);
     });
 
     it("nudges to compact only strictly above the absolute token threshold", () => {
