@@ -47,7 +47,15 @@ describe("windowRange", () => {
 });
 
 /** A bottom-anchored list of fixed-height rows using the hook. */
-function List({ keys, followTail }: { keys: string[]; followTail: boolean }): React.ReactElement {
+function List({
+    keys,
+    followTail,
+    resetKey,
+}: {
+    keys: string[];
+    followTail: boolean;
+    resetKey?: string;
+}): React.ReactElement {
     const scrollRef = useRef<HTMLDivElement>(null);
     const windowed = useWindowedList({
         scrollRef,
@@ -55,6 +63,7 @@ function List({ keys, followTail }: { keys: string[]; followTail: boolean }): Re
         estimate: () => 50,
         followTail,
         anchorable: () => true,
+        resetKey,
     });
     return React.createElement(
         "div",
@@ -199,5 +208,19 @@ describe("useWindowedList", () => {
         const before = topOf(reading);
         act(() => root.render(React.createElement(List, { keys: [...rows(80, "old"), ...keys], followTail: false })));
         expect(topOf(reading)).toBe(before);
+    });
+
+    it("opens a new list at its tail even though the reader had scrolled away in the last one", () => {
+        withLayout();
+        act(() => root.render(React.createElement(List, { keys: rows(1000), followTail: true, resetKey: "a" })));
+        // Scrolled away; the owner has not caught up yet and still asks to follow the tail.
+        act(() => {
+            scroller().scrollTop = 30_000;
+            scroller().dispatchEvent(new Event("scroll", { bubbles: true }));
+        });
+        expect(mounted()).not.toContain("r999");
+        act(() => root.render(React.createElement(List, { keys: rows(1000, "b"), followTail: true, resetKey: "b" })));
+        expect(mounted().at(-1)).toBe("b999");
+        expect(scroller().scrollTop).toBe(scroller().scrollHeight - VIEWPORT);
     });
 });

@@ -89,6 +89,8 @@ interface WindowedListOptions {
      * day divider, which sits above the day's oldest loaded row) can't.
      */
     anchorable: (key: string) => boolean;
+    /** Changes when the list shows something else entirely (another conversation): start afresh. */
+    resetKey?: string;
 }
 
 interface WindowedList {
@@ -112,6 +114,7 @@ export function useWindowedList({
     estimate,
     followTail,
     anchorable,
+    resetKey,
 }: WindowedListOptions): WindowedList {
     const heights = useRef(new Map<string, number>());
     const beforeRef = useRef<HTMLLIElement>(null);
@@ -120,6 +123,15 @@ export function useWindowedList({
     // The caller learns that the reader left the tail a frame after the scroll; until then a
     // re-render would still pin to the bottom and undo the reader's scroll. Track it here too.
     const scrolledAway = useRef(false);
+    const anchor = useRef<{ key: string; offset: number; scrollTop: number } | null>(null);
+    // A new list starts unmeasured at its tail, not windowed around the previous list's offset.
+    const previousResetKey = useRef(resetKey);
+    if (resetKey !== previousResetKey.current) {
+        previousResetKey.current = resetKey;
+        viewport.current = null;
+        anchor.current = null;
+        scrolledAway.current = false;
+    }
     const previousFollowTail = useRef(followTail);
     // The caller going back to the tail (jump to bottom, sending a message) overrides it.
     if (followTail && !previousFollowTail.current) scrolledAway.current = false;
@@ -206,7 +218,6 @@ export function useWindowedList({
     // from the viewport's top. Mounting rows, measuring them and prepending history all move the
     // content; restoring the anchor keeps the reader's place. Scroll anchoring is off on the
     // scroller, because the browser would otherwise correct the same shift a second time.
-    const anchor = useRef<{ key: string; offset: number; scrollTop: number } | null>(null);
     const captureAnchor = useCallback((): void => {
         const scroller = scrollRef.current;
         const rows = mountedRows();

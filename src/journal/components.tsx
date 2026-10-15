@@ -206,6 +206,7 @@ import {
     conversationTitle,
     type DeviceDTO,
     displaySender,
+    eventSnippet,
     type EventPayload,
     type FileKind,
     fileKindFromMime,
@@ -5808,7 +5809,8 @@ function Timeline({
         });
     };
 
-    useEffect(() => {
+    // Before paint, so the first frame of the new conversation already follows its tail.
+    useLayoutEffect(() => {
         setFollow(true);
         return cancelPendingScrollFrame;
     }, [state.selectedConversationId, cancelPendingScrollFrame]);
@@ -5867,6 +5869,7 @@ function Timeline({
         estimate: estimateTimelineRow,
         followTail: isFollowingTail,
         anchorable: isAnchorableTimelineRow,
+        resetKey: state.selectedConversationId,
     });
 
     // Read state: report which rows were on screen. A layout effect, so a conversation switch
@@ -5879,6 +5882,22 @@ function Timeline({
         if (!seenConversationId || !root || !list) return;
         return observeSeenRows({ tracker: client.seen, convoId: seenConversationId, root, list });
     }, [client, seenConversationId]);
+
+    // New messages are announced through a live region of their own. The list is not one: with
+    // the transcript windowed, rows mount and unmount as the reader scrolls, and a live list would
+    // read those out as if they had just arrived. Only a newer last event in the same conversation
+    // counts, so opening a conversation and loading its history announce nothing.
+    const [arrival, setArrival] = useState("");
+    const lastEvent = useRef<{ conversationId: string; seq: number } | undefined>(undefined);
+    useEffect(() => {
+        const last = visibleEvents.at(-1);
+        const previous = lastEvent.current;
+        lastEvent.current = last && { conversationId: last.convo_id, seq: last.seq };
+        if (!last || last.convo_id !== state.selectedConversationId || last.sender.startsWith("user:")) return;
+        if (previous?.conversationId !== last.convo_id || last.seq <= previous.seq) return;
+        const text = eventSnippet(last.type, last.payload);
+        setArrival(`${displaySender(last.sender)}: ${text || "new message"}`);
+    }, [visibleEvents, state.selectedConversationId]);
 
     const loadEarlierMessages = (): void => {
         const node = scrollRef.current;
@@ -5989,8 +6008,11 @@ function Timeline({
 
     const timelineMain = (
         <main className="mj_ChatView_timeline" data-testid="timeline">
+            <div className="mj_ScreenReaderOnly" aria-live="polite" aria-atomic="true">
+                {arrival}
+            </div>
             <div className="mj_ChatView_messagePanel mj_AutoHideScrollbar" ref={scrollRef} onScroll={onScroll}>
-                <ol className="mj_ChatView_messageList" aria-live="polite" ref={listRef}>
+                <ol className="mj_ChatView_messageList" ref={listRef}>
                     {state.hasOlderHistory && (
                         <li className="mj_HistoryRow">
                             <button
