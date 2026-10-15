@@ -75,7 +75,10 @@
         }
     },
     "browserslist": [
-        "last 2 versions and fully supports es6-module"
+        "last 2 versions and fully supports es6-module",
+        "chrome >= 146",
+        "safari >= 18",
+        "ios_saf >= 18"
     ],
     "engines": {
         "node": ">=22.18"
