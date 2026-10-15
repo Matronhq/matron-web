@@ -217,6 +217,7 @@ import {
     conversationTitle,
     type DeviceDTO,
     displaySender,
+    eventSnippet,
     type EventPayload,
     type FileKind,
     fileKindFromMime,
@@ -250,6 +251,7 @@ import {
     VoiceRecordingBar,
 } from "./voice-recorder";
 import { voiceNoteSessionFor } from "./voice-note-session";
+import { useWindowedList } from "./windowing";
 
 const NAV_VIEW = { projects: "missions", decisions: "inbox", memories: "memories" } as const;
 const NAV_KEY_FOR_VIEW: Record<"missions" | "inbox" | "memories", NavKey> = {
@@ -5933,6 +5935,20 @@ function useMinDisplayDuration(active: boolean): boolean {
     return active || held;
 }
 
+type TimelineRow =
+    | { key: string; kind: "divider"; timestamp: number }
+    | { key: string; kind: "event"; event: JournalEvent; continuation: boolean; lastInSection: boolean }
+    | { key: string; kind: "pending"; message: ClientState["pendingMessages"][number] };
+
+/** Height assumed for a row that hasn't been on screen yet. */
+function estimateTimelineRow(key: string): number {
+    return key.includes(":d-") ? 40 : 96;
+}
+
+function isAnchorableTimelineRow(key: string): boolean {
+    return !key.includes(":d-");
+}
+
 function Timeline({
     client,
     state,
@@ -6020,6 +6036,37 @@ function Timeline({
             ].sort((left, right) => left.timestamp - right.timestamp),
         [visibleEvents, state.pendingMessages],
     );
+    // One entry per element in the list: a day divider before the first row of each calendar day,
+    // then the row. Windowing mounts a slice of these.
+    const rows = useMemo(() => {
+        const conversation = state.selectedConversationId ?? "";
+        const out: TimelineRow[] = [];
+        timeline.forEach((item, index) => {
+            const previous = timeline[index - 1];
+            const newDay = !previous || !sameCalendarDay(item.timestamp, previous.timestamp);
+            if (newDay) {
+                // Keyed by the day, not by its first row, so the key survives older rows of the same
+                // day arriving with "Load earlier messages".
+                const day = new Date(item.timestamp);
+                const dayKey = `${day.getFullYear()}-${day.getMonth() + 1}-${day.getDate()}`;
+                out.push({ key: `${conversation}:d-${dayKey}`, kind: "divider", timestamp: item.timestamp });
+            }
+            if (item.kind === "event") {
+                const next = timeline[index + 1];
+                out.push({
+                    key: `${conversation}:e-${item.event.seq}`,
+                    kind: "event",
+                    event: item.event,
+                    continuation: previous?.kind === "event" && previous.event.sender === item.event.sender && !newDay,
+                    lastInSection: next?.kind !== "event" || next.event.sender !== item.event.sender,
+                });
+            } else {
+                out.push({ key: `${conversation}:m-${item.message.localId}`, kind: "pending", message: item.message });
+            }
+        });
+        return out;
+    }, [timeline, state.selectedConversationId]);
+    const rowKeys = useMemo(() => rows.map((row) => row.key), [rows]);
     const answeredPromptReplies = useMemo(() => {
         const replies = new Map<string, { choice?: string }>();
         for (const event of state.events) {
@@ -6086,6 +6133,7 @@ function Timeline({
     const onScroll = (): void => {
         const node = scrollRef.current;
         if (!node) return;
+        windowed.onScroll();
         cancelPendingScrollFrame();
         const queuedConversationId = state.selectedConversationId;
         pendingScrollFrame.current = requestAnimationFrame(() => {
@@ -6095,7 +6143,8 @@ function Timeline({
         });
     };
 
-    useEffect(() => {
+    // Before paint, so the first frame of the new conversation already follows its tail.
+    useLayoutEffect(() => {
         setFollow(true);
         return cancelPendingScrollFrame;
     }, [state.selectedConversationId, cancelPendingScrollFrame]);
@@ -6147,6 +6196,16 @@ function Timeline({
         isFollowingTail,
     ]);
 
+    // Declared after the scroll effects above, so it measures once they have placed the scroller.
+    const windowed = useWindowedList({
+        scrollRef,
+        keys: rowKeys,
+        estimate: estimateTimelineRow,
+        followTail: isFollowingTail,
+        anchorable: isAnchorableTimelineRow,
+        resetKey: state.selectedConversationId,
+    });
+
     // Read state: report which rows were on screen. A layout effect, so a conversation switch
     // re-binds before any row of the new conversation can be counted under the old one. A
     // read-only subagent transcript reports nothing.
@@ -6157,6 +6216,25 @@ function Timeline({
         if (!seenConversationId || !root || !list) return;
         return observeSeenRows({ tracker: client.seen, convoId: seenConversationId, root, list });
     }, [client, seenConversationId]);
+
+    // New messages are announced through a live region of their own. The list is not one: with
+    // the transcript windowed, rows mount and unmount as the reader scrolls, and a live list would
+    // read those out as if they had just arrived. Only a newer last event in the same conversation
+    // counts, so opening a conversation and loading its history announce nothing.
+    // A repeat of the same text would not change the region, so every other announcement ends in
+    // a no-break space; a switch clears it.
+    const [arrival, setArrival] = useState("");
+    const lastEvent = useRef<{ conversationId: string; seq: number } | undefined>(undefined);
+    useEffect(() => {
+        const last = visibleEvents.at(-1);
+        const previous = lastEvent.current;
+        lastEvent.current = last && { conversationId: last.convo_id, seq: last.seq };
+        if (!last || last.convo_id !== state.selectedConversationId || last.sender.startsWith("user:")) return;
+        if (previous?.conversationId !== last.convo_id || last.seq <= previous.seq) return;
+        const text = `${displaySender(last.sender)}: ${eventSnippet(last.type, last.payload) || "new message"}`;
+        setArrival((current) => (current === text ? `${text}\u00a0` : text));
+    }, [visibleEvents, state.selectedConversationId]);
+    useLayoutEffect(() => setArrival(""), [state.selectedConversationId]);
 
     const loadEarlierMessages = (): void => {
         const node = scrollRef.current;
@@ -6173,13 +6251,14 @@ function Timeline({
 
     // Jump to a message: once the client has loaded the history holding the target seq it hands
     // over `focusTarget`; scroll that row into view and flash it. Rows are found by their
-    // data-event-id, so the memoised rows take no extra props. Off-screen rows may be laid out at
-    // an estimated height (content-visibility), and sizing them for real as they come into view
-    // moves the target, so the position is re-checked each frame until it holds still — and given
-    // up the moment the user scrolls themself.
+    // data-event-id, so the memoised rows take no extra props. The row may not be mounted (the
+    // transcript is windowed), so it is revealed first at its estimated position. Sizing rows for
+    // real as they mount moves the target, so the position is re-checked each frame until it holds
+    // still — and given up the moment the user scrolls themself.
     const focusRun = useRef(0);
     const focusHighlight = useRef<{ row: HTMLElement; timer: ReturnType<typeof setTimeout> } | undefined>(undefined);
     const focusTarget = state.focusTarget;
+    const { reveal } = windowed;
     useLayoutEffect(() => {
         const node = scrollRef.current;
         if (!node || !focusTarget || focusTarget.conversationId !== state.selectedConversationId) return;
@@ -6188,14 +6267,28 @@ function Timeline({
             visibleEvents.map((event) => event.seq),
             focusTarget.seq,
         );
-        const rowFor = (): HTMLElement | null =>
-            seq === undefined ? null : node.querySelector<HTMLElement>(`[data-event-id="${seq}"]`);
-        const row = rowFor();
-        if (!row) return;
+        const index = seq === undefined ? -1 : rowKeys.indexOf(`${state.selectedConversationId}:e-${seq}`);
+        if (index < 0) return;
+        const rowFor = (): HTMLElement | null => node.querySelector<HTMLElement>(`[data-event-id="${seq}"]`);
         cancelPendingScrollFrame();
         historyScrollAnchor.current = undefined;
         historyScrollRestored.current = false;
         setFollow(false);
+        if (!rowFor()) reveal(index);
+
+        const flash = (row: HTMLElement): void => {
+            const previous = focusHighlight.current;
+            if (previous) {
+                clearTimeout(previous.timer);
+                previous.row.classList.remove("mj_EventTile_focused");
+            }
+            row.classList.add("mj_EventTile_focused");
+            const timer = setTimeout(() => {
+                row.classList.remove("mj_EventTile_focused");
+                if (focusHighlight.current?.row === row) focusHighlight.current = undefined;
+            }, FOCUS_HIGHLIGHT_MS);
+            focusHighlight.current = { row, timer };
+        };
 
         const run = ++focusRun.current;
         const stop = (): void => {
@@ -6205,9 +6298,15 @@ function Timeline({
         for (const type of userScroll) node.addEventListener(type, stop, { once: true, passive: true });
         let frames = 0;
         let still = 0;
+        let flashed = false;
         const place = (): void => {
-            const target = focusRun.current === run ? rowFor() : null;
+            const live = focusRun.current === run;
+            const target = live ? rowFor() : null;
             if (target) {
+                if (!flashed) {
+                    flash(target);
+                    flashed = true;
+                }
                 const top = focusScrollTop(node, target);
                 if (Math.abs(node.scrollTop - top) > 1) {
                     node.scrollTop = top;
@@ -6216,26 +6315,15 @@ function Timeline({
                     still += 1;
                 }
             }
-            if (target && still < 3 && ++frames < 60) {
+            // Until the revealed row has mounted, keep waiting for it (within the frame budget).
+            if (live && still < 3 && ++frames < 60) {
                 requestAnimationFrame(place);
                 return;
             }
             for (const type of userScroll) node.removeEventListener(type, stop);
         };
         place();
-
-        const previous = focusHighlight.current;
-        if (previous) {
-            clearTimeout(previous.timer);
-            previous.row.classList.remove("mj_EventTile_focused");
-        }
-        row.classList.add("mj_EventTile_focused");
-        const timer = setTimeout(() => {
-            row.classList.remove("mj_EventTile_focused");
-            if (focusHighlight.current?.row === row) focusHighlight.current = undefined;
-        }, FOCUS_HIGHLIGHT_MS);
-        focusHighlight.current = { row, timer };
-    }, [client, focusTarget, state.selectedConversationId, visibleEvents, cancelPendingScrollFrame]);
+    }, [client, focusTarget, state.selectedConversationId, visibleEvents, rowKeys, reveal, cancelPendingScrollFrame]);
     useEffect(
         () => () => {
             focusRun.current += 1;
@@ -6257,8 +6345,11 @@ function Timeline({
 
     const timelineMain = (
         <main className="mj_ChatView_timeline" data-testid="timeline">
+            <div className="mj_ScreenReaderOnly" aria-live="polite" aria-atomic="true">
+                {arrival}
+            </div>
             <div className="mj_ChatView_messagePanel mj_AutoHideScrollbar" ref={scrollRef} onScroll={onScroll}>
-                <ol className="mj_ChatView_messageList" aria-live="polite" ref={listRef}>
+                <ol className="mj_ChatView_messageList" ref={listRef}>
                     {state.hasOlderHistory && (
                         <li className="mj_HistoryRow">
                             <button
@@ -6270,71 +6361,74 @@ function Timeline({
                             </button>
                         </li>
                     )}
-                    {timeline.map((item, index) => {
-                        const previous = timeline[index - 1];
-                        // A day divider precedes the first row of each new calendar day (§ upload-first
-                        // ref): a centred dated label flanked by hairline rules.
-                        const divider =
-                            !previous || !sameCalendarDay(item.timestamp, previous.timestamp) ? (
-                                <li className="mj_DateDivider" role="separator">
+                    <li
+                        className="mj_TimelineSpacer"
+                        aria-hidden="true"
+                        ref={windowed.beforeRef}
+                        style={{ height: windowed.range.before }}
+                    />
+                    {rows.slice(windowed.range.start, windowed.range.end).map((row) => {
+                        if (row.kind === "divider") {
+                            // A centred dated label flanked by hairline rules (§ upload-first ref).
+                            return (
+                                <li key={row.key} className="mj_DateDivider" role="separator">
                                     <span className="mj_DateDivider_rule" aria-hidden="true" />
-                                    <span className="mj_DateDivider_label">{formatDayDivider(item.timestamp)}</span>
+                                    <span className="mj_DateDivider_label">{formatDayDivider(row.timestamp)}</span>
                                     <span className="mj_DateDivider_rule" aria-hidden="true" />
                                 </li>
-                            ) : null;
-                        if (item.kind === "event") {
-                            const next = timeline[index + 1];
-                            return (
-                                <React.Fragment key={`e-${item.event.seq}`}>
-                                    {divider}
-                                    <MemoEventRow
-                                        client={client}
-                                        event={item.event}
-                                        answeredPromptReplies={answeredPromptReplies}
-                                        spawnOutcomes={spawnOutcomes}
-                                        agentChatResolutions={agentChatResolutions}
-                                        coordinatorDecisions={coordinatorDecisions}
-                                        itemCards={itemCards}
-                                        isReadOnly={isReadOnly}
-                                        resolvedAction={resolvedAction}
-                                        continuation={
-                                            previous?.kind === "event" &&
-                                            previous.event.sender === item.event.sender &&
-                                            !divider
-                                        }
-                                        lastInSection={
-                                            next?.kind !== "event" || next.event.sender !== item.event.sender
-                                        }
-                                        rowHandlers={menu.rowHandlers}
-                                    />
-                                </React.Fragment>
                             );
                         }
-                        const message = item.message;
-                        return (
-                            <React.Fragment key={`m-${message.localId}`}>
-                                {divider}
-                                {message.kind === "image" || message.kind === "file" ? (
-                                    <PendingAttachment client={client} message={message} isReadOnly={isReadOnly} />
-                                ) : (
-                                    <li
-                                        className="mj_EventTile mj_EventTile_sending mj_EventTile_lastInSection"
-                                        data-layout="bubble"
-                                        data-self="true"
-                                    >
-                                        <div className="mj_EventTile_line">
-                                            <div className="mj_TextBody mj_EventTile_content">
-                                                <div className="mj_Markdown">
-                                                    <MarkdownBody text={message.body} label={message.localId} />
-                                                </div>
-                                            </div>
+                        if (row.kind === "event") {
+                            return (
+                                <MemoEventRow
+                                    key={row.key}
+                                    client={client}
+                                    event={row.event}
+                                    answeredPromptReplies={answeredPromptReplies}
+                                    spawnOutcomes={spawnOutcomes}
+                                    agentChatResolutions={agentChatResolutions}
+                                    coordinatorDecisions={coordinatorDecisions}
+                                    itemCards={itemCards}
+                                    isReadOnly={isReadOnly}
+                                    resolvedAction={resolvedAction}
+                                    continuation={row.continuation}
+                                    lastInSection={row.lastInSection}
+                                    rowHandlers={menu.rowHandlers}
+                                />
+                            );
+                        }
+                        const message = row.message;
+                        return message.kind === "image" || message.kind === "file" ? (
+                            <PendingAttachment
+                                key={row.key}
+                                client={client}
+                                message={message}
+                                isReadOnly={isReadOnly}
+                            />
+                        ) : (
+                            <li
+                                key={row.key}
+                                className="mj_EventTile mj_EventTile_sending mj_EventTile_lastInSection"
+                                data-layout="bubble"
+                                data-self="true"
+                            >
+                                <div className="mj_EventTile_line">
+                                    <div className="mj_TextBody mj_EventTile_content">
+                                        <div className="mj_Markdown">
+                                            <MarkdownBody text={message.body} label={message.localId} />
                                         </div>
-                                        <span className="mj_SendingLabel">Sending…</span>
-                                    </li>
-                                )}
-                            </React.Fragment>
+                                    </div>
+                                </div>
+                                <span className="mj_SendingLabel">Sending…</span>
+                            </li>
                         );
                     })}
+                    <li
+                        className="mj_TimelineSpacer"
+                        aria-hidden="true"
+                        ref={windowed.afterRef}
+                        style={{ height: windowed.range.after }}
+                    />
                     {Object.values(state.textStreams).map((text, index) => (
                         <li
                             className="mj_EventTile mj_EventTile_lastInSection"

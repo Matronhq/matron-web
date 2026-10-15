@@ -469,33 +469,40 @@ describe("useAdaptiveHeader", () => {
         document.body.append(container);
         const root = createRoot(container);
         mountedProbes.push({ container, root });
+        // The transcript watches its own size too; count only the header's observers.
+        const headerObservers = (): ObserverRecord[] =>
+            observers.filter((observer) =>
+                observer.observe.mock.calls.some(([target]) =>
+                    (target as Element).classList.contains("mj_ChatView_body"),
+                ),
+            );
 
         await act(async () => root.render(React.createElement(MatronApp, { client })));
         expect(container.querySelector(".mj_ChatView_body")).toBeNull();
-        expect(observers).toHaveLength(0);
+        expect(headerObservers()).toHaveLength(0);
 
         await act(async () => client.selectConversation(PARENT.id));
         const firstBody = container.querySelector<HTMLElement>(".mj_ChatView_body")!;
         expect(firstBody).not.toBeNull();
-        expect(observers).toHaveLength(1);
-        expect(observers[0].observe).toHaveBeenCalledWith(firstBody);
+        expect(headerObservers()).toHaveLength(1);
+        expect(headerObservers()[0].observe).toHaveBeenCalledWith(firstBody);
         expect(container.textContent).toContain("Finished child");
 
-        resize(observers[0], firstBody, 560);
+        resize(headerObservers()[0], firstBody, 560);
         await flushFrames();
         expect(container.querySelector(".mj_UsageCluster_collapsed")).not.toBeNull();
 
         await act(async () => client.clearSelection());
         expect(container.querySelector(".mj_ChatView_body")).toBeNull();
-        expect(observers[0].disconnect).toHaveBeenCalledTimes(1);
+        expect(headerObservers()[0].disconnect).toHaveBeenCalledTimes(1);
 
         await act(async () => client.selectConversation(PARENT.id));
         const secondBody = container.querySelector<HTMLElement>(".mj_ChatView_body")!;
         expect(secondBody).not.toBe(firstBody);
-        expect(observers).toHaveLength(2);
-        expect(observers[1].observe).toHaveBeenCalledWith(secondBody);
+        expect(headerObservers()).toHaveLength(2);
+        expect(headerObservers()[1].observe).toHaveBeenCalledWith(secondBody);
 
-        resize(observers[1], secondBody, 560);
+        resize(headerObservers()[1], secondBody, 560);
         await flushFrames();
         expect(container.querySelector(".mj_UsageCluster_collapsed")).not.toBeNull();
     });
