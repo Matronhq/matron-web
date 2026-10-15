@@ -505,6 +505,200 @@ textarea {
     right: 0;
 }
 
+/* "Rooms · n" and the notifications bell, beside the "⋯" (ChatHeaderRooms.tsx). */
+.mj_RoomsControl,
+.mj_NotifyBell {
+    position: relative;
+    display: inline-flex;
+    flex: 0 0 auto;
+}
+
+.mj_RoomsControl_trigger {
+    height: 26px;
+    border: 0;
+    border-radius: 999px;
+    background: var(--mj-color-bg-subtle-secondary);
+    color: var(--mj-color-text-secondary);
+    padding: 0 10px;
+    font: 500 12px/16px var(--mj-font-family-ui);
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.mj_RoomsControl_trigger:hover {
+    background: var(--mj-color-bg-subtle-primary);
+}
+
+.mj_NotifyBell_trigger svg {
+    width: 18px;
+    height: 18px;
+}
+
+.mj_NotifyBell_trigger_silenced {
+    color: var(--mj-color-text-secondary);
+}
+
+.mj_RoomsControl .mj_HeaderMenu,
+.mj_NotifyBell .mj_HeaderMenu {
+    top: calc(100% + var(--mj-space-1x));
+    right: 0;
+}
+
+.mj_RoomsControl .mj_HeaderMenu {
+    width: min(340px, calc(100vw - 32px));
+    gap: 2px;
+}
+
+.mj_RoomsMenu .mj_RoomsMenu_item {
+    display: flex;
+    min-height: 0;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 2px;
+    background: transparent;
+    padding: 6px var(--mj-space-2x);
+    text-align: left;
+}
+
+.mj_RoomsMenu .mj_RoomsMenu_item:hover,
+.mj_RoomsMenu .mj_RoomsMenu_item:focus-visible {
+    background: var(--mj-color-bg-subtle-secondary);
+}
+
+.mj_RoomsMenu_head {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: var(--mj-space-2x);
+}
+
+.mj_RoomsMenu .mj_RoomsMenu_dot_running {
+    background: var(--mj-color-text-action-accent);
+}
+
+.mj_RoomsMenu .mj_RoomsMenu_dot_waiting {
+    background: var(--mj-color-usage-medium);
+}
+
+.mj_RoomsMenu .mj_RoomsMenu_title {
+    flex: 1 1 auto;
+    min-width: 0;
+    color: var(--mj-color-text-primary);
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.mj_RoomsMenu_muted {
+    flex: none;
+    width: 14px;
+    height: 14px;
+    color: var(--mj-color-icon-secondary);
+}
+
+.mj_RoomsMenu .mj_RoomsMenu_time {
+    flex: none;
+    color: var(--mj-color-text-tertiary);
+    font: 400 12px/16px var(--mj-font-family-ui);
+}
+
+.mj_RoomsMenu .mj_RoomsMenu_peers {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    padding-left: calc(8px + var(--mj-space-2x));
+    color: var(--mj-color-text-secondary);
+    font: 400 12px/16px var(--mj-font-family-ui);
+}
+
+.mj_RoomsMenu .mj_RoomsMenu_peer,
+.mj_RoomsMenu .mj_RoomsMenu_peer span {
+    overflow: visible;
+}
+
+.mj_NotifyBell .mj_HeaderMenu {
+    width: min(260px, calc(100vw - 32px));
+    gap: var(--mj-space-2x);
+}
+
+.mj_NotifyMenu_group {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.mj_NotifyMenu_group + .mj_NotifyMenu_group {
+    border-top: 1px solid var(--mj-color-border-subtle);
+    padding-top: var(--mj-space-2x);
+}
+
+.mj_NotifyMenu .mj_NotifyMenu_label {
+    padding: 0 var(--mj-space-2x) 2px;
+    color: var(--mj-color-text-tertiary);
+    font: 600 11px/16px var(--mj-font-family-ui);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.mj_NotifyMenu .mj_NotifyMenu_item {
+    display: flex;
+    align-items: center;
+    gap: var(--mj-space-2x);
+    background: transparent;
+    padding: 0 var(--mj-space-2x);
+    text-align: left;
+}
+
+.mj_NotifyMenu .mj_NotifyMenu_item:hover,
+.mj_NotifyMenu .mj_NotifyMenu_item:focus-visible {
+    background: var(--mj-color-bg-subtle-secondary);
+}
+
+.mj_NotifyMenu_check {
+    display: inline-flex;
+    width: 14px;
+    flex: none;
+    color: var(--mj-color-text-action-accent);
+}
+
+.mj_NotifyMenu_error {
+    margin: 0;
+    color: var(--mj-color-text-critical-primary);
+    font: 400 12px/16px var(--mj-font-family-ui);
+}
+
+/* A narrow header folds Rooms and the bell into the "⋯" menu, above the actions. */
+.mj_HeaderMenu.mj_ConversationMenu_withSections {
+    width: min(320px, calc(100vw - var(--mj-space-4x)));
+}
+
+.mj_OverflowSection {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 4px 0;
+}
+
+.mj_OverflowSection .mj_OverflowSection_label {
+    padding: 0 var(--mj-space-2x) 2px;
+    color: var(--mj-color-text-tertiary);
+    font: 600 11px/16px var(--mj-font-family-ui);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.mj_OverflowSection_separator {
+    flex: none;
+    height: 1px;
+    margin: 4px 0;
+    background: var(--mj-color-border-subtle);
+}
+
+.mj_CompactButton.mj_CompactButton_iconOnly {
+    width: 28px;
+    padding: 0;
+}
+
 /* Session run-state in the subtitle — teal while running (v3 mock), muted otherwise. */
 .mj_HeaderState {
     color: var(--mj-color-text-secondary);
@@ -2541,6 +2735,14 @@ textarea {
     font: var(--mj-font-body-sm-regular);
 }
 
+/* A sheet or pane whose code could not be fetched (deferred-ui.tsx). */
+.mj_DeferredFailed {
+    margin: 0;
+    padding: var(--mj-space-3x);
+    color: var(--mj-color-text-critical-primary);
+    font: var(--mj-font-body-sm-regular);
+}
+
 /* v5 new-session sheet: the upload-dialog shell + a fully themed form. The load-bearing
    fix is §10.4 — the native inputs were unstyled, so they inherited the UA white and
    vanished on dark ("Agent default" white-on-dark). Every input/checkbox/label now sets
@@ -3984,6 +4186,151 @@ button.mj_File {
     margin-inline: var(--mj-space-1x);
 }
 
+/* The main column makes room under the page for the app-wide voice-note bar (Mac: the detail
+   column's bottom inset), rather than floating it over the composer. */
+.mj_ChatView_wrapper_voiceNote {
+    flex-direction: column;
+}
+
+.mj_ChatView_wrapper_voiceNote > :not(.mj_VoiceNoteBar) {
+    width: 100%;
+    min-height: 0;
+    flex: 1 1 0;
+}
+
+.mj_VoiceNoteBar {
+    display: flex;
+    flex: 0 0 auto;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: var(--mj-space-2x) var(--mj-space-4x);
+    background: var(--mj-color-bg-chat-canvas);
+}
+
+/* Mac VoiceNoteIndicator: a capsule up to 480pt wide — where the note goes, the running time,
+   Cancel and Send; the rest of it opens the conversation. */
+.mj_VoiceNoteIndicator {
+    display: flex;
+    width: 100%;
+    max-width: 480px;
+    box-sizing: border-box;
+    align-items: center;
+    gap: var(--mj-space-2x);
+    padding: 6px var(--mj-space-2x) 6px 14px;
+    border: 1px solid var(--mj-color-border-subtle);
+    border-radius: var(--mj-radius-pill);
+    background: var(--mj-color-bg-canvas-raised);
+    box-shadow: 0 2px 6px rgb(0 0 0 / 0.12);
+    color: var(--mj-color-text-primary);
+}
+
+.mj_VoiceNoteIndicator_open {
+    display: flex;
+    min-width: 0;
+    flex: 1 1 auto;
+    align-items: center;
+    gap: 10px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    text-align: start;
+}
+
+.mj_VoiceNoteIndicator_text {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+}
+
+.mj_VoiceNoteIndicator_headline {
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 18px;
+}
+
+.mj_VoiceNoteIndicator_time {
+    margin-inline-start: 4px;
+    font-family: var(--mj-font-family-mono);
+    font-variant-numeric: tabular-nums;
+}
+
+.mj_VoiceNoteIndicator_subtitle {
+    overflow: hidden;
+    color: var(--mj-color-text-secondary);
+    font-size: 12px;
+    line-height: 16px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_VoiceNoteIndicator_warning {
+    width: 18px;
+    height: 18px;
+    flex: 0 0 auto;
+    color: var(--mj-color-usage-medium);
+}
+
+.mj_VoiceNoteIndicator_action {
+    display: inline-flex;
+    width: 32px;
+    height: 32px;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 0;
+    border-radius: var(--mj-radius-pill);
+    background: transparent;
+    color: var(--mj-color-icon-secondary);
+}
+
+.mj_VoiceNoteIndicator_action svg {
+    width: 22px;
+    height: 22px;
+}
+
+.mj_VoiceNoteIndicator_send {
+    color: var(--mj-color-icon-accent-primary);
+}
+
+.mj_VoiceNoteIndicator_send svg {
+    width: 28px;
+    height: 28px;
+}
+
+.mj_VoiceNoteIndicator_action:hover:not(:disabled) {
+    background: var(--mj-color-bg-subtle-primary);
+}
+
+.mj_VoiceNoteIndicator_action:disabled {
+    cursor: default;
+    opacity: 0.5;
+}
+
+.mj_VoiceNoteIndicator_textAction {
+    flex: 0 0 auto;
+    padding: 4px 6px;
+    border: 0;
+    background: transparent;
+    color: var(--mj-color-text-secondary);
+    font-size: 13px;
+}
+
+.mj_VoiceNoteIndicator_retry {
+    color: var(--mj-color-text-action-accent);
+    font-weight: 600;
+}
+
+.mj_VoiceNoteIndicator_open:focus-visible,
+.mj_VoiceNoteIndicator_action:focus-visible,
+.mj_VoiceNoteIndicator_textAction:focus-visible {
+    border-radius: var(--mj-radius-sm);
+    outline: 2px solid var(--mj-color-icon-accent-primary);
+    outline-offset: 2px;
+}
+
 .mj_ScreenReaderOnly {
     position: absolute;
     width: 1px;
@@ -4118,6 +4465,31 @@ button.mj_File {
     .mj_ResizeHandle,
     .mj_Chat_mobileHidden {
         display: none;
+    }
+
+    /* Back on the conversation list the main column is hidden, but a live voice note's bar stays:
+       pinned along the bottom of the screen, the rest of the column still out of the way. */
+    .mj_Chat_mobileHidden.mj_ChatView_wrapper_voiceNote {
+        display: flex;
+        position: fixed;
+        z-index: 10;
+        right: 0;
+        bottom: 0;
+        left: 0;
+    }
+
+    .mj_Chat_mobileHidden.mj_ChatView_wrapper_voiceNote > :not(.mj_VoiceNoteBar) {
+        display: none;
+    }
+
+    .mj_Chat_mobileHidden.mj_ChatView_wrapper_voiceNote > .mj_VoiceNoteBar {
+        padding-bottom: calc(var(--mj-space-2x) + env(safe-area-inset-bottom, 0px));
+    }
+
+    /* The list scrolls clear of the pinned bar: its last rows can still be reached. */
+    .mj_App:has(> .mj_Chat_mobileHidden.mj_ChatView_wrapper_voiceNote) > .mj_Sidebar_outerWrapper {
+        box-sizing: border-box;
+        padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px));
     }
 
     .mj_BackButton {
@@ -4887,4 +5259,324 @@ button.mj_TrackerAttachmentChip_preview {
         min-width: 0;
         border-left: 0;
     }
+}
+
+/* — Subtask line: a bridge "Subtask" message drawn as a card that opens its subagent — */
+.mj_SubtaskCard {
+    display: flex;
+    width: 100%;
+    max-width: 520px;
+    align-items: center;
+    gap: var(--mj-space-2x);
+    box-sizing: border-box;
+    border: 1px solid color-mix(in srgb, var(--mj-color-text-action-accent) 20%, transparent);
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--mj-color-text-action-accent) 8%, transparent);
+    color: var(--mj-color-text-primary);
+    cursor: pointer;
+    padding: var(--mj-space-2x) var(--mj-space-3x);
+    text-align: left;
+}
+.mj_SubtaskCard:hover {
+    background: color-mix(in srgb, var(--mj-color-text-action-accent) 14%, transparent);
+}
+.mj_SubtaskCard_icon {
+    width: 18px;
+    height: 18px;
+    flex: 0 0 auto;
+    color: var(--mj-color-text-action-accent);
+}
+.mj_SubtaskCard_text {
+    display: flex;
+    min-width: 0;
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: 2px;
+}
+.mj_SubtaskCard_title {
+    display: -webkit-box;
+    overflow: hidden;
+    font: var(--mj-font-body-strong);
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+}
+.mj_SubtaskCard_state {
+    color: var(--mj-color-text-secondary);
+    font: var(--mj-font-body-xs-regular);
+}
+.mj_SubtaskCard_done {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 auto;
+    color: var(--mj-color-text-success);
+}
+.mj_SubtaskCard_chevron {
+    width: 14px;
+    height: 14px;
+    flex: 0 0 auto;
+    color: var(--mj-color-icon-tertiary);
+}
+
+/* — The subagent pane beside its parent chat — */
+.mj_SubChatPane {
+    display: flex;
+    flex: 0 0 auto;
+    flex-direction: column;
+    box-sizing: border-box;
+    min-width: 0;
+    height: 100%;
+    min-height: 0;
+    background: var(--mj-color-bg-chat-canvas, var(--mj-color-bg-canvas-default));
+}
+.mj_SubChatPane_resizer {
+    border-left: 1px solid var(--mj-color-border-interactive-secondary);
+}
+/* The chat area is too narrow for both: the pane covers the chat (the chat stays mounted under it). */
+.mj_SubChatPane_covering {
+    position: fixed;
+    z-index: 40;
+    right: 0;
+    width: auto;
+}
+.mj_SubChatPane_header {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: var(--mj-space-2x);
+    border-bottom: 1px solid var(--mj-color-border-subtle);
+    padding: var(--mj-space-2x) var(--mj-space-3x);
+}
+.mj_SubChatPane_heading {
+    display: flex;
+    min-width: 0;
+    flex: 1 1 auto;
+    flex-direction: column;
+}
+.mj_SubChatPane_title {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: var(--mj-space-2x);
+    margin: 0;
+    color: var(--mj-color-text-primary);
+    font: var(--mj-font-body-strong);
+}
+.mj_SubChatPane_titleText {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.mj_SubChatPane_state {
+    color: var(--mj-color-text-secondary);
+    font: var(--mj-font-body-xs-regular);
+}
+.mj_SubChatPane_switch {
+    max-width: 160px;
+    flex: 0 1 auto;
+    border: 1px solid var(--mj-color-border-interactive-secondary);
+    border-radius: var(--mj-radius-md);
+    background: var(--mj-color-bg-canvas-raised);
+    color: var(--mj-color-text-primary);
+    font: var(--mj-font-body-xs-regular);
+    padding: 2px var(--mj-space-1x);
+}
+.mj_SubChatPane_close {
+    flex: 0 0 auto;
+}
+.mj_SubChatPane_body {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto;
+    padding: var(--mj-space-3x) var(--mj-space-4x);
+    scrollbar-color: var(--mj-scrollbar) transparent;
+}
+.mj_SubChatPane_list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--mj-space-3x);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+.mj_SubChatPane_row {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+.mj_SubChatPane_row[data-self="true"] {
+    align-self: flex-end;
+    max-width: 85%;
+    border-radius: var(--mj-radius-bubble);
+    background: var(--mj-color-bg-subtle-primary);
+    padding: var(--mj-space-2x) var(--mj-space-3x);
+}
+.mj_SubChatPane_empty {
+    margin: var(--mj-space-6x) 0;
+    color: var(--mj-color-text-secondary);
+    text-align: center;
+}
+
+/* — The conversation's Media / Files / Links browser — */
+.mj_MediaBrowser_scrim {
+    position: fixed;
+    z-index: 50;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--mj-scrim-modal);
+}
+.mj_MediaBrowser {
+    display: flex;
+    width: min(640px, calc(100vw - 32px));
+    height: min(520px, calc(100dvh - 32px));
+    box-sizing: border-box;
+    flex-direction: column;
+    overflow: hidden;
+    border-radius: var(--mj-radius-popover);
+    background: var(--mj-color-bg-canvas-raised);
+    box-shadow: var(--mj-shadow-lg);
+    color: var(--mj-color-text-primary);
+}
+.mj_MediaBrowser_head {
+    position: relative;
+    display: flex;
+    height: 52px;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    padding: 0 var(--mj-space-4x);
+}
+.mj_MediaBrowser_tabs {
+    display: inline-flex;
+    gap: 2px;
+    border-radius: var(--mj-radius-md);
+    background: var(--mj-color-bg-subtle-primary);
+    padding: 2px;
+}
+.mj_MediaBrowser_tab {
+    min-width: 72px;
+    border: 0;
+    border-radius: calc(var(--mj-radius-md) - 2px);
+    background: transparent;
+    color: var(--mj-color-text-secondary);
+    cursor: pointer;
+    font: var(--mj-font-body-sm-regular);
+    padding: 3px var(--mj-space-3x);
+}
+.mj_MediaBrowser_tab[aria-selected="true"] {
+    background: var(--mj-color-bg-canvas-raised);
+    box-shadow: 0 1px 2px rgb(0 0 0 / 12%);
+    color: var(--mj-color-text-primary);
+}
+.mj_MediaBrowser_done {
+    position: absolute;
+    right: var(--mj-space-4x);
+    border: 0;
+    background: transparent;
+    color: var(--mj-color-text-action-accent);
+    cursor: pointer;
+    font: 600 13px/17px var(--mj-font-family-ui);
+}
+.mj_MediaBrowser_body {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto;
+    border-top: 1px solid var(--mj-color-border-subtle);
+}
+.mj_MediaBrowser_grid {
+    display: grid;
+    gap: 2px;
+    grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+}
+.mj_MediaBrowser_thumb {
+    display: flex;
+    overflow: hidden;
+    align-items: center;
+    justify-content: center;
+    aspect-ratio: 1;
+    border: 0;
+    background: var(--mj-color-bg-subtle-secondary);
+    color: var(--mj-color-icon-tertiary);
+    cursor: pointer;
+    padding: 0;
+}
+.mj_MediaBrowser_thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+.mj_MediaBrowser_thumb svg {
+    width: 24px;
+    height: 24px;
+}
+.mj_MediaBrowser_thumb_expired {
+    cursor: default;
+}
+.mj_MediaBrowser_list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+.mj_MediaBrowser_file {
+    display: flex;
+    align-items: center;
+    gap: var(--mj-space-2x);
+    border-bottom: 1px solid var(--mj-color-border-subtle);
+    padding: var(--mj-space-2x) var(--mj-space-4x);
+}
+.mj_MediaBrowser_link {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    border-bottom: 1px solid var(--mj-color-border-subtle);
+    color: inherit;
+    padding: var(--mj-space-2x) var(--mj-space-4x);
+    text-decoration: none;
+}
+.mj_MediaBrowser_link:hover {
+    background: var(--mj-state-hover);
+}
+.mj_MediaBrowser_linkUrl,
+.mj_MediaBrowser_linkContext {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.mj_MediaBrowser_linkUrl {
+    color: var(--mj-color-text-action-accent);
+    font: var(--mj-font-body-sm-regular);
+}
+.mj_MediaBrowser_linkContext {
+    color: var(--mj-color-text-secondary);
+    font: var(--mj-font-body-xs-regular);
+}
+.mj_MediaBrowser_linkTime {
+    color: var(--mj-color-text-tertiary);
+    font: var(--mj-font-body-xs-regular);
+}
+.mj_MediaBrowser_empty,
+.mj_MediaBrowser_loading {
+    display: flex;
+    height: 100%;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--mj-space-2x);
+    margin: 0;
+    color: var(--mj-color-text-secondary);
+}
+.mj_MediaBrowser_empty svg {
+    width: 32px;
+    height: 32px;
+    color: var(--mj-color-icon-tertiary);
+}
+.mj_MediaBrowser_empty p {
+    margin: 0;
+    font: var(--mj-font-body-strong);
+}
+.mj_SubChatPane_resizer:focus-visible {
+    outline: none;
+}
+.mj_SubChatPane_resizer:focus-visible::after {
+    background: var(--mj-color-text-action-accent);
 }
