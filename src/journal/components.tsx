@@ -5895,13 +5895,14 @@ function Timeline({
 
     // Jump to a message: once the client has loaded the history holding the target seq it hands
     // over `focusTarget`; scroll that row into view and flash it. Rows are found by their
-    // data-event-id, so the memoised rows take no extra props. Off-screen rows may be laid out at
-    // an estimated height (content-visibility), and sizing them for real as they come into view
-    // moves the target, so the position is re-checked each frame until it holds still — and given
-    // up the moment the user scrolls themself.
+    // data-event-id, so the memoised rows take no extra props. The row may not be mounted (the
+    // transcript is windowed), so it is revealed first at its estimated position. Sizing rows for
+    // real as they mount moves the target, so the position is re-checked each frame until it holds
+    // still — and given up the moment the user scrolls themself.
     const focusRun = useRef(0);
     const focusHighlight = useRef<{ row: HTMLElement; timer: ReturnType<typeof setTimeout> } | undefined>(undefined);
     const focusTarget = state.focusTarget;
+    const { reveal } = windowed;
     useLayoutEffect(() => {
         const node = scrollRef.current;
         if (!node || !focusTarget || focusTarget.conversationId !== state.selectedConversationId) return;
@@ -5910,14 +5911,28 @@ function Timeline({
             visibleEvents.map((event) => event.seq),
             focusTarget.seq,
         );
-        const rowFor = (): HTMLElement | null =>
-            seq === undefined ? null : node.querySelector<HTMLElement>(`[data-event-id="${seq}"]`);
-        const row = rowFor();
-        if (!row) return;
+        const index = seq === undefined ? -1 : rowKeys.indexOf(`${state.selectedConversationId}:e-${seq}`);
+        if (index < 0) return;
+        const rowFor = (): HTMLElement | null => node.querySelector<HTMLElement>(`[data-event-id="${seq}"]`);
         cancelPendingScrollFrame();
         historyScrollAnchor.current = undefined;
         historyScrollRestored.current = false;
         setFollow(false);
+        if (!rowFor()) reveal(index);
+
+        const flash = (row: HTMLElement): void => {
+            const previous = focusHighlight.current;
+            if (previous) {
+                clearTimeout(previous.timer);
+                previous.row.classList.remove("mj_EventTile_focused");
+            }
+            row.classList.add("mj_EventTile_focused");
+            const timer = setTimeout(() => {
+                row.classList.remove("mj_EventTile_focused");
+                if (focusHighlight.current?.row === row) focusHighlight.current = undefined;
+            }, FOCUS_HIGHLIGHT_MS);
+            focusHighlight.current = { row, timer };
+        };
 
         const run = ++focusRun.current;
         const stop = (): void => {
@@ -5927,9 +5942,15 @@ function Timeline({
         for (const type of userScroll) node.addEventListener(type, stop, { once: true, passive: true });
         let frames = 0;
         let still = 0;
+        let flashed = false;
         const place = (): void => {
-            const target = focusRun.current === run ? rowFor() : null;
+            const live = focusRun.current === run;
+            const target = live ? rowFor() : null;
             if (target) {
+                if (!flashed) {
+                    flash(target);
+                    flashed = true;
+                }
                 const top = focusScrollTop(node, target);
                 if (Math.abs(node.scrollTop - top) > 1) {
                     node.scrollTop = top;
@@ -5938,26 +5959,15 @@ function Timeline({
                     still += 1;
                 }
             }
-            if (target && still < 3 && ++frames < 60) {
+            // Until the revealed row has mounted, keep waiting for it (within the frame budget).
+            if (live && still < 3 && ++frames < 60) {
                 requestAnimationFrame(place);
                 return;
             }
             for (const type of userScroll) node.removeEventListener(type, stop);
         };
         place();
-
-        const previous = focusHighlight.current;
-        if (previous) {
-            clearTimeout(previous.timer);
-            previous.row.classList.remove("mj_EventTile_focused");
-        }
-        row.classList.add("mj_EventTile_focused");
-        const timer = setTimeout(() => {
-            row.classList.remove("mj_EventTile_focused");
-            if (focusHighlight.current?.row === row) focusHighlight.current = undefined;
-        }, FOCUS_HIGHLIGHT_MS);
-        focusHighlight.current = { row, timer };
-    }, [client, focusTarget, state.selectedConversationId, visibleEvents, cancelPendingScrollFrame]);
+    }, [client, focusTarget, state.selectedConversationId, visibleEvents, rowKeys, reveal, cancelPendingScrollFrame]);
     useEffect(
         () => () => {
             focusRun.current += 1;

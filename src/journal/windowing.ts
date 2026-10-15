@@ -154,13 +154,25 @@ export function useWindowedList({
         followTailRef.current = following;
     });
 
+    /**
+     * Whether the rows are laid out. Not when the scroller is hidden, nor without a layout engine
+     * (jsdom), where every offset reads 0 even if a test gives the scroller a height.
+     */
+    const hasLayout = useCallback((): boolean => {
+        const scroller = scrollRef.current;
+        const before = beforeRef.current;
+        const after = afterRef.current;
+        if (!scroller || !before || !after || scroller.clientHeight === 0) return false;
+        return rendered.current.end === rendered.current.start || after.offsetTop > before.offsetTop;
+    }, [scrollRef]);
+
     /** Viewport position relative to the first row. The scroller is the rows' offsetParent. */
     const readViewport = useCallback((): { top: number; height: number } | null => {
         const scroller = scrollRef.current;
         const before = beforeRef.current;
         if (!scroller || !before) return null;
-        return { top: scroller.scrollTop - before.offsetTop, height: scroller.clientHeight };
-    }, [scrollRef]);
+        return { top: scroller.scrollTop - before.offsetTop, height: hasLayout() ? scroller.clientHeight : 0 };
+    }, [scrollRef, hasLayout]);
 
     /** The mounted row elements, or null when they don't line up with the rendered range. */
     const mountedRows = useCallback((): HTMLElement[] | null => {
@@ -176,9 +188,8 @@ export function useWindowedList({
 
     /** Record the real height of every mounted row. Returns whether any height changed. */
     const measure = useCallback((): boolean => {
-        const scroller = scrollRef.current;
         const rows = mountedRows();
-        if (!scroller || !rows || scroller.clientHeight === 0) return false;
+        if (!rows || !hasLayout()) return false;
         rows.push(afterRef.current!);
         let changed = false;
         for (let index = 0; index < rows.length - 1; index++) {
@@ -189,7 +200,7 @@ export function useWindowedList({
             changed = true;
         }
         return changed;
-    }, [scrollRef, mountedRows, estimate]);
+    }, [mountedRows, hasLayout, estimate]);
 
     // The row the reader is looking at (the first one reaching into the viewport) and its distance
     // from the viewport's top. Mounting rows, measuring them and prepending history all move the
@@ -199,7 +210,7 @@ export function useWindowedList({
     const captureAnchor = useCallback((): void => {
         const scroller = scrollRef.current;
         const rows = mountedRows();
-        if (!scroller || !rows) {
+        if (!scroller || !rows || !hasLayout()) {
             anchor.current = null;
             return;
         }
@@ -218,7 +229,7 @@ export function useWindowedList({
             };
             return;
         }
-    }, [scrollRef, mountedRows, anchorable]);
+    }, [scrollRef, mountedRows, hasLayout, anchorable]);
 
     /**
      * `scrollTop` is where the scroller was before this commit moved anything. If the reader has
@@ -230,7 +241,7 @@ export function useWindowedList({
         (scrollTop: number | undefined): void => {
             const scroller = scrollRef.current;
             const before = beforeRef.current;
-            if (!scroller || !before || scroller.clientHeight === 0) return;
+            if (!scroller || !before || !hasLayout()) return;
             if (followTailRef.current) {
                 scroller.scrollTop = scroller.scrollHeight;
                 return;
@@ -255,7 +266,7 @@ export function useWindowedList({
             if (Math.abs(scroller.scrollTop - target) >= 1) scroller.scrollTop = target;
             current.scrollTop = scroller.scrollTop;
         },
-        [scrollRef, mountedRows, estimate],
+        [scrollRef, mountedRows, hasLayout, estimate],
     );
 
     const sameRange = (left: WindowRange, right: WindowRange): boolean =>
