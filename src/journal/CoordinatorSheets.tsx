@@ -50,9 +50,6 @@ import {
 import { displayTitle } from "./SessionTag";
 import type { ClientState, Conversation } from "./types";
 
-/** "New coordinator chat…" starts the session on this model, as on the Mac. */
-export const COORDINATOR_NEW_CHAT_MODEL = "opus[1m]";
-
 const FOCUSABLE = "button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled])";
 
 /**

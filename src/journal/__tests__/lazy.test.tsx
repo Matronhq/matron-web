@@ -1,0 +1,205 @@
+/*
+Copyright 2026 Matron Contributors.
+
+SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
+Please see LICENSE files in the repository root for full details.
+*/
+
+import React, { act, Component, type ReactNode } from "react";
+import { createRoot, type Root } from "react-dom/client";
+
+import { SheetFrame } from "../deferred-ui";
+import { deferred, preloadDeferredUi } from "../lazy";
+
+function Greeting({ name }: { name: string }): React.ReactElement {
+    return <p data-testid="greeting">Hello {name}</p>;
+}
+
+function fallback(_props: { name: string }, failed: boolean): ReactNode {
+    return <p data-testid="fallback">{failed ? "failed" : "loading"}</p>;
+}
+
+/** A promise the test settles by hand. */
+function manual<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (error: unknown) => void } {
+    let resolve!: (value: T) => void;
+    let reject!: (error: unknown) => void;
+    const promise = new Promise<T>((res, rej) => {
+        resolve = res;
+        reject = rej;
+    });
+    return { promise, resolve, reject };
+}
+
+class Catcher extends Component<{ children: ReactNode }, { error?: Error }> {
+    public state: { error?: Error } = {};
+    public static getDerivedStateFromError(error: Error): { error: Error } {
+        return { error };
+    }
+    public render(): ReactNode {
+        return this.state.error ? <p data-testid="caught">{this.state.error.message}</p> : this.props.children;
+    }
+}
+
+describe("deferred components", () => {
+    let container: HTMLDivElement;
+    let root: Root;
+    const text = (testId: string): string | null =>
+        document.querySelector(`[data-testid="${testId}"]`)?.textContent ?? null;
+
+    beforeEach(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+        container = document.createElement("div");
+        document.body.append(container);
+        root = createRoot(container);
+    });
+
+    afterEach(() => {
+        act(() => root.unmount());
+        container.remove();
+        jest.useRealTimers();
+    });
+
+    it("shows the fallback while the chunk loads, then the component", async () => {
+        const chunk = manual<typeof Greeting>();
+        const Lazy = deferred(() => chunk.promise, fallback);
+        await act(async () => root.render(<Lazy name="alice" />));
+        expect(text("fallback")).toBe("loading");
+        expect(text("greeting")).toBeNull();
+
+        await act(async () => chunk.resolve(Greeting));
+        expect(text("fallback")).toBeNull();
+        expect(text("greeting")).toBe("Hello alice");
+    });
+
+    it("mounts in the same render, without the fallback, once preloaded", async () => {
+        const load = jest.fn(async () => Greeting);
+        const frame = jest.fn(fallback);
+        const Lazy = deferred(load, frame);
+        await Lazy.preload();
+        await Lazy.preload();
+        expect(load).toHaveBeenCalledTimes(1);
+
+        act(() => root.render(<Lazy name="bob" />));
+        expect(text("greeting")).toBe("Hello bob");
+        expect(document.querySelector('[data-testid="fallback"]')).toBeNull();
+    });
+
+    it("shows the failed frame when the chunk cannot be fetched, and fetches again on the next open", async () => {
+        const load = jest
+            .fn<Promise<typeof Greeting>, []>()
+            .mockRejectedValueOnce(new Error("ChunkLoadError"))
+            .mockResolvedValue(Greeting);
+        const Lazy = deferred(load, fallback);
+        const spy = jest.spyOn(console, "error").mockImplementation(() => undefined);
+        try {
+            await act(async () => root.render(<Lazy name="carol" />));
+            expect(text("fallback")).toBe("failed");
+
+            // Closing and opening again mounts afresh and retries the fetch.
+            await act(async () => root.render(<></>));
+            await act(async () => root.render(<Lazy name="carol" />));
+            expect(load).toHaveBeenCalledTimes(2);
+            expect(text("greeting")).toBe("Hello carol");
+        } finally {
+            spy.mockRestore();
+        }
+    });
+
+    it("lets a render error in the loaded component through to the boundaries above", async () => {
+        function Broken(): React.ReactElement {
+            throw new Error("boom");
+        }
+        const Lazy = deferred(
+            async () => Broken,
+            () => <p data-testid="fallback" />,
+        );
+        const spy = jest.spyOn(console, "error").mockImplementation(() => undefined);
+        try {
+            await act(async () =>
+                root.render(
+                    <Catcher>
+                        <Lazy />
+                    </Catcher>,
+                ),
+            );
+            expect(text("caught")).toBe("boom");
+            expect(document.querySelector('[data-testid="fallback"]')).toBeNull();
+        } finally {
+            spy.mockRestore();
+        }
+    });
+
+    it("preloads every deferred chunk once the browser is idle, and not after cleanup", () => {
+        jest.useFakeTimers();
+        const first = jest.fn(async () => Greeting);
+        const second = jest.fn(async () => Greeting);
+        deferred(first, fallback);
+        deferred(second, fallback);
+
+        const cancel = preloadDeferredUi();
+        expect(first).not.toHaveBeenCalled();
+        jest.advanceTimersByTime(1000);
+        expect(first).toHaveBeenCalledTimes(1);
+        expect(second).toHaveBeenCalledTimes(1);
+        cancel();
+
+        const third = jest.fn(async () => Greeting);
+        deferred(third, fallback);
+        preloadDeferredUi()();
+        jest.advanceTimersByTime(1000);
+        expect(third).not.toHaveBeenCalled();
+    });
+});
+
+describe("SheetFrame", () => {
+    let container: HTMLDivElement;
+    let root: Root;
+
+    beforeEach(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+        container = document.createElement("div");
+        document.body.append(container);
+        root = createRoot(container);
+    });
+
+    afterEach(() => {
+        act(() => root.unmount());
+        container.remove();
+    });
+
+    it("leaves focus on the opener, closes on Escape and on the scrim, and says when loading failed", () => {
+        const opener = document.createElement("button");
+        document.body.append(opener);
+        opener.focus();
+        const onClose = jest.fn();
+        const frame = (failed: boolean): React.ReactElement => (
+            <SheetFrame
+                scrimClassName="mj_SettingsScrim"
+                sheetClassName="mj_SettingsSheet"
+                label="Settings"
+                failed={failed}
+                onClose={onClose}
+            />
+        );
+
+        act(() => root.render(frame(false)));
+        const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+        expect(dialog.getAttribute("aria-label")).toBe("Settings");
+        expect(dialog.getAttribute("aria-busy")).toBe("true");
+        expect(document.activeElement).toBe(opener);
+
+        act(() => {
+            document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+        });
+        expect(onClose).toHaveBeenCalledTimes(1);
+
+        act(() => dialog.click());
+        expect(onClose).toHaveBeenCalledTimes(1);
+        act(() => document.querySelector<HTMLElement>(".mj_SettingsScrim")!.click());
+        expect(onClose).toHaveBeenCalledTimes(2);
+
+        act(() => root.render(frame(true)));
+        expect(document.querySelector('[role="alert"]')?.textContent).toMatch(/Couldn't load/);
+        opener.remove();
+    });
+});
