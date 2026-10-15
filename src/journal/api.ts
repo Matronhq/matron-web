@@ -542,6 +542,21 @@ export class JournalApi {
         return this.json<ProjectDetail>(`/projects/${encodeTrackerId(id)}`);
     }
 
+    /** POST /projects — a new project (the Projects home's "New project"). A blank body is left out. */
+    public createProject(fields: { title: string; body?: string }, idemKey?: string): Promise<{ project: Project }> {
+        const body: { title: string; body?: string } = { title: fields.title };
+        if (fields.body?.trim()) body.body = fields.body;
+        return this.json<{ project: Project }>("/projects", { method: "POST", body, ...idempotencyHeader(idemKey) });
+    }
+
+    /** POST /projects/:id/merge — every mission of `id` moves to `into`, and `id` closes as merged. */
+    public mergeProject(id: string | number, into: string | number): Promise<{ project: Project; merged: Project }> {
+        return this.json<{ project: Project; merged: Project }>(`/projects/${encodeTrackerId(id)}/merge`, {
+            method: "POST",
+            body: { into },
+        });
+    }
+
     /** GET /projects/:id/feed — the next (older) page of one roll-up kind, from a `next_before` cursor. */
     public projectFeed<Row = unknown>(
         id: string | number,
@@ -698,6 +713,41 @@ export class JournalApi {
     /** PUT /coordinator {consent} — the Coordinator consent-approval switch. Unvalidated `{convo_id, consent}`. */
     public async putCoordinatorConsent(consent: boolean): Promise<unknown> {
         return this.json<unknown>("/coordinator", { method: "PUT", body: { consent } });
+    }
+
+    /**
+     * PUT /coordinator {convo_id} — make a conversation the Coordinator, or clear it with null.
+     * 404 for a conversation the user does not own. Unvalidated `{convo_id, consent}`.
+     */
+    public async putCoordinator(convoId: string | null): Promise<unknown> {
+        return this.json<unknown>("/coordinator", { method: "PUT", body: { convo_id: convoId } });
+    }
+
+    // ── Coordinator routines (journal /routines; 404 on the collection = a journal without them) ──
+
+    /** GET /routines — `{routines}` by name. Unvalidated (routines.ts parses it). */
+    public routines(): Promise<unknown> {
+        return this.json<unknown>("/routines");
+    }
+
+    /** POST /routines — 201 `{routine}`; 409 `{blocked_by: 'name' | 'cap'}`, 400 for a bad field. */
+    public createRoutine(body: Record<string, unknown>): Promise<unknown> {
+        return this.json<unknown>("/routines", { method: "POST", body });
+    }
+
+    /** PATCH /routines/:key — any subset of the fields (never `name`); 200 `{routine}`. */
+    public patchRoutine(key: string, body: Record<string, unknown>): Promise<unknown> {
+        return this.json<unknown>(`/routines/${encodeURIComponent(key)}`, { method: "PATCH", body });
+    }
+
+    /** DELETE /routines/:key — 200 `{ok: true}`; 404 when it is already gone. */
+    public deleteRoutine(key: string): Promise<unknown> {
+        return this.json<unknown>(`/routines/${encodeURIComponent(key)}`, { method: "DELETE", body: {} });
+    }
+
+    /** POST /routines/:key/run — 202 `{accepted: true}` or `{delivered: false, reason}`. */
+    public runRoutine(key: string): Promise<unknown> {
+        return this.json<unknown>(`/routines/${encodeURIComponent(key)}/run`, { method: "POST", body: {} });
     }
 
     // ── New-chat defaults (journal /defaults; Bearer-auth, per user) ──
@@ -887,10 +937,10 @@ export class JournalApi {
         return this.json<BriefingLatest>("/briefings/refresh", { method: "POST" });
     }
 
-    /** PATCH /missions/:id — edit the mission title/body. */
+    /** PATCH /missions/:id — edit the mission title/body, or move it to another project. */
     public patchMission(
         id: string | number,
-        body: { title?: string; body?: string },
+        body: { title?: string; body?: string; project?: string | number },
         idemKey?: string,
     ): Promise<{ mission: Mission }> {
         return this.json<{ mission: Mission }>(`/missions/${encodeTrackerId(id)}`, {

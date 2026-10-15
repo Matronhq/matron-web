@@ -244,5 +244,38 @@ export function mergeSessionStatus(current: SessionStatus | undefined, update: S
         limits: update.limits ?? current?.limits,
         vitals: update.vitals ?? current?.vitals,
         email: update.email ?? current?.email,
+        // Effort is tri-state on the wire: a string sets it, an explicit null is the bridge
+        // disowning the level it was tracking, and an absent key leaves the held value alone.
+        effort: "effort" in update ? (update.effort ?? undefined) : current?.effort,
     };
+}
+
+// "opus" / "opus · high": the session's model with its effort level beside it, as the Mac
+// header's model line. An unknown effort adds nothing (no separator, no placeholder): the
+// bridge publishes no effort rather than a guess, so absent is the normal state.
+export function modelLine(model: string, effort: string | null | undefined): string {
+    const level = effort?.trim();
+    return level ? `${model} · ${level}` : model;
+}
+
+// Absolute context size (tokens) past which the chat offers to compact. Absolute, not a
+// fraction of the window: the concern is cost, latency and recall at large sizes, which a
+// 1M-window model shares. Same threshold as the Apple clients.
+export const COMPACT_NUDGE_TOKENS = 400_000;
+
+// No status frame yet, and exactly-at-threshold, do not nudge; strictly above does.
+export function shouldNudgeCompact(context: SessionStatus["context"]): boolean {
+    return context !== undefined && context.tokens > COMPACT_NUDGE_TOKENS;
+}
+
+export function compactNudgeTitle(tokens: number): string {
+    return `Large conversation (${compactTokens(tokens)})`;
+}
+
+// Screen-reader variant of compactTokens: "265 thousand", "1.2 million".
+export function spokenTokens(tokens: number): string {
+    if (tokens < 1_000) return String(tokens);
+    if (tokens < 1_000_000) return `${Math.round(tokens / 1_000)} thousand`;
+    const millions = Math.round((tokens / 1_000_000) * 10) / 10;
+    return `${millions.toLocaleString("en-US", { maximumFractionDigits: 1 })} million`;
 }
