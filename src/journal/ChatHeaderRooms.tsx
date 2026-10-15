@@ -22,7 +22,6 @@ Please see LICENSE files in the repository root for full details.
 import React, { useCallback, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
 import type { MatronJournalClient } from "./client";
-import { useDismissablePopover } from "./components";
 import {
     ROOM_STATE_LABEL,
     roomsAccessibilityLabel,
@@ -44,6 +43,7 @@ import {
 import { TaggedTitle } from "./SessionTag";
 import { formatRelativeTime } from "./tracker/format";
 import type { ClientState, Conversation } from "./types";
+import { useDismissablePopover } from "./use-dismissable-popover";
 
 /** Arrow keys walk the menu's items, Home and End jump to the ends; Escape closes it and gives focus back to the opener. */
 function onMenuKeyDown(

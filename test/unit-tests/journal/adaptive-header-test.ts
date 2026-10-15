@@ -9,7 +9,8 @@ import React, { act, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
 import { MatronJournalClient } from "../../../src/journal/client";
-import { HeaderShell, MatronApp, useAdaptiveHeader, useDismissablePopover } from "../../../src/journal/components";
+import { HeaderShell, MatronApp, useAdaptiveHeader } from "../../../src/journal/components";
+import { useDismissablePopover } from "../../../src/journal/use-dismissable-popover";
 import type { ClientState, Conversation, Session } from "../../../src/journal/types";
 
 jest.mock("../../../res/matron-logo-simple.svg", () => "matron-logo.svg");

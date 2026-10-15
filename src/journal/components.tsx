@@ -7,7 +7,6 @@ Please see LICENSE files in the repository root for full details.
 
 import React, {
     type FormEvent,
-    type RefObject,
     useCallback,
     useEffect,
     useId,
@@ -128,6 +127,7 @@ import { NAV_RAIL_WIDTH, NavRail, type NavKey } from "./NavRail";
 import { isAgentRoomTitle, needsYouByConversation, projectsNeedsYou } from "./needs-you";
 import { notificationsFor, unreadTotal as countUnread } from "./notifications";
 import { ConvoNotifyBell, RoomsControl } from "./ChatHeaderRooms";
+import { useDismissablePopover } from "./use-dismissable-popover";
 import { SettingsSheet } from "./SettingsSheet";
 import { displayTitle, TaggedTitle } from "./SessionTag";
 import { groupByDay } from "./sidebar-groups";
@@ -2611,37 +2611,6 @@ const ConversationList = React.memo(
         previous.width === next.width &&
         sameStateExcept(previous.state, next.state, CONVERSATION_LIST_IGNORED_STATE),
 );
-
-export function useDismissablePopover(
-    open: boolean,
-    close: () => void,
-    refs: { openerRef: RefObject<HTMLElement | null>; panelRef: RefObject<HTMLElement | null> },
-): void {
-    const { openerRef, panelRef } = refs;
-    useEffect(() => {
-        if (!open) return;
-        const onPointerDown = (event: PointerEvent): void => {
-            const target = event.target as Node;
-            if (!openerRef.current?.contains(target) && !panelRef.current?.contains(target)) close();
-        };
-        const onKeyDown = (event: KeyboardEvent): void => {
-            if (event.key !== "Escape") return;
-            close();
-            openerRef.current?.focus();
-        };
-        const onScroll = (event: Event): void => {
-            if (!panelRef.current?.contains(event.target as Node)) close();
-        };
-        document.addEventListener("pointerdown", onPointerDown);
-        document.addEventListener("keydown", onKeyDown);
-        document.addEventListener("scroll", onScroll, true);
-        return () => {
-            document.removeEventListener("pointerdown", onPointerDown);
-            document.removeEventListener("keydown", onKeyDown);
-            document.removeEventListener("scroll", onScroll, true);
-        };
-    }, [open, close, openerRef, panelRef]);
-}
 
 // Redesign-v4 pane-width bands (ResizeObserver on the chat pane, not viewport):
 // >=720 full 2×2 usage grid (keep all four bars as long as they genuinely fit — the
