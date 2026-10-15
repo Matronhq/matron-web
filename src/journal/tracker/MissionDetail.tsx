@@ -307,9 +307,9 @@ export function MissionDetail({
     const targets = moveTargets(projects);
     const canMove = !closed && targets.some((target) => target.id !== mission.project_id);
 
+    // A milestone opens its conversation on the message it was posted at, not at the tail.
     const jump = (milestone: Milestone): void => {
-        client.closeTrackerView();
-        void client.selectConversation(milestone.convo_id);
+        void client.focusMessage(milestone.convo_id, milestone.seq);
     };
 
     // matron://item / matron://mission deep links inside the mission body + close summary open the
