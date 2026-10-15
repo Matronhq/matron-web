@@ -5887,6 +5887,8 @@ function Timeline({
     // the transcript windowed, rows mount and unmount as the reader scrolls, and a live list would
     // read those out as if they had just arrived. Only a newer last event in the same conversation
     // counts, so opening a conversation and loading its history announce nothing.
+    // A repeat of the same text would not change the region, so every other announcement ends in
+    // a no-break space; a switch clears it.
     const [arrival, setArrival] = useState("");
     const lastEvent = useRef<{ conversationId: string; seq: number } | undefined>(undefined);
     useEffect(() => {
@@ -5895,9 +5897,10 @@ function Timeline({
         lastEvent.current = last && { conversationId: last.convo_id, seq: last.seq };
         if (!last || last.convo_id !== state.selectedConversationId || last.sender.startsWith("user:")) return;
         if (previous?.conversationId !== last.convo_id || last.seq <= previous.seq) return;
-        const text = eventSnippet(last.type, last.payload);
-        setArrival(`${displaySender(last.sender)}: ${text || "new message"}`);
+        const text = `${displaySender(last.sender)}: ${eventSnippet(last.type, last.payload) || "new message"}`;
+        setArrival((current) => (current === text ? `${text}\u00a0` : text));
     }, [visibleEvents, state.selectedConversationId]);
+    useLayoutEffect(() => setArrival(""), [state.selectedConversationId]);
 
     const loadEarlierMessages = (): void => {
         const node = scrollRef.current;

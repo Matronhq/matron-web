@@ -89,6 +89,18 @@ describe("timeline arrivals", () => {
         expect(live()).toContain("build finished");
     });
 
+    it("announces a second message with the same text, and clears on a switch", async () => {
+        const { client, live } = await render(range(1, 5));
+        const same = { payload: { body: "done" } };
+        await patch(client, { events: [...range(1, 5), event(6, same)] });
+        const first = live();
+        await patch(client, { events: [...range(1, 5), event(6, same), event(7, same)] });
+        expect(live()).not.toBe(first);
+        expect(live().trim()).toBe(first.trim());
+        await patch(client, { selectedConversationId: "c2", events: range(20, 30, { convo_id: "c2" }) });
+        expect(live()).toBe("");
+    });
+
     it("stays quiet for older history, the user's own messages and another conversation", async () => {
         const { client, live } = await render(range(10, 15));
         await patch(client, { events: range(1, 15) });
