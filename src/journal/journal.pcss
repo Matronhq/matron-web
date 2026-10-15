@@ -4265,6 +4265,21 @@ button.mj_File {
         display: none;
     }
 
+    /* Back on the conversation list the main column is hidden, but a live voice note's bar stays:
+       pinned along the bottom of the screen, the rest of the column still out of the way. */
+    .mj_Chat_mobileHidden.mj_ChatView_wrapper_voiceNote {
+        display: flex;
+        position: fixed;
+        z-index: 10;
+        right: 0;
+        bottom: 0;
+        left: 0;
+    }
+
+    .mj_Chat_mobileHidden.mj_ChatView_wrapper_voiceNote > :not(.mj_VoiceNoteBar) {
+        display: none;
+    }
+
     .mj_BackButton {
         display: inline-flex;
         position: absolute;

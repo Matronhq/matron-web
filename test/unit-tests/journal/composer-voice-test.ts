@@ -1022,6 +1022,40 @@ describe("Voice note across conversations", () => {
         expect(harness.streams[0].track.stop).toHaveBeenCalledTimes(1);
     });
 
+    it("never takes a draft for a note sent from the indicator, even if its conversation opens before it finishes", async () => {
+        harness.queue({ autoStopEvents: false, finalChunk: "NOTE" });
+        const client = makeClient();
+        const sendVoiceNote = jest.spyOn(client, "sendVoiceNote").mockResolvedValue("sent");
+        const { container } = await renderComposer(false, client);
+        await typeDraft(container, "still a draft");
+        const recorder = await startRecording(container);
+        await select(client, "B");
+
+        await click(container, "Send voice note");
+        await select(client, "A");
+        await act(async () => recorder.dispatchFinalEvents());
+        await advance(0);
+
+        expect(sendVoiceNote).toHaveBeenCalledTimes(1);
+        expect(sendVoiceNote.mock.calls[0][1]).toBe("A");
+        expect(sendVoiceNote.mock.calls[0][3]).toBeUndefined();
+        expect(composerTextarea(container).value).toBe("still a draft");
+    });
+
+    it("reports a failed send from the indicator in the indicator, not in the composer on screen", async () => {
+        const client = makeClient();
+        jest.spyOn(client, "sendVoiceNote").mockResolvedValue("persist-failed");
+        const { container } = await renderComposer(false, client);
+        await startRecording(container);
+        await select(client, "B");
+
+        await click(container, "Send voice note");
+        await advance(0);
+
+        expect(voiceError(container)).toBeNull();
+        expect(indicatorText(container)).toContain("Voice note didn't send");
+    });
+
     it("cancels from the indicator: nothing is sent and the microphone is released", async () => {
         const client = makeClient();
         const sendVoiceNote = jest.spyOn(client, "sendVoiceNote").mockResolvedValue("sent");

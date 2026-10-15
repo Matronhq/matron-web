@@ -133,6 +133,7 @@ export class VoiceNoteSession {
     private acquireTimer: ReturnType<typeof setTimeout> | null = null;
     private disposition: "send" | "discard" = "discard";
     private sendInFlight = false;
+    private stoppedAway = false;
     private stopInFlight = false;
     private finalized = false;
     private recordingId = 0;
@@ -234,6 +235,9 @@ export class VoiceNoteSession {
         if (disposition === "send") {
             this.disposition = "send";
             this.sendInFlight = true;
+            // Sent while no surface shows the note's place (the app-wide bar, the duration cap):
+            // it goes out on its own, never taking a draft from a composer that opens meanwhile.
+            this.stoppedAway = this.snapshot.showsIndicator;
         } else if (!this.sendInFlight) {
             this.disposition = "discard";
         }
@@ -286,7 +290,7 @@ export class VoiceNoteSession {
         const note = this.failedNotes.get(id);
         if (!note) return;
         this.forget(id);
-        this.deliver(note.blob, note.start, note.sessionGen);
+        this.deliver(note.blob, note.start, note.sessionGen, true);
     }
 
     /** Gives up on a failed note. */
@@ -445,22 +449,23 @@ export class VoiceNoteSession {
             console.warn("voice: session changed before finalize — recording not sent", { rid });
         }
         if (wantSend && blob && start && this.client.sessionGeneration === capturedSessionGen) {
-            this.deliver(blob, start, capturedSessionGen);
+            this.deliver(blob, start, capturedSessionGen, this.stoppedAway);
         }
     }
 
     /**
-     * A persistent note goes through a mounted surface of its kind (which reports its own failures),
-     * or the fallback when none is; a failed fallback send is kept for Retry. Any other note goes
-     * through the surface that started it.
+     * A persistent note sent away from its place (or retried from the bar) goes out through its
+     * fallback, and a failure there is kept for Retry. One sent from its own place goes through a
+     * mounted surface of its kind, which reports its own failures, or the fallback when none is.
+     * Any other note goes through the surface that started it.
      */
-    private deliver(blob: Blob, start: VoiceNoteStart, sessionGen: number): void {
+    private deliver(blob: Blob, start: VoiceNoteStart, sessionGen: number, away: boolean): void {
         const context = { contextKey: start.contextKey, sessionGen };
         let deliver = start.deliver;
         if (start.persistent) {
             const surfaces = [...this.surfaces.values()].filter((surface) => surface.kind === start.kind);
             const surface = surfaces.find((candidate) => candidate.key === start.key) ?? surfaces[0];
-            deliver = surface?.deliver ?? start.deliverAway ?? start.deliver;
+            deliver = (away ? undefined : surface?.deliver) ?? start.deliverAway ?? start.deliver;
         }
         const outcome = deliver(blob, context);
         if (!outcome) return;
@@ -537,6 +542,7 @@ export class VoiceNoteSession {
 
             this.disposition = "discard";
             this.sendInFlight = false;
+            this.stoppedAway = false;
             this.stopInFlight = false;
             this.finalized = false;
             this.recordingStartMs = Date.now();
