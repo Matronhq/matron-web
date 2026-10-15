@@ -2662,7 +2662,9 @@ export function useAdaptiveHeader(bodyEl: HTMLElement | null, meterCount = 0): H
                 frame = null;
                 const usageCollapsed = latestWidth < usageCollapsePx;
                 const titleCollapsed = latestWidth < TITLE_COLLAPSE_PX;
-                const controlsFolded = latestWidth < foldPx;
+                // Folded below the width the current usage form needs: the collapsed two-bar
+                // disclosure is far narrower than either grid.
+                const controlsFolded = latestWidth < (usageCollapsed ? CONTROLS_FOLD_USAGE_COLLAPSED_PX : foldPx);
                 if (
                     collapseRef.current.usageCollapsed !== usageCollapsed ||
                     collapseRef.current.titleCollapsed !== titleCollapsed ||
@@ -2689,10 +2691,13 @@ export function useAdaptiveHeader(bodyEl: HTMLElement | null, meterCount = 0): H
 // the ⋯ menu and Compact keeps only its icon, so the title keeps about 240px. Measured with every
 // control showing (usage grid with reset times, Compact, Rooms · n, Tasks, Media, the bell, ⋯).
 // The full four-meter grid shows from USAGE_COLLAPSE_PX and needs about 810px of controls
-// inline; the six-meter grid shows from USAGE_COLLAPSE_WIDE_PX and needs about 160px more. The
-// Mac shrinks its mission chip instead and never folds, but its title row has no usage grid.
+// inline; the six-meter grid shows from USAGE_COLLAPSE_WIDE_PX and needs about 160px more; the
+// collapsed two-bar disclosure needs about 590px. So a six-meter header can be inline just below
+// USAGE_COLLAPSE_WIDE_PX and fold again just above it, where the wide grid appears. The Mac
+// shrinks its mission chip instead and never folds, but its title row has no usage grid.
 const CONTROLS_FOLD_PX = 1060;
 const CONTROLS_FOLD_WIDE_PX = 1200;
+const CONTROLS_FOLD_USAGE_COLLAPSED_PX = 840;
 
 function useMinuteClock(now?: number): number {
     const [clockNow, setClockNow] = useState(Date.now);

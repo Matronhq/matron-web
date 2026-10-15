@@ -369,7 +369,7 @@ describe("useAdaptiveHeader", () => {
         expect(probe.container.textContent).toBe('{"usageCollapsed":true,"titleCollapsed":false}');
     });
 
-    it("folds the controls beside the title below 1060, or 1200 with the six-meter grid", async () => {
+    it("folds the controls beside the title below the width the usage form leaves room for", async () => {
         function FoldProbe({ el, meterCount }: { el: HTMLElement; meterCount: number }): React.ReactElement {
             return React.createElement("output", null, String(useAdaptiveHeader(el, meterCount).controlsFolded));
         }
@@ -401,6 +401,13 @@ describe("useAdaptiveHeader", () => {
         resize(sixObserver, el, 1250);
         await flushFrames();
         expect(six.container.textContent).toBe("false");
+        // Below 960 the six-meter grid collapses to two bars, which leaves room again until 840.
+        resize(sixObserver, el, 900);
+        await flushFrames();
+        expect(six.container.textContent).toBe("false");
+        resize(sixObserver, el, 800);
+        await flushFrames();
+        expect(six.container.textContent).toBe("true");
     });
 
     it("coalesces resize callbacks into one frame and renders only when flags flip", async () => {
