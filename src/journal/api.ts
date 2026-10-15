@@ -542,6 +542,21 @@ export class JournalApi {
         return this.json<ProjectDetail>(`/projects/${encodeTrackerId(id)}`);
     }
 
+    /** POST /projects — a new project (the Projects home's "New project"). A blank body is left out. */
+    public createProject(fields: { title: string; body?: string }, idemKey?: string): Promise<{ project: Project }> {
+        const body: { title: string; body?: string } = { title: fields.title };
+        if (fields.body?.trim()) body.body = fields.body;
+        return this.json<{ project: Project }>("/projects", { method: "POST", body, ...idempotencyHeader(idemKey) });
+    }
+
+    /** POST /projects/:id/merge — every mission of `id` moves to `into`, and `id` closes as merged. */
+    public mergeProject(id: string | number, into: string | number): Promise<{ project: Project; merged: Project }> {
+        return this.json<{ project: Project; merged: Project }>(`/projects/${encodeTrackerId(id)}/merge`, {
+            method: "POST",
+            body: { into },
+        });
+    }
+
     /** GET /projects/:id/feed — the next (older) page of one roll-up kind, from a `next_before` cursor. */
     public projectFeed<Row = unknown>(
         id: string | number,
@@ -922,10 +937,10 @@ export class JournalApi {
         return this.json<BriefingLatest>("/briefings/refresh", { method: "POST" });
     }
 
-    /** PATCH /missions/:id — edit the mission title/body. */
+    /** PATCH /missions/:id — edit the mission title/body, or move it to another project. */
     public patchMission(
         id: string | number,
-        body: { title?: string; body?: string },
+        body: { title?: string; body?: string; project?: string | number },
         idemKey?: string,
     ): Promise<{ mission: Mission }> {
         return this.json<{ mission: Mission }>(`/missions/${encodeTrackerId(id)}`, {
