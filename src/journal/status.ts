@@ -247,6 +247,8 @@ export function mergeSessionStatus(current: SessionStatus | undefined, update: S
         // Effort is tri-state on the wire: a string sets it, an explicit null is the bridge
         // disowning the level it was tracking, and an absent key leaves the held value alone.
         effort: "effort" in update ? (update.effort ?? undefined) : current?.effort,
+        model_options: update.model_options ?? current?.model_options,
+        effort_levels: update.effort_levels ?? current?.effort_levels,
     };
 }
 

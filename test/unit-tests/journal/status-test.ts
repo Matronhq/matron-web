@@ -264,6 +264,17 @@ describe("journal session status presentation", () => {
         expect(mergeSessionStatus(held, { effort: "low" }).effort).toBe("low");
     });
 
+    it("keeps the /model and /effort offers until a frame replaces them, an empty list included", () => {
+        const offers = { model_options: [{ value: "opus", label: "Opus" }], effort_levels: [{ value: "high" }] };
+        const held = mergeSessionStatus({ model: "m" }, offers);
+        expect(mergeSessionStatus(held, { model: "m2" })).toMatchObject(offers);
+        // An empty list is the agent offering nothing (a switch to an agent without the list).
+        expect(mergeSessionStatus(held, { model_options: [], effort_levels: [] })).toMatchObject({
+            model_options: [],
+            effort_levels: [],
+        });
+    });
+
     it("nudges to compact only strictly above the absolute token threshold", () => {
         expect(COMPACT_NUDGE_TOKENS).toBe(400_000);
         expect(shouldNudgeCompact(undefined)).toBe(false);

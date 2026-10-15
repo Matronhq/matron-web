@@ -167,8 +167,11 @@ import {
 } from "./media-viewer";
 import { getSnapshot, nextThemePref, setTheme, subscribe } from "./theme";
 import {
+    applyArgument,
     applyCommand,
     applyFolder,
+    type ArgSuggestion,
+    argSuggestions,
     type BotCommand,
     CLAUDE_BRIDGE_COMMANDS,
     filterCommands,
@@ -6253,20 +6256,24 @@ function Timeline({
 const SLASH_LISTBOX_ID = "mj_SlashPalette_listbox";
 const slashRowId = (index: number): string => `${SLASH_LISTBOX_ID}_opt_${index}`;
 
+// The palette's second mode, for a fully typed command: its arguments first (few and short), then
+// any recent folders (up to eight), as the Mac composer orders them.
+type PaletteSuggestion = { kind: "argument"; argument: ArgSuggestion } | { kind: "folder"; path: string };
+
 function SlashCommandPalette({
     commands,
-    folders,
+    suggestions,
     highlighted,
     onHighlight,
     onSelectCommand,
-    onSelectFolder,
+    onSelectSuggestion,
 }: {
     commands: BotCommand[];
-    folders: string[];
+    suggestions: PaletteSuggestion[];
     highlighted: number | null;
     onHighlight: (index: number | null) => void;
     onSelectCommand: (command: BotCommand) => void;
-    onSelectFolder: (path: string) => void;
+    onSelectSuggestion: (suggestion: PaletteSuggestion) => void;
 }): React.ReactElement {
     const highlightedRow = useRef<HTMLDivElement>(null);
 
@@ -6274,40 +6281,49 @@ function SlashCommandPalette({
         if (highlighted !== null) highlightedRow.current?.scrollIntoView({ block: "nearest" });
     }, [highlighted]);
 
+    const rowProps = (
+        index: number,
+        onClick: () => void,
+    ): React.HTMLAttributes<HTMLDivElement> & {
+        ref?: React.Ref<HTMLDivElement>;
+    } => ({
+        className: `mj_SlashPalette_row${highlighted === index ? " mj_SlashPalette_row_highlighted" : ""}`,
+        id: slashRowId(index),
+        ref: highlighted === index ? highlightedRow : undefined,
+        role: "option",
+        "aria-selected": highlighted === index,
+        onMouseEnter: () => onHighlight(index),
+        onMouseDown: (event) => event.preventDefault(),
+        onClick,
+    });
+
     return (
         <div className="mj_SlashPalette" id={SLASH_LISTBOX_ID} role="listbox">
-            {folders.length > 0
-                ? folders.map((folder, index) => (
-                      <div
-                          className={`mj_SlashPalette_row${
-                              highlighted === index ? " mj_SlashPalette_row_highlighted" : ""
-                          }`}
-                          id={slashRowId(index)}
-                          key={`${folder}-${index}`}
-                          ref={highlighted === index ? highlightedRow : undefined}
-                          role="option"
-                          aria-selected={highlighted === index}
-                          onMouseEnter={() => onHighlight(index)}
-                          onMouseDown={(event) => event.preventDefault()}
-                          onClick={() => onSelectFolder(folder)}
-                      >
-                          <span className="mj_SlashPalette_trigger">{folder}</span>
-                      </div>
-                  ))
+            {suggestions.length > 0
+                ? suggestions.map((suggestion, index) =>
+                      suggestion.kind === "argument" ? (
+                          <div
+                              key={`arg:${suggestion.argument.value}`}
+                              {...rowProps(index, () => onSelectSuggestion(suggestion))}
+                          >
+                              <span className="mj_SlashPalette_trigger">
+                                  {suggestion.argument.label ?? suggestion.argument.value}
+                              </span>
+                              {suggestion.argument.summary && (
+                                  <span className="mj_SlashPalette_summary">{suggestion.argument.summary}</span>
+                              )}
+                          </div>
+                      ) : (
+                          <div
+                              key={`dir:${suggestion.path}-${index}`}
+                              {...rowProps(index, () => onSelectSuggestion(suggestion))}
+                          >
+                              <span className="mj_SlashPalette_trigger">{suggestion.path}</span>
+                          </div>
+                      ),
+                  )
                 : commands.map((command, index) => (
-                      <div
-                          className={`mj_SlashPalette_row${
-                              highlighted === index ? " mj_SlashPalette_row_highlighted" : ""
-                          }`}
-                          id={slashRowId(index)}
-                          key={command.trigger}
-                          ref={highlighted === index ? highlightedRow : undefined}
-                          role="option"
-                          aria-selected={highlighted === index}
-                          onMouseEnter={() => onHighlight(index)}
-                          onMouseDown={(event) => event.preventDefault()}
-                          onClick={() => onSelectCommand(command)}
-                      >
+                      <div key={command.trigger} {...rowProps(index, () => onSelectCommand(command))}>
                           <span className="mj_SlashPalette_trigger">{command.trigger}</span>
                           {command.argHint && <span className="mj_SlashPalette_argHint">{command.argHint}</span>}
                           <span className="mj_SlashPalette_summary">{command.summary}</span>
@@ -6353,9 +6369,15 @@ function Composer({
     const prevConvoIdRef = useRef(convoId);
     const draftTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
     const draftTimerConvoRef = useRef<string | undefined>(undefined);
-    const folders = folderSuggestions(body, store);
+    const suggestions: PaletteSuggestion[] = [
+        ...argSuggestions(body, CLAUDE_BRIDGE_COMMANDS, state.sessionStatus).map((argument): PaletteSuggestion => ({
+            kind: "argument",
+            argument,
+        })),
+        ...folderSuggestions(body, store).map((path): PaletteSuggestion => ({ kind: "folder", path })),
+    ];
     const commands = filterCommands(CLAUDE_BRIDGE_COMMANDS, body);
-    const open = body !== dismissed && (folders.length > 0 || (isCommandMode(body) && commands.length > 0));
+    const open = body !== dismissed && (suggestions.length > 0 || (isCommandMode(body) && commands.length > 0));
 
     // A finished voice note goes to the conversation it was recorded in. The typed draft goes with
     // it as its caption, so the agent gets both in one turn — unless a text send of it is already
@@ -6482,10 +6504,16 @@ function Composer({
         setHighlighted(null);
         textarea.current?.focus();
     };
-    const selectFolder = (path: string): void => {
-        const nextBody = applyFolder(body, path);
-        setBodyDraft(nextBody);
-        setDismissed(nextBody);
+    // A folder completes the line, so the palette closes on it; an argument leaves a space after
+    // it, and the palette goes on to offer whatever the command still accepts.
+    const selectSuggestion = (suggestion: PaletteSuggestion): void => {
+        if (suggestion.kind === "folder") {
+            const nextBody = applyFolder(body, suggestion.path);
+            setBodyDraft(nextBody);
+            setDismissed(nextBody);
+        } else {
+            setBodyDraft(applyArgument(body, suggestion.argument.value));
+        }
         setHighlighted(null);
         textarea.current?.focus();
     };
@@ -6620,11 +6648,11 @@ function Composer({
                 {open && (
                     <SlashCommandPalette
                         commands={commands}
-                        folders={folders}
+                        suggestions={suggestions}
                         highlighted={highlighted}
                         onHighlight={setHighlighted}
                         onSelectCommand={selectCommand}
-                        onSelectFolder={selectFolder}
+                        onSelectSuggestion={selectSuggestion}
                     />
                 )}
                 {convoId && tray.length > 0 && (
@@ -6707,7 +6735,7 @@ function Composer({
                                             }
                                         }
                                         if (open) {
-                                            const count = folders.length || commands.length;
+                                            const count = suggestions.length || commands.length;
                                             if (event.key === "ArrowDown") {
                                                 event.preventDefault();
                                                 setHighlighted((current) =>
@@ -6725,7 +6753,7 @@ function Composer({
                                             if (event.key === "Tab") {
                                                 event.preventDefault();
                                                 const index = highlighted ?? 0;
-                                                if (folders.length > 0) selectFolder(folders[index]);
+                                                if (suggestions.length > 0) selectSuggestion(suggestions[index]);
                                                 else selectCommand(commands[index]);
                                                 return;
                                             }
@@ -6737,7 +6765,7 @@ function Composer({
                                             }
                                             if (event.key === "Enter" && !event.shiftKey && highlighted !== null) {
                                                 event.preventDefault();
-                                                if (folders.length > 0) selectFolder(folders[highlighted]);
+                                                if (suggestions.length > 0) selectSuggestion(suggestions[highlighted]);
                                                 else selectCommand(commands[highlighted]);
                                                 return;
                                             }

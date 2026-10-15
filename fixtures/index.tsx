@@ -627,6 +627,21 @@ const state: ClientState = {
     sessionStatus: {
         model: "claude-sonnet",
         effort: "high",
+        // The composer's /model and /effort arguments, as the bridge offers them.
+        model_options: [
+            { value: "default", label: "Default" },
+            { value: "opus", label: "Opus" },
+            { value: "opus[1m]", label: "Opus 1M" },
+            { value: "sonnet", label: "Sonnet" },
+            { value: "haiku", label: "Haiku" },
+        ],
+        effort_levels: [
+            { value: "low", label: "Low" },
+            { value: "medium", label: "Medium" },
+            { value: "high", label: "High" },
+            { value: "xhigh", label: "X-High" },
+            { value: "max", label: "Max" },
+        ],
         workdir: "/srv/app/web",
         email: "alice@example.com",
         context: { tokens: 144_000, window: 200_000, pct: 72 },

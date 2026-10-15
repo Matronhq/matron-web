@@ -1639,6 +1639,63 @@ describe("slash command palette", () => {
         expect(sendMessage).not.toHaveBeenCalled();
     });
 
+    it("offers a command's flags after it, and a pick fills the composer ready for the next", async () => {
+        const client = signedInClient();
+        const sendMessage = jest.spyOn(client, "sendMessage").mockResolvedValue(true);
+        rendered = await renderClient(client);
+        await act(async () => inputTextarea(composer(), "/start "));
+        expect(options().map((row) => row.querySelector(".mj_SlashPalette_trigger")?.textContent)).toEqual([
+            "--claude",
+            "--codex",
+            "--browser",
+        ]);
+        expect(options()[1].querySelector(".mj_SlashPalette_summary")?.textContent).toBe("Use the Codex agent");
+
+        await keydown(composer(), "ArrowDown");
+        await keydown(composer(), "ArrowDown");
+        await keydown(composer(), "Enter");
+        expect(composer().value).toBe("/start --codex ");
+        // --claude and --browser both conflict with --codex: nothing left to offer.
+        expect(options()).toHaveLength(0);
+        expect(sendMessage).not.toHaveBeenCalled();
+    });
+
+    it("lists arguments ahead of recent folders and completes a flag with Tab", async () => {
+        makeRecentFoldersStore(SESSION).record("/srv/app");
+        rendered = await renderClient(signedInClient());
+        await act(async () => inputTextarea(composer(), "/start "));
+        expect(options().map((row) => row.textContent)).toEqual([
+            "--claudeUse the Claude agent",
+            "--codexUse the Codex agent",
+            "--browserAdd browser tools (chrome-devtools MCP)",
+            "/srv/app",
+        ]);
+
+        await act(async () => inputTextarea(composer(), "/start --b"));
+        await keydown(composer(), "Tab");
+        expect(composer().value).toBe("/start --browser ");
+        expect(options().map((row) => row.textContent)).toEqual(["--claudeUse the Claude agent", "/srv/app"]);
+    });
+
+    it("offers the session's own models for /model, by label", async () => {
+        const client = signedInClient();
+        internals(client).state = {
+            ...client.getSnapshot(),
+            sessionStatus: {
+                model_options: [
+                    { value: "opus", label: "Opus" },
+                    { value: "opus[1m]", label: "Opus 1M" },
+                ],
+            },
+        };
+        rendered = await renderClient(client);
+        await act(async () => inputTextarea(composer(), "/model op"));
+        expect(options().map((row) => row.textContent)).toEqual(["Opus", "Opus 1M"]);
+
+        await act(async () => options()[1].dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })));
+        expect(composer().value).toBe("/model opus[1m] ");
+    });
+
     it("records only folder commands accepted by sendMessage", async () => {
         const store = makeRecentFoldersStore(SESSION);
         const client = signedInClient();
