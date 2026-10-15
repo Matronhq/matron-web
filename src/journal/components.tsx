@@ -8,6 +8,7 @@ Please see LICENSE files in the repository root for full details.
 import React, {
     type FormEvent,
     type RefObject,
+    Suspense,
     useCallback,
     useEffect,
     useId,
@@ -156,8 +157,7 @@ import {
     useMarkdownPreviewPanel,
 } from "./markdown-preview";
 import { TrackerPane } from "./tracker/TrackerPane";
-import { MediaBrowserSheet } from "./media-browser";
-import { paneCoversChat, SubChatPane, type SubChatRow, useChatArea } from "./subchat-pane";
+import { paneCoversChat, type SubChatRow, useChatArea } from "./subchat-area";
 import { chatSidePane, subtaskDescription } from "./subtask";
 import { SubtaskLine } from "./subtask-link";
 import {
@@ -3617,6 +3617,10 @@ function ChatHeader({
     );
 }
 
+// The media browser and the subagent pane load on first use, keeping them out of the first paint.
+const MediaBrowserSheet = React.lazy(() => import("./media-browser"));
+const SubChatPane = React.lazy(() => import("./subchat-pane"));
+
 // Opens the conversation's Media / Files / Links browser. Keyed by conversation, so moving to
 // another chat closes it.
 function MediaBrowserButton({ client, convoId }: { client: MatronJournalClient; convoId: string }): React.ReactElement {
@@ -3653,7 +3657,9 @@ function MediaBrowserButton({ client, convoId }: { client: MatronJournalClient; 
             </button>
             {open &&
                 createPortal(
-                    <MediaBrowserSheet client={client} convoId={convoId} renderFile={renderFile} onClose={close} />,
+                    <Suspense fallback={null}>
+                        <MediaBrowserSheet client={client} convoId={convoId} renderFile={renderFile} onClose={close} />
+                    </Suspense>,
                     document.body,
                 )}
         </>
@@ -7512,15 +7518,17 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                     </div>
                     {/* One slot beside the chat, decided by chatSidePane: never both panes at once. */}
                     {sidePane?.kind === "subchat" ? (
-                        <SubChatPane
-                            key={sidePane.parentId}
-                            client={client}
-                            conversations={state.conversations}
-                            parentId={sidePane.parentId}
-                            childId={sidePane.childId}
-                            area={chatArea}
-                            transcript={subChatTranscript}
-                        />
+                        <Suspense fallback={null}>
+                            <SubChatPane
+                                key={sidePane.parentId}
+                                client={client}
+                                conversations={state.conversations}
+                                parentId={sidePane.parentId}
+                                childId={sidePane.childId}
+                                area={chatArea}
+                                transcript={subChatTranscript}
+                            />
+                        </Suspense>
                     ) : sidePane?.kind === "tasks" && state.chatTasks ? (
                         <ChatTasksPane
                             client={client}

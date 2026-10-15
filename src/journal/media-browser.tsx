@@ -114,7 +114,8 @@ function EmptyTab({ icon, title }: { icon: React.ReactNode; title: string }): Re
     );
 }
 
-export function MediaBrowserSheet({
+// The default export is what the chat header loads on demand, the first time the sheet opens.
+export default function MediaBrowserSheet({
     client,
     convoId,
     renderFile,
