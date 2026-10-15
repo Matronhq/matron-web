@@ -21,16 +21,87 @@ import { ChevronLeftIcon, CloseIcon } from "./icons";
 import { buildMediaCorpus, MediaViewer, MediaViewerContext, type MediaViewerContextValue } from "./media-viewer";
 import { MarkdownPreviewContext, type MarkdownPreviewContextValue, useMarkdownPreview } from "./markdown-preview";
 import { displayTitle } from "./SessionTag";
-import { type ChatArea, paneCoversChat, type SubChatRow } from "./subchat-area";
-import { clampSidePaneWidth, SIDE_PANE_MIN_WIDTH } from "./subtask";
+import { clampSidePaneWidth, SIDE_BY_SIDE_MIN_WIDTH, SIDE_PANE_MIN_WIDTH } from "./subtask";
 import { childrenOf, type Conversation, type JournalEvent } from "./types";
+
+/** One transcript row and its rendered content. */
+export interface SubChatRow {
+    event: JournalEvent;
+    content: React.ReactNode;
+}
+
+/** Where the chat area is on screen: from the chat's left edge to the app's right edge, less a
+ *  Markdown preview open at that edge. */
+export interface ChatArea {
+    left: number;
+    top: number;
+    bottom: number;
+    width: number;
+}
+
+/**
+ * Measures the chat area while `active`, following window and layout resizes. The pane decides
+ * from it whether it fits beside the chat or covers it.
+ */
+export function useChatArea(
+    app: React.RefObject<HTMLElement | null>,
+    chat: React.RefObject<HTMLElement | null>,
+    active: boolean,
+): ChatArea | undefined {
+    const [area, setArea] = useState<ChatArea>();
+    useLayoutEffect(() => {
+        if (!active) {
+            setArea(undefined);
+            return undefined;
+        }
+        const measure = (): void => {
+            const appNode = app.current;
+            const chatNode = chat.current;
+            if (!appNode || !chatNode) return;
+            const appRect = appNode.getBoundingClientRect();
+            const chatRect = chatNode.getBoundingClientRect();
+            // A Markdown preview open beside them takes its own room from the chat and the pane.
+            const preview = appNode.querySelector(".mj_MdPreview");
+            const previewWidth = preview ? preview.getBoundingClientRect().width : 0;
+            const next = {
+                left: Math.round(chatRect.left),
+                top: Math.round(chatRect.top),
+                bottom: Math.round(chatRect.bottom),
+                width: Math.round(appRect.right - chatRect.left - previewWidth),
+            };
+            setArea((previous) =>
+                previous &&
+                previous.left === next.left &&
+                previous.top === next.top &&
+                previous.bottom === next.bottom &&
+                previous.width === next.width
+                    ? previous
+                    : next,
+            );
+        };
+        measure();
+        window.addEventListener("resize", measure);
+        const observer = typeof ResizeObserver === "function" ? new ResizeObserver(measure) : undefined;
+        if (app.current) observer?.observe(app.current);
+        if (chat.current) observer?.observe(chat.current);
+        return () => {
+            window.removeEventListener("resize", measure);
+            observer?.disconnect();
+        };
+    }, [app, chat, active]);
+    return area;
+}
+
+/** Whether the pane covers the chat rather than sitting beside it. Unmeasured counts as wide. */
+export function paneCoversChat(area: ChatArea | undefined): boolean {
+    return area !== undefined && area.width < SIDE_BY_SIDE_MIN_WIDTH;
+}
 
 function isNearBottom(node: HTMLElement): boolean {
     return node.scrollHeight - node.scrollTop - node.clientHeight < 80;
 }
 
-// The default export is what the chat loads on demand, the first time a subagent opens beside it.
-export default function SubChatPane({
+export function SubChatPane({
     client,
     conversations,
     parentId,
