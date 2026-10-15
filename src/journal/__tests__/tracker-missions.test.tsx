@@ -12,7 +12,7 @@ import type { MatronJournalClient } from "../client";
 import type { AgentRosterEntry, Milestone, MissionConversation, MissionItemRef } from "../types";
 import { MILESTONE_PAGE, MissionConvoRow, MissionDetail, missionConvoTopic } from "../tracker/MissionDetail";
 import { MissionsList } from "../tracker/MissionsList";
-import { trackerItem, trackerMission, trackerMissionDetail } from "./tracker-fixtures";
+import { trackerItem, trackerMission, trackerMissionDetail, trackerProject } from "./tracker-fixtures";
 
 async function mount(element: React.ReactElement): Promise<{ container: HTMLDivElement; root: Root }> {
     const container = document.createElement("div");
@@ -518,5 +518,67 @@ describe("MissionDetail page (Mac parity)", () => {
         await act(async () => closed.querySelector<HTMLButtonElement>(".mj_TrackerShowMore")!.click());
         expect(closed.textContent).toContain("None found yet.");
         expect(closed.querySelector(".mj_TrackerShowMore")?.textContent).toBe("Show more");
+    });
+});
+
+describe("MissionDetail move to project", () => {
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+    afterEach(() => {
+        document.body.innerHTML = "";
+    });
+
+    const project = (id: string, title: string, state: "open" | "closed" = "open") =>
+        trackerProject({ id, num: Number(id.slice(3)), title, state });
+
+    it("moves an open mission to another open project from its header", async () => {
+        const moveTrackerMission = jest.fn().mockResolvedValue(null);
+        const client = { getSnapshot: jest.fn().mockReturnValue({ trackerView: {} }), moveTrackerMission };
+        const { container } = await mount(
+            <MissionDetail
+                detail={trackerMissionDetail({ mission: trackerMission({ id: "ms_1", project_id: "pj_1" }) })}
+                client={client as unknown as MatronJournalClient}
+                projects={[project("pj_1", "Home"), project("pj_2", "Away"), project("pj_3", "Gone", "closed")]}
+                onOpenItem={jest.fn()}
+                onBack={jest.fn()}
+            />,
+        );
+        const move = container.querySelector<HTMLButtonElement>(".mj_TrackerMissionHead_move")!;
+        expect(move.textContent).toBe("Move to project…");
+        await act(async () => move.click());
+        const rows = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="dialog"] [role="listitem"]'));
+        expect(rows.map((row) => row.textContent)).toEqual(["Home", "Away"]);
+        expect(rows[0].disabled).toBe(true);
+        await act(async () => rows[1].click());
+        expect(moveTrackerMission).toHaveBeenCalledWith("ms_1", "pj_2");
+        expect(document.querySelector('[role="dialog"]')).toBeNull();
+    });
+
+    it("offers no move on a closed mission or with nowhere else to go", async () => {
+        const client = { getSnapshot: jest.fn().mockReturnValue({ trackerView: {} }) };
+        const { container } = await mount(
+            <MissionDetail
+                detail={trackerMissionDetail({
+                    mission: trackerMission({ state: "closed", project_id: "pj_1" }),
+                })}
+                client={client as unknown as MatronJournalClient}
+                projects={[project("pj_1", "Home"), project("pj_2", "Away")]}
+                onOpenItem={jest.fn()}
+                onBack={jest.fn()}
+            />,
+        );
+        expect(container.querySelector(".mj_TrackerMissionHead_move")).toBeNull();
+        document.body.innerHTML = "";
+        const second = await mount(
+            <MissionDetail
+                detail={trackerMissionDetail({ mission: trackerMission({ project_id: "pj_1" }) })}
+                client={client as unknown as MatronJournalClient}
+                projects={[project("pj_1", "Home")]}
+                onOpenItem={jest.fn()}
+                onBack={jest.fn()}
+            />,
+        );
+        expect(second.container.querySelector(".mj_TrackerMissionHead_move")).toBeNull();
     });
 });

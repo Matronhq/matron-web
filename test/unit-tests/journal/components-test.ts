@@ -209,6 +209,112 @@ describe("usage limit accessibility", () => {
         expect(progressbar?.parentElement?.hasAttribute("aria-label")).toBe(false);
     });
 
+    it("shows the effort level beside the model and the account email in the header subtitle", async () => {
+        const client = signedInClient();
+        internals(client).state = {
+            ...client.getSnapshot(),
+            sessionStatus: {
+                model: "claude-sonnet",
+                effort: "high",
+                workdir: "/srv/app",
+                email: "alice@example.com",
+            },
+        };
+
+        rendered = await renderClient(client);
+
+        const meta = rendered.container.querySelector(".mj_ChatHeader .mj_HeaderMeta");
+        expect(meta?.querySelector(".mj_HeaderModel")?.textContent).toBe("claude-sonnet · high");
+        expect(meta?.querySelector(".mj_HeaderEmail")?.textContent).toBe("alice@example.com");
+        // Order as on the Mac: workdir, then the account it runs under.
+        const segments = [...(meta?.children ?? [])].map((element) => element.className.split(" ")[0]);
+        expect(segments.indexOf("mj_HeaderEmail")).toBe(segments.indexOf("mj_HeaderWorkdir") + 1);
+    });
+
+    it("leaves the model alone when no effort level is known, and drops the email when absent", async () => {
+        const client = signedInClient();
+        internals(client).state = { ...client.getSnapshot(), sessionStatus: { model: "claude-sonnet" } };
+
+        rendered = await renderClient(client);
+
+        expect(rendered.container.querySelector(".mj_HeaderModel")?.textContent).toBe("claude-sonnet");
+        expect(rendered.container.querySelector(".mj_HeaderEmail")).toBeNull();
+    });
+
+    it("offers to compact a conversation past the context threshold, sending /compact once", async () => {
+        const client = signedInClient();
+        internals(client).state = {
+            ...client.getSnapshot(),
+            sessionStatus: { context: { tokens: 512_300, window: 1_000_000, pct: 51 } },
+        };
+        let release: (sent: boolean) => void = () => {};
+        const sendMessage = jest
+            .spyOn(client, "sendMessage")
+            .mockImplementation(() => new Promise<boolean>((resolve) => (release = resolve)));
+
+        rendered = await renderClient(client);
+
+        const nudge = button(rendered.container, "Large conversation, 512 thousand tokens, compact it");
+        expect(nudge.textContent).toContain("Large conversation (512k)");
+        expect(nudge.textContent).toContain("Compact");
+        await act(async () => nudge.click());
+        // A second click while the first is still sending does not queue another /compact.
+        await act(async () => nudge.click());
+        expect(sendMessage).toHaveBeenCalledTimes(1);
+        expect(sendMessage).toHaveBeenCalledWith("/compact", client.getSnapshot().selectedConversationId);
+        await act(async () => release(true));
+        await act(async () => nudge.click());
+        expect(sendMessage).toHaveBeenCalledTimes(2);
+    });
+
+    it("sends one /compact for a double-click, even once the first send has been queued", async () => {
+        const client = signedInClient();
+        internals(client).state = {
+            ...client.getSnapshot(),
+            sessionStatus: { context: { tokens: 512_300, window: 1_000_000, pct: 51 } },
+        };
+        const sendMessage = jest.spyOn(client, "sendMessage").mockResolvedValue(true);
+
+        rendered = await renderClient(client);
+
+        const nudge = rendered.container.querySelector<HTMLButtonElement>(".mj_CompactNudge")!;
+        await act(async () => nudge.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 })));
+        await act(async () => nudge.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 2 })));
+        expect(sendMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not nudge in a read-only subagent transcript", async () => {
+        const result = await renderComposerAppWithChild("p1", "k1");
+        rendered = result;
+        const large = { context: { tokens: 512_300, window: 1_000_000, pct: 51 } };
+        act(() =>
+            (result.client as unknown as { patch(update: Partial<ClientState>): void }).patch({
+                sessionStatus: large,
+            }),
+        );
+        expect(result.container.querySelector(".mj_CompactNudge")).not.toBeNull();
+        act(() =>
+            (result.client as unknown as { patch(update: Partial<ClientState>): void }).patch({
+                selectedConversationId: "k1",
+                sessionStatus: large,
+            }),
+        );
+        expect(result.container.querySelector(".mj_ReadOnlyHint")).not.toBeNull();
+        expect(result.container.querySelector(".mj_CompactNudge")).toBeNull();
+    });
+
+    it("does not nudge at or below the context threshold", async () => {
+        const client = signedInClient();
+        internals(client).state = {
+            ...client.getSnapshot(),
+            sessionStatus: { context: { tokens: 400_000, window: 1_000_000, pct: 40 } },
+        };
+
+        rendered = await renderClient(client);
+
+        expect(rendered.container.querySelector(".mj_CompactNudge")).toBeNull();
+    });
+
     it("fills only the semantic affirmative in a permission card, whatever the option order", async () => {
         const client = signedInClient({
             events: [
