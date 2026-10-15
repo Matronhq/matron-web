@@ -66,6 +66,12 @@ import {
 } from "./coordinator-consent";
 import { CompactNudge } from "./compact-nudge";
 import { CoordinatorEventNotice, isUnrenderableNoticeEvent } from "./coordinator-notices";
+import {
+    isSystemNoticeEvent,
+    sameTimelineSection as sameSection,
+    systemNotice,
+    type SystemNotice,
+} from "./system-notice";
 import { dateTimeFormat } from "./date-format";
 import { ChatTasksPane, CoordinatorChooserSheet, RoutinesSheet, SettingsSheet, TrackerPane } from "./deferred-ui";
 import { FOCUS_HIGHLIGHT_MS, focusScrollTop, jumpToLastOwnShortcutLabel, landingSeq } from "./jump-to-message";
@@ -4592,6 +4598,41 @@ function SpawnOutcomeRow({ client, event }: { client: MatronJournalClient; event
     );
 }
 
+/** A tagged bridge notice: icon, summary and time on one line; the full text when opened. */
+function SystemNoticeRow({
+    client,
+    event,
+    notice,
+    body,
+}: {
+    client: MatronJournalClient;
+    event: JournalEvent;
+    notice: SystemNotice;
+    body: string;
+}): React.ReactElement {
+    return (
+        <details className="mj_SystemNotice" data-notice-kind={notice.kind}>
+            <summary title={notice.summary}>
+                <ChevronDownIcon className="mj_SystemNotice_chevron" aria-hidden="true" />
+                <span className="mj_SystemNotice_icon" aria-hidden="true">
+                    {notice.icon}
+                </span>
+                <span className="mj_SystemNotice_summary">{notice.summary}</span>
+                <time className="mj_SystemNotice_time" dateTime={new Date(event.ts).toISOString()}>
+                    {formatTime(event.ts)}
+                </time>
+            </summary>
+            <div className="mj_SystemNotice_body mj_Markdown">
+                <MarkdownBody
+                    text={body}
+                    label={String(event.seq)}
+                    onTrackerLink={(kind, num) => client.openTrackerLink(kind, num)}
+                />
+            </div>
+        </details>
+    );
+}
+
 function ToolOutput({ client, event }: { client: MatronJournalClient; event: JournalEvent }): React.ReactElement {
     const payload = event.payload;
     const command = asString(payload.command).trim() || asString(payload.tool_name).trim() || "Tool output";
@@ -5357,6 +5398,10 @@ export function EventContent({
             // renders that marker, so suppress the duplicate fallback text.
             if (asString(event.payload.fallback_for)) return null;
             const body = asString(event.payload.body);
+            // A bridge notice about a turn it injected (payload.notice): one short row, the full
+            // text one click away.
+            const notice = systemNotice(event);
+            if (notice) return <SystemNoticeRow client={client} event={event} notice={notice} body={body} />;
             // A bridge "🔀 Subtask: …" line opens the subagent it started, once that is known.
             const subtask = event.sender.startsWith("user:") ? undefined : subtaskDescription(body);
             if (subtask) {
@@ -5580,13 +5625,15 @@ function EventRow({
     lastInSection?: boolean;
     rowHandlers: RowContextMenu<JournalEvent>["rowHandlers"];
 }): React.ReactElement {
-    const own = event.sender.startsWith("user:");
+    // A bridge notice row is its own one-line row: no sender header, no grouping, never an own bubble.
+    const noticeRow = isSystemNoticeEvent(event);
+    const own = !noticeRow && event.sender.startsWith("user:");
     const liRef = useRef<HTMLLIElement>(null);
     const handlers = rowHandlers(event, () => liRef.current);
     return (
         <li
             ref={liRef}
-            className={`mj_EventTile${continuation ? " mj_EventTile_continuation" : ""}${lastInSection ? " mj_EventTile_lastInSection" : ""}`}
+            className={`mj_EventTile${continuation ? " mj_EventTile_continuation" : ""}${lastInSection ? " mj_EventTile_lastInSection" : ""}${noticeRow ? " mj_EventTile_systemNotice" : ""}`}
             tabIndex={-1}
             aria-live="polite"
             aria-atomic="true"
@@ -5596,7 +5643,7 @@ function EventRow({
             {...handlers}
             onClickCapture={handlers.onClickCapture}
         >
-            {!own && !continuation && (
+            {!own && !continuation && !noticeRow && (
                 <span className="mj_SenderName">
                     <MsgAvatar />
                     <span className="mj_SenderName_displayName">{displaySender(event.sender)}</span>
@@ -6076,8 +6123,8 @@ function Timeline({
                     key: `${conversation}:e-${item.event.seq}`,
                     kind: "event",
                     event: item.event,
-                    continuation: previous?.kind === "event" && previous.event.sender === item.event.sender && !newDay,
-                    lastInSection: next?.kind !== "event" || next.event.sender !== item.event.sender,
+                    continuation: previous?.kind === "event" && sameSection(previous.event, item.event) && !newDay,
+                    lastInSection: next?.kind !== "event" || !sameSection(item.event, next.event),
                 });
             } else {
                 out.push({ key: `${conversation}:m-${item.message.localId}`, kind: "pending", message: item.message });
