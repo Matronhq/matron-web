@@ -626,17 +626,38 @@ const state: ClientState = {
     connection: "online",
     sessionStatus: {
         model: "claude-sonnet",
+        effort: "high",
+        workdir: "/srv/app/web",
+        email: "alice@example.com",
         context: { tokens: 144_000, window: 200_000, pct: 72 },
         // id-driven limits (v5+ bridge): ctx is synthesized from context; the rest carry
         // stable ids → short tags 5h/fbl/wk/cpu/ram + column-first 3×2 grid order.
         limits: [
-            { id: "week_all", label: "Week (all models)", percent: 63, resets: "4d" },
-            { id: "session", label: "Session", percent: 41, resets: "3h20" },
+            {
+                id: "week_all",
+                label: "Week (all models)",
+                percent: 63,
+                resets: "4d",
+                resets_at: new Date(Date.now() + 4 * 86_400_000).toISOString(),
+            },
+            {
+                id: "session",
+                label: "Session",
+                percent: 41,
+                resets: "3h20",
+                resets_at: new Date(Date.now() + 200 * 60_000 + 30_000).toISOString(),
+            },
             // host_ram: FRESH sample (10s old) → renders normally. host_cpu: STALE (4m old,
             // past HOST_VITALS_STALE_MS=60s) → renders dimmed with "last sampled 4m ago" in the
             // accessible name. Contact sheet shows the fresh vs stale host-vital states together.
             { id: "host_ram", label: "Host RAM", percent: 55, unit: "%", sampled_at_ms: Date.now() - 10_000 },
-            { id: "week_fable", label: "Week (Fable)", percent: 22, resets: "4d" },
+            {
+                id: "week_fable",
+                label: "Week (Fable)",
+                percent: 22,
+                resets: "4d",
+                resets_at: new Date(Date.now() + 4 * 86_400_000).toISOString(),
+            },
             { id: "host_cpu", label: "Host CPU", percent: 34, unit: "%", sampled_at_ms: Date.now() - 240_000 },
         ],
     },
@@ -1638,6 +1659,15 @@ if (notifyParam === "default" || notifyParam === "granted" || notifyParam === "d
         public close(): void {}
     }
     Object.defineProperty(window, "Notification", { value: FixtureNotification, configurable: true });
+}
+
+// ?context=large puts the open conversation past the compact threshold, so the
+// "Large conversation" nudge shows under the header.
+if (new URLSearchParams(window.location.search).get("context") === "large") {
+    state.sessionStatus = {
+        ...state.sessionStatus,
+        context: { tokens: 512_300, window: 1_000_000, pct: 51 },
+    };
 }
 
 const params = new URLSearchParams(window.location.search);
