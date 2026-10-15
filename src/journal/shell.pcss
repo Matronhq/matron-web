@@ -1694,6 +1694,34 @@ label.mj_SettingsSheet_row {
     opacity: 0.5;
 }
 
+/* Notifications: the mode as radio rows (title over subtitle), and an override's Clear. */
+.mj_SettingsSheet_radioRow {
+    justify-content: flex-start;
+    align-items: center;
+    cursor: pointer;
+}
+
+.mj_SettingsSheet_radioRow input {
+    flex: none;
+    margin: 0;
+    accent-color: var(--mj-color-text-action-accent);
+}
+
+.mj_SettingsSheet_overrideTitle {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_SettingsSheet_clear {
+    flex: none;
+    border: 0;
+    background: transparent;
+    color: var(--mj-color-text-action-accent);
+    cursor: pointer;
+    font: 500 13px/17px var(--mj-font-family-ui);
+}
+
 .mj_SettingsSheet_signOut {
     height: 32px;
     border: 0;

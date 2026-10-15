@@ -703,6 +703,15 @@ export class JournalApi {
     }
 
     /**
+     * PUT /notify — changes any part of the settings: `mode`, `events`, this device's
+     * `device_level`, or one conversation's `convo` level or mute (an explicit null clears it).
+     * Answers the whole view, as GET does; client tokens only.
+     */
+    public async updateNotify(body: Record<string, unknown>): Promise<unknown> {
+        return this.json<unknown>("/notify", { method: "PUT", body });
+    }
+
+    /**
      * GET /coordinator — `{convo_id, consent}`: the user's Coordinator conversation (null for none)
      * and whether the Coordinator may answer chat and spawn asks. Unvalidated.
      */
