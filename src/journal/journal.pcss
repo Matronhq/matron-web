@@ -2541,6 +2541,14 @@ textarea {
     font: var(--mj-font-body-sm-regular);
 }
 
+/* A sheet or pane whose code could not be fetched (deferred-ui.tsx). */
+.mj_DeferredFailed {
+    margin: 0;
+    padding: var(--mj-space-3x);
+    color: var(--mj-color-text-critical-primary);
+    font: var(--mj-font-body-sm-regular);
+}
+
 /* v5 new-session sheet: the upload-dialog shell + a fully themed form. The load-bearing
    fix is §10.4 — the native inputs were unstyled, so they inherited the UA white and
    vanished on dark ("Agent default" white-on-dark). Every input/checkbox/label now sets
