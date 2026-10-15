@@ -72,6 +72,13 @@ export default (_environment, arguments_) => {
                     exclude: /pdf\.worker\.min\..*\.mjs$/,
                     terserOptions: { compress: { passes: 2 } },
                 }),
+                // Webpack minifies only JS by default. Without this the stylesheet ships with its
+                // comments and indentation, nearly doubling its compressed size.
+                new MinimizerPlugin({
+                    test: /\.css$/i,
+                    minify: MinimizerPlugin.cleanCssMinify,
+                    minimizerOptions: { level: 1 },
+                }),
             ],
         },
         module: {
@@ -94,7 +101,7 @@ export default (_environment, arguments_) => {
                             options: {
                                 sourceMap: true,
                                 postcssOptions: {
-                                    plugins: [postcssPresetEnv({ stage: 3, browsers: "last 2 versions" })],
+                                    plugins: [postcssPresetEnv({ stage: 3 })],
                                 },
                             },
                         },

@@ -7,7 +7,6 @@ Please see LICENSE files in the repository root for full details.
 
 import React, {
     type FormEvent,
-    type RefObject,
     useCallback,
     useEffect,
     useId,
@@ -68,6 +67,7 @@ import {
 import { CompactNudge } from "./compact-nudge";
 import { CoordinatorEventNotice, isUnrenderableNoticeEvent } from "./coordinator-notices";
 import { dateTimeFormat } from "./date-format";
+import { ChatTasksPane, CoordinatorChooserSheet, RoutinesSheet, SettingsSheet, TrackerPane } from "./deferred-ui";
 import { FOCUS_HIGHLIGHT_MS, focusScrollTop, jumpToLastOwnShortcutLabel, landingSeq } from "./jump-to-message";
 import { FindInChatBar, useFindInChatShortcut } from "./find-in-chat";
 import { GoToNumberDialog, goToNumberShortcutLabel, NumberSearchResult, useGoToNumberShortcut } from "./goto-number";
@@ -125,14 +125,15 @@ import {
     ArrowUpCircleIcon,
     ProjectsIcon,
 } from "./icons";
-import { COORDINATOR_NEW_CHAT_MODEL, CoordinatorChooserSheet, RoutinesSheet } from "./CoordinatorSheets";
 import { NAV_RAIL_WIDTH, NavRail, type NavKey } from "./NavRail";
 import { isAgentRoomTitle, needsYouByConversation, projectsNeedsYou } from "./needs-you";
 import { notificationsFor, unreadTotal as countUnread } from "./notifications";
-import { SettingsSheet } from "./SettingsSheet";
+import { ConvoNotifyBell, OverflowRoomsAndNotify, RoomsControl } from "./ChatHeaderRooms";
+import { useDismissablePopover } from "./use-dismissable-popover";
 import { displayTitle, TaggedTitle } from "./SessionTag";
 import { groupByDay } from "./sidebar-groups";
 import { observeSeenRows } from "./seen-tracker";
+import { preloadDeferredUi } from "./lazy";
 import { createLongPressController, type LongPressController } from "./longPress";
 import { MarkdownBody, markdownToPlainText } from "./markdown";
 import {
@@ -145,7 +146,6 @@ import {
     MissionNotice,
     renderItemMarker,
 } from "./tracker/cards";
-import { ChatTasksPane } from "./tracker/ChatTasksPane";
 import { needsUser } from "./tracker/format";
 import { NeedsYouBadge } from "./tracker/glyphs";
 import {
@@ -155,7 +155,6 @@ import {
     useMarkdownPreview,
     useMarkdownPreviewPanel,
 } from "./markdown-preview";
-import { TrackerPane } from "./tracker/TrackerPane";
 import { MediaBrowserSheet } from "./media-browser";
 import { paneCoversChat, SubChatPane, type SubChatRow, useChatArea } from "./subchat-pane";
 import { chatSidePane, subtaskDescription } from "./subtask";
@@ -173,8 +172,11 @@ import {
 } from "./media-viewer";
 import { getSnapshot, nextThemePref, setTheme, subscribe } from "./theme";
 import {
+    applyArgument,
     applyCommand,
     applyFolder,
+    type ArgSuggestion,
+    argSuggestions,
     type BotCommand,
     CLAUDE_BRIDGE_COMMANDS,
     filterCommands,
@@ -239,12 +241,15 @@ import {
     normalizeServerUrl,
 } from "./types";
 import {
+    useVoiceNoteBarVisible,
     useVoiceRecorder,
     VoiceErrorBanner,
     VoiceMicButton,
+    VoiceNoteBar,
     type VoiceRecordingContext,
     VoiceRecordingBar,
 } from "./voice-recorder";
+import { voiceNoteSessionFor } from "./voice-note-session";
 
 const NAV_VIEW = { projects: "missions", decisions: "inbox", memories: "memories" } as const;
 const NAV_KEY_FOR_VIEW: Record<"missions" | "inbox" | "memories", NavKey> = {
@@ -703,6 +708,9 @@ function BoxUsage({ status, now }: { status: BoxStatus | undefined; now: number 
         </span>
     );
 }
+
+/** "New coordinator chat…" starts the session on this model, as on the Mac. */
+const COORDINATOR_NEW_CHAT_MODEL = "opus[1m]";
 
 export function NewSessionSheet({
     client,
@@ -2618,37 +2626,6 @@ const ConversationList = React.memo(
         sameStateExcept(previous.state, next.state, CONVERSATION_LIST_IGNORED_STATE),
 );
 
-export function useDismissablePopover(
-    open: boolean,
-    close: () => void,
-    refs: { openerRef: RefObject<HTMLElement | null>; panelRef: RefObject<HTMLElement | null> },
-): void {
-    const { openerRef, panelRef } = refs;
-    useEffect(() => {
-        if (!open) return;
-        const onPointerDown = (event: PointerEvent): void => {
-            const target = event.target as Node;
-            if (!openerRef.current?.contains(target) && !panelRef.current?.contains(target)) close();
-        };
-        const onKeyDown = (event: KeyboardEvent): void => {
-            if (event.key !== "Escape") return;
-            close();
-            openerRef.current?.focus();
-        };
-        const onScroll = (event: Event): void => {
-            if (!panelRef.current?.contains(event.target as Node)) close();
-        };
-        document.addEventListener("pointerdown", onPointerDown);
-        document.addEventListener("keydown", onKeyDown);
-        document.addEventListener("scroll", onScroll, true);
-        return () => {
-            document.removeEventListener("pointerdown", onPointerDown);
-            document.removeEventListener("keydown", onKeyDown);
-            document.removeEventListener("scroll", onScroll, true);
-        };
-    }, [open, close, openerRef, panelRef]);
-}
-
 // Redesign-v4 pane-width bands (ResizeObserver on the chat pane, not viewport):
 // >=720 full 2×2 usage grid (keep all four bars as long as they genuinely fit — the
 // 2×2 is ~430px with reset times and clears a minimal title down to ~720); <720 collapse to a ctx+5h
@@ -2664,23 +2641,27 @@ const USAGE_COLLAPSE_WIDE_PX = 960;
 const USAGE_WIDE_METER_COUNT = 4; // >4 meters ⇒ 3rd column ⇒ use the wide threshold
 const TITLE_COLLAPSE_PX = 560;
 
-export function useAdaptiveHeader(
-    bodyEl: HTMLElement | null,
-    meterCount = 0,
-): {
+export interface HeaderCollapse {
     usageCollapsed: boolean;
     titleCollapsed: boolean;
-} {
+    /** Rooms · n and the bell live in the ⋯ menu and Compact keeps only its icon. */
+    controlsFolded: boolean;
+}
+
+const EXPANDED_HEADER: HeaderCollapse = { usageCollapsed: false, titleCollapsed: false, controlsFolded: false };
+
+export function useAdaptiveHeader(bodyEl: HTMLElement | null, meterCount = 0): HeaderCollapse {
     const usageCollapsePx = meterCount > USAGE_WIDE_METER_COUNT ? USAGE_COLLAPSE_WIDE_PX : USAGE_COLLAPSE_PX;
-    const [collapse, setCollapse] = useState({ usageCollapsed: false, titleCollapsed: false });
+    const foldPx = meterCount > USAGE_WIDE_METER_COUNT ? CONTROLS_FOLD_WIDE_PX : CONTROLS_FOLD_PX;
+    const [collapse, setCollapse] = useState<HeaderCollapse>(EXPANDED_HEADER);
     const collapseRef = useRef(collapse);
 
     useEffect(() => {
         if (bodyEl == null || typeof ResizeObserver === "undefined") {
-            if (collapseRef.current.usageCollapsed || collapseRef.current.titleCollapsed) {
-                const expanded = { usageCollapsed: false, titleCollapsed: false };
-                collapseRef.current = expanded;
-                setCollapse(expanded);
+            const current = collapseRef.current;
+            if (current.usageCollapsed || current.titleCollapsed || current.controlsFolded) {
+                collapseRef.current = EXPANDED_HEADER;
+                setCollapse(EXPANDED_HEADER);
             }
             return;
         }
@@ -2695,11 +2676,15 @@ export function useAdaptiveHeader(
                 frame = null;
                 const usageCollapsed = latestWidth < usageCollapsePx;
                 const titleCollapsed = latestWidth < TITLE_COLLAPSE_PX;
+                // Folded below the width the current usage form needs: the collapsed two-bar
+                // disclosure is far narrower than either grid.
+                const controlsFolded = latestWidth < (usageCollapsed ? CONTROLS_FOLD_USAGE_COLLAPSED_PX : foldPx);
                 if (
                     collapseRef.current.usageCollapsed !== usageCollapsed ||
-                    collapseRef.current.titleCollapsed !== titleCollapsed
+                    collapseRef.current.titleCollapsed !== titleCollapsed ||
+                    collapseRef.current.controlsFolded !== controlsFolded
                 ) {
-                    const next = { usageCollapsed, titleCollapsed };
+                    const next = { usageCollapsed, titleCollapsed, controlsFolded };
                     collapseRef.current = next;
                     setCollapse(next);
                 }
@@ -2711,10 +2696,22 @@ export function useAdaptiveHeader(
             observer.disconnect();
             if (frame != null) cancelAnimationFrame(frame);
         };
-    }, [bodyEl, usageCollapsePx]);
+    }, [bodyEl, usageCollapsePx, foldPx]);
 
     return collapse;
 }
+
+// Below these pane widths the controls beside the title fold: Rooms · n and the bell move into
+// the ⋯ menu and Compact keeps only its icon, so the title keeps about 240px. Measured with every
+// control showing (usage grid with reset times, Compact, Rooms · n, Tasks, Media, the bell, ⋯).
+// The full four-meter grid shows from USAGE_COLLAPSE_PX and needs about 810px of controls
+// inline; the six-meter grid shows from USAGE_COLLAPSE_WIDE_PX and needs about 160px more; the
+// collapsed two-bar disclosure needs about 590px. So a six-meter header can be inline just below
+// USAGE_COLLAPSE_WIDE_PX and fold again just above it, where the wide grid appears. The Mac
+// shrinks its mission chip instead and never folds, but its title row has no usage grid.
+const CONTROLS_FOLD_PX = 1060;
+const CONTROLS_FOLD_WIDE_PX = 1200;
+const CONTROLS_FOLD_USAGE_COLLAPSED_PX = 840;
 
 function useMinuteClock(now?: number): number {
     const [clockNow, setClockNow] = useState(Date.now);
@@ -3127,16 +3124,23 @@ export function HeaderShell({
     );
 }
 
+// The items a header menu's arrow keys walk: actions, and the level choices' radio items.
+const MENU_ITEM_SELECTOR = '[role="menuitem"], [role="menuitemradio"]';
+
 // Header "⋯" overflow: the selected conversation's actions (same set as the sidebar
 // row menu), opened by click only (never hover — these mutate state).
 function HeaderOverflowMenu({
     client,
     conversation,
     state,
+    extras,
 }: {
     client: MatronJournalClient;
     conversation: Conversation;
     state: ClientState;
+    /** Sections shown above the actions (the folded Rooms and bell); `pick` closes the menu,
+     *  runs the choice and gives focus back to the ⋯ button. */
+    extras?: (pick: (run: () => void) => void) => React.ReactNode;
 }): React.ReactElement {
     const [open, setOpen] = useState(false);
     const openerRef = useRef<HTMLButtonElement>(null);
@@ -3148,7 +3152,7 @@ function HeaderOverflowMenu({
     const close = useCallback(() => setOpen(false), []);
     useDismissablePopover(open, close, { openerRef, panelRef });
     useLayoutEffect(() => {
-        if (open) panelRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+        if (open) panelRef.current?.querySelector<HTMLElement>(MENU_ITEM_SELECTOR)?.focus();
     }, [open]);
     useEffect(
         () => () => {
@@ -3206,13 +3210,11 @@ function HeaderOverflowMenu({
             </button>
             {open && (
                 <div
-                    className="mj_HeaderMenu mj_ConversationMenu"
+                    className={`mj_HeaderMenu mj_ConversationMenu${extras ? " mj_ConversationMenu_withSections" : ""}`}
                     role="menu"
                     ref={panelRef}
                     onKeyDown={(event) => {
-                        const items = Array.from(
-                            event.currentTarget.querySelectorAll<HTMLElement>('[role="menuitem"]'),
-                        );
+                        const items = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(MENU_ITEM_SELECTOR));
                         const currentIndex = items.findIndex((item) => item === document.activeElement);
                         if (event.key === "ArrowDown" || event.key === "ArrowUp") {
                             event.preventDefault();
@@ -3232,6 +3234,7 @@ function HeaderOverflowMenu({
                         }
                     }}
                 >
+                    {extras?.(act)}
                     {state.journalPins ? (
                         journalPinned ? (
                             <>
@@ -3521,9 +3524,11 @@ function ChatHeader({
 }: {
     client: MatronJournalClient;
     state: ClientState;
-    collapse?: { usageCollapsed: boolean; titleCollapsed: boolean };
+    /** `controlsFolded`: too narrow for every control beside the title (useAdaptiveHeader). */
+    collapse?: { usageCollapsed: boolean; titleCollapsed: boolean; controlsFolded?: boolean };
 }): React.ReactElement {
     const conversation = client.selectedConversation();
+    const controlsFolded = collapse.controlsFolded === true;
     const title = conversation ? displayTitle(conversation) : "Conversation";
     const status = state.sessionStatus;
     const runState = conversation?.session_state;
@@ -3575,7 +3580,7 @@ function ChatHeader({
             rightControls={
                 status?.context && (
                     <button
-                        className="mj_CompactButton"
+                        className={`mj_CompactButton${controlsFolded ? " mj_CompactButton_iconOnly" : ""}`}
                         type="button"
                         aria-label="Compact conversation"
                         title="Compact the conversation — sends /compact"
@@ -3585,8 +3590,8 @@ function ChatHeader({
                                 .catch((error) => console.warn("Compact command failed to send:", error))
                         }
                     >
-                        <CompactIcon />
-                        <span>Compact</span>
+                        <CompactIcon aria-hidden />
+                        {!controlsFolded && <span>Compact</span>}
                     </button>
                 )
             }
@@ -3595,17 +3600,43 @@ function ChatHeader({
                 // remounts (and closes) it, instead of silently retargeting the actions.
                 conversation && (
                     <>
+                        {!controlsFolded && (
+                            <RoomsControl
+                                key={`rooms-${conversation.id}`}
+                                client={client}
+                                state={state}
+                                conversation={conversation}
+                            />
+                        )}
                         <MediaBrowserButton
                             key={`media:${conversation.id}`}
                             client={client}
                             convoId={conversation.id}
                         />
                         <ChatTasksButton client={client} state={state} convoId={conversation.id} />
+                        <ConvoNotifyBell
+                            key={`notify-${conversation.id}`}
+                            client={client}
+                            convoId={conversation.id}
+                            onlyWhenSilenced={controlsFolded}
+                        />
                         <HeaderOverflowMenu
                             key={conversation.id}
                             client={client}
                             conversation={conversation}
                             state={state}
+                            extras={
+                                controlsFolded
+                                    ? (pick) => (
+                                          <OverflowRoomsAndNotify
+                                              client={client}
+                                              state={state}
+                                              conversation={conversation}
+                                              onPick={pick}
+                                          />
+                                      )
+                                    : undefined
+                            }
                         />
                     </>
                 )
@@ -6346,20 +6377,24 @@ function Timeline({
 const SLASH_LISTBOX_ID = "mj_SlashPalette_listbox";
 const slashRowId = (index: number): string => `${SLASH_LISTBOX_ID}_opt_${index}`;
 
+// The palette's second mode, for a fully typed command: its arguments first (few and short), then
+// any recent folders (up to eight), as the Mac composer orders them.
+type PaletteSuggestion = { kind: "argument"; argument: ArgSuggestion } | { kind: "folder"; path: string };
+
 function SlashCommandPalette({
     commands,
-    folders,
+    suggestions,
     highlighted,
     onHighlight,
     onSelectCommand,
-    onSelectFolder,
+    onSelectSuggestion,
 }: {
     commands: BotCommand[];
-    folders: string[];
+    suggestions: PaletteSuggestion[];
     highlighted: number | null;
     onHighlight: (index: number | null) => void;
     onSelectCommand: (command: BotCommand) => void;
-    onSelectFolder: (path: string) => void;
+    onSelectSuggestion: (suggestion: PaletteSuggestion) => void;
 }): React.ReactElement {
     const highlightedRow = useRef<HTMLDivElement>(null);
 
@@ -6367,40 +6402,49 @@ function SlashCommandPalette({
         if (highlighted !== null) highlightedRow.current?.scrollIntoView({ block: "nearest" });
     }, [highlighted]);
 
+    const rowProps = (
+        index: number,
+        onClick: () => void,
+    ): React.HTMLAttributes<HTMLDivElement> & {
+        ref?: React.Ref<HTMLDivElement>;
+    } => ({
+        className: `mj_SlashPalette_row${highlighted === index ? " mj_SlashPalette_row_highlighted" : ""}`,
+        id: slashRowId(index),
+        ref: highlighted === index ? highlightedRow : undefined,
+        role: "option",
+        "aria-selected": highlighted === index,
+        onMouseEnter: () => onHighlight(index),
+        onMouseDown: (event) => event.preventDefault(),
+        onClick,
+    });
+
     return (
-        <div className="mj_SlashPalette" id={SLASH_LISTBOX_ID} role="listbox">
-            {folders.length > 0
-                ? folders.map((folder, index) => (
-                      <div
-                          className={`mj_SlashPalette_row${
-                              highlighted === index ? " mj_SlashPalette_row_highlighted" : ""
-                          }`}
-                          id={slashRowId(index)}
-                          key={`${folder}-${index}`}
-                          ref={highlighted === index ? highlightedRow : undefined}
-                          role="option"
-                          aria-selected={highlighted === index}
-                          onMouseEnter={() => onHighlight(index)}
-                          onMouseDown={(event) => event.preventDefault()}
-                          onClick={() => onSelectFolder(folder)}
-                      >
-                          <span className="mj_SlashPalette_trigger">{folder}</span>
-                      </div>
-                  ))
+        <div className="mj_SlashPalette" id={SLASH_LISTBOX_ID} role="listbox" aria-label="Suggestions">
+            {suggestions.length > 0
+                ? suggestions.map((suggestion, index) =>
+                      suggestion.kind === "argument" ? (
+                          <div
+                              key={`arg:${suggestion.argument.value}`}
+                              {...rowProps(index, () => onSelectSuggestion(suggestion))}
+                          >
+                              <span className="mj_SlashPalette_trigger">
+                                  {suggestion.argument.label ?? suggestion.argument.value}
+                              </span>
+                              {suggestion.argument.summary && (
+                                  <span className="mj_SlashPalette_summary">{suggestion.argument.summary}</span>
+                              )}
+                          </div>
+                      ) : (
+                          <div
+                              key={`dir:${suggestion.path}-${index}`}
+                              {...rowProps(index, () => onSelectSuggestion(suggestion))}
+                          >
+                              <span className="mj_SlashPalette_trigger">{suggestion.path}</span>
+                          </div>
+                      ),
+                  )
                 : commands.map((command, index) => (
-                      <div
-                          className={`mj_SlashPalette_row${
-                              highlighted === index ? " mj_SlashPalette_row_highlighted" : ""
-                          }`}
-                          id={slashRowId(index)}
-                          key={command.trigger}
-                          ref={highlighted === index ? highlightedRow : undefined}
-                          role="option"
-                          aria-selected={highlighted === index}
-                          onMouseEnter={() => onHighlight(index)}
-                          onMouseDown={(event) => event.preventDefault()}
-                          onClick={() => onSelectCommand(command)}
-                      >
+                      <div key={command.trigger} {...rowProps(index, () => onSelectCommand(command))}>
                           <span className="mj_SlashPalette_trigger">{command.trigger}</span>
                           {command.argHint && <span className="mj_SlashPalette_argHint">{command.argHint}</span>}
                           <span className="mj_SlashPalette_summary">{command.summary}</span>
@@ -6408,6 +6452,24 @@ function SlashCommandPalette({
                   ))}
         </div>
     );
+}
+
+/**
+ * A conversation's voice note finished while no composer is mounted (stopped from the app-wide bar
+ * on another page): it goes out on its own. Resolves to why it didn't, for the bar's Retry row.
+ */
+async function sendVoiceNoteAway(
+    client: MatronJournalClient,
+    blob: Blob,
+    { contextKey, sessionGen }: VoiceRecordingContext,
+): Promise<string | null> {
+    try {
+        const outcome = await client.sendVoiceNote(blob, contextKey, sessionGen);
+        if (outcome === "sent" || outcome === "persisted-terminal") return null;
+        return outcome === "skipped" ? "This conversation can't take it now." : "Couldn't save the recording.";
+    } catch {
+        return "Couldn't save the recording.";
+    }
 }
 
 function Composer({
@@ -6446,9 +6508,15 @@ function Composer({
     const prevConvoIdRef = useRef(convoId);
     const draftTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
     const draftTimerConvoRef = useRef<string | undefined>(undefined);
-    const folders = folderSuggestions(body, store);
+    const suggestions: PaletteSuggestion[] = [
+        ...argSuggestions(body, CLAUDE_BRIDGE_COMMANDS, state.sessionStatus).map((argument): PaletteSuggestion => ({
+            kind: "argument",
+            argument,
+        })),
+        ...folderSuggestions(body, store).map((path): PaletteSuggestion => ({ kind: "folder", path })),
+    ];
     const commands = filterCommands(CLAUDE_BRIDGE_COMMANDS, body);
-    const open = body !== dismissed && (folders.length > 0 || (isCommandMode(body) && commands.length > 0));
+    const open = body !== dismissed && (suggestions.length > 0 || (isCommandMode(body) && commands.length > 0));
 
     // A finished voice note goes to the conversation it was recorded in. The typed draft goes with
     // it as its caption, so the agent gets both in one turn — unless a text send of it is already
@@ -6476,7 +6544,19 @@ function Composer({
             })
             .catch(failed);
     };
-    const voice = useVoiceRecorder({ contextKey: convoId, client, onRecorded: onVoiceRecorded });
+    const deliverVoiceNoteAway = (blob: Blob, context: VoiceRecordingContext): Promise<string | null> =>
+        sendVoiceNoteAway(client, blob, context);
+    // The note outlives this composer: it keeps recording across conversation switches and pages,
+    // and one finished while no composer is mounted goes out on its own, the draft left in place.
+    const voiceConversation = state.conversations.find((conversation) => conversation.id === convoId);
+    const voice = useVoiceRecorder({
+        contextKey: convoId,
+        client,
+        onRecorded: onVoiceRecorded,
+        kind: "conversation",
+        title: voiceConversation ? displayTitle(voiceConversation) : "this conversation",
+        deliverAway: deliverVoiceNoteAway,
+    });
     const { voiceState } = voice;
 
     // Mirror the store's canonical per-convo durability flag into React state, but only for the
@@ -6575,10 +6655,28 @@ function Composer({
         setHighlighted(null);
         textarea.current?.focus();
     };
-    const selectFolder = (path: string): void => {
-        const nextBody = applyFolder(body, path);
-        setBodyDraft(nextBody);
-        setDismissed(nextBody);
+    // Tab and Enter pick the row at `index`. A status frame can shorten the argument list under a
+    // held highlight, so a row that is no longer there picks nothing (and Enter then sends).
+    const pickRow = (index: number): boolean => {
+        if (suggestions.length > 0) {
+            if (!suggestions[index]) return false;
+            selectSuggestion(suggestions[index]);
+        } else {
+            if (!commands[index]) return false;
+            selectCommand(commands[index]);
+        }
+        return true;
+    };
+    // A folder completes the line, so the palette closes on it; an argument leaves a space after
+    // it, and the palette goes on to offer whatever the command still accepts.
+    const selectSuggestion = (suggestion: PaletteSuggestion): void => {
+        if (suggestion.kind === "folder") {
+            const nextBody = applyFolder(body, suggestion.path);
+            setBodyDraft(nextBody);
+            setDismissed(nextBody);
+        } else {
+            setBodyDraft(applyArgument(body, suggestion.argument.value));
+        }
         setHighlighted(null);
         textarea.current?.focus();
     };
@@ -6713,11 +6811,11 @@ function Composer({
                 {open && (
                     <SlashCommandPalette
                         commands={commands}
-                        folders={folders}
+                        suggestions={suggestions}
                         highlighted={highlighted}
                         onHighlight={setHighlighted}
                         onSelectCommand={selectCommand}
-                        onSelectFolder={selectFolder}
+                        onSelectSuggestion={selectSuggestion}
                     />
                 )}
                 {convoId && tray.length > 0 && (
@@ -6800,7 +6898,7 @@ function Composer({
                                             }
                                         }
                                         if (open) {
-                                            const count = folders.length || commands.length;
+                                            const count = suggestions.length || commands.length;
                                             if (event.key === "ArrowDown") {
                                                 event.preventDefault();
                                                 setHighlighted((current) =>
@@ -6817,9 +6915,7 @@ function Composer({
                                             }
                                             if (event.key === "Tab") {
                                                 event.preventDefault();
-                                                const index = highlighted ?? 0;
-                                                if (folders.length > 0) selectFolder(folders[index]);
-                                                else selectCommand(commands[index]);
+                                                pickRow(highlighted ?? 0);
                                                 return;
                                             }
                                             if (event.key === "Escape") {
@@ -6828,10 +6924,13 @@ function Composer({
                                                 setHighlighted(null);
                                                 return;
                                             }
-                                            if (event.key === "Enter" && !event.shiftKey && highlighted !== null) {
+                                            if (
+                                                event.key === "Enter" &&
+                                                !event.shiftKey &&
+                                                highlighted !== null &&
+                                                pickRow(highlighted)
+                                            ) {
                                                 event.preventDefault();
-                                                if (folders.length > 0) selectFolder(folders[highlighted]);
-                                                else selectCommand(commands[highlighted]);
                                                 return;
                                             }
                                         }
@@ -7318,6 +7417,19 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
     const appContent = useRef<HTMLDivElement>(null);
     // Desktop notifications and the unread count in the title / app badge, while signed in.
     useEffect(() => notificationsFor(client).start(), [client]);
+    // A voice note outlives every page but not the signed-in app: leaving it releases the microphone.
+    useEffect(() => () => voiceNoteSessionFor(client).reset(), [client]);
+    const voiceNoteBarVisible = useVoiceNoteBarVisible(client);
+    const openVoiceNoteTarget = useCallback(
+        (kind: string, contextKey: string): void => {
+            if (kind === "conversation") void client.selectConversation(contextKey);
+            else if (kind === "item") client.openTrackerItem(Number(contextKey));
+        },
+        [client],
+    );
+    // Settings, the tracker and the other sheets load in their own chunks: fetch them once the
+    // first screen is up, so they open instantly later.
+    useEffect(() => preloadDeferredUi(), []);
     const drafts = useMemo(() => makeDraftStore(state.session), [state.session]);
     const sendingConvos = useRef<Set<string>>(new Set());
     const draftRevisions = useRef<Map<string, number>>(new Map());
@@ -7429,7 +7541,7 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                         ref={chatAreaRef}
                         // Covered by the subagent pane, the chat stays mounted but out of reach.
                         inert={sidePane?.kind === "subchat" && paneCoversChat(chatArea)}
-                        className={`mj_ChatView_wrapper ${state.trackerView?.open || state.selectedConversationId ? "" : "mj_Chat_mobileHidden"}`}
+                        className={`mj_ChatView_wrapper ${state.trackerView?.open || state.selectedConversationId ? "" : "mj_Chat_mobileHidden"}${voiceNoteBarVisible ? " mj_ChatView_wrapper_voiceNote" : ""}`}
                     >
                         {state.trackerView?.open ? (
                             <TrackerPane client={client} state={state} />
@@ -7509,6 +7621,7 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                                 </div>
                             </main>
                         )}
+                        <VoiceNoteBar client={client} onOpen={openVoiceNoteTarget} />
                     </div>
                     {/* One slot beside the chat, decided by chatSidePane: never both panes at once. */}
                     {sidePane?.kind === "subchat" ? (

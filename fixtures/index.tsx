@@ -23,7 +23,7 @@ import "@fontsource/inter/latin-400.css";
 import "@fontsource/inter/latin-500.css";
 import "@fontsource/inter/latin-600.css";
 
-import { JournalApiError } from "../src/journal/api";
+import { JournalApi, JournalApiError } from "../src/journal/api";
 import { archiveStore, favoriteStore, MatronJournalClient, pinnedStore, unreadStore } from "../src/journal/client";
 import { MatronApp } from "../src/journal/components";
 import type { Routine } from "../src/journal/routines";
@@ -627,6 +627,21 @@ const state: ClientState = {
     sessionStatus: {
         model: "claude-sonnet",
         effort: "high",
+        // The composer's /model and /effort arguments, as the bridge offers them.
+        model_options: [
+            { value: "default", label: "Default" },
+            { value: "opus", label: "Opus" },
+            { value: "opus[1m]", label: "Opus 1M" },
+            { value: "sonnet", label: "Sonnet" },
+            { value: "haiku", label: "Haiku" },
+        ],
+        effort_levels: [
+            { value: "low", label: "Low" },
+            { value: "medium", label: "Medium" },
+            { value: "high", label: "High" },
+            { value: "xhigh", label: "X-High" },
+            { value: "max", label: "Max" },
+        ],
         workdir: "/srv/app/web",
         email: "alice@example.com",
         context: { tokens: 144_000, window: 200_000, pct: 72 },
@@ -1342,6 +1357,68 @@ if (trackerMode === "inbox" || trackerMode === "item") {
     }
 }
 
+// ?rooms=1 puts the selected conversation in two agent-chat rooms (the header's "Rooms · 2") and
+// answers the journal's notification settings: one room silenced, the selected chat muted for an
+// hour, so the bell, the rooms list and Settings → Notifications show their states.
+if (fixtureParams.get("rooms") === "1") {
+    const now = Date.now();
+    state.conversations = [
+        ...state.conversations,
+        {
+            id: "r1",
+            title: "↔️ [r1] Release checklist",
+            agent_device_id: 1,
+            session_state: "running",
+            last_seq: 9,
+            unread_count: 0,
+            snippet: "box-b: migrations are green on staging",
+            created_at: now - 3 * 3600_000,
+            last_ts: now - 4 * 60_000,
+            read_up_to_seq: 9,
+            participants: [1, 2],
+            participant_convos: ["c1", "c3"],
+        },
+        {
+            id: "r2",
+            title: "🔗 [r2] Schema review",
+            agent_device_id: 2,
+            session_state: "waiting",
+            last_seq: 4,
+            unread_count: 0,
+            snippet: "Agreed: keep the old column for one release",
+            created_at: now - 26 * 3600_000,
+            last_ts: now - 5 * 3600_000,
+            read_up_to_seq: 4,
+            participants: [1, 2],
+            participant_convos: ["c2", "c1"],
+        },
+    ];
+    const notify = {
+        mode: "coordinator",
+        events: {
+            prompts: true,
+            questions: true,
+            notices: true,
+            coordinator_done: true,
+            other_done: false,
+            stopped: false,
+            rooms: false,
+            activity: false,
+        },
+        has_coordinator: true,
+        device_level: "all",
+        convos: [
+            { convo_id: "c1", level: "needs_me", mute_until: now + 3600_000 },
+            { convo_id: "r2", level: "none", mute_until: null },
+        ],
+    };
+    const api = JournalApi.prototype as unknown as Record<string, unknown>;
+    api.notifySettings = async () => notify;
+    api.coordinator = async () => ({ convo_id: "c2", consent: true });
+    // A save is accepted; the shots do not change anything.
+    api.updateNotify = async () => notify;
+}
+
 // ?badges=1: the conversation list's needs-you counts and "New" marker, and the Projects badge in
 // the rail. Two questions from c2 and one from c1 wait on the user (two of them on a mission), and
 // c3 arrived without the user starting it and has not been opened.
@@ -1855,6 +1932,10 @@ const errorLog = (): File => new File([new Uint8Array(512)], "error-log.txt", { 
             },
         }),
     setTheme: (t: string) => document.documentElement.setAttribute("data-theme", t),
+    // Switch conversation (or none, for the home page) the way the client's own select would.
+    // A voice note recording in one conversation keeps going, with the app-wide bar elsewhere.
+    selectConversation: (id?: string) =>
+        patchState({ selectedConversationId: id, events: id === "c1" ? state.events : [], pendingMessages: [] }),
     // Drive the child (subagent) view: select the running child s1 of parent c1 → back chip +
     // ↳ header + ringed current pill. The fixture client has no database, so selectConversation
     // no-ops; patch the state directly (mirrors the client's own patch()).
