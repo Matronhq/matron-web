@@ -87,15 +87,17 @@ describe("NavRail", () => {
     const entry = (key: string): HTMLButtonElement =>
         container.querySelector<HTMLButtonElement>(`button[data-nav="${key}"]`)!;
 
-    it("shows the four Mac entries in order and marks Conversations current", async () => {
+    it("shows the Mac entries in order and marks Conversations current", async () => {
         await render(signedInClient([convo("c1")]));
         expect(entries().map((button) => button.dataset.nav)).toEqual([
+            "coordinator",
             "projects",
             "decisions",
             "conversations",
             "memories",
         ]);
         expect(entries().map((button) => button.textContent)).toEqual([
+            "Coordinator",
             "Projects",
             "For you",
             "Conversations",

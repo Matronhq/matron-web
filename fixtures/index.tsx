@@ -13,7 +13,7 @@ Please see LICENSE files in the repository root for full details.
  * via webpack.fixtures.mjs) — in every state, both themes, without a login or live server.
  *
  * Playwright reaches the client via window.__matron to drive states (stage a file →
- * upload modal, etc.). Theme comes from ?theme=dark on <html data-theme>.
+ * attachment tray, etc.). Theme comes from ?theme=dark on <html data-theme>.
  */
 
 import React from "react";
@@ -26,10 +26,12 @@ import "@fontsource/inter/latin-600.css";
 import { JournalApiError } from "../src/journal/api";
 import { archiveStore, favoriteStore, MatronJournalClient, pinnedStore, unreadStore } from "../src/journal/client";
 import { MatronApp } from "../src/journal/components";
+import type { Routine } from "../src/journal/routines";
 import type { ClientState, Conversation, JournalEvent, Session } from "../src/journal/types";
 import "../src/journal/shell.pcss";
 import "../src/journal/journal.pcss";
 import "../src/journal/tracker.pcss";
+import "../src/journal/coordinator.pcss";
 
 const SESSION: Session = {
     serverUrl: "https://journal.example",
@@ -624,17 +626,38 @@ const state: ClientState = {
     connection: "online",
     sessionStatus: {
         model: "claude-sonnet",
+        effort: "high",
+        workdir: "/srv/app/web",
+        email: "alice@example.com",
         context: { tokens: 144_000, window: 200_000, pct: 72 },
         // id-driven limits (v5+ bridge): ctx is synthesized from context; the rest carry
         // stable ids → short tags 5h/fbl/wk/cpu/ram + column-first 3×2 grid order.
         limits: [
-            { id: "week_all", label: "Week (all models)", percent: 63, resets: "4d" },
-            { id: "session", label: "Session", percent: 41, resets: "3h20" },
+            {
+                id: "week_all",
+                label: "Week (all models)",
+                percent: 63,
+                resets: "4d",
+                resets_at: new Date(Date.now() + 4 * 86_400_000).toISOString(),
+            },
+            {
+                id: "session",
+                label: "Session",
+                percent: 41,
+                resets: "3h20",
+                resets_at: new Date(Date.now() + 200 * 60_000 + 30_000).toISOString(),
+            },
             // host_ram: FRESH sample (10s old) → renders normally. host_cpu: STALE (4m old,
             // past HOST_VITALS_STALE_MS=60s) → renders dimmed with "last sampled 4m ago" in the
             // accessible name. Contact sheet shows the fresh vs stale host-vital states together.
             { id: "host_ram", label: "Host RAM", percent: 55, unit: "%", sampled_at_ms: Date.now() - 10_000 },
-            { id: "week_fable", label: "Week (Fable)", percent: 22, resets: "4d" },
+            {
+                id: "week_fable",
+                label: "Week (Fable)",
+                percent: 22,
+                resets: "4d",
+                resets_at: new Date(Date.now() + 4 * 86_400_000).toISOString(),
+            },
             { id: "host_cpu", label: "Host CPU", percent: 34, unit: "%", sampled_at_ms: Date.now() - 240_000 },
         ],
     },
@@ -889,8 +912,13 @@ if (trackerMode === "projects" || trackerMode === "project" || trackerMode === "
     }
     const tracker = state as unknown as Record<string, unknown>;
     tracker.projects = projects;
-    // One mission filed in no project, shown below the cards.
-    tracker.missions = [{ ...mission(1311, "Log retention clean-up", null, "idle", 0), project_id: null }];
+    // Missions filed in no project, shown below the cards: one active, two quiet for over a week
+    // (folded under "Quiet for over a week").
+    tracker.missions = [
+        { ...mission(1311, "Log retention clean-up", null, "idle", 0), project_id: null },
+        { ...mission(1187, "Try a smaller base image", null, "quiet", 0), project_id: null },
+        { ...mission(1102, "Archive the old status page", null, "quiet", 0), project_id: null },
+    ];
     tracker.trackerView =
         trackerMode === "project"
             ? { open: true, view: "missions", selectedProjectId: 2645 }
@@ -1399,6 +1427,196 @@ if (fixtureParams.get("badges") === "1") {
     stub.sendMessage = async () => !stopFails;
 }
 
+// The Coordinator is c2 (its unread count badges the rail entry); ?coordinator=none leaves it
+// unset, so the rail entry and Settings offer the chooser. The Routines sheet lists the starter
+// set: a pause flips the row, Run now is accepted, and saves and deletes land in the list.
+{
+    const stub = client as unknown as Record<string, unknown>;
+    const patch = (update: Partial<ClientState>): void =>
+        (client as unknown as { patch: (update: Partial<ClientState>) => void }).patch(update);
+    const now = Date.now();
+    const day = new Date(now);
+    const at = (offsetDays: number, hour: number, minute: number): number =>
+        new Date(day.getFullYear(), day.getMonth(), day.getDate() + offsetDays, hour, minute).getTime();
+    const base = { tz: "Europe/London", origin: "seed", created_at: now - 9 * 86_400_000, updated_at: now };
+    const routines: Routine[] = [
+        {
+            ...base,
+            id: "rt_1",
+            name: "daily-sweep",
+            title: "Daily sweep",
+            schedule: "5 7 * * *",
+            trigger: null,
+            prompt: "Follow the daily-sweep section of the playbook.",
+            enabled: true,
+            next_at: at(1, 7, 5),
+            last_fired_at: now - 5 * 3_600_000,
+            last_outcome: "applied now",
+        },
+        {
+            ...base,
+            id: "rt_2",
+            name: "deploy-window",
+            title: "Deploy window",
+            schedule: "30 18 * * 1-5",
+            trigger: null,
+            prompt: "Follow the deploy-window section of the playbook.",
+            enabled: false,
+            next_at: null,
+            last_fired_at: now - 2 * 86_400_000,
+            last_outcome: "applied deferred",
+        },
+        {
+            ...base,
+            id: "rt_3",
+            name: "disk-low",
+            title: "Disk low",
+            schedule: null,
+            trigger: { kind: "disk_under", threshold: 20 },
+            prompt: "Follow the disk-low section of the playbook.",
+            enabled: true,
+            next_at: null,
+            last_fired_at: now - 40 * 60_000,
+            last_outcome: "failed agent_unreachable",
+        },
+        {
+            ...base,
+            id: "rt_4",
+            name: "project-status",
+            title: "Project status",
+            schedule: "0 8,17 * * *",
+            trigger: null,
+            prompt: "Follow the project-status section of the playbook.",
+            enabled: true,
+            next_at: at(0, 17, 0) > now ? at(0, 17, 0) : at(1, 8, 0),
+            last_fired_at: null,
+            last_outcome: null,
+        },
+        {
+            ...base,
+            id: "rt_5",
+            name: "stalled-session",
+            title: "Stalled session",
+            schedule: null,
+            trigger: { kind: "stalled", threshold: 120 },
+            prompt: "Follow the stalled-session section of the playbook.",
+            enabled: true,
+            next_at: null,
+            last_fired_at: null,
+            last_outcome: null,
+        },
+    ];
+    state.coordinatorConvoId = fixtureParams.get("coordinator") === "none" ? null : "c2";
+    const current = (): Routine[] => client.getSnapshot().routines?.list ?? routines;
+    const setList = (list: Routine[]): void =>
+        patch({ routines: { list: [...list].sort((a, b) => a.name.localeCompare(b.name)), unsupported: false } });
+    stub.coordinatorConversationId = async () => client.getSnapshot().coordinatorConvoId ?? null;
+    stub.setCoordinator = async (convoId: string | null) => {
+        patch({ coordinatorConvoId: convoId });
+        return undefined;
+    };
+    stub.loadRoutines = async () => setList(current());
+    stub.watchRoutines = () => {
+        setList(current());
+        return () => undefined;
+    };
+    stub.setRoutineEnabled = async (id: string, enabled: boolean) => {
+        setList(current().map((row) => (row.id === id ? { ...row, enabled, next_at: enabled ? row.next_at : null } : row)));
+        return undefined;
+    };
+    stub.runRoutine = async () => null;
+    stub.deleteRoutine = async (id: string) => {
+        setList(current().filter((row) => row.id !== id));
+        return undefined;
+    };
+}
+
+// Settings → Devices: a made-up roster (this browser, a phone, two agent boxes). Rename, tag and
+// revoke edit it in place. Add Agent previews any full code as a request from a fixture host and
+// the box "connects" on the first poll; Link a Device shows a fixed code, and with ?link=claimed a
+// device asks to sign in on the first poll.
+{
+    const stub = client as unknown as Record<string, unknown>;
+    const now = Date.now();
+    let roster = [
+        {
+            device_id: 1,
+            kind: "client",
+            name: "Browser",
+            created_at: now - 9 * DAY_MS,
+            lag: 0,
+            last_seen_at: now,
+            connected: true,
+            is_self: true,
+        },
+        {
+            device_id: 3,
+            kind: "client",
+            name: "Phone",
+            created_at: now - 4 * DAY_MS,
+            lag: 12,
+            last_seen_at: now - 2 * 3600_000,
+            connected: false,
+            is_self: false,
+        },
+        {
+            device_id: 2,
+            kind: "agent",
+            name: "box-a",
+            tag_char: "a",
+            created_at: now - 30 * DAY_MS,
+            lag: 0,
+            last_seen_at: now - 60_000,
+            connected: true,
+            is_self: false,
+        },
+        {
+            device_id: 4,
+            kind: "agent",
+            name: "box-b",
+            tag_char: null,
+            created_at: now - 20 * DAY_MS,
+            lag: 0,
+            last_seen_at: now - 3 * DAY_MS,
+            connected: false,
+            is_self: false,
+        },
+    ];
+    const edit = (id: number, change: Record<string, unknown>): void => {
+        roster = roster.map((device) => (device.device_id === id ? { ...device, ...change } : device));
+    };
+    stub.listDevices = async () => roster;
+    stub.renameDevice = async (id: number, name: string) => edit(id, { name });
+    stub.setDeviceTag = async (id: number, tag: string | null) => edit(id, { tag_char: tag });
+    stub.revokeDevice = async (device: { device_id: number }) => {
+        roster = roster.filter((entry) => entry.device_id !== device.device_id);
+    };
+    stub.pairPreview = async () => ({ requester_ip: "box-c.example.com", expires_in: 540 });
+    stub.pairApprove = async (_code: string, name: string, tag: string | null) => {
+        roster = [
+            ...roster,
+            {
+                device_id: 5,
+                kind: "agent",
+                name,
+                tag_char: tag,
+                created_at: Date.now(),
+                lag: 0,
+                last_seen_at: Date.now(),
+                connected: true,
+                is_self: false,
+            },
+        ];
+    };
+    stub.linkStart = async () => ({ link_code: "KTNM-3VQ8", expires_in: 300 });
+    stub.linkStatus = async () =>
+        fixtureParams.get("link") === "claimed"
+            ? { status: "claimed", device_name: "Laptop", requester_ip: "laptop.example.com", expires_in: 280 }
+            : { status: "waiting", expires_in: 290 };
+    stub.linkApprove = async () => undefined;
+    stub.linkDeny = async () => undefined;
+}
+
 // Media stubs: a short generated tone for the voice note, a 404 for the reaped blob.
 function toneWav(seconds = 2, rate = 8000): Blob {
     const samples = seconds * rate;
@@ -1584,6 +1802,15 @@ if (notifyParam === "default" || notifyParam === "granted" || notifyParam === "d
     Object.defineProperty(window, "Notification", { value: FixtureNotification, configurable: true });
 }
 
+// ?context=large puts the open conversation past the compact threshold, so the
+// "Large conversation" nudge shows under the header.
+if (new URLSearchParams(window.location.search).get("context") === "large") {
+    state.sessionStatus = {
+        ...state.sessionStatus,
+        context: { tokens: 512_300, window: 1_000_000, pct: 51 },
+    };
+}
+
 const params = new URLSearchParams(window.location.search);
 document.documentElement.setAttribute("data-theme", params.get("theme") === "dark" ? "dark" : "light");
 
@@ -1594,25 +1821,45 @@ const PNG_8X8 =
 const imageFile = (name: string): File =>
     new File([Uint8Array.from(atob(PNG_8X8), (c) => c.charCodeAt(0))], name, { type: "image/png" });
 
-// Expose hooks so the Playwright driver can drive states (stage files → upload modal, etc.).
+// Patch the fixture client's state directly (it has no database), as the client's own patch() does.
+const patchState = (update: Partial<ClientState>): void =>
+    (client as unknown as { patch: (update: Partial<ClientState>) => void }).patch(update);
+const runbook = (): File => new File([new Uint8Array(1024)], "deploy-runbook.pdf", { type: "application/pdf" });
+const errorLog = (): File => new File([new Uint8Array(512)], "error-log.txt", { type: "text/plain" });
+
+// Expose hooks so the Playwright driver can drive states (stage files → attachment tray, etc.).
 (window as unknown as { __matron: unknown }).__matron = {
     client,
     stageImage: (name = "screenshot.png") => client.stageFiles([imageFile(name)]),
-    // Single NON-image file → hatched "image preview" placeholder + the single-file case
-    // (no thumbnail strip, no "n of N" pill).
-    stageDoc: () =>
-        client.stageFiles([new File([new Uint8Array(1024)], "deploy-runbook.pdf", { type: "application/pdf" })]),
-    stageTwo: () =>
-        client.stageFiles([
-            imageFile("Screenshot 2026-07-25 at 10.12.05.png"),
-            new File([new Uint8Array(512)], "error-log.txt", { type: "text/plain" }),
-        ]),
+    stageDoc: () => client.stageFiles([runbook()]),
+    stageTwo: () => client.stageFiles([imageFile("Screenshot 2026-07-25 at 10.12.05.png"), errorLog()]),
+    // A send in flight: the first file uploading, the rest waiting their turn.
+    trayUploading: () =>
+        patchState({
+            composerAttachments: {
+                c1: [
+                    { id: "t1", file: imageFile("screenshot.png"), state: "uploading", progress: 0.62 },
+                    { id: "t2", file: runbook(), state: "queued" },
+                    { id: "t3", file: errorLog(), state: "queued" },
+                ],
+            },
+        }),
+    // A send that stopped at a failed upload: the reason on the chip, a retry beside remove.
+    trayFailed: () =>
+        patchState({
+            composerAttachments: {
+                c1: [
+                    { id: "t2", file: runbook(), state: "failed", error: "File too large." },
+                    { id: "t3", file: errorLog(), state: "staged" },
+                ],
+            },
+        }),
     setTheme: (t: string) => document.documentElement.setAttribute("data-theme", t),
     // Drive the child (subagent) view: select the running child s1 of parent c1 → back chip +
     // ↳ header + ringed current pill. The fixture client has no database, so selectConversation
     // no-ops; patch the state directly (mirrors the client's own patch()).
     selectChild: () =>
-        (client as unknown as { patch: (update: Partial<ClientState>) => void }).patch({
+        patchState({
             selectedConversationId: "s1",
             events: [],
             pendingMessages: [],

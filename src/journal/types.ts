@@ -6,6 +6,7 @@ Please see LICENSE files in the repository root for full details.
 */
 
 import type { CoordinatorDecision } from "./coordinator-consent";
+import type { Routine } from "./routines";
 
 export const MESSAGE_EVENT_TYPES = new Set([
     "text",
@@ -80,11 +81,34 @@ export interface DeviceDTO {
     last_seen_at?: number;
     connected: boolean;
     is_self: boolean;
+    /** The journal-held tag character shown before an agent box's chat titles; null = automatic. */
+    tag_char?: string | null;
+    /** Enrolment time (ms); the Devices list sorts newest first within apps and agent boxes. */
+    created_at?: number;
+    /** How many events the device's cursor trails the user's head. */
+    lag?: number;
     status?: BoxStatus;
     /** An agent box's stored defaults for new sessions (see BoxDefaults). Absent on journals
      *  that predate per-box defaults, and on client devices. */
     defaults?: BoxDefaults;
 }
+
+/** POST /pair/preview: who is asking to pair, and how long the code has left (seconds). */
+export interface PairPreview {
+    requester_ip: string;
+    expires_in: number;
+}
+
+/** POST /link/start: the code this device shows, and its lifetime (seconds). */
+export interface LinkStart {
+    link_code: string;
+    expires_in: number;
+}
+
+/** POST /link/status: still waiting for a scan, or claimed by a device asking to sign in. */
+export type LinkStatus =
+    | { status: "waiting"; expires_in: number }
+    | { status: "claimed"; device_name: string; requester_ip: string; expires_in: number };
 
 export interface DevicesResponse {
     devices: DeviceDTO[];
@@ -280,6 +304,8 @@ export interface JournalControlFrame {
     pins?: unknown;
     /** `hello_ok` and the `settings` op carry the user's journal settings (unvalidated JSON). */
     settings?: unknown;
+    /** hello_ok: the user's Coordinator conversation (null for none); absent on an older journal. */
+    coordinator_convo_id?: unknown;
 }
 
 export interface JournalRpcFrame {
@@ -454,6 +480,10 @@ export interface SessionStatus {
         sampled_at_ms: number;
     };
     email?: string;
+    // The session's effort level. Tri-state on the wire: a string while the bridge tracks one,
+    // an explicit null once it tracks none, and absent from frames that say nothing about it
+    // (see mergeSessionStatus). Held state is a string or absent.
+    effort?: string | null;
 }
 
 export interface ToolStreamState {
@@ -487,28 +517,48 @@ export interface PendingMessage {
         | "electron_binary_unsupported";
     errorMessage?: string;
     canRetry?: boolean;
+    /** Set on an attachment sent together with others from one composer message. */
+    batch?: AttachmentBatchTag;
 }
 
 export type ConnectionState = "offline" | "connecting" | "online";
 
-export interface StagedUploadItem {
+/**
+ * One attachment's place in a multi-attachment composer send. Every attachment of a send with more
+ * than one carries the same `id`, so the bridge can gather their frames back into the one message
+ * the user wrote; `index` is 1-based and `total` is how many frames complete the batch. On the
+ * wire it rides in the media payload as `batch_id` / `batch_index` / `batch_total`.
+ */
+export interface AttachmentBatchTag {
     id: string;
-    file: File;
-    /** Built on first confirm attempt; reused by persist retries so a page has ONE row identity. */
-    message?: PendingMessage;
+    index: number;
+    total: number;
 }
 
-export interface StagedUploads {
-    convoId: string;
-    items: StagedUploadItem[];
-    /** Cumulative count ever staged into this queue (paste-append increments). Header: "File k of N", k = total - items.length + 1. */
-    total: number;
-    /** P23 transient-submission lock: set synchronously at confirm entry; all modal actions inert while true. */
-    confirming: boolean;
-    /** Terminal invalidation notice (items cleared, error page shown). */
-    error?: "archived";
-    /** Non-terminal persist failure: page kept, inline error shown, Send retries. */
-    persistError?: boolean;
+/**
+ * A file in the composer's attachment tray: picked, pasted or dropped, and not yet sent. It leaves
+ * with the composer text when the user sends, so the agent gets the file and the words about it
+ * as one turn.
+ */
+export interface ComposerAttachment {
+    id: string;
+    file: File;
+    /**
+     * `staged` waits for a send; `queued` is part of a send in flight and waiting its turn;
+     * `uploading` is on its way; `failed` didn't go out and stays for the next send to retry.
+     */
+    state: "staged" | "queued" | "uploading" | "failed";
+    /** Uploaded fraction (0…1) while uploading. */
+    progress?: number;
+    /** Why it failed, in prose. */
+    error?: string;
+    /** A file that can never upload (empty, or too big for the browser): it blocks the send until removed. */
+    unsendable?: boolean;
+    /**
+     * The tag this file's frame was about to carry when its send failed. A retry re-emits it under
+     * the same batch, so the bridge can still complete the message its siblings already started.
+     */
+    batch?: AttachmentBatchTag;
 }
 
 /** The loaded part of For you's Done list. `error` is the last load's failure; the rows it could
@@ -591,7 +641,8 @@ export interface ClientState {
     textStreams: Record<string, string>;
     toolStreams: Record<string, ToolStreamState>;
     dragActive: boolean;
-    stagedUploads?: StagedUploads;
+    /** Each conversation's attachment tray, by conversation id; a conversation with none has no key. */
+    composerAttachments: Record<string, ComposerAttachment[]>;
     sendTick: number;
     // A row the open timeline should scroll to and flash once it renders (a search hit, a
     // milestone, "jump to my last message"). Set by client.focusMessage after the history holding
@@ -676,6 +727,24 @@ export interface ClientState {
     /** Settings → Coordinator: whether the Coordinator may answer chat and spawn asks (`consent`
      *  on GET /coordinator). `enabled` undefined = not known yet, or a journal without the switch. */
     coordinatorConsent?: { enabled?: boolean; error?: string };
+    /** The user's Coordinator conversation (GET/PUT /coordinator `convo_id`, `hello_ok`
+     *  `coordinator_convo_id`). Undefined = not known yet; null = none set. */
+    coordinatorConvoId?: string | null;
+    /** Settings → Coordinator → Routines. Undefined = never loaded this session. */
+    routines?: RoutinesState;
+}
+
+/** The Routines sheet's view of GET /routines and the writes in flight. */
+export interface RoutinesState {
+    /** Sorted by name. Undefined until the first load lands. */
+    list?: Routine[];
+    /** GET /routines answered 404: the journal predates routines. */
+    unsupported?: boolean;
+    loading?: boolean;
+    /** The last load's failure. A failed load never clears `list`. */
+    error?: string;
+    /** Routines with a pause/resume or run request in flight. */
+    busyIds?: ReadonlySet<string>;
 }
 
 // ── New-chat defaults (journal GET/PUT /defaults) ───────────────────────────────────────────────
@@ -1026,6 +1095,9 @@ export interface Mission {
     project_num?: number | null;
     /** The mission's activity rollup, where the journal sends it. */
     activity?: string;
+    /** When anything last happened on the mission (milestone, status, its conversations), where
+     *  the journal sends it. */
+    last_activity_at?: number | null;
     /** The mission's status line (one short paragraph, inline markdown), who set it and when.
      *  Null when unset; absent from journals that predate mission status. */
     status?: string | null;

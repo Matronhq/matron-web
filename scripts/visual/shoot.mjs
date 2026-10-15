@@ -83,30 +83,32 @@ const SHOTS_SPEC = [
         setup: async (p) => p.fill(".mj_ComposerInput_input", "/"),
     },
     {
-        comp: "upload",
-        state: "single",
-        clip: ".mj_UploadConfirm",
-        setup: async (p) => {
-            await p.evaluate(() => window.__matron.stageImage());
-            await p.waitForSelector(".mj_UploadConfirm_queue");
-        },
-    },
-    {
-        comp: "upload",
-        state: "single-doc",
-        clip: ".mj_UploadConfirm",
-        setup: async (p) => {
-            await p.evaluate(() => window.__matron.stageDoc());
-            await p.waitForSelector(".mj_UploadConfirm_queue");
-        },
-    },
-    {
-        comp: "upload",
-        state: "queue",
-        clip: ".mj_UploadConfirm",
+        comp: "tray",
+        state: "staged",
+        clip: ".mj_Composer",
         setup: async (p) => {
             await p.evaluate(() => window.__matron.stageTwo());
-            await p.waitForSelector(".mj_UploadConfirm_queue");
+            await p.fill(".mj_ComposerInput_input", "the deploy failed with this error");
+            await p.waitForSelector(".mj_AttachmentTray img");
+        },
+    },
+    {
+        comp: "tray",
+        state: "uploading",
+        clip: ".mj_Composer",
+        setup: async (p) => {
+            await p.evaluate(() => window.__matron.trayUploading());
+            await p.waitForSelector(".mj_StagedAttachment_uploading img");
+        },
+    },
+    {
+        comp: "tray",
+        state: "failed",
+        clip: ".mj_Composer",
+        setup: async (p) => {
+            await p.evaluate(() => window.__matron.trayFailed());
+            await p.fill(".mj_ComposerInput_input", "the deploy failed with this error");
+            await p.waitForSelector(".mj_StagedAttachment_failed");
         },
     },
     // Track-1 r2 surfaces.

@@ -20,6 +20,19 @@ import { JournalConnection } from "./connection";
 import { effectiveUnread, makeIdSetStore, type IdSetStore } from "./conversation-flags";
 import { parseCoordinatorConsent, resetSessionStops, spawnConsentRowsIn } from "./coordinator-consent";
 import { JournalDatabase } from "./database";
+import {
+    parseRoutine,
+    parseRoutineList,
+    type Routine,
+    type RoutineDraft,
+    routineErrorMessage,
+    routineFormError,
+    routineRequestBody,
+    routineRunMessage,
+    RoutineRules,
+    ROUTINES_UNSUPPORTED,
+    sortRoutines,
+} from "./routines";
 import { newestOwnMessageSeq } from "./jump-to-message";
 import { parseOwnTrackerUrl, parseTrackerLinkPath, type TrackerLinkPath } from "./link-path";
 import {
@@ -49,7 +62,9 @@ import {
     type BriefingLatest,
     type BriefingRefresh,
     type BriefingState,
+    type AttachmentBatchTag,
     type ClientState,
+    type ComposerAttachment,
     type Conversation,
     type ConversationMissionLink,
     type BoxDefaults,
@@ -58,6 +73,9 @@ import {
     type DefaultsState,
     type ConvoPin,
     type DeviceDTO,
+    type LinkStart,
+    type LinkStatus,
+    type PairPreview,
     type JournalBoxStatusFrame,
     isSubChat,
     type MatronLinkKind,
@@ -71,6 +89,7 @@ import {
     normalizeServerUrl,
     type NewSessionOffer,
     type PendingMessage,
+    type Project,
     type RecentFolder,
     rendersAsTopLevelRow,
     type RpcReply,
@@ -83,6 +102,7 @@ import {
     type StartSessionPicks,
     type TrackerAttachment,
     type JournalControlFrame,
+    type RoutinesState,
     type TrackerCommentWrite,
     type TrackerItem,
     type TrackerItemCreate,
@@ -202,6 +222,8 @@ export function conversationMatchSeqs(
 }
 
 const RPC_CREATE_WATCHDOG_MS = 10_000;
+// How long a marker-driven refetch waits, so a burst of markers costs one GET.
+const MARKER_REFETCH_DELAY_MS = 250;
 const BACKFILL_SNAPSHOT_TIMEOUT_MS = 10_000;
 const TOOL_STREAM_DISPLAY_BYTES = 65_536;
 const MARK_ALL_READ_ERROR = "Some conversations couldn't be updated — device storage is full or unavailable.";
@@ -346,6 +368,7 @@ function blankState(): ClientState {
         boxStatuses: {},
         agents: [],
         dragActive: false,
+        composerAttachments: {},
         sendTick: 0,
     };
 }
@@ -428,6 +451,16 @@ function capToolStream(value: string): { content: string; truncated: boolean } {
     return { content: new TextDecoder().decode(slice), truncated: true };
 }
 
+/** A tray file's failed upload, in the words its chip shows. */
+function stagedUploadError(error: unknown): string {
+    const aborted =
+        (error instanceof DOMException && error.name === "AbortError") ||
+        (error instanceof JournalApiError && error.status === 0 && /abort/i.test(error.message));
+    if (aborted) return "The upload was interrupted.";
+    if (error instanceof Error && error.message) return error.message;
+    return "Upload failed.";
+}
+
 function abortPromise(signal: AbortSignal): Promise<never> {
     return new Promise((_, reject) => {
         const rejectAbort = (): void => reject(new DOMException("The upload timed out.", "AbortError"));
@@ -484,7 +517,6 @@ export class MatronJournalClient {
     private readonly readHighWater = new Map<string, number>();
     private readonly readTimers = new Map<string, number>();
     private pendingFiles = new Map<string, File>();
-    private stagedSendChain: Promise<void> = Promise.resolve();
     private transientAttachmentErrors = new Map<string, PendingMessage>();
     private readonly dismissedAttachments = new Set<string>();
     private readonly attachmentOperations = new Map<string, Promise<void>>();
@@ -549,6 +581,19 @@ export class MatronJournalClient {
     private coordinatorConsentEpoch = 0;
     private coordinatorConsentConfirmed?: boolean;
     private coordinatorConsentWrite: Promise<void> = Promise.resolve();
+    // The Coordinator conversation: bumped by every write, hello and marker, so only the newest
+    // answer lands; and the pending marker-driven refetch (a burst of `coordinator` events costs
+    // one GET).
+    private coordinatorEpoch = 0;
+    // A `coordinator` marker arrived and no hello, write or read has answered since: the value in
+    // state may be the old one.
+    private coordinatorStale = false;
+    private coordinatorRefetchTimer?: number;
+    // Routines: a request-generation guard like the tracker loaders', the views showing them (only
+    // then do `routine` markers and reconnects refetch), and the pending marker-driven refetch.
+    private routinesGen = 0;
+    private routinesViewers = 0;
+    private routinesRefetchTimer?: number;
     private briefingExpiryTimer?: number;
     // New-chat defaults. What the sheet shows is always `defaultsServer` (the latest answer from
     // the journal: a GET result, a PUT response's key, or a live frame, applied in arrival order)
@@ -1863,6 +1908,14 @@ export class MatronJournalClient {
             size: message.size,
             local_id: message.localId,
             ...(message.caption ? { caption: message.caption } : {}),
+            // Absent for a lone attachment, so its frame is exactly what an older bridge expects.
+            ...(message.batch
+                ? {
+                      batch_id: message.batch.id,
+                      batch_index: message.batch.index,
+                      batch_total: message.batch.total,
+                  }
+                : {}),
         };
     }
 
@@ -1933,128 +1986,214 @@ export class MatronJournalClient {
         }
     }
 
-    public stageFiles(files: File[]): void {
-        if (files.length === 0) return;
-        const staged = this.state.stagedUploads;
-        if (staged) {
-            if (this.isChildConvo(staged.convoId)) return;
-            if (staged.error) return;
-            this.patch({
-                stagedUploads: {
-                    ...staged,
-                    items: [...staged.items, ...files.map((file) => ({ id: crypto.randomUUID(), file }))],
-                    total: staged.total + files.length,
-                },
-            });
-            return;
-        }
-        const convoId = this.state.selectedConversationId;
-        if (!convoId) return;
-        if (this.isChildConvo(convoId)) return;
-        this.patch({
-            stagedUploads: {
-                convoId,
-                items: files.map((file) => ({ id: crypto.randomUUID(), file })),
-                total: files.length,
-                confirming: false,
-            },
+    /**
+     * Adds files to a conversation's attachment tray (the selected one by default). Picking, pasting
+     * and dropping all land here; nothing uploads until the user sends.
+     */
+    public stageFiles(files: File[], convoId = this.state.selectedConversationId): void {
+        if (files.length === 0 || !convoId || this.isChildConvo(convoId)) return;
+        const added = files.map((file): ComposerAttachment => {
+            const unsendable =
+                file.size === 0
+                    ? "That file is empty."
+                    : file.size > BROWSER_MEMORY_SAFETY_MAX_BYTES
+                      ? "Too large for this browser to upload."
+                      : undefined;
+            return unsendable
+                ? { id: crypto.randomUUID(), file, state: "failed", error: unsendable, unsendable: true }
+                : { id: crypto.randomUUID(), file, state: "staged" };
         });
+        this.setTray(convoId, [...this.trayOf(convoId), ...added]);
     }
 
-    public async confirmStagedFile(itemId: string, captionInput?: string): Promise<void> {
-        const staged = this.state.stagedUploads;
-        if (!staged || staged.confirming || staged.error) return;
-        const head = staged.items[0];
-        if (!head || head.id !== itemId) return;
-        if (this.isChildConvo(staged.convoId)) return;
-        this.patch({ stagedUploads: { ...staged, confirming: true } });
+    /** Takes one file out of the tray. A file already part of a send in flight stays. */
+    public removeStagedFile(convoId: string, id: string): void {
+        const tray = this.trayOf(convoId);
+        const item = tray.find((candidate) => candidate.id === id);
+        if (!item || item.state === "queued" || item.state === "uploading") return;
+        this.setTray(
+            convoId,
+            tray.filter((candidate) => candidate.id !== id),
+        );
+    }
 
+    /**
+     * Sends a conversation's tray with the composer text, as one turn: the files upload one at a
+     * time, each followed by its media frame. The text rides on the first as its caption (once, so
+     * the agent doesn't read it per file), and with more than one file every frame carries the same
+     * batch tag, so the bridge hands them to the agent together.
+     *
+     * Stops at the first failed upload: a later file sent without the earlier one it goes with would
+     * reach the agent out of context. The failed file and the ones after it stay in the tray, keeping
+     * their batch tags, and the next send retries them. `captionDelivered` says whether the text went
+     * out with a file that made it, so the composer knows whether to put it back.
+     */
+    public async sendStagedFiles(
+        convoId: string,
+        caption: string,
+    ): Promise<{ outcome: "sent" | "failed" | "skipped"; captionDelivered: boolean }> {
+        const skipped = { outcome: "skipped" as const, captionDelivered: false };
         const gen = this.sessionGen;
         const api = this.api;
         const db = this.database;
-        if (!api || !db) {
-            const current = this.state.stagedUploads;
-            if (current) this.patch({ stagedUploads: { ...current, confirming: false } });
-            return;
+        if (!api || !db || this.isChildConvo(convoId) || !this.stagedConvoValid(convoId)) return skipped;
+        const tray = this.trayOf(convoId);
+        if (
+            tray.length === 0 ||
+            tray.some((item) => item.unsendable || item.state === "queued" || item.state === "uploading")
+        ) {
+            return skipped;
         }
+        // Fresh tags only across files that haven't failed out of an earlier send, and only when
+        // there is more than one: a lone file goes untagged, and a retried one keeps its own tag.
+        const untagged = tray.filter((item) => !item.batch);
+        const batchId = untagged.length > 1 ? crypto.randomUUID() : undefined;
+        let freshIndex = 0;
+        const plan = tray.map((item) => ({
+            id: item.id,
+            file: item.file,
+            batch: item.batch ?? (batchId ? { id: batchId, index: ++freshIndex, total: untagged.length } : undefined),
+        }));
+        const planned = new Set(plan.map((step) => step.id));
+        this.setTray(
+            convoId,
+            tray.map((item) =>
+                planned.has(item.id) ? { ...item, state: "queued", progress: undefined, error: undefined } : item,
+            ),
+        );
+        if (this.state.selectedConversationId === convoId) this.patch({ sendTick: this.state.sendTick + 1 });
+
         const owner: AttachmentOwner = { gen, api, db };
-        const convoId = staged.convoId;
-
-        if (!this.stagedConvoValid(convoId)) {
-            this.patch({ stagedUploads: { ...staged, items: [], confirming: false, error: "archived" } });
-            return;
-        }
-
-        const caption = captionInput?.trim() ? captionInput.trim() : undefined;
-        const message = head.message ?? this.buildPendingAttachment(head.file, convoId, caption);
-        head.message = message;
-        if (caption) message.caption = caption;
-        else delete message.caption;
-
-        const persistOutcome = await this.persistPendingAttachment(message, head.file, db, gen);
-        if (this.sessionGen !== gen) return;
-        const current = this.state.stagedUploads;
-        if (!current) return;
-        if (persistOutcome.kind === "persist-failed") {
-            this.transientAttachmentErrors.delete(message.localId);
-            this.pendingFiles.delete(message.localId);
-            if (this.state.selectedConversationId === convoId) {
-                await this.refreshSelectedConversation(convoId, db, gen).catch(() => undefined);
-            }
-            const afterPurge = this.state.stagedUploads;
-            if (!afterPurge) return;
-            this.patch({ stagedUploads: { ...afterPurge, confirming: false, persistError: true } });
-            return;
-        }
-        if (this.state.selectedConversationId === convoId) {
-            this.patch({ sendTick: this.state.sendTick + 1 });
-        }
-        void this.refreshSelectedConversation(convoId, db, gen).catch(() => undefined);
-        const rest = current.items.slice(1);
-        this.patch({
-            stagedUploads: rest.length
-                ? { ...current, items: rest, confirming: false, persistError: false }
-                : undefined,
-        });
-
-        if (persistOutcome.kind === "persisted-terminal") return;
-
-        this.stagedSendChain = this.stagedSendChain.then(async () => {
-            try {
-                if (this.sessionGen !== gen || this.database !== db) return;
-                if (!this.stagedConvoValid(convoId)) {
-                    message.attachState = "error";
-                    message.errorKind = "upload_failed";
-                    message.errorMessage = "Conversation was archived in another tab — unarchive to retry.";
-                    if (await this.persistAttachment(message, db, gen)) {
-                        await this.refreshSelectedConversation(convoId, db, gen).catch(() => undefined);
-                    }
-                    return;
+        try {
+            return await this.runStagedSend(convoId, plan, caption.trim(), owner);
+        } finally {
+            // Whatever way the send ended, no file of it may stay stuck as queued or uploading:
+            // anything still in the tray goes back to staged with its batch tag, ready to retry.
+            if (this.sessionGen === gen) {
+                const batches = new Map(plan.map((step) => [step.id, step.batch]));
+                const tray = this.trayOf(convoId);
+                if (
+                    tray.some((item) => batches.has(item.id) && (item.state === "queued" || item.state === "uploading"))
+                ) {
+                    this.setTray(
+                        convoId,
+                        tray.map((item): ComposerAttachment => {
+                            if (!batches.has(item.id) || (item.state !== "queued" && item.state !== "uploading")) {
+                                return item;
+                            }
+                            const batch = batches.get(item.id);
+                            return { id: item.id, file: item.file, state: "staged", ...(batch ? { batch } : {}) };
+                        }),
+                    );
                 }
-                await this.runPendingUpload(message, head.file, owner);
-            } catch {
-                // Rejection isolation: one failed upload must not poison the chain.
             }
-        });
+        }
     }
 
-    public skipStagedFile(itemId: string): void {
-        const staged = this.state.stagedUploads;
-        if (!staged || staged.confirming || staged.error) return;
-        const head = staged.items[0];
-        if (!head || head.id !== itemId) return;
-        const rest = staged.items.slice(1);
-        this.patch({
-            stagedUploads: rest.length ? { ...staged, items: rest, persistError: false } : undefined,
-        });
+    private async runStagedSend(
+        convoId: string,
+        plan: { id: string; file: File; batch?: AttachmentBatchTag }[],
+        text: string,
+        owner: AttachmentOwner,
+    ): Promise<{ outcome: "sent" | "failed" | "skipped"; captionDelivered: boolean }> {
+        const { gen, api, db } = owner;
+        let captionDelivered = false;
+        for (const [index, step] of plan.entries()) {
+            if (this.sessionGen !== gen || this.api !== api || this.database !== db) {
+                return { outcome: "skipped", captionDelivered };
+            }
+            let mediaId: string;
+            try {
+                if (this.isChildConvo(convoId)) throw new Error("Can't send to a read-only subagent transcript.");
+                if (!this.stagedConvoValid(convoId)) throw new Error("This conversation was archived.");
+                this.updateStaged(convoId, step.id, { state: "uploading", progress: 0 });
+                mediaId = await this.uploadStagedFile(convoId, step.id, step.file, api);
+            } catch (error) {
+                if (this.sessionGen !== gen) return { outcome: "skipped", captionDelivered };
+                const unsent = new Map(plan.slice(index).map((later) => [later.id, later.batch]));
+                this.setTray(
+                    convoId,
+                    this.trayOf(convoId).map((item): ComposerAttachment => {
+                        if (!unsent.has(item.id)) return item;
+                        const batch = unsent.get(item.id);
+                        const kept: ComposerAttachment = { id: item.id, file: item.file, state: "staged" };
+                        if (batch) kept.batch = batch;
+                        if (item.id === step.id) {
+                            kept.state = "failed";
+                            kept.error = stagedUploadError(error);
+                        }
+                        return kept;
+                    }),
+                );
+                return { outcome: "failed", captionDelivered };
+            }
+            const message = this.buildPendingAttachment(step.file, convoId, index === 0 ? text : undefined);
+            message.blobRef = mediaId;
+            if (step.batch) message.batch = step.batch;
+            // Out of the tray as it joins the timeline, so the two never show the same file.
+            this.setTray(
+                convoId,
+                this.trayOf(convoId).filter((item) => item.id !== step.id),
+            );
+            // From here the outbox owns it: a failed frame becomes a retryable tile in the timeline,
+            // and the text is with it either way.
+            if (message.caption) captionDelivered = true;
+            try {
+                await this.emitPendingAttachment(message, owner);
+            } catch (error) {
+                console.warn("matron: attachment frame not dispatched", error);
+                return { outcome: "failed", captionDelivered };
+            }
+        }
+        return { outcome: "sent", captionDelivered };
     }
 
-    public cancelStagedFiles(): void {
-        const staged = this.state.stagedUploads;
-        if (!staged) return;
-        // The confirming lock guards all mutations at the client boundary.
-        if (staged.confirming) return;
-        this.patch({ stagedUploads: undefined });
+    private trayOf(convoId: string): ComposerAttachment[] {
+        return this.state.composerAttachments[convoId] ?? [];
+    }
+
+    private setTray(convoId: string, items: ComposerAttachment[]): void {
+        const next = { ...this.state.composerAttachments };
+        if (items.length > 0) next[convoId] = items;
+        else delete next[convoId];
+        this.patch({ composerAttachments: next });
+    }
+
+    private updateStaged(convoId: string, id: string, change: Partial<ComposerAttachment>): void {
+        const tray = this.trayOf(convoId);
+        if (!tray.some((item) => item.id === id)) return;
+        this.setTray(
+            convoId,
+            tray.map((item) => (item.id === id ? { ...item, ...change } : item)),
+        );
+    }
+
+    private async uploadStagedFile(convoId: string, id: string, file: File, api: JournalApi): Promise<string> {
+        const controller = new AbortController();
+        const timer = window.setTimeout(() => controller.abort(), uploadTimeoutMsFor(file.size));
+        // Tracked with the outbox uploads, so signing out or the conversation turning into a
+        // read-only subagent transcript aborts it too.
+        this.inFlightUploads.set(id, controller);
+        this.uploadConvos.set(id, convoId);
+        try {
+            const bytes = await Promise.race([file.arrayBuffer(), abortPromise(controller.signal)]);
+            const response = await api.uploadMedia(
+                bytes,
+                file.type || "application/octet-stream",
+                controller.signal,
+                (fraction) => this.updateStaged(convoId, id, { progress: fraction }),
+            );
+            if (typeof response.media_id !== "string" || response.media_id.trim() === "") {
+                throw new Error("The journal server returned a malformed media response.");
+            }
+            return response.media_id;
+        } finally {
+            window.clearTimeout(timer);
+            if (this.inFlightUploads.get(id) === controller) {
+                this.inFlightUploads.delete(id);
+                this.uploadConvos.delete(id);
+            }
+        }
     }
 
     private stagedConvoValid(convoId: string): boolean {
@@ -2592,32 +2731,26 @@ export class MatronJournalClient {
         }
     }
 
-    /**
-     * GET /coordinator: the user's Coordinator conversation, asked fresh each time. The one lookup
-     * for anything that opens the Coordinator (⌘1 today); reuse it rather than reading the answer
-     * again. Null for none, a signed-out client or a failed read.
-     */
-    public async coordinatorConversationId(): Promise<string | null> {
-        const api = this.api;
-        if (!api) return null;
-        try {
-            const raw = await api.coordinator();
-            const id = raw && typeof raw === "object" ? (raw as { convo_id?: unknown }).convo_id : undefined;
-            return this.api === api && typeof id === "string" && id ? id : null;
-        } catch {
-            return null;
-        }
-    }
-
     // ── Coordinator consent approval (Settings → Coordinator; GET/PUT /coordinator `consent`) ──
 
-    /** GET /coordinator: the switch's value. A journal without `consent` leaves it hidden. */
+    /**
+     * GET /coordinator: the switch's value, and the Coordinator conversation. A journal without
+     * `consent` leaves the switch hidden.
+     */
     public async loadCoordinatorConsent(): Promise<void> {
         const api = this.api;
         if (!api) return;
         const epoch = this.coordinatorConsentEpoch;
+        const coordinatorEpoch = this.coordinatorEpoch;
         try {
-            const enabled = parseCoordinatorConsent(await api.coordinator());
+            const raw = await api.coordinator();
+            const enabled = parseCoordinatorConsent(raw);
+            // The same answer names the Coordinator conversation (Settings shows it above the switch).
+            const id = coordinatorIdIn(raw);
+            if (this.api === api && id !== undefined && this.coordinatorEpoch === coordinatorEpoch) {
+                this.coordinatorStale = false;
+                this.patch({ coordinatorConvoId: id });
+            }
             // A write since the GET was sent is newer than its answer.
             if (this.api !== api || this.coordinatorConsentEpoch !== epoch) return;
             this.coordinatorConsentConfirmed = enabled;
@@ -2654,6 +2787,288 @@ export class MatronJournalClient {
         });
         this.coordinatorConsentWrite = write;
         return write;
+    }
+
+    // ── The Coordinator conversation (rail entry, Settings → Coordinator; /coordinator `convo_id`) ──
+
+    /**
+     * GET /coordinator: the user's Coordinator conversation, asked fresh each time. The one lookup
+     * for anything that opens the Coordinator (the rail entry, a keyboard shortcut): call it and
+     * pass a non-null answer to `selectConversation(id, { suppressNotFound: true })`, or use
+     * `openCoordinator()`, rather than reading `/coordinator` again.
+     *
+     * Resolves to the journal's answer (null = no Coordinator), which also updates
+     * `coordinatorConvoId`; when a hello, write or marker landed while the read was in flight, that
+     * newer value instead. A failed read falls back to the last known value, so an offline click
+     * still opens it. Null for a signed-out client, or a failed read with nothing known.
+     */
+    public async coordinatorConversationId(): Promise<string | null> {
+        const api = this.api;
+        if (!api) return null;
+        // A `coordinator` marker only says the value changed: an answer it overtook is asked again
+        // (a few times at most), while a hello or write already put the newer value in state.
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+            const epoch = this.coordinatorEpoch;
+            let raw: unknown;
+            try {
+                raw = await api.coordinator();
+            } catch {
+                return this.api === api ? (this.state.coordinatorConvoId ?? null) : null;
+            }
+            if (this.api !== api) return null;
+            if (this.coordinatorEpoch === epoch) {
+                const id = coordinatorIdIn(raw);
+                if (id !== undefined) {
+                    this.coordinatorStale = false;
+                    this.patch({ coordinatorConvoId: id });
+                }
+                return id ?? null;
+            }
+            if (!this.coordinatorStale) return this.state.coordinatorConvoId ?? null;
+        }
+        return this.state.coordinatorConvoId ?? null;
+    }
+
+    /**
+     * The rail's Coordinator entry: opens the Coordinator conversation (`coordinatorConversationId`
+     * semantics: the journal first, the last known value when the read fails). Resolves false
+     * when there is none, so the caller can offer the chooser.
+     */
+    public async openCoordinator(): Promise<boolean> {
+        const id = await this.coordinatorConversationId();
+        if (!id) return false;
+        this.closeTrackerView();
+        void this.selectConversation(id, { suppressNotFound: true });
+        return true;
+    }
+
+    /**
+     * PUT /coordinator {convo_id}: the user's pick, or null to clear. The journal first; the value
+     * shown follows its answer, so a failed write changes nothing. Resolves to the message to
+     * show, or undefined on success.
+     */
+    public async setCoordinator(convoId: string | null): Promise<string | undefined> {
+        const api = this.api;
+        if (!api) return "Not signed in.";
+        try {
+            const raw = await api.putCoordinator(convoId);
+            if (this.api !== api) return undefined;
+            this.coordinatorEpoch += 1;
+            this.coordinatorStale = false;
+            this.patch({ coordinatorConvoId: coordinatorIdIn(raw) ?? convoId });
+            return undefined;
+        } catch (error) {
+            if (error instanceof JournalApiError && error.status === 404) {
+                return "That conversation can't be the Coordinator: it no longer exists, or it isn't yours.";
+            }
+            return `Couldn't change the Coordinator: ${errorMessage(error)}`;
+        }
+    }
+
+    // hello_ok's `coordinator_convo_id` is the journal's word on connect; it supersedes any GET in
+    // flight. An older journal leaves the key out, and a GET asks instead.
+    private applyHelloCoordinator(hello: JournalControlFrame): void {
+        const id =
+            "coordinator_convo_id" in hello ? coordinatorIdIn({ convo_id: hello.coordinator_convo_id }) : undefined;
+        if (id === undefined) {
+            void this.coordinatorConversationId();
+            return;
+        }
+        this.coordinatorEpoch += 1;
+        this.coordinatorStale = false;
+        this.patch({ coordinatorConvoId: id });
+    }
+
+    // `coordinator` events (assigned / released) and `routine` markers are pure invalidation: the
+    // journal's answer is refetched, so a reconnect's replayed backlog can never leave an old value.
+    private handleCoordinatorMarker(event: JournalEvent): void {
+        if (event.type === "coordinator") {
+            this.coordinatorEpoch += 1;
+            this.coordinatorStale = true;
+            if (this.coordinatorRefetchTimer !== undefined) return;
+            this.coordinatorRefetchTimer = window.setTimeout(() => {
+                this.coordinatorRefetchTimer = undefined;
+                void this.coordinatorConversationId();
+            }, MARKER_REFETCH_DELAY_MS);
+            return;
+        }
+        if (event.type === "routine" && this.routinesViewers > 0) this.scheduleRoutinesRefetch();
+    }
+
+    // ── Coordinator routines (Settings → Coordinator → Routines; journal /routines) ──
+
+    /**
+     * The Routines sheet is showing: load now, and follow `routine` markers and reconnects until
+     * the returned function is called. Nothing loads before, so an older journal's 404 stays on
+     * that sheet.
+     */
+    public watchRoutines(): () => void {
+        this.routinesViewers += 1;
+        void this.loadRoutines();
+        let stopped = false;
+        return () => {
+            if (stopped) return;
+            stopped = true;
+            this.routinesViewers = Math.max(0, this.routinesViewers - 1);
+            if (this.routinesViewers === 0 && this.routinesRefetchTimer !== undefined) {
+                window.clearTimeout(this.routinesRefetchTimer);
+                this.routinesRefetchTimer = undefined;
+            }
+        };
+    }
+
+    /** GET /routines. A 404 marks the journal as without routines; a failure keeps the list. */
+    public async loadRoutines(): Promise<void> {
+        const api = this.api;
+        if (!api) return;
+        const gen = ++this.routinesGen;
+        this.patchRoutines({ loading: true });
+        try {
+            const list = parseRoutineList(await api.routines());
+            if (this.api !== api || this.routinesGen !== gen) return;
+            if (!list) {
+                this.patchRoutines({ loading: false, error: "The journal sent a malformed routines list." });
+                return;
+            }
+            this.patchRoutines({ list, loading: false, unsupported: false, error: undefined });
+        } catch (error) {
+            if (this.api !== api || this.routinesGen !== gen) return;
+            if (error instanceof JournalApiError && error.status === 404) {
+                this.patchRoutines({ loading: false, unsupported: true, error: undefined });
+                return;
+            }
+            this.patchRoutines({ loading: false, error: errorMessage(error) });
+        }
+    }
+
+    /** Pause (false) or resume (true). Resolves to the message to show, or undefined. */
+    public async setRoutineEnabled(id: string, enabled: boolean): Promise<string | undefined> {
+        const api = this.api;
+        if (!api || this.state.routines?.busyIds?.has(id)) return undefined;
+        this.markRoutineBusy(id, true);
+        try {
+            const raw = await api.patchRoutine(id, { enabled });
+            if (this.api !== api) return undefined;
+            this.replaceRoutine(routineIn(raw));
+            return undefined;
+        } catch (error) {
+            if (this.api !== api) return undefined;
+            if (error instanceof JournalApiError && error.status === 404) void this.loadRoutines();
+            return routineFailure(error, false);
+        } finally {
+            if (this.api === api) this.markRoutineBusy(id, false);
+        }
+    }
+
+    /**
+     * POST /routines/:key/run: fires the routine now. Its outcome lands later as a `fired` marker,
+     * which refetches the list. Resolves to null once the journal took it, otherwise the reason.
+     */
+    public async runRoutine(id: string): Promise<string | null> {
+        const api = this.api;
+        if (!api || this.state.routines?.busyIds?.has(id)) return null;
+        this.markRoutineBusy(id, true);
+        try {
+            const message = routineRunMessage(await api.runRoutine(id));
+            return this.api === api ? message : null;
+        } catch (error) {
+            return this.api === api ? routineFailure(error, false) : null;
+        } finally {
+            if (this.api === api) this.markRoutineBusy(id, false);
+        }
+    }
+
+    /**
+     * Creates (`existingId` undefined) or edits a routine. The journal's rules are checked first,
+     * and a new routine's name must not already be in the list. Resolves to the message to show,
+     * or undefined on success.
+     */
+    public async saveRoutine(
+        existingId: string | undefined,
+        name: string,
+        draft: RoutineDraft,
+    ): Promise<string | undefined> {
+        const api = this.api;
+        if (!api) return "Not signed in.";
+        const isNew = existingId === undefined;
+        if (isNew && !this.state.routines?.list) await this.loadRoutines();
+        const problem = routineFormError(name, draft);
+        if (problem) return problem;
+        const routines = this.state.routines;
+        if (isNew) {
+            if (!routines?.list) {
+                return routines?.unsupported
+                    ? ROUTINES_UNSUPPORTED
+                    : "Routines haven't loaded yet, so this name can't be checked. Try again in a moment.";
+            }
+            if (routines.list.some((routine) => routine.name === name)) {
+                return `A routine named "${name}" already exists. Open it from the list to change it.`;
+            }
+            if (routines.list.length >= RoutineRules.maxRoutines)
+                return routineErrorMessage(409, { blocked_by: "cap" }, true)!;
+        }
+        const body = routineRequestBody(draft);
+        try {
+            const raw = isNew
+                ? await api.createRoutine({ ...body, name, tz: draft.tz })
+                : await api.patchRoutine(existingId, body);
+            if (this.api !== api) return undefined;
+            this.replaceRoutine(routineIn(raw));
+            return undefined;
+        } catch (error) {
+            if (this.api !== api) return undefined;
+            // An edit of a routine deleted elsewhere: drop it from the list, as a pause does.
+            if (!isNew && error instanceof JournalApiError && error.status === 404) void this.loadRoutines();
+            return routineFailure(error, isNew);
+        }
+    }
+
+    /** DELETE /routines/:key. A routine already gone counts as deleted. */
+    public async deleteRoutine(id: string): Promise<string | undefined> {
+        const api = this.api;
+        if (!api) return "Not signed in.";
+        try {
+            await api.deleteRoutine(id);
+        } catch (error) {
+            if (!(error instanceof JournalApiError && error.status === 404)) return routineFailure(error, false);
+        }
+        if (this.api !== api) return undefined;
+        // Any load in flight was asked before the delete: its answer may still have the routine.
+        this.routinesGen += 1;
+        const list = this.state.routines?.list?.filter((routine) => routine.id !== id);
+        this.patchRoutines({ loading: false, ...(list ? { list } : {}) });
+        return undefined;
+    }
+
+    private patchRoutines(update: Partial<RoutinesState>): void {
+        this.patch({ routines: { ...this.state.routines, ...update } });
+    }
+
+    private markRoutineBusy(id: string, busy: boolean): void {
+        const busyIds = new Set(this.state.routines?.busyIds ?? []);
+        if (busy) busyIds.add(id);
+        else busyIds.delete(id);
+        this.patchRoutines({ busyIds });
+    }
+
+    // One routine's fresh copy goes into the list at once, before the marker's refetch lands. Any
+    // load already in flight was asked before this write, so its answer is dropped.
+    private replaceRoutine(routine: Routine | null): void {
+        if (!routine) {
+            void this.loadRoutines();
+            return;
+        }
+        this.routinesGen += 1;
+        const others = (this.state.routines?.list ?? []).filter((row) => row.id !== routine.id);
+        this.patchRoutines({ list: sortRoutines([...others, routine]), loading: false });
+    }
+
+    private scheduleRoutinesRefetch(): void {
+        if (this.routinesRefetchTimer !== undefined) return;
+        this.routinesRefetchTimer = window.setTimeout(() => {
+            this.routinesRefetchTimer = undefined;
+            if (this.routinesViewers > 0) void this.loadRoutines();
+        }, MARKER_REFETCH_DELAY_MS);
     }
 
     // A settings frame (or hello_ok) is the journal's word on the current value; it supersedes any
@@ -2885,6 +3300,71 @@ export class MatronJournalClient {
 
     private patchDefaults(update: Partial<DefaultsState>): void {
         this.patch({ defaults: { loading: false, unsupported: false, ...this.state.defaults, ...update } });
+    }
+
+    // ── Device admin (Settings → Devices). Pull-based, as on the Mac: the screen re-fetches the
+    // roster after every change; only the agent roster (session tags) is pushed, by `device_meta`.
+
+    private deviceAdminApi(): JournalApi {
+        if (!this.api) throw new JournalApiError("Not signed in.", 401, "unauthenticated");
+        return this.api;
+    }
+
+    /** GET /devices: every device on the account, this one included. */
+    public async listDevices(): Promise<DeviceDTO[]> {
+        return (await this.deviceAdminApi().devices()).devices;
+    }
+
+    /** Rename a device; the Boxes group re-reads its names. */
+    public async renameDevice(deviceId: number, name: string): Promise<void> {
+        await this.deviceAdminApi().renameDevice(deviceId, name);
+        void this.loadBoxDefaults();
+    }
+
+    /** Set an agent box's tag character, or clear it back to automatic (null). */
+    public async setDeviceTag(deviceId: number, tagChar: string | null): Promise<void> {
+        await this.deviceAdminApi().setDeviceTag(deviceId, tagChar);
+    }
+
+    /**
+     * Revoke a device. A 404 means it was already revoked elsewhere and counts as done. Revoking
+     * this device is a sign-out: the token is already dead, so the client signs out at once.
+     */
+    public async revokeDevice(device: Pick<DeviceDTO, "device_id" | "is_self">): Promise<void> {
+        try {
+            await this.deviceAdminApi().revokeDevice(device.device_id);
+        } catch (error) {
+            if (!(error instanceof JournalApiError && error.status === 404)) throw error;
+        }
+        if (device.is_self) {
+            await this.logout("This device was revoked. Sign in again to continue.");
+            return;
+        }
+        void this.loadBoxDefaults();
+    }
+
+    public pairPreview(pairCode: string): Promise<PairPreview> {
+        return this.deviceAdminApi().pairPreview(pairCode);
+    }
+
+    public pairApprove(pairCode: string, agentName: string, tagChar: string | null): Promise<void> {
+        return this.deviceAdminApi().pairApprove(pairCode, agentName, tagChar);
+    }
+
+    public linkStart(): Promise<LinkStart> {
+        return this.deviceAdminApi().linkStart();
+    }
+
+    public linkStatus(): Promise<LinkStatus> {
+        return this.deviceAdminApi().linkStatus();
+    }
+
+    public linkApprove(linkCode: string): Promise<void> {
+        return this.deviceAdminApi().linkApprove(linkCode);
+    }
+
+    public linkDeny(linkCode: string): Promise<void> {
+        return this.deviceAdminApi().linkDeny(linkCode);
     }
 
     // ── Per-box defaults (Settings → Boxes; GET /devices `defaults`, PUT /devices/:id/defaults) ──
@@ -3957,6 +4437,78 @@ export class MatronJournalClient {
         return true;
     }
 
+    // ── Project filing (the Mac's "New project", "Move to project…" and "Merge into…"). ──
+
+    /**
+     * "New project": creates it, refreshes the Projects home and opens the new project's page. A
+     * failure comes back with its reason for the sheet to show beside what was typed, rather than
+     * on the tracker's banner, so the sheet stays open with nothing lost.
+     */
+    public async createTrackerProject(title: string, body = ""): Promise<{ project: Project } | { error: string }> {
+        const api = this.api;
+        if (!api) return { error: "Not signed in." };
+        let project: Project;
+        try {
+            ({ project } = await api.createProject({ title: title.trim(), body: body.trim() }, crypto.randomUUID()));
+        } catch (error) {
+            return { error: errorMessage(error) };
+        }
+        if (this.api !== api) return { project };
+        await this.loadProjects();
+        this.openTrackerProject(project.num);
+        return { project };
+    }
+
+    /**
+     * "Move to project…": files the mission into another open project, then refetches what shows
+     * it — the mission page when it is the one shown, the missions and projects lists when loaded,
+     * and the open project page (which it may just have left). Resolves to why it did not move, for
+     * the sheet (which stays open over the pane's banner) to show, or null once moved.
+     */
+    public async moveTrackerMission(missionId: string, projectId: string): Promise<string | null> {
+        const api = this.api;
+        if (!api) return "Not signed in.";
+        try {
+            await api.patchMission(missionId, { project: projectId }, crypto.randomUUID());
+        } catch (error) {
+            return projectFilingFailure(error, "move");
+        }
+        if (this.api !== api) return null;
+        await Promise.all([
+            this.isSelectedTrackerMission(missionId) ? this.loadMission(missionId) : undefined,
+            this.state.missions ? this.loadMissions() : undefined,
+            this.state.projects ? this.loadProjects() : undefined,
+            this.state.trackerProject ? this.loadProject(this.state.trackerProject.project.num) : undefined,
+        ]);
+        return null;
+    }
+
+    /**
+     * "Merge into…": the journal moves every mission of `sourceId` to `intoId` and closes the
+     * source as merged. The page follows its missions to the project they went into, when the
+     * source's page is still the one shown. The journal lets the user merge, and of the agents
+     * only the Coordinator. Resolves to why it did not merge, for the sheet to show (the page
+     * stays), or null once merged.
+     */
+    public async mergeTrackerProject(sourceId: string, intoId: string): Promise<string | null> {
+        const api = this.api;
+        if (!api) return "Not signed in.";
+        if (sourceId === intoId) return "A project cannot merge into itself.";
+        let into: Project;
+        try {
+            ({ project: into } = await api.mergeProject(sourceId, intoId));
+        } catch (error) {
+            return projectFilingFailure(error, "merge");
+        }
+        if (this.api !== api) return null;
+        const shown = this.state.trackerProject?.project;
+        if (shown?.id === sourceId && this.state.trackerView?.selectedProjectId === shown.num) {
+            this.openTrackerProject(into.num);
+        }
+        await Promise.all([this.loadProjects(), this.state.missions ? this.loadMissions() : undefined]);
+        return null;
+    }
+
     // WS invalidation for tracker markers (`item` / `mission` / `milestone` journal frames).
     // A marker is a change connected clients must reflect without re-polling; we refetch ONLY the
     // tracker data the OPEN pane is showing. A closed pane fetches nothing: reopening it remounts the
@@ -4105,7 +4657,6 @@ export class MatronJournalClient {
         this.uploadConvos.clear();
         this.dismissedAttachments.clear();
         this.pendingFiles.clear();
-        this.stagedSendChain = Promise.resolve();
         this.transientAttachmentErrors.clear();
         this.connection?.stop();
         this.database?.close();
@@ -4560,6 +5111,9 @@ export class MatronJournalClient {
             this.sessionGen === gen && this.database === db && this.connection === connection;
 
         if (hello?.settings !== undefined) this.applySettingsFrame(hello.settings);
+        if (hello !== undefined) this.applyHelloCoordinator(hello);
+        // A routine marker missed while offline is never replayed: refetch while the sheet shows them.
+        if (this.routinesViewers > 0) void this.loadRoutines();
         // The For you badge counts open items awaiting the user, so the inbox loads on every
         // (re)connect, not only when the tracker opens: markers missed while offline never replay.
         void this.loadInbox();
@@ -4672,6 +5226,7 @@ export class MatronJournalClient {
         // data regardless of whether this event is newly applied below — fire-and-forget so it
         // never blocks (or is blocked by) timeline application. Non-tracker types return at once.
         this.handleTrackerMarker(event);
+        this.handleCoordinatorMarker(event);
         const applied = await this.database.applyJournal(event);
         this.clearRpcCreateWatchdog(event.convo_id);
         const removed = await this.database.reconcileOwnMessage(event);
@@ -5085,6 +5640,13 @@ export class MatronJournalClient {
         if (this.briefingExpiryTimer !== undefined) window.clearTimeout(this.briefingExpiryTimer);
         this.briefingExpiryTimer = undefined;
         this.briefingGen += 1;
+        if (this.coordinatorRefetchTimer !== undefined) window.clearTimeout(this.coordinatorRefetchTimer);
+        this.coordinatorRefetchTimer = undefined;
+        this.coordinatorEpoch += 1;
+        this.coordinatorStale = false;
+        if (this.routinesRefetchTimer !== undefined) window.clearTimeout(this.routinesRefetchTimer);
+        this.routinesRefetchTimer = undefined;
+        this.routinesGen += 1;
         this.readTimers.clear();
         this.readHighWater.clear();
         this.ackTimer = undefined;
@@ -5178,6 +5740,52 @@ export function sanitizeBriefingLatest(raw: unknown): BriefingLatest {
         next_refresh_at: finite(value.next_refresh_at) ?? null,
         has_coordinator: value.has_coordinator === true,
     };
+}
+
+/**
+ * Why a filing write (move a mission, merge projects) did not happen, in the user's words where
+ * the journal says why: a closed project on either end, or a merge only the user or the
+ * Coordinator may make. Anything else is the ordinary error message.
+ */
+export function projectFilingFailure(error: unknown, write: "move" | "merge"): string {
+    if (error instanceof JournalApiError) {
+        const blockedBy = error.body?.blocked_by;
+        if (error.status === 409 && (blockedBy === "project_closed" || blockedBy === "into_closed")) {
+            return "That project is closed, so nothing can move into it.";
+        }
+        // `closed` names the row the write addresses: the mission on a move, the source on a merge.
+        if (error.status === 409 && blockedBy === "closed") {
+            return write === "move"
+                ? "This mission is closed, so it stays where it is."
+                : "This project is already closed.";
+        }
+        if (error.status === 403 && error.body?.detail === "not_coordinator") {
+            return "Only you or your Coordinator can merge projects.";
+        }
+    }
+    return errorMessage(error);
+}
+
+/** A `/coordinator` body's `convo_id`: the id, null for none, undefined when it says nothing. */
+function coordinatorIdIn(raw: unknown): string | null | undefined {
+    if (!raw || typeof raw !== "object" || !("convo_id" in raw)) return undefined;
+    const id = (raw as { convo_id?: unknown }).convo_id;
+    if (id === null) return null;
+    return typeof id === "string" ? id || null : undefined;
+}
+
+/** The `{routine}` of a create or edit answer, or null when malformed. */
+function routineIn(raw: unknown): Routine | null {
+    return parseRoutine(raw && typeof raw === "object" ? (raw as { routine?: unknown }).routine : undefined);
+}
+
+/** A failed routines write in the sheet's words. */
+function routineFailure(error: unknown, collection: boolean): string {
+    if (error instanceof JournalApiError) {
+        const message = routineErrorMessage(error.status, error.body, collection);
+        if (message) return message;
+    }
+    return errorMessage(error);
 }
 
 export function errorMessage(error: unknown): string {

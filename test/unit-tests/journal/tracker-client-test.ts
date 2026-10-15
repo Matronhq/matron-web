@@ -103,6 +103,8 @@ interface TrackerApiMock {
     deleteMemory: jest.Mock;
     projects: jest.Mock;
     project: jest.Mock;
+    createProject: jest.Mock;
+    mergeProject: jest.Mock;
     uploadMedia: jest.Mock;
     createItem: jest.Mock;
     rankItem: jest.Mock;
@@ -2216,6 +2218,173 @@ describe("MatronJournalClient.fetchMissionClosedItems", () => {
     it("resolves empty when signed out", async () => {
         const { client } = makeClient();
         await expect(client.fetchMissionClosedItems(MS_1)).resolves.toEqual({ items: [], cursor: null });
+    });
+});
+
+describe("MatronJournalClient project filing", () => {
+    const project = (num: number, over: Record<string, unknown> = {}) =>
+        ({
+            id: `pj_${num}`,
+            num,
+            state: "open",
+            title: `Project ${num}`,
+            body: "",
+            status: null,
+            status_by: null,
+            status_updated_at: null,
+            created_at: 1,
+            updated_at: 1,
+            missions: { running: 0, waiting: 0, idle: 0, quiet: 0, closed: 0 },
+            needs_you: 0,
+            open_items: 0,
+            last_activity_at: 1,
+            ...over,
+        }) as const;
+    const detail = (num: number) => ({
+        project: project(num),
+        missions: [],
+        needs_you: [],
+        recent_milestones: [],
+        sessions_by_box: {},
+    });
+
+    beforeAll(() => {
+        if (typeof globalThis.crypto?.randomUUID !== "function") {
+            (globalThis as { crypto: Crypto }).crypto = webcrypto as unknown as Crypto;
+        }
+    });
+
+    it("creates a project with a trimmed title, refreshes the list and opens its page", async () => {
+        const { client, state } = makeClient({ trackerView: { open: true, view: "missions" } });
+        state.api = {
+            createProject: jest.fn().mockResolvedValue({ project: project(12, { title: "Launch" }) }),
+            projects: jest.fn().mockResolvedValue({ projects: [project(12)] }),
+        };
+
+        const out = await client.createTrackerProject("  Launch  ", "  ");
+
+        expect(state.api.createProject).toHaveBeenCalledWith({ title: "Launch", body: "" }, expect.any(String));
+        expect(out).toEqual({ project: expect.objectContaining({ num: 12 }) });
+        expect(state.api.projects).toHaveBeenCalled();
+        expect(client.getSnapshot().trackerView?.selectedProjectId).toBe(12);
+    });
+
+    it("returns why a create failed without raising the tracker banner", async () => {
+        const { client, state } = makeClient();
+        state.api = { createProject: jest.fn().mockRejectedValue(new Error("offline")) };
+
+        const out = await client.createTrackerProject("Launch");
+
+        expect(out).toEqual({ error: "offline" });
+        expect(client.getSnapshot().trackerError).toBeUndefined();
+    });
+
+    it("moves a mission, then refetches the shown mission, the lists and the open project", async () => {
+        const { client, state } = makeClient({
+            trackerView: { open: true, view: "missions", selectedMissionId: 5 },
+            trackerMission: missionDetail(),
+            missions: [mission()],
+            projects: [project(1), project(2)],
+            trackerProject: detail(1),
+        } as Partial<ClientState>);
+        state.api = {
+            patchMission: jest.fn().mockResolvedValue({ mission: mission({ project_id: "pj_2" }) }),
+            mission: jest.fn().mockResolvedValue(missionDetail({ project_id: "pj_2" })),
+            missions: jest.fn().mockResolvedValue({ missions: [] }),
+            projects: jest.fn().mockResolvedValue({ projects: [] }),
+            project: jest.fn().mockResolvedValue(detail(1)),
+        };
+
+        await expect(client.moveTrackerMission("ms_1", "pj_2")).resolves.toBeNull();
+
+        expect(state.api.patchMission).toHaveBeenCalledWith("ms_1", { project: "pj_2" }, expect.any(String));
+        expect(state.api.mission).toHaveBeenCalledWith("ms_1");
+        expect(state.api.missions).toHaveBeenCalled();
+        expect(state.api.projects).toHaveBeenCalled();
+        expect(state.api.project).toHaveBeenCalledWith(1);
+    });
+
+    it("says in plain words when the target project has closed", async () => {
+        const { client, state } = makeClient();
+        state.api = {
+            patchMission: jest
+                .fn()
+                .mockRejectedValue(
+                    new JournalApiError("conflict", 409, "conflict", undefined, { blocked_by: "project_closed" }),
+                ),
+        };
+
+        await expect(client.moveTrackerMission("ms_1", "pj_2")).resolves.toBe(
+            "That project is closed, so nothing can move into it.",
+        );
+    });
+
+    it("names the mission, not a project, when the mission itself has closed", async () => {
+        const { client, state } = makeClient();
+        state.api = {
+            patchMission: jest
+                .fn()
+                .mockRejectedValue(
+                    new JournalApiError("conflict", 409, "conflict", undefined, { blocked_by: "closed" }),
+                ),
+            mergeProject: jest
+                .fn()
+                .mockRejectedValue(
+                    new JournalApiError("conflict", 409, "conflict", undefined, { blocked_by: "closed" }),
+                ),
+        };
+
+        await expect(client.moveTrackerMission("ms_1", "pj_2")).resolves.toBe(
+            "This mission is closed, so it stays where it is.",
+        );
+        await expect(client.mergeTrackerProject("pj_1", "pj_2")).resolves.toBe("This project is already closed.");
+    });
+
+    it("never asks the journal to merge a project into itself", async () => {
+        const { client, state } = makeClient();
+        state.api = { mergeProject: jest.fn() };
+
+        await expect(client.mergeTrackerProject("pj_1", "pj_1")).resolves.toBe("A project cannot merge into itself.");
+        expect(state.api.mergeProject).not.toHaveBeenCalled();
+    });
+
+    it("merges the open project into another and follows its missions there", async () => {
+        const { client, state } = makeClient({
+            trackerView: { open: true, view: "missions", selectedProjectId: 1 },
+            trackerProject: detail(1),
+            projects: [project(1), project(2)],
+        } as Partial<ClientState>);
+        state.api = {
+            mergeProject: jest.fn().mockResolvedValue({
+                project: project(2),
+                merged: project(1, { state: "closed", merged_into_num: 2 }),
+            }),
+            projects: jest.fn().mockResolvedValue({ projects: [project(2)] }),
+        };
+
+        await expect(client.mergeTrackerProject("pj_1", "pj_2")).resolves.toBeNull();
+
+        expect(state.api.mergeProject).toHaveBeenCalledWith("pj_1", "pj_2");
+        expect(state.api.projects).toHaveBeenCalled();
+        expect(client.getSnapshot().trackerView?.selectedProjectId).toBe(2);
+    });
+
+    it("shows the journal's refusal of a merge and stays on the page", async () => {
+        const { client, state } = makeClient({
+            trackerView: { open: true, view: "missions", selectedProjectId: 1 },
+        });
+        state.api = {
+            mergeProject: jest
+                .fn()
+                .mockRejectedValue(
+                    new JournalApiError("forbidden", 403, "forbidden", undefined, { detail: "not_coordinator" }),
+                ),
+        };
+
+        await expect(client.mergeTrackerProject("pj_1", "pj_2")).resolves.toBe(
+            "Only you or your Coordinator can merge projects.",
+        );
+        expect(client.getSnapshot().trackerView?.selectedProjectId).toBe(1);
     });
 });
 
