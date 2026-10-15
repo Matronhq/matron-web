@@ -3992,6 +3992,151 @@ button.mj_File {
     margin-inline: var(--mj-space-1x);
 }
 
+/* The main column makes room under the page for the app-wide voice-note bar (Mac: the detail
+   column's bottom inset), rather than floating it over the composer. */
+.mj_ChatView_wrapper_voiceNote {
+    flex-direction: column;
+}
+
+.mj_ChatView_wrapper_voiceNote > :not(.mj_VoiceNoteBar) {
+    width: 100%;
+    min-height: 0;
+    flex: 1 1 0;
+}
+
+.mj_VoiceNoteBar {
+    display: flex;
+    flex: 0 0 auto;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: var(--mj-space-2x) var(--mj-space-4x);
+    background: var(--mj-color-bg-chat-canvas);
+}
+
+/* Mac VoiceNoteIndicator: a capsule up to 480pt wide — where the note goes, the running time,
+   Cancel and Send; the rest of it opens the conversation. */
+.mj_VoiceNoteIndicator {
+    display: flex;
+    width: 100%;
+    max-width: 480px;
+    box-sizing: border-box;
+    align-items: center;
+    gap: var(--mj-space-2x);
+    padding: 6px var(--mj-space-2x) 6px 14px;
+    border: 1px solid var(--mj-color-border-subtle);
+    border-radius: var(--mj-radius-pill);
+    background: var(--mj-color-bg-canvas-raised);
+    box-shadow: 0 2px 6px rgb(0 0 0 / 0.12);
+    color: var(--mj-color-text-primary);
+}
+
+.mj_VoiceNoteIndicator_open {
+    display: flex;
+    min-width: 0;
+    flex: 1 1 auto;
+    align-items: center;
+    gap: 10px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    text-align: start;
+}
+
+.mj_VoiceNoteIndicator_text {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+}
+
+.mj_VoiceNoteIndicator_headline {
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 18px;
+}
+
+.mj_VoiceNoteIndicator_time {
+    margin-inline-start: 4px;
+    font-family: var(--mj-font-family-mono);
+    font-variant-numeric: tabular-nums;
+}
+
+.mj_VoiceNoteIndicator_subtitle {
+    overflow: hidden;
+    color: var(--mj-color-text-secondary);
+    font-size: 12px;
+    line-height: 16px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_VoiceNoteIndicator_warning {
+    width: 18px;
+    height: 18px;
+    flex: 0 0 auto;
+    color: var(--mj-color-usage-medium);
+}
+
+.mj_VoiceNoteIndicator_action {
+    display: inline-flex;
+    width: 32px;
+    height: 32px;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 0;
+    border-radius: var(--mj-radius-pill);
+    background: transparent;
+    color: var(--mj-color-icon-secondary);
+}
+
+.mj_VoiceNoteIndicator_action svg {
+    width: 22px;
+    height: 22px;
+}
+
+.mj_VoiceNoteIndicator_send {
+    color: var(--mj-color-icon-accent-primary);
+}
+
+.mj_VoiceNoteIndicator_send svg {
+    width: 28px;
+    height: 28px;
+}
+
+.mj_VoiceNoteIndicator_action:hover:not(:disabled) {
+    background: var(--mj-color-bg-subtle-primary);
+}
+
+.mj_VoiceNoteIndicator_action:disabled {
+    cursor: default;
+    opacity: 0.5;
+}
+
+.mj_VoiceNoteIndicator_textAction {
+    flex: 0 0 auto;
+    padding: 4px 6px;
+    border: 0;
+    background: transparent;
+    color: var(--mj-color-text-secondary);
+    font-size: 13px;
+}
+
+.mj_VoiceNoteIndicator_retry {
+    color: var(--mj-color-text-action-accent);
+    font-weight: 600;
+}
+
+.mj_VoiceNoteIndicator_open:focus-visible,
+.mj_VoiceNoteIndicator_action:focus-visible,
+.mj_VoiceNoteIndicator_textAction:focus-visible {
+    border-radius: var(--mj-radius-sm);
+    outline: 2px solid var(--mj-color-icon-accent-primary);
+    outline-offset: 2px;
+}
+
 .mj_ScreenReaderOnly {
     position: absolute;
     width: 1px;
@@ -4126,6 +4271,31 @@ button.mj_File {
     .mj_ResizeHandle,
     .mj_Chat_mobileHidden {
         display: none;
+    }
+
+    /* Back on the conversation list the main column is hidden, but a live voice note's bar stays:
+       pinned along the bottom of the screen, the rest of the column still out of the way. */
+    .mj_Chat_mobileHidden.mj_ChatView_wrapper_voiceNote {
+        display: flex;
+        position: fixed;
+        z-index: 10;
+        right: 0;
+        bottom: 0;
+        left: 0;
+    }
+
+    .mj_Chat_mobileHidden.mj_ChatView_wrapper_voiceNote > :not(.mj_VoiceNoteBar) {
+        display: none;
+    }
+
+    .mj_Chat_mobileHidden.mj_ChatView_wrapper_voiceNote > .mj_VoiceNoteBar {
+        padding-bottom: calc(var(--mj-space-2x) + env(safe-area-inset-bottom, 0px));
+    }
+
+    /* The list scrolls clear of the pinned bar: its last rows can still be reached. */
+    .mj_App:has(> .mj_Chat_mobileHidden.mj_ChatView_wrapper_voiceNote) > .mj_Sidebar_outerWrapper {
+        box-sizing: border-box;
+        padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px));
     }
 
     .mj_BackButton {

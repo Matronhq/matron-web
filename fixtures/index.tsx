@@ -1729,6 +1729,10 @@ const errorLog = (): File => new File([new Uint8Array(512)], "error-log.txt", { 
             },
         }),
     setTheme: (t: string) => document.documentElement.setAttribute("data-theme", t),
+    // Switch conversation (or none, for the home page) the way the client's own select would.
+    // A voice note recording in one conversation keeps going, with the app-wide bar elsewhere.
+    selectConversation: (id?: string) =>
+        patchState({ selectedConversationId: id, events: id === "c1" ? state.events : [], pendingMessages: [] }),
     // Drive the child (subagent) view: select the running child s1 of parent c1 → back chip +
     // ↳ header + ringed current pill. The fixture client has no database, so selectConversation
     // no-ops; patch the state directly (mirrors the client's own patch()).
