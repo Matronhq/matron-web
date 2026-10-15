@@ -935,3 +935,72 @@ describe("JournalApi box defaults", () => {
         await expect(api.putBoxDefaults(7, { default_agent: null })).rejects.toBeInstanceOf(JournalApiError);
     });
 });
+
+describe("JournalApi project filing", () => {
+    beforeAll(() => {
+        globalThis.TextDecoder = NodeTextDecoder as typeof TextDecoder;
+    });
+
+    beforeEach(() => {
+        fetchMock.mockReset();
+        globalThis.fetch = fetchMock as unknown as typeof fetch;
+        delete (window as Window & { electron?: unknown }).electron;
+    });
+
+    const sent = (): { url: string; init: RequestInit; body: Record<string, unknown> } => ({
+        url: String(fetchMock.mock.calls[0][0]),
+        init: fetchMock.mock.calls[0][1] as RequestInit,
+        body: JSON.parse(fetchMock.mock.calls[0][1].body as string) as Record<string, unknown>,
+    });
+
+    it("creates a project with a title, an optional body and an Idempotency-Key", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ project: { id: "pj_1", num: 7 } }, 201));
+        const api = new JournalApi("https://journal.example", "token");
+
+        const out = await api.createProject({ title: "Launch", body: "The spring launch" }, "key-1");
+
+        const { url, init, body } = sent();
+        expect(url).toBe("https://journal.example/projects");
+        expect(init).toEqual(
+            expect.objectContaining({
+                method: "POST",
+                headers: expect.objectContaining({ "Idempotency-Key": "key-1" }),
+            }),
+        );
+        expect(body).toEqual({ title: "Launch", body: "The spring launch" });
+        expect(out.project.num).toBe(7);
+    });
+
+    it("leaves a blank body out of the create", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ project: { id: "pj_1", num: 7 } }, 201));
+        const api = new JournalApi("https://journal.example", "token");
+
+        await api.createProject({ title: "Launch", body: "   " }, "key-1");
+
+        expect(sent().body).toEqual({ title: "Launch" });
+    });
+
+    it("merges a project into another by POST /projects/:id/merge with only `into`", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ project: { id: "pj_2" }, merged: { id: "pj_1" } }));
+        const api = new JournalApi("https://journal.example", "token");
+
+        await api.mergeProject("pj_1", "pj_2");
+
+        const { url, init, body } = sent();
+        expect(url).toBe("https://journal.example/projects/pj_1/merge");
+        expect(init.method).toBe("POST");
+        expect(body).toEqual({ into: "pj_2" });
+    });
+
+    it("moves a mission by PATCHing its project", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ mission: { id: "ms_1" } }));
+        const api = new JournalApi("https://journal.example", "token");
+
+        await api.patchMission("ms_1", { project: "pj_2" }, "key-2");
+
+        const { url, init, body } = sent();
+        expect(url).toBe("https://journal.example/missions/ms_1");
+        expect(init.method).toBe("PATCH");
+        expect(body).toEqual({ project: "pj_2" });
+    });
+});

@@ -271,6 +271,17 @@ textarea {
     flex: 0 1 auto;
 }
 
+/* Workdir and account email give way first on a narrow pane; the model (· effort) and
+   run-state truncate only once those are gone. They take no room of their own (zero basis)
+   and grow into whatever the model and run-state leave, up to their own width. A shrink
+   factor would not do: shrinking is shared out by width, so the model always lost a
+   fraction of a pixel, enough to clip its effort to an ellipsis. */
+.mj_HeaderMeta .mj_HeaderWorkdir,
+.mj_HeaderMeta .mj_HeaderEmail {
+    max-width: max-content;
+    flex: 1 1 0;
+}
+
 /* RIGHT zone: usage bars + Compact pill. */
 .mj_HeaderControls {
     display: flex;
@@ -581,6 +592,17 @@ textarea {
     text-align: right;
 }
 
+/* Reset time trailing a limit's bar ("3h20", "Thu 9am"), quieter than the percent. Rows
+   without a reset (ctx, host vitals) simply end at the percent. */
+.mj_UsageReset {
+    color: var(--mj-color-text-tertiary);
+    white-space: nowrap;
+}
+
+.mj_UsageRow:has(.mj_UsageReset) {
+    grid-template-columns: 24px 68px 32px auto;
+}
+
 .mj_UsageTrack {
     display: block;
     width: 100%;
@@ -657,6 +679,12 @@ textarea {
     grid-template-columns: 24px 72px 32px;
 }
 
+/* The collapsed ctx+5h stack is what a narrow pane and a phone get: a reset time there
+   would come out of the title's width. Its popover lists every reset. */
+.mj_UsageCluster_collapsed .mj_UsageReset {
+    display: none;
+}
+
 .mj_UsageCluster_collapsed:hover {
     background: var(--mj-color-bg-subtle-secondary);
 }
@@ -669,11 +697,11 @@ textarea {
 .mj_UsagePopover {
     top: calc(100% + var(--mj-space-1x));
     right: 0;
-    width: 250px;
+    width: 300px;
 }
 
 .mj_UsagePopover .mj_UsageRow {
-    grid-template-columns: 28px 1fr 40px;
+    grid-template-columns: 28px 1fr 40px 64px;
     font-size: 11px;
     line-height: 16px;
 }
@@ -722,6 +750,19 @@ textarea {
     left: 0;
     width: max-content;
     max-width: min(320px, calc(100vw - 32px));
+}
+
+/* The popover is where a narrow pane shows the whole subtitle: wrap the segments onto
+   further lines rather than truncating them all. */
+.mj_TitlePopover .mj_HeaderMeta {
+    flex-wrap: wrap;
+}
+
+.mj_TitlePopover .mj_HeaderMeta > *,
+.mj_TitlePopover .mj_HeaderMeta .mj_HeaderWorkdir,
+.mj_TitlePopover .mj_HeaderMeta .mj_HeaderEmail {
+    max-width: 100%;
+    flex: 0 0 auto;
 }
 
 .mj_TitlePopoverTitle {
@@ -857,6 +898,66 @@ textarea {
 
 /* §10.11: non-scrolling row — [pinned back chip] · [hairline] · [scrolling pill run].
    Only .mj_SubagentStrip_run scrolls; the escape stays pinned. */
+/* Large-conversation nudge under the header: an inset red card, as on the Mac (same
+   attention vocabulary as the offline banner); the whole strip sends /compact. */
+.mj_CompactNudge {
+    display: flex;
+    min-width: 0;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: var(--mj-space-2x);
+    margin: var(--mj-space-2x) 14px 0;
+    padding: var(--mj-space-2x) var(--mj-space-3x);
+    border: 0;
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--mj-color-text-critical-primary) 92%, transparent);
+    color: #fff;
+    cursor: pointer;
+    font: inherit;
+    font-size: 13px;
+    line-height: 18px;
+    text-align: start;
+}
+
+[data-theme="dark"] .mj_CompactNudge {
+    background: color-mix(in srgb, var(--mj-color-text-critical-primary) 62%, black);
+}
+
+.mj_CompactNudge:hover {
+    filter: brightness(1.08);
+}
+
+.mj_CompactNudge:focus-visible {
+    outline: 2px solid var(--mj-color-text-action-accent);
+    outline-offset: 2px;
+}
+
+.mj_CompactNudge[aria-busy="true"] {
+    cursor: progress;
+    opacity: 0.8;
+}
+
+/* The title may truncate on a narrow pane; the trailing action never does. */
+.mj_CompactNudge_title {
+    min-width: 0;
+    flex: 1 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_CompactNudge_action {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    gap: var(--mj-space-1x);
+}
+
+.mj_CompactNudge_action svg {
+    width: 12px;
+    height: 12px;
+}
+
 .mj_SubagentStrip {
     display: flex;
     min-width: 0;

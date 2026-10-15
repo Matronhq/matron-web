@@ -336,32 +336,32 @@ describe("useAdaptiveHeader", () => {
 
     it("uses a wider usage-collapse threshold when >4 meters add a 3rd column", async () => {
         // 6 meters (ctx+5h+fbl+wk+cpu+ram) → the 3-column grid needs a wider pane, so the
-        // usage collapses below 760 instead of 640; the title band still flips at 560.
+        // usage collapses below 960 instead of 720; the title band still flips at 560.
         const el = document.createElement("div");
         const probe = await mountAdaptiveProbe(el, undefined, 6);
         const observer = observers[0];
 
-        resize(observer, el, 800);
+        resize(observer, el, 1000);
         await flushFrames();
         expect(probe.container.textContent).toBe('{"usageCollapsed":false,"titleCollapsed":false}');
 
-        // 700 clears the 4-bar 640 threshold but NOT the 6-bar 760 one → usage collapses.
-        resize(observer, el, 700);
+        // 800 clears the 4-bar 720 threshold but NOT the 6-bar 960 one → usage collapses.
+        resize(observer, el, 800);
         await flushFrames();
         expect(probe.container.textContent).toBe('{"usageCollapsed":true,"titleCollapsed":false}');
     });
 
-    it("keeps the 640 usage-collapse threshold for the 4-bar grid", async () => {
+    it("keeps the 720 usage-collapse threshold for the 4-bar grid", async () => {
         const el = document.createElement("div");
         const probe = await mountAdaptiveProbe(el, undefined, 4);
         const observer = observers[0];
 
-        // 700 > 640 → the 4-bar grid stays expanded where the 6-bar grid would collapse.
-        resize(observer, el, 700);
+        // 800 > 720 → the 4-bar grid stays expanded where the 6-bar grid would collapse.
+        resize(observer, el, 800);
         await flushFrames();
         expect(probe.container.textContent).toBe('{"usageCollapsed":false,"titleCollapsed":false}');
 
-        resize(observer, el, 600);
+        resize(observer, el, 700);
         await flushFrames();
         expect(probe.container.textContent).toBe('{"usageCollapsed":true,"titleCollapsed":false}');
     });

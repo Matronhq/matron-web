@@ -16,7 +16,7 @@ Please see LICENSE files in the repository root for full details.
 
 import React from "react";
 
-import { ConversationsIcon, DecisionsIcon, MemoriesIcon, ProjectsIcon } from "./icons";
+import { ConversationsIcon, DecisionsIcon, MemoriesIcon, PersonCheckIcon, ProjectsIcon } from "./icons";
 
 export type NavKey = "projects" | "decisions" | "conversations" | "memories";
 
@@ -37,22 +37,55 @@ const ENTRIES: ReadonlyArray<{
     { key: "memories", label: "Memories", Icon: MemoriesIcon, countNoun: "need you" },
 ];
 
+/** The Coordinator entry: whether its conversation is on screen, its unread count, and the tap. */
+export interface NavRailCoordinator {
+    selected: boolean;
+    unread: number;
+    onOpen: () => void;
+}
+
 export function NavRail({
     active,
     counts,
     onSelect,
+    coordinator,
     footer,
 }: {
     active: NavKey;
     counts: Partial<Record<NavKey, number>>;
     onSelect: (key: NavKey) => void;
+    coordinator?: NavRailCoordinator;
     footer?: React.ReactNode;
 }): React.ReactElement {
     return (
         <nav className="mj_NavRail" aria-label="Sections" data-testid="nav-rail">
+            {coordinator && (
+                <button
+                    type="button"
+                    className="mj_NavRail_entry"
+                    data-nav="coordinator"
+                    aria-current={coordinator.selected ? "page" : undefined}
+                    aria-label={coordinator.unread > 0 ? `Coordinator, ${coordinator.unread} unread` : "Coordinator"}
+                    title="Coordinator"
+                    onClick={coordinator.onOpen}
+                >
+                    <span className="mj_NavRail_icon" aria-hidden="true">
+                        <PersonCheckIcon />
+                        {coordinator.unread > 0 && (
+                            <span className="mj_NavRail_badge">
+                                {coordinator.unread > 99 ? "99+" : coordinator.unread}
+                            </span>
+                        )}
+                    </span>
+                    <span className="mj_NavRail_label" aria-hidden="true">
+                        Coordinator
+                    </span>
+                </button>
+            )}
             {ENTRIES.map(({ key, label, Icon, countNoun }) => {
                 const count = counts[key] ?? 0;
-                const selected = key === active;
+                // The Coordinator's conversation is under Conversations, but its own entry is current.
+                const selected = key === active && !(key === "conversations" && coordinator?.selected);
                 return (
                     <button
                         key={key}
