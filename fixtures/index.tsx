@@ -23,7 +23,7 @@ import "@fontsource/inter/latin-400.css";
 import "@fontsource/inter/latin-500.css";
 import "@fontsource/inter/latin-600.css";
 
-import { JournalApiError } from "../src/journal/api";
+import { JournalApi, JournalApiError } from "../src/journal/api";
 import { archiveStore, favoriteStore, MatronJournalClient, pinnedStore, unreadStore } from "../src/journal/client";
 import { MatronApp } from "../src/journal/components";
 import type { Routine } from "../src/journal/routines";
@@ -1355,6 +1355,68 @@ if (trackerMode === "inbox" || trackerMode === "item") {
             tracker.trackerItem = { item: consentItem, comments: [] };
         }
     }
+}
+
+// ?rooms=1 puts the selected conversation in two agent-chat rooms (the header's "Rooms · 2") and
+// answers the journal's notification settings: one room silenced, the selected chat muted for an
+// hour, so the bell, the rooms list and Settings → Notifications show their states.
+if (fixtureParams.get("rooms") === "1") {
+    const now = Date.now();
+    state.conversations = [
+        ...state.conversations,
+        {
+            id: "r1",
+            title: "↔️ [r1] Release checklist",
+            agent_device_id: 1,
+            session_state: "running",
+            last_seq: 9,
+            unread_count: 0,
+            snippet: "box-b: migrations are green on staging",
+            created_at: now - 3 * 3600_000,
+            last_ts: now - 4 * 60_000,
+            read_up_to_seq: 9,
+            participants: [1, 2],
+            participant_convos: ["c1", "c3"],
+        },
+        {
+            id: "r2",
+            title: "🔗 [r2] Schema review",
+            agent_device_id: 2,
+            session_state: "waiting",
+            last_seq: 4,
+            unread_count: 0,
+            snippet: "Agreed: keep the old column for one release",
+            created_at: now - 26 * 3600_000,
+            last_ts: now - 5 * 3600_000,
+            read_up_to_seq: 4,
+            participants: [1, 2],
+            participant_convos: ["c2", "c1"],
+        },
+    ];
+    const notify = {
+        mode: "coordinator",
+        events: {
+            prompts: true,
+            questions: true,
+            notices: true,
+            coordinator_done: true,
+            other_done: false,
+            stopped: false,
+            rooms: false,
+            activity: false,
+        },
+        has_coordinator: true,
+        device_level: "all",
+        convos: [
+            { convo_id: "c1", level: "needs_me", mute_until: now + 3600_000 },
+            { convo_id: "r2", level: "none", mute_until: null },
+        ],
+    };
+    const api = JournalApi.prototype as unknown as Record<string, unknown>;
+    api.notifySettings = async () => notify;
+    api.coordinator = async () => ({ convo_id: "c2", consent: true });
+    // A save is accepted; the shots do not change anything.
+    api.updateNotify = async () => notify;
 }
 
 // ?badges=1: the conversation list's needs-you counts and "New" marker, and the Projects badge in
