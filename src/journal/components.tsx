@@ -67,6 +67,7 @@ import {
 import { CompactNudge } from "./compact-nudge";
 import { CoordinatorEventNotice, isUnrenderableNoticeEvent } from "./coordinator-notices";
 import { dateTimeFormat } from "./date-format";
+import { ChatTasksPane, CoordinatorChooserSheet, RoutinesSheet, SettingsSheet, TrackerPane } from "./deferred-ui";
 import { FOCUS_HIGHLIGHT_MS, focusScrollTop, jumpToLastOwnShortcutLabel, landingSeq } from "./jump-to-message";
 import { FindInChatBar, useFindInChatShortcut } from "./find-in-chat";
 import { GoToNumberDialog, goToNumberShortcutLabel, NumberSearchResult, useGoToNumberShortcut } from "./goto-number";
@@ -123,14 +124,13 @@ import {
     ArrowUpCircleIcon,
     ProjectsIcon,
 } from "./icons";
-import { COORDINATOR_NEW_CHAT_MODEL, CoordinatorChooserSheet, RoutinesSheet } from "./CoordinatorSheets";
 import { NAV_RAIL_WIDTH, NavRail, type NavKey } from "./NavRail";
 import { isAgentRoomTitle, needsYouByConversation, projectsNeedsYou } from "./needs-you";
 import { notificationsFor, unreadTotal as countUnread } from "./notifications";
-import { SettingsSheet } from "./SettingsSheet";
 import { displayTitle, TaggedTitle } from "./SessionTag";
 import { groupByDay } from "./sidebar-groups";
 import { observeSeenRows } from "./seen-tracker";
+import { preloadDeferredUi } from "./lazy";
 import { createLongPressController, type LongPressController } from "./longPress";
 import { MarkdownBody, markdownToPlainText } from "./markdown";
 import {
@@ -143,7 +143,6 @@ import {
     MissionNotice,
     renderItemMarker,
 } from "./tracker/cards";
-import { ChatTasksPane } from "./tracker/ChatTasksPane";
 import { needsUser } from "./tracker/format";
 import { NeedsYouBadge } from "./tracker/glyphs";
 import {
@@ -153,7 +152,6 @@ import {
     useMarkdownPreview,
     useMarkdownPreviewPanel,
 } from "./markdown-preview";
-import { TrackerPane } from "./tracker/TrackerPane";
 import {
     buildMediaCorpus,
     isRenderableInViewer,
@@ -697,6 +695,9 @@ function BoxUsage({ status, now }: { status: BoxStatus | undefined; now: number 
         </span>
     );
 }
+
+/** "New coordinator chat…" starts the session on this model, as on the Mac. */
+const COORDINATOR_NEW_CHAT_MODEL = "opus[1m]";
 
 export function NewSessionSheet({
     client,
@@ -7152,6 +7153,9 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
     const appContent = useRef<HTMLDivElement>(null);
     // Desktop notifications and the unread count in the title / app badge, while signed in.
     useEffect(() => notificationsFor(client).start(), [client]);
+    // Settings, the tracker and the other sheets load in their own chunks: fetch them once the
+    // first screen is up, so they open instantly later.
+    useEffect(() => preloadDeferredUi(), []);
     const drafts = useMemo(() => makeDraftStore(state.session), [state.session]);
     const sendingConvos = useRef<Set<string>>(new Set());
     const draftRevisions = useRef<Map<string, number>>(new Map());
