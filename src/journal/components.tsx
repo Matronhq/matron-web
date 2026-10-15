@@ -47,7 +47,6 @@ import {
 import { isMediaExpiredError, JournalApiError } from "./api";
 import {
     type AgentProbe,
-    BROWSER_MEMORY_SAFETY_MAX_BYTES,
     errorMessage,
     type MatronJournalClient,
     PREFERENCES_UNAVAILABLE_ERROR,
@@ -65,19 +64,25 @@ import {
     readCoordinatorDecisions,
     stopSpawnedSession,
 } from "./coordinator-consent";
+import { CompactNudge } from "./compact-nudge";
 import { CoordinatorEventNotice, isUnrenderableNoticeEvent } from "./coordinator-notices";
 import { dateTimeFormat } from "./date-format";
+import { FOCUS_HIGHLIGHT_MS, focusScrollTop, jumpToLastOwnShortcutLabel, landingSeq } from "./jump-to-message";
+import { FindInChatBar, useFindInChatShortcut } from "./find-in-chat";
 import { GoToNumberDialog, goToNumberShortcutLabel, NumberSearchResult, useGoToNumberShortcut } from "./goto-number";
 import { PinDialog, type PinDialogTarget } from "./PinDialogs";
+import { CommandPalette } from "./CommandPalette";
+import { shortcutLabel, useAppShortcuts, useShortcutCommand } from "./shortcuts";
 import { pinGlyph, successorHintText } from "./pins";
 import {
     AnthropicMark,
     ArchiveIcon,
-    AttachmentIcon,
+    ArrowUpToLineIcon,
     CheckIcon,
     ChevronDownIcon,
     ChevronLeftIcon,
     ChevronUpIcon,
+    ChecklistIcon,
     ClipboardIcon,
     CloseIcon,
     CodeBracketsIcon,
@@ -103,7 +108,6 @@ import {
     OpenAIMark,
     PinIcon,
     SearchIcon,
-    SendIcon,
     SettingsIcon,
     SystemThemeIcon,
     LightThemeIcon,
@@ -112,19 +116,22 @@ import {
     StarIcon,
     StopIcon,
     UnarchiveIcon,
-    UploadTrayIcon,
     CheckCircleIcon,
     XOctagonIcon,
     PlusCircleIcon,
+    RefreshIcon,
     ArrowUpCircleIcon,
     ProjectsIcon,
 } from "./icons";
+import { COORDINATOR_NEW_CHAT_MODEL, CoordinatorChooserSheet, RoutinesSheet } from "./CoordinatorSheets";
 import { NAV_RAIL_WIDTH, NavRail, type NavKey } from "./NavRail";
+import { isAgentRoomTitle, needsYouByConversation, projectsNeedsYou } from "./needs-you";
 import { notificationsFor, unreadTotal as countUnread } from "./notifications";
 import { ConvoNotifyBell, RoomsControl } from "./ChatHeaderRooms";
 import { SettingsSheet } from "./SettingsSheet";
 import { displayTitle, TaggedTitle } from "./SessionTag";
 import { groupByDay } from "./sidebar-groups";
+import { observeSeenRows } from "./seen-tracker";
 import { createLongPressController, type LongPressController } from "./longPress";
 import { MarkdownBody, markdownToPlainText } from "./markdown";
 import {
@@ -137,7 +144,9 @@ import {
     MissionNotice,
     renderItemMarker,
 } from "./tracker/cards";
+import { ChatTasksPane } from "./tracker/ChatTasksPane";
 import { needsUser } from "./tracker/format";
+import { NeedsYouBadge } from "./tracker/glyphs";
 import {
     isPreviewableMarkdown,
     MarkdownPreviewContext,
@@ -173,6 +182,7 @@ import {
     compactTokens,
     formatSampleAge,
     isSampleStale,
+    modelLine,
     normalizePercent,
     resetDisplay,
     sampleAgeMs,
@@ -191,7 +201,9 @@ import {
     childrenOf,
     childSidebarPlacement,
     type ClientState,
+    type ComposerAttachment,
     type MessageSearchState,
+    type SearchHit,
     type Conversation,
     type ConversationMissionLink,
     type ConvoPin,
@@ -218,8 +230,6 @@ import {
     type SessionStatus,
     spawnOutcomeKind,
     spawnOutcomeSnippet,
-    type StagedUploadItem,
-    type StagedUploads,
     type ToolStreamState,
     normalizeServerUrl,
 } from "./types";
@@ -692,16 +702,26 @@ function BoxUsage({ status, now }: { status: BoxStatus | undefined; now: number 
 export function NewSessionSheet({
     client,
     onClose,
+    title = "New session",
+    initialModel,
+    onCreated,
 }: {
     client: MatronJournalClient;
     onClose: () => void;
+    title?: string;
+    /** A model picked up front (the Coordinator chooser's new chat); dropped on a box without it. */
+    initialModel?: string;
+    /** Called with the new conversation once the box created it, after it is opened. */
+    onCreated?: (convoId: string) => void;
 }): React.ReactElement {
     const [sheetState, setSheetState] = useState<SheetState>({ step: "loading-agents" });
     const boxStatuses = useSyncExternalStore(client.subscribe, () => client.getSnapshot().boxStatuses);
     const now = useMinuteClock();
     const [workdir, setWorkdir] = useState("");
     const [browserTools, setBrowserTools] = useState(false);
-    const [picks, setPicks] = useState<SheetPicks>(NO_PICKS);
+    const [picks, setPicks] = useState<SheetPicks>(() =>
+        initialModel ? { ...NO_PICKS, model: initialModel } : NO_PICKS,
+    );
     const [showBack, setShowBack] = useState(false);
     const sheetStateRef = useRef(sheetState);
     const agentsRef = useRef<DeviceDTO[]>([]);
@@ -846,6 +866,7 @@ export function NewSessionSheet({
             dismissedRef.current = true;
             onClose();
             void client.selectConversation(outcome.convoId, { fromRpcCreate: true });
+            onCreated?.(outcome.convoId);
             return;
         }
         if (outcome.kind === "uncertain") {
@@ -871,7 +892,7 @@ export function NewSessionSheet({
             <div className="mj_UploadConfirm mj_NewSessionSheet">
                 <div className="mj_NewSessionSheet_head">
                     <h2 className="mj_UploadConfirm_title" id="mj-new-session-title">
-                        New session
+                        {title}
                     </h2>
                     <button type="button" className="mj_NewSessionSheet_close" aria-label="Close" onClick={dismiss}>
                         <svg
@@ -1234,7 +1255,7 @@ export function MessageSearchResults({
     query: string;
     search: MessageSearchState | undefined;
     now: number;
-    onSelect: (conversationId: string) => void;
+    onSelect: (hit: SearchHit) => void;
 }): React.ReactElement | null {
     // Only surface the section for a live query. `search` can lag the box by a debounce interval
     // or a stale query, so gate on the current box being non-empty AND the results being for it.
@@ -1269,7 +1290,7 @@ export function MessageSearchResults({
                             <button
                                 type="button"
                                 className="mj_SearchHit"
-                                onClick={() => onSelect(hit.convo_id)}
+                                onClick={() => onSelect(hit)}
                                 aria-label={`Open conversation ${hit.title || "Untitled"}`}
                             >
                                 <span className="mj_SearchHit_top">
@@ -1299,6 +1320,16 @@ function ConversationListView({
     const [tab, setTab] = useState<"active" | "favorites" | "archived">("active");
     const [accountOpen, setAccountOpen] = useState(false);
     const [newSessionOpen, setNewSessionOpen] = useState(false);
+    // The Coordinator's sheets (chooser, its new chat, Routines), one at a time. Opened from
+    // Settings, they take its place and give it back when they close, as the Mac's sit over it.
+    // "assigning": the new chat exists and PUT /coordinator is in flight; nothing shows.
+    const [coordinatorSheet, setCoordinatorSheet] = useState<{
+        kind: "chooser" | "new-chat" | "assigning" | "routines";
+        fromSettings: boolean;
+        error?: string;
+    } | null>(null);
+    const coordinatorSheetRef = useRef(coordinatorSheet);
+    coordinatorSheetRef.current = coordinatorSheet;
     const [pinDialog, setPinDialog] = useState<PinDialogTarget>();
     const [conversationMenu, setConversationMenu] = useState<{ conversationId: string; left: number; top: number }>();
     const conversationMenuRef = useRef(conversationMenu);
@@ -1394,6 +1425,20 @@ function ConversationListView({
         setConversationMenu(undefined);
         if (restoreFocus) conversationMenuOpenerRef.current?.focus();
     }, []);
+
+    // ⌘N and ⇧⌘F (shortcuts.ts). Like the Mac, search-all-chats acts only on Conversations,
+    // where its field is.
+    useShortcutCommand("newSession", () => {
+        setAccountOpen(false);
+        closeConversationMenu();
+        setNewSessionOpen(true);
+    });
+    useShortcutCommand("searchAllChats", () => {
+        if (state.trackerView?.open) return;
+        const field = document.getElementById("conversation-search-input") as HTMLInputElement | null;
+        field?.focus();
+        field?.select();
+    });
 
     // After a menu ACTION (mark-read/archive/unarchive) the focused menuitem unmounts, and
     // archive/unarchive also remove the originating row — so restoring to the opener only works
@@ -1494,6 +1539,10 @@ function ConversationListView({
         [state.conversations, state.archivedIds, state.collapsedSubagentParentIds],
     );
     const childIndex = useMemo(() => childrenByParent(state.conversations), [state.conversations]);
+    // Keyed on the open-items array, which the client replaces whenever an item changes, so the
+    // memoised list re-renders (inboxItems is not in CONVERSATION_LIST_IGNORED_STATE) and the
+    // counts are rebuilt only then, not on every row render.
+    const needsYouCounts = useMemo(() => needsYouByConversation(state.inboxItems), [state.inboxItems]);
     const childRowsOf = (parentId: string): Conversation[] => childIndex.get(parentId) ?? [];
     const isTopLevelRow = (conversation: Conversation): boolean => rendersAsTopLevelRow(conversation, sidebarIndex);
     const conversations = useMemo(() => {
@@ -1582,7 +1631,16 @@ function ConversationListView({
     const unreadTotal = countUnread(state.conversations, state.archivedIds, state.unreadOverrideIds);
     // The For you badge: open items awaiting the user, the inbox's own "Needs you" filter.
     const needsYouTotal = (state.inboxItems ?? []).filter(needsUser).length;
+    // The Projects badge: what needs the user across the missions (the Mac's Missions total).
+    const projectsNeedsYouTotal = projectsNeedsYou(state.inboxItems, state.missions);
     const closeSettings = useCallback(() => setAccountOpen(false), []);
+    const closeCoordinatorSheet = (): void => {
+        if (coordinatorSheet?.fromSettings) setAccountOpen(true);
+        setCoordinatorSheet(null);
+    };
+    const coordinatorConversation = state.coordinatorConvoId
+        ? state.conversations.find((conversation) => conversation.id === state.coordinatorConvoId)
+        : undefined;
     const renderNow = Date.now();
     const pinnedRows = journalPins ? [] : visibleRows.filter((conversation) => state.pinnedIds.has(conversation.id));
     const unpinnedRows = journalPins
@@ -1648,6 +1706,16 @@ function ConversationListView({
         const name = pin ? pin.label : conversationTitle(conversation);
         const outcomeStatus = isSubagent ? accessibleOutcome(classifyOutcome(conversation)) : undefined;
         const relativeTimestamp = formatRelativeDay(conversation.last_ts ?? conversation.created_at, renderNow);
+        // Items this conversation raised that wait on the user, and the "New" marker on a session
+        // that arrived unasked and has not been opened (a room's title, or a child's parent link,
+        // can land after the mark).
+        const needsYou = needsYouCounts.get(conversation.id) ?? 0;
+        const isNew =
+            !selected &&
+            !isSubagent &&
+            !isSubChat(conversation) &&
+            state.newConversationIds.has(conversation.id) &&
+            !isAgentRoomTitle(conversation.title);
         // When this parent's subagent rows are collapsed, surface a subtle count of the hidden
         // child rows so the collapse stays discoverable on the row itself. Gate on the CANONICAL
         // index (hasSubagentChildRows) — NOT an independent running-child count — so it agrees with
@@ -1681,7 +1749,9 @@ function ConversationListView({
                     className={`mj_ConversationListItem${selected ? " mj_ConversationListItem_selected" : ""}${isSubagent ? " mj_ConversationListItem_sub" : ""}`}
                     type="button"
                     aria-current={selected ? "page" : undefined}
-                    aria-label={`Open ${isSubagent ? "subagent" : "room"} ${name}${outcomeStatus ? `, ${outcomeStatus}` : ""}, last activity ${relativeTimestamp}${overrideUnread ? ", marked unread" : ""}${
+                    aria-label={`Open ${isSubagent ? "subagent" : "room"} ${name}${outcomeStatus ? `, ${outcomeStatus}` : ""}, last activity ${relativeTimestamp}${isNew ? ", new session" : ""}${
+                        needsYou > 0 ? `, ${needsYou} ${needsYou === 1 ? "item needs" : "items need"} you` : ""
+                    }${overrideUnread ? ", marked unread" : ""}${
                         collapsedSubagentCount > 0
                             ? `, ${collapsedSubagentCount} subagent${collapsedSubagentCount === 1 ? "" : "s"} hidden${collapsedSubagentUnread ? " (unread)" : ""}`
                             : ""
@@ -1816,13 +1886,25 @@ function ConversationListView({
                                 {collapsedSubagentUnread && <span className="mj_UnreadDot" aria-hidden />}
                             </span>
                         )}
-                        {conversation.unread_count > 0 ? (
-                            <span className="mj_UnreadBadge" aria-label={`${conversation.unread_count} unread`}>
-                                {conversation.unread_count}
+                        {/* Mac order: New, then what needs you, then unread. Announced via the row's
+                            aria-label, like the collapsed-children chip above. */}
+                        {(isNew || needsYou > 0 || conversation.unread_count > 0 || overrideUnread) && (
+                            <span className="mj_ConversationListBadges">
+                                {isNew && (
+                                    <span className="mj_ConversationListNew" aria-hidden="true">
+                                        New
+                                    </span>
+                                )}
+                                <NeedsYouBadge count={needsYou} />
+                                {conversation.unread_count > 0 ? (
+                                    <span className="mj_UnreadBadge" aria-label={`${conversation.unread_count} unread`}>
+                                        {conversation.unread_count}
+                                    </span>
+                                ) : overrideUnread ? (
+                                    <span className="mj_UnreadDot" aria-hidden />
+                                ) : null}
                             </span>
-                        ) : overrideUnread ? (
-                            <span className="mj_UnreadDot" aria-hidden />
-                        ) : null}
+                        )}
                     </span>
                 </button>
                 {/* The row menu opens via right-click / long-press for pointer + touch. This
@@ -1901,7 +1983,7 @@ function ConversationListView({
         >
             <NavRail
                 active={navActive}
-                counts={{ conversations: unreadTotal, decisions: needsYouTotal }}
+                counts={{ projects: projectsNeedsYouTotal, conversations: unreadTotal, decisions: needsYouTotal }}
                 onSelect={(key) => {
                     setAccountOpen(false);
                     closeConversationMenu();
@@ -1915,6 +1997,23 @@ function ConversationListView({
                             itemId: null,
                             memoryName: null,
                         });
+                }}
+                coordinator={{
+                    selected:
+                        !state.trackerView?.open &&
+                        !!state.coordinatorConvoId &&
+                        state.selectedConversationId === state.coordinatorConvoId,
+                    unread: coordinatorConversation?.unread_count ?? 0,
+                    onOpen: () => {
+                        setAccountOpen(false);
+                        closeConversationMenu();
+                        void client.openCoordinator().then((opened) => {
+                            // A new coordinator chat being assigned is the answer on its way: its own
+                            // result (Settings back, or the chooser with the error) lands instead.
+                            if (opened || coordinatorSheetRef.current?.kind === "assigning") return;
+                            setCoordinatorSheet({ kind: "chooser", fromSettings: false });
+                        });
+                    },
                 }}
                 footer={
                     // Mac: theme and account live in the Settings sheet; the rail foot keeps one
@@ -1981,7 +2080,7 @@ function ConversationListView({
                             className="mj_IconButton"
                             type="button"
                             aria-label="New session"
-                            title="New session — runs /start"
+                            title={`New session (${shortcutLabel("n")}) — runs /start`}
                             onClick={() => {
                                 setAccountOpen(false);
                                 closeConversationMenu();
@@ -2138,7 +2237,7 @@ function ConversationListView({
                         query={query}
                         search={state.messageSearch}
                         now={renderNow}
-                        onSelect={(conversationId) => void client.selectConversation(conversationId)}
+                        onSelect={(hit) => client.openSearchHit(hit)}
                     />
                 </div>
             </nav>
@@ -2151,6 +2250,14 @@ function ConversationListView({
                     noticesError={state.userSettingsError}
                     onLoadSettings={() => void client.loadSettings()}
                     onNoticesChange={(value) => void client.setNoticesSetting(value)}
+                    onChooseCoordinator={() => {
+                        setAccountOpen(false);
+                        setCoordinatorSheet({ kind: "chooser", fromSettings: true });
+                    }}
+                    onOpenRoutines={() => {
+                        setAccountOpen(false);
+                        setCoordinatorSheet({ kind: "routines", fromSettings: true });
+                    }}
                     onSignOut={() => {
                         setAccountOpen(false);
                         void client.logout();
@@ -2159,6 +2266,43 @@ function ConversationListView({
                 />
             )}
             {newSessionOpen && <NewSessionSheet client={client} onClose={() => setNewSessionOpen(false)} />}
+            {coordinatorSheet?.kind === "chooser" && (
+                <CoordinatorChooserSheet
+                    client={client}
+                    state={state}
+                    initialError={coordinatorSheet.error}
+                    onClose={closeCoordinatorSheet}
+                    onNewChat={() => setCoordinatorSheet({ ...coordinatorSheet, kind: "new-chat", error: undefined })}
+                />
+            )}
+            {coordinatorSheet?.kind === "new-chat" && (
+                <NewSessionSheet
+                    client={client}
+                    title="New coordinator chat"
+                    initialModel={COORDINATOR_NEW_CHAT_MODEL}
+                    // Closing the new chat goes back to the chooser. A created chat closes it too,
+                    // and onCreated runs in the same batch: it replaces the chooser with
+                    // "assigning", so the chooser never shows while the new chat becomes the
+                    // Coordinator. The answer lands only if nothing else opened meanwhile.
+                    onClose={() => setCoordinatorSheet({ ...coordinatorSheet, kind: "chooser", error: undefined })}
+                    onCreated={(convoId) => {
+                        const fromSettings = coordinatorSheet.fromSettings;
+                        const assigning = { kind: "assigning" as const, fromSettings };
+                        setCoordinatorSheet(assigning);
+                        void client.setCoordinator(convoId).then((error) => {
+                            if (coordinatorSheetRef.current !== assigning) return;
+                            if (error) {
+                                // The chat started but did not become the Coordinator: say so in the chooser.
+                                setCoordinatorSheet({ kind: "chooser", fromSettings, error });
+                                return;
+                            }
+                            setCoordinatorSheet(null);
+                            if (fromSettings) setAccountOpen(true);
+                        });
+                    }}
+                />
+            )}
+            {coordinatorSheet?.kind === "routines" && <RoutinesSheet client={client} onClose={closeCoordinatorSheet} />}
             {pinDialog && (
                 <PinDialog client={client} state={state} target={pinDialog} onClose={() => setPinDialog(undefined)} />
             )}
@@ -2439,6 +2583,12 @@ const CONVERSATION_LIST_IGNORED_STATE = new Set<keyof ClientState>([
     "hasOlderHistory",
     "sendTick",
     "dragActive",
+    // The Routines sheet reads its own state from the client; the list never does.
+    "routines",
+    "composerAttachments",
+    "chatTasks",
+    "focusTarget",
+    "chatSearch",
 ]);
 
 export function sameStateExcept(
@@ -2494,16 +2644,17 @@ export function useDismissablePopover(
 }
 
 // Redesign-v4 pane-width bands (ResizeObserver on the chat pane, not viewport):
-// >=640 full 2×2 usage grid (keep all four bars as long as they genuinely fit — the
-// 2×2 is ~350px and clears a minimal title down to ~640); <640 collapse to a ctx+5h
+// >=720 full 2×2 usage grid (keep all four bars as long as they genuinely fit — the
+// 2×2 is ~430px with reset times and clears a minimal title down to ~720); <720 collapse to a ctx+5h
 // two-row stack + popover with all four. >=560 full subtitle + Compact; <560 subtitle →
 // status dot + short model, title popover, Compact hidden.
-const USAGE_COLLAPSE_PX = 640;
-// with host cpu/ram the grid grows to a 3rd column (~500px) — it needs a wider pane
+// Both widths include the reset time trailing each limit's bar ("3h20", "Sun 10pm").
+const USAGE_COLLAPSE_PX = 720;
+// with host cpu/ram the grid grows to a 3rd column (~600px with reset times) — it needs a wider pane
 // to render without crushing the title, so collapse earlier (to the ctx+5h popover, which
 // still lists all six bars). Only the collapse WIDTH moves for the wide grid; the collapse
 // BEHAVIOUR (ctx+5h stack + popover) is unchanged, preserving the tuned narrow experience.
-const USAGE_COLLAPSE_WIDE_PX = 760;
+const USAGE_COLLAPSE_WIDE_PX = 960;
 const USAGE_WIDE_METER_COUNT = 4; // >4 meters ⇒ 3rd column ⇒ use the wide threshold
 const TITLE_COLLAPSE_PX = 560;
 
@@ -2693,6 +2844,13 @@ export function UsageCluster({
                             <span className={`mj_UsagePercent mj_UsagePercent_${level}`}>
                                 {norm === null ? "—" : `${Math.round(norm)}%`}
                             </span>
+                            {/* Reset time trailing the bar, as the Mac header shows it. Visible
+                                only: the progressbar's value text already announces it. */}
+                            {reset && (
+                                <span className="mj_UsageReset" aria-hidden="true">
+                                    {reset}
+                                </span>
+                            )}
                         </div>
                     );
                 })}
@@ -3366,7 +3524,7 @@ function ChatHeader({
     const limits = status?.limits?.filter((limit) => limit.label.trim());
     const meters = buildUsageMeters(status, limits);
     const shortModel = status?.model ? shortModelName(status.model) : undefined;
-    const hasSubtitle = Boolean(status?.model || runState);
+    const hasSubtitle = Boolean(status?.model || status?.workdir || status?.email || runState);
     // The mission chip's data: fetched whenever another conversation comes on screen (mission
     // markers keep it fresh after that), and only ever shown for the conversation it was fetched for.
     const convoId = conversation?.id;
@@ -3384,8 +3542,10 @@ function ChatHeader({
             titleNode={conversation ? <TaggedTitle conversation={conversation} agents={state.agents} /> : undefined}
             subtitle={
                 <>
-                    {status?.model && <span className="mj_HeaderModel">{status.model}</span>}
+                    {status?.model && <span className="mj_HeaderModel">{modelLine(status.model, status.effort)}</span>}
                     {status?.workdir && <span className="mj_HeaderWorkdir">{status.workdir}</span>}
+                    {/* The account the session runs under, after its workdir, as on the Mac. */}
+                    {status?.email && <span className="mj_HeaderEmail">{status.email}</span>}
                     {runState && <span className={`mj_HeaderState mj_HeaderState_${runState}`}>{runState}</span>}
                 </>
             }
@@ -3435,6 +3595,7 @@ function ChatHeader({
                             state={state}
                             conversation={conversation}
                         />
+                        <ChatTasksButton client={client} state={state} convoId={conversation.id} />
                         <ConvoNotifyBell key={`notify-${conversation.id}`} client={client} convoId={conversation.id} />
                         <HeaderOverflowMenu
                             key={conversation.id}
@@ -3449,6 +3610,37 @@ function ChatHeader({
             limits={meters}
             collapse={collapse}
         />
+    );
+}
+
+// Opens the Tasks & decisions pane beside the chat. Its badge counts this chat's open items that
+// wait on the user, from the app-wide open items that already feed the For you badge.
+function ChatTasksButton({
+    client,
+    state,
+    convoId,
+}: {
+    client: MatronJournalClient;
+    state: ClientState;
+    convoId: string;
+}): React.ReactElement {
+    const needsYou = useMemo(
+        () => (state.inboxItems ?? []).filter((item) => item.origin_convo_id === convoId && needsUser(item)).length,
+        [state.inboxItems, convoId],
+    );
+    const open = state.chatTasks?.open === true;
+    return (
+        <button
+            type="button"
+            className={`mj_IconButton mj_ChatTasksToggle${open ? " mj_ChatTasksToggle_open" : ""}`}
+            aria-label={`Tasks and decisions${needsYou > 0 ? `, ${needsYou} need you` : ""}`}
+            aria-pressed={open}
+            title="Tasks & decisions"
+            onClick={() => client.toggleChatTasks()}
+        >
+            <ChecklistIcon aria-hidden />
+            <NeedsYouBadge count={needsYou} />
+        </button>
     );
 }
 
@@ -5530,6 +5722,7 @@ function Timeline({
     isReadOnly?: boolean;
 }): React.ReactElement {
     const scrollRef = useRef<HTMLDivElement>(null);
+    const listRef = useRef<HTMLOListElement>(null);
     const pendingScrollFrame = useRef<number | undefined>(undefined);
     const selectedConversationId = useRef(state.selectedConversationId);
     const [isFollowingTail, setFollow] = useState(true);
@@ -5733,6 +5926,17 @@ function Timeline({
         isFollowingTail,
     ]);
 
+    // Read state: report which rows were on screen. A layout effect, so a conversation switch
+    // re-binds before any row of the new conversation can be counted under the old one. A
+    // read-only subagent transcript reports nothing.
+    const seenConversationId = isReadOnly ? undefined : state.selectedConversationId;
+    useLayoutEffect(() => {
+        const root = scrollRef.current;
+        const list = listRef.current;
+        if (!seenConversationId || !root || !list) return;
+        return observeSeenRows({ tracker: client.seen, convoId: seenConversationId, root, list });
+    }, [client, seenConversationId]);
+
     const loadEarlierMessages = (): void => {
         const node = scrollRef.current;
         if (node) {
@@ -5746,6 +5950,82 @@ function Timeline({
         void client.loadOlderHistory();
     };
 
+    // Jump to a message: once the client has loaded the history holding the target seq it hands
+    // over `focusTarget`; scroll that row into view and flash it. Rows are found by their
+    // data-event-id, so the memoised rows take no extra props. Off-screen rows may be laid out at
+    // an estimated height (content-visibility), and sizing them for real as they come into view
+    // moves the target, so the position is re-checked each frame until it holds still — and given
+    // up the moment the user scrolls themself.
+    const focusRun = useRef(0);
+    const focusHighlight = useRef<{ row: HTMLElement; timer: ReturnType<typeof setTimeout> } | undefined>(undefined);
+    const focusTarget = state.focusTarget;
+    useLayoutEffect(() => {
+        const node = scrollRef.current;
+        if (!node || !focusTarget || focusTarget.conversationId !== state.selectedConversationId) return;
+        client.clearFocusTarget(focusTarget.token);
+        const seq = landingSeq(
+            visibleEvents.map((event) => event.seq),
+            focusTarget.seq,
+        );
+        const rowFor = (): HTMLElement | null =>
+            seq === undefined ? null : node.querySelector<HTMLElement>(`[data-event-id="${seq}"]`);
+        const row = rowFor();
+        if (!row) return;
+        cancelPendingScrollFrame();
+        historyScrollAnchor.current = undefined;
+        historyScrollRestored.current = false;
+        setFollow(false);
+
+        const run = ++focusRun.current;
+        const stop = (): void => {
+            if (focusRun.current === run) focusRun.current += 1;
+        };
+        const userScroll = ["wheel", "touchstart", "pointerdown", "keydown"] as const;
+        for (const type of userScroll) node.addEventListener(type, stop, { once: true, passive: true });
+        let frames = 0;
+        let still = 0;
+        const place = (): void => {
+            const target = focusRun.current === run ? rowFor() : null;
+            if (target) {
+                const top = focusScrollTop(node, target);
+                if (Math.abs(node.scrollTop - top) > 1) {
+                    node.scrollTop = top;
+                    still = 0;
+                } else {
+                    still += 1;
+                }
+            }
+            if (target && still < 3 && ++frames < 60) {
+                requestAnimationFrame(place);
+                return;
+            }
+            for (const type of userScroll) node.removeEventListener(type, stop);
+        };
+        place();
+
+        const previous = focusHighlight.current;
+        if (previous) {
+            clearTimeout(previous.timer);
+            previous.row.classList.remove("mj_EventTile_focused");
+        }
+        row.classList.add("mj_EventTile_focused");
+        const timer = setTimeout(() => {
+            row.classList.remove("mj_EventTile_focused");
+            if (focusHighlight.current?.row === row) focusHighlight.current = undefined;
+        }, FOCUS_HIGHLIGHT_MS);
+        focusHighlight.current = { row, timer };
+    }, [client, focusTarget, state.selectedConversationId, visibleEvents, cancelPendingScrollFrame]);
+    useEffect(
+        () => () => {
+            focusRun.current += 1;
+            if (focusHighlight.current) clearTimeout(focusHighlight.current.timer);
+        },
+        [],
+    );
+
+    // ⇧⌘U / Ctrl+Shift+U, the floating pill's shortcut, is bound with the app's other shortcuts
+    // (shortcuts.ts useAppShortcuts), live whenever a conversation is open.
+
     // The activity indicator ('Thinking' / 'Running …') and the fire-and-forget tool-call cards
     // both ride ephemeral frames whose turn-end 'idle'/'end' frame is never replayed
     // (lib/journal-publisher.js publishActivity), so a dropped final frame would otherwise strand
@@ -5757,7 +6037,7 @@ function Timeline({
     const timelineMain = (
         <main className="mj_ChatView_timeline" data-testid="timeline">
             <div className="mj_ChatView_messagePanel mj_AutoHideScrollbar" ref={scrollRef} onScroll={onScroll}>
-                <ol className="mj_ChatView_messageList" aria-live="polite">
+                <ol className="mj_ChatView_messageList" aria-live="polite" ref={listRef}>
                     {state.hasOlderHistory && (
                         <li className="mj_HistoryRow">
                             <button
@@ -5878,6 +6158,17 @@ function Timeline({
                     conversationId={state.selectedConversationId}
                     running={sessionRunning}
                 />
+            )}
+            {!isFollowingTail && (
+                <button
+                    type="button"
+                    className="mj_JumpToLastOwn"
+                    aria-label="Jump to my last message"
+                    title={`Jump to my last message (${jumpToLastOwnShortcutLabel()})`}
+                    onClick={() => void client.jumpToLastOwnMessage()}
+                >
+                    <ArrowUpToLineIcon aria-hidden />
+                </button>
             )}
             {!isFollowingTail && (
                 <button
@@ -6259,10 +6550,43 @@ function Composer({
         node.style.height = `${Math.min(node.scrollHeight, 144)}px`;
         node.setSelectionRange(node.value.length, node.value.length);
     }, [body]);
+    const tray = convoId ? (state.composerAttachments[convoId] ?? []) : [];
+    // A send already uploading, or a file that can never upload, holds the send until it's done or removed.
+    const trayHeld = tray.some((item) => item.unsendable || item.state === "queued" || item.state === "uploading");
+    // With files in the tray the text leaves with them, as one turn: it rides on the first file.
+    const sendStaged = async (cid: string, submitted: string): Promise<void> => {
+        const staged = client.getSnapshot().composerAttachments[cid] ?? [];
+        if (staged.some((item) => item.unsendable || item.state === "queued" || item.state === "uploading")) return;
+        const caption = submitted.trim();
+        const submittedRevision = draftRevisions.current.get(cid) ?? 0;
+        sendingConvos.current.add(cid);
+        // Like a voice note: the text leaves the field as the send starts (the uploads take a while)
+        // and comes back if it didn't go out.
+        if (caption) {
+            sentHistory.record(caption, cid);
+            clearSentDraft(cid, submittedRevision);
+        }
+        try {
+            const { captionDelivered } = await client.sendStagedFiles(cid, caption);
+            if (caption && !captionDelivered) restoreDraft(cid, submitted);
+            const folder = captionDelivered ? recentFolderArgument(submitted) : undefined;
+            if (folder) store.record(folder);
+        } catch (error) {
+            console.warn("matron: attachments not sent", error);
+            if (caption) restoreDraft(cid, submitted);
+        } finally {
+            sendingConvos.current.delete(cid);
+        }
+    };
     const send = async (): Promise<void> => {
         const cid = convoIdRef.current;
         const submitted = body;
-        if (!cid || !submitted.trim() || sendingConvos.current.has(cid)) return;
+        if (!cid || sendingConvos.current.has(cid)) return;
+        if ((client.getSnapshot().composerAttachments[cid] ?? []).length > 0) {
+            await sendStaged(cid, submitted);
+            return;
+        }
+        if (!submitted.trim()) return;
         const submittedRevision = draftRevisions.current.get(cid) ?? 0;
         sendingConvos.current.add(cid);
         try {
@@ -6309,6 +6633,17 @@ function Composer({
                         onHighlight={setHighlighted}
                         onSelectCommand={selectCommand}
                         onSelectFolder={selectFolder}
+                    />
+                )}
+                {convoId && tray.length > 0 && (
+                    <AttachmentTray
+                        attachments={tray}
+                        onRemove={(id) => {
+                            client.removeStagedFile(convoId, id);
+                            // The pressed button goes with its chip; keep keyboard focus in the composer.
+                            textarea.current?.focus();
+                        }}
+                        onRetry={() => void send()}
                     />
                 )}
                 {voiceState === "recording" ? (
@@ -6421,7 +6756,6 @@ function Composer({
                                         }
                                     }}
                                     onPaste={(event) => {
-                                        if (state.stagedUploads) return;
                                         const files = [...event.clipboardData.files];
                                         if (files.length > 0) {
                                             event.preventDefault();
@@ -6443,11 +6777,13 @@ function Composer({
                             </div>
                         </div>
                         <VoiceMicButton recorder={voice} className="mj_ComposerControl mj_ComposerMic" />
-                        {/* Mac: the send glyph (arrow.up.circle.fill) appears only once there is text. */}
-                        {body.trim() && (
+                        {/* Mac: the send glyph (arrow.up.circle.fill) appears only once there is
+                            something to send — text, or a file in the tray. */}
+                        {(body.trim() || tray.length > 0) && (
                             <button
                                 className="mj_ComposerSend"
                                 type="button"
+                                disabled={trayHeld}
                                 onClick={() => void send()}
                                 aria-label="Send message"
                             >
@@ -6461,6 +6797,130 @@ function Composer({
                     / commands · shift+enter for newline
                 </span>
             </div>
+        </div>
+    );
+}
+
+/**
+ * The files waiting above the composer between attaching and sending: a thumbnail for an image, a
+ * named chip for anything else, each with a remove button. While a send uploads them each shows
+ * its progress; one that failed says why and offers a retry, which sends again with the text.
+ */
+function AttachmentTray({
+    attachments,
+    onRemove,
+    onRetry,
+}: {
+    attachments: ComposerAttachment[];
+    onRemove: (id: string) => void;
+    onRetry: () => void;
+}): React.ReactElement {
+    // A failed send says so out loud too: the chip's label changes, but a label change isn't announced.
+    const failure = attachments.find((item) => item.state === "failed" && !item.unsendable);
+    return (
+        <>
+            <div className="mj_AttachmentTray" role="list" aria-label="Attachments">
+                {attachments.map((attachment) => (
+                    <StagedAttachmentChip
+                        key={attachment.id}
+                        attachment={attachment}
+                        onRemove={() => onRemove(attachment.id)}
+                        onRetry={onRetry}
+                    />
+                ))}
+            </div>
+            <span className="mj_AttachmentTray_status" role="status">
+                {failure ? `${failure.file.name} was not sent: ${failure.error ?? "upload failed"}` : ""}
+            </span>
+        </>
+    );
+}
+
+function StagedAttachmentChip({
+    attachment,
+    onRemove,
+    onRetry,
+}: {
+    attachment: ComposerAttachment;
+    onRemove: () => void;
+    onRetry: () => void;
+}): React.ReactElement {
+    const { file, state } = attachment;
+    const isImage = file.type.startsWith("image/") && !attachment.unsendable;
+    const [previewUrl, setPreviewUrl] = useState<string>();
+    useEffect(() => {
+        if (!isImage || typeof URL.createObjectURL !== "function") return undefined;
+        const url = URL.createObjectURL(file);
+        setPreviewUrl(url);
+        return () => URL.revokeObjectURL(url);
+    }, [file, isImage]);
+    const busy = state === "queued" || state === "uploading";
+    // A failed image shows as a named chip, so the reason it failed is on screen, not only in a tooltip.
+    const thumbnail = isImage && state !== "failed" ? previewUrl : undefined;
+    const percent = Math.round(Math.min(Math.max(attachment.progress ?? 0, 0), 1) * 100);
+    const size = formatBytes(file.size) ?? "";
+    const status =
+        state === "uploading"
+            ? `uploading, ${percent} percent`
+            : state === "queued"
+              ? "waiting to upload"
+              : state === "failed"
+                ? `not sent: ${attachment.error ?? "upload failed"}`
+                : undefined;
+    const KindIcon = FILE_KIND_ICON[fileKindFromMime(file.type)];
+    return (
+        <div
+            role="listitem"
+            className={[
+                "mj_StagedAttachment",
+                thumbnail ? "mj_StagedAttachment_image" : "mj_StagedAttachment_file",
+                `mj_StagedAttachment_${state}`,
+            ].join(" ")}
+            aria-label={[`${isImage ? "Image" : "File"} attachment, ${file.name}, ${size}`, status]
+                .filter(Boolean)
+                .join(", ")}
+            title={attachment.error ? `${file.name}: ${attachment.error}` : file.name}
+        >
+            {thumbnail ? (
+                <img className="mj_StagedAttachment_thumb" src={thumbnail} alt="" />
+            ) : (
+                <>
+                    <KindIcon className="mj_StagedAttachment_icon" aria-hidden />
+                    <span className="mj_StagedAttachment_meta">
+                        <span className="mj_StagedAttachment_name">{file.name}</span>
+                        <span className="mj_StagedAttachment_detail">
+                            {state === "failed" ? (attachment.error ?? "Upload failed") : size}
+                        </span>
+                    </span>
+                </>
+            )}
+            {busy && (
+                <span className="mj_StagedAttachment_progress" aria-hidden="true">
+                    <span className="mj_StagedAttachment_progressFill" style={{ width: `${percent}%` }} />
+                </span>
+            )}
+            {state === "failed" && !attachment.unsendable && (
+                <button
+                    type="button"
+                    className="mj_StagedAttachment_retry"
+                    aria-label={`Retry sending ${file.name}`}
+                    title="Retry"
+                    onClick={onRetry}
+                >
+                    <RefreshIcon aria-hidden />
+                </button>
+            )}
+            {!busy && (
+                <button
+                    type="button"
+                    className="mj_StagedAttachment_remove"
+                    aria-label={`Remove ${file.name}`}
+                    title="Remove"
+                    onClick={onRemove}
+                >
+                    <CloseIcon aria-hidden />
+                </button>
+            )}
         </div>
     );
 }
@@ -6599,225 +7059,6 @@ function formatEventTimestamp(ts: number): string {
     return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}.${pad(date.getMilliseconds(), 3)}`;
 }
 
-function UploadConfirmDialog({
-    client,
-    staged,
-}: {
-    client: MatronJournalClient;
-    staged: StagedUploads;
-}): React.ReactElement {
-    useEffect(() => {
-        const onPaste = (event: ClipboardEvent): void => {
-            // Ignore the bootstrap paste the composer already consumed. On the first
-            // paste (modal closed) the composer stages + calls preventDefault(), which
-            // opens this dialog; React 19 flushes that mount synchronously, so this
-            // document listener registers WITHIN the same paste dispatch and would stage
-            // the file a second time ("1 of 2"). defaultPrevented is set by the composer's
-            // preventDefault() and is propagation-order-independent, so it holds even
-            // though the listener was added mid-dispatch. Once the dialog is open the
-            // composer is inert (no preventDefault), so subsequent pastes append here.
-            if (event.defaultPrevented) return;
-            const files = [...(event.clipboardData?.files ?? [])];
-            if (files.length > 0) {
-                event.preventDefault();
-                client.stageFiles(files);
-            }
-        };
-        const preventDropNavigation = (event: DragEvent): void => event.preventDefault();
-        document.addEventListener("paste", onPaste);
-        document.addEventListener("dragover", preventDropNavigation);
-        document.addEventListener("drop", preventDropNavigation);
-        return () => {
-            document.removeEventListener("paste", onPaste);
-            document.removeEventListener("dragover", preventDropNavigation);
-            document.removeEventListener("drop", preventDropNavigation);
-        };
-    }, [client]);
-
-    if (staged.error) {
-        return (
-            <div className="mj_UploadConfirm_scrim" role="dialog" aria-modal="true" aria-label="Upload error">
-                <div className="mj_UploadConfirm">
-                    <p className="mj_UploadConfirm_error">
-                        This conversation was archived in another tab. Attachment(s) were not sent.
-                    </p>
-                    <div className="mj_UploadConfirm_actions">
-                        <button aria-label="Close" onClick={() => client.cancelStagedFiles()}>
-                            Close
-                        </button>
-                    </div>
-                </div>
-            </div>
-        );
-    }
-
-    const head = staged.items[0];
-    if (!head) return <></>;
-    return (
-        <div className="mj_UploadConfirm_scrim" role="dialog" aria-modal="true" aria-label={head.file.name}>
-            <UploadConfirmPage key={head.id} client={client} staged={staged} head={head} />
-        </div>
-    );
-}
-
-function UploadConfirmPage({
-    client,
-    staged,
-    head,
-}: {
-    client: MatronJournalClient;
-    staged: StagedUploads;
-    head: StagedUploadItem;
-}): React.ReactElement {
-    const isImage = head.file.type.startsWith("image/");
-    const preflight =
-        head.file.size === 0
-            ? "That file is empty."
-            : head.file.size > BROWSER_MEMORY_SAFETY_MAX_BYTES
-              ? "This file is too large for this browser to upload safely."
-              : undefined;
-    const canSend = !preflight && !staged.confirming;
-    const [caption, setCaption] = useState("");
-    const textarea = useRef<HTMLTextAreaElement>(null);
-    const [previewUrl, setPreviewUrl] = useState<string>();
-    const position = staged.total - staged.items.length + 1;
-
-    useEffect(() => {
-        textarea.current?.focus();
-        if (!isImage || preflight) return undefined;
-        const url = URL.createObjectURL(head.file);
-        setPreviewUrl(url);
-        return () => {
-            URL.revokeObjectURL(url);
-        };
-        // Mounted once per page (keyed by head.id at the call site).
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
-
-    const send = (): void => {
-        if (!canSend) return;
-        void client.confirmStagedFile(head.id, caption);
-    };
-
-    return (
-        <div className="mj_UploadConfirm mj_UploadConfirm_queue">
-            <header className="mj_UploadConfirm_header">
-                {/* §10.1/§10.2: the title is ALWAYS "Send file" (never the filename — the
-                    filename lives in the file-info row below). "n of N" is a chip. */}
-                <UploadTrayIcon className="mj_UploadConfirm_uploadIcon" aria-hidden />
-                <h2 className="mj_UploadConfirm_title">Send file</h2>
-                {staged.total > 1 && (
-                    <span className="mj_UploadConfirm_count">
-                        {position} of {staged.total}
-                    </span>
-                )}
-                <span className="mj_UploadConfirm_headerSpacer" />
-                {/* ✕ is DESTRUCTIVE: cancelStagedFiles() irreversibly clears the ENTIRE staged
-                    queue (every file + all typed captions), not just this page. Its accessible
-                    name must disclose that — count-aware, so a SR user hears what is discarded.
-                    Same handler + semantics as the footer "Cancel all" (hidden for a lone file). */}
-                <button
-                    className="mj_UploadConfirm_close"
-                    aria-label={staged.total > 1 ? "Cancel all uploads" : "Cancel upload"}
-                    disabled={staged.confirming}
-                    onClick={() => client.cancelStagedFiles()}
-                >
-                    <CloseIcon />
-                </button>
-            </header>
-            <div className="mj_UploadConfirm_body">
-                {/* Preview + file-info are ONE card: a real image fills the top, otherwise a
-                    hatched "image preview" placeholder; the file-info row sits under a hairline. */}
-                <div className="mj_UploadConfirm_previewCard">
-                    {isImage && previewUrl ? (
-                        <img className="mj_UploadConfirm_preview" src={previewUrl} alt={head.file.name} />
-                    ) : (
-                        <div className="mj_UploadConfirm_previewPlaceholder" aria-hidden="true">
-                            <span>image preview</span>
-                        </div>
-                    )}
-                    <div className="mj_UploadConfirm_fileMeta">
-                        <FileIcon className="mj_UploadConfirm_fileIcon" aria-hidden />
-                        <span className="mj_UploadConfirm_fileName">{head.file.name}</span>
-                        <span className="mj_FileSize">{formatBytes(head.file.size)}</span>
-                    </div>
-                </div>
-                {staged.total > 1 && (
-                    <div className="mj_UploadConfirm_strip" role="list" aria-label="Queued files">
-                        {staged.items.map((item) => {
-                            const active = item.id === head.id;
-                            return (
-                                <span
-                                    key={item.id}
-                                    role="listitem"
-                                    className={active ? "mj_UploadThumb mj_UploadThumb_active" : "mj_UploadThumb"}
-                                    title={item.file.name}
-                                >
-                                    {active && isImage && previewUrl ? (
-                                        <img src={previewUrl} alt="" />
-                                    ) : (
-                                        <AttachmentIcon aria-hidden />
-                                    )}
-                                </span>
-                            );
-                        })}
-                        {staged.items.length > 1 && (
-                            <span className="mj_UploadConfirm_more">{staged.items.length - 1} more file queued</span>
-                        )}
-                    </div>
-                )}
-                {preflight && <p className="mj_UploadConfirm_error">{preflight}</p>}
-                {staged.persistError && (
-                    <p className="mj_UploadConfirm_error">Couldn&apos;t save this attachment — try Send again.</p>
-                )}
-                <textarea
-                    ref={textarea}
-                    className="mj_UploadConfirm_caption"
-                    placeholder="Add a caption…"
-                    maxLength={4096}
-                    value={caption}
-                    onChange={(event) => setCaption(event.target.value)}
-                    onKeyDown={(event) => {
-                        if (event.nativeEvent.isComposing || event.keyCode === 229) return;
-                        if (event.key === "Enter" && !event.shiftKey) {
-                            event.preventDefault();
-                            send();
-                        } else if (event.key === "Escape" && !staged.confirming) {
-                            event.preventDefault();
-                            client.skipStagedFile(head.id);
-                        }
-                    }}
-                    aria-label="Caption"
-                />
-            </div>
-            <footer className="mj_UploadConfirm_footer mj_UploadConfirm_actions">
-                {staged.total > 1 && (
-                    <button
-                        className="mj_TextButton"
-                        aria-label="Cancel all"
-                        disabled={staged.confirming}
-                        onClick={() => client.cancelStagedFiles()}
-                    >
-                        Cancel all
-                    </button>
-                )}
-                <button
-                    className="mj_UploadConfirm_skip"
-                    aria-label="Skip"
-                    disabled={staged.confirming}
-                    onClick={() => client.skipStagedFile(head.id)}
-                >
-                    Skip
-                </button>
-                <button className="mj_UploadConfirm_send" aria-label="Send" disabled={!canSend} onClick={send}>
-                    <SendIcon />
-                    Send
-                </button>
-            </footer>
-        </div>
-    );
-}
-
 export function SubagentStrip({
     client,
     state,
@@ -6915,22 +7156,15 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
         (state.sessionStatus?.context ? 1 : 0) +
         (state.sessionStatus?.limits?.filter((limit) => limit.label.trim()).length ?? 0);
     const collapse = useAdaptiveHeader(bodyEl, meterCount);
+    // The command palette puts the caret back in the composer on screen after a pick.
     const appContent = useRef<HTMLDivElement>(null);
     // Desktop notifications and the unread count in the title / app badge, while signed in.
     useEffect(() => notificationsFor(client).start(), [client]);
-    const uploadDialogWasOpen = useRef(Boolean(state.stagedUploads));
     const drafts = useMemo(() => makeDraftStore(state.session), [state.session]);
     const sendingConvos = useRef<Set<string>>(new Set());
     const draftRevisions = useRef<Map<string, number>>(new Map());
     // Sent-message recall is per account, like the drafts; it lives for the page session only.
     const sentHistory = useMemo(() => new SentMessageHistory(), [state.session]); // eslint-disable-line react-hooks/exhaustive-deps
-
-    useEffect(() => {
-        if (uploadDialogWasOpen.current && !state.stagedUploads) {
-            appContent.current?.querySelector<HTMLTextAreaElement>(".mj_ComposerInput_input")?.focus();
-        }
-        uploadDialogWasOpen.current = Boolean(state.stagedUploads);
-    }, [state.stagedUploads]);
 
     // Markdown attachment preview: a side panel to the right of the conversation or item.
     const markdownPreview = useMarkdownPreviewPanel();
@@ -6964,7 +7198,6 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
         if (!hasParent || !parentId) return undefined;
         const onKey = (event: KeyboardEvent): void => {
             if (event.key !== "Escape" || event.defaultPrevented) return;
-            if (state.stagedUploads) return; // upload / new-session modal owns Escape
             // Any inner overlay still mounted → it owns this press; defer.
             if (
                 document.querySelector(
@@ -6978,15 +7211,47 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
         };
         document.addEventListener("keydown", onKey);
         return () => document.removeEventListener("keydown", onKey);
-    }, [hasParent, parentId, state.stagedUploads, client]);
+    }, [hasParent, parentId, client]);
 
-    // The field is modal, so the shortcut stays off while the upload sheet holds the app inert.
-    useGoToNumberShortcut(client, !state.stagedUploads);
+    useGoToNumberShortcut(client, true);
+    // Ctrl/⌘F finds in the conversation on screen; with none open the browser keeps the key.
+    useFindInChatShortcut(client, Boolean(state.selectedConversationId) && !state.trackerView?.open);
+
+    const reloadDraft = useCallback(
+        (conversationId: string) =>
+            setDraftReloadTicks((ticks) => ({ ...ticks, [conversationId]: (ticks[conversationId] ?? 0) + 1 })),
+        [],
+    );
+    // ⌘K: the slash palette, for a conversation with a composer on screen (Mac: the chat view's).
+    const [paletteOpen, setPaletteOpen] = useState(false);
+    const composerConvo =
+        state.selectedConversationId && !state.trackerView?.open && !childMode ? state.selectedConversationId : null;
+    useEffect(() => setPaletteOpen(false), [composerConvo]);
+    useAppShortcuts(client, {
+        enabled: true,
+        onCommandPalette: composerConvo ? () => setPaletteOpen((open) => !open) : undefined,
+    });
+    // A pick replaces the draft with the command, ready for arguments, as the composer's own palette does.
+    const pickCommand = (command: BotCommand): void => {
+        setPaletteOpen(false);
+        if (!composerConvo) return;
+        const text = applyCommand(command.trigger);
+        sentHistory.endRecall();
+        draftRevisions.current.set(composerConvo, (draftRevisions.current.get(composerConvo) ?? 0) + 1);
+        drafts.setDraft(composerConvo, text);
+        drafts.persist(composerConvo);
+        reloadDraft(composerConvo);
+        requestAnimationFrame(() => {
+            const input = appContent.current?.querySelector<HTMLTextAreaElement>(".mj_ComposerInput_input");
+            input?.focus();
+            input?.setSelectionRange(text.length, text.length);
+        });
+    };
 
     return (
         <MarkdownPreviewContext.Provider value={markdownPreview.context}>
             <div className="mj_App_wrapper">
-                <div ref={appContent} className="mj_App" inert={state.stagedUploads ? true : undefined}>
+                <div ref={appContent} className="mj_App">
                     <ConversationList client={client} state={state} width={leftPanel.width} />
                     <div
                         className="mj_ResizeHandle mj_ResizeHandle--horizontal"
@@ -7013,7 +7278,6 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                                     event.preventDefault();
                                     setDragActive(false);
                                     if (childMode) return;
-                                    if (state.stagedUploads) return;
                                     const files = [...event.dataTransfer.files];
                                     if (files.length > 0) client.stageFiles(files);
                                 }}
@@ -7035,11 +7299,23 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                                     ) : (
                                         <ChatHeader client={client} state={state} collapse={collapse} />
                                     )}
+                                    {!childMode && (
+                                        <CompactNudge
+                                            key={state.selectedConversationId}
+                                            context={state.sessionStatus?.context}
+                                            send={(command) =>
+                                                client.sendMessage(command, state.selectedConversationId)
+                                            }
+                                        />
+                                    )}
                                     <SubagentStrip
                                         client={client}
                                         state={state}
                                         mode={childMode ? "child" : "parent"}
                                     />
+                                    {state.chatSearch?.conversationId === state.selectedConversationId && (
+                                        <FindInChatBar client={client} search={state.chatSearch} />
+                                    )}
                                     <Timeline client={client} state={state} isReadOnly={childMode} />
                                     {childMode ? (
                                         <ReadOnlyHint />
@@ -7049,12 +7325,7 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                                             state={state}
                                             drafts={drafts}
                                             draftReloadTick={draftReloadTicks[state.selectedConversationId] ?? 0}
-                                            reloadDraft={(conversationId) =>
-                                                setDraftReloadTicks((ticks) => ({
-                                                    ...ticks,
-                                                    [conversationId]: (ticks[conversationId] ?? 0) + 1,
-                                                }))
-                                            }
+                                            reloadDraft={reloadDraft}
                                             sendingConvos={sendingConvos}
                                             draftRevisions={draftRevisions}
                                             sentHistory={sentHistory}
@@ -7071,6 +7342,14 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                             </main>
                         )}
                     </div>
+                    {state.chatTasks?.open && state.selectedConversationId && !childMode && !state.trackerView?.open ? (
+                        <ChatTasksPane
+                            client={client}
+                            pane={state.chatTasks}
+                            convoId={state.selectedConversationId}
+                            conversations={state.conversations}
+                        />
+                    ) : null}
                     {markdownPreview.target ? (
                         <MarkdownPreviewPanel
                             client={client}
@@ -7079,8 +7358,10 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                         />
                     ) : null}
                 </div>
-                {state.stagedUploads && <UploadConfirmDialog client={client} staged={state.stagedUploads} />}
-                {state.goToNumberOpen && !state.stagedUploads && <GoToNumberDialog client={client} />}
+                {state.goToNumberOpen && <GoToNumberDialog client={client} />}
+                {paletteOpen && composerConvo && (
+                    <CommandPalette onPick={pickCommand} onClose={() => setPaletteOpen(false)} />
+                )}
             </div>
         </MarkdownPreviewContext.Provider>
     );

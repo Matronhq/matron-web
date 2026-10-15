@@ -173,6 +173,26 @@ describe("JournalDatabase", () => {
         database.close();
     });
 
+    it("learns a live-born conversation's box and title from its convo_meta", async () => {
+        const database = await JournalDatabase.open("https://journal.example", 11, "alice");
+        await database.applyJournal(event(1, "agent:box-a", "session_status", { state: "running" }));
+        expect((await database.conversations())[0].agent_device_id).toBeUndefined();
+
+        await database.applyJournal(
+            event(2, "agent:box-a", "convo_meta", {
+                title: "Fix the build",
+                parent_convo_id: null,
+                agent_device_id: 4,
+            }),
+        );
+        expect((await database.conversations())[0]).toMatchObject({ title: "Fix the build", agent_device_id: 4 });
+
+        // A meta without a box (a membership change) leaves the known one alone.
+        await database.applyJournal(event(3, "journal", "convo_meta", { participants: [] }));
+        expect((await database.conversations())[0].agent_device_id).toBe(4);
+        database.close();
+    });
+
     it("keeps own messages unread-free and converges read markers", async () => {
         const database = await JournalDatabase.open("https://journal.example", 2, "alice");
         await database.replaceWithSnapshot({
