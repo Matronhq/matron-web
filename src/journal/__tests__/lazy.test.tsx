@@ -242,3 +242,48 @@ describe("pane frames", () => {
         expect(container.querySelector('[role="alert"]')?.textContent).toMatch(/Couldn't load/);
     });
 });
+
+describe("tasks frame on a narrow window", () => {
+    const realMatchMedia = window.matchMedia;
+    let container: HTMLDivElement;
+    let root: Root;
+
+    beforeEach(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+        container = document.createElement("div");
+        document.body.append(container);
+        root = createRoot(container);
+    });
+
+    afterEach(() => {
+        act(() => root.unmount());
+        container.remove();
+        window.matchMedia = realMatchMedia;
+    });
+
+    const press = (key: string): KeyboardEvent => {
+        const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+        act(() => {
+            document.dispatchEvent(event);
+        });
+        return event;
+    };
+
+    it("covering the chat, closes on Escape and holds Tab", () => {
+        window.matchMedia = ((query: string) => ({ matches: true, media: query })) as typeof window.matchMedia;
+        const close = jest.fn();
+        act(() => root.render(<ChatTasksFrame close={close} failed={false} />));
+        expect(press("Tab").defaultPrevented).toBe(true);
+        press("Escape");
+        expect(close).toHaveBeenCalledTimes(1);
+    });
+
+    it("beside the chat, leaves the keyboard alone", () => {
+        window.matchMedia = ((query: string) => ({ matches: false, media: query })) as typeof window.matchMedia;
+        const close = jest.fn();
+        act(() => root.render(<ChatTasksFrame close={close} failed={false} />));
+        expect(press("Tab").defaultPrevented).toBe(false);
+        press("Escape");
+        expect(close).not.toHaveBeenCalled();
+    });
+});

@@ -11,7 +11,7 @@ Please see LICENSE files in the repository root for full details.
  * or the code lands back in the initial bundle.
  */
 
-import React, { useEffect, useRef, type ComponentProps } from "react";
+import React, { useEffect, useRef, useState, type ComponentProps } from "react";
 import { createPortal } from "react-dom";
 
 import { CloseIcon } from "./icons";
@@ -23,35 +23,36 @@ type RoutinesSheetProps = ComponentProps<typeof import("./CoordinatorSheets").Ro
 type ChatTasksPaneProps = ComponentProps<typeof import("./tracker/ChatTasksPane").ChatTasksPane>;
 type TrackerPaneProps = ComponentProps<typeof import("./tracker/TrackerPane").TrackerPane>;
 
+/** Same as the tasks pane's own: below this width it covers the chat. */
+const CHAT_TASKS_OVERLAY_QUERY = "(max-width: 700px)";
+
 const LOAD_FAILED = "Couldn't load this. Check your connection and try again.";
 
 /**
- * Closes on Escape, as every sheet does, while only its frame is on screen. A modal frame also
- * swallows Tab, so focus can't wander to the page behind the scrim in the meantime.
+ * While a frame covers the page: Escape closes it, as on the real sheet or pane, and Tab is held,
+ * so focus stays on the opener rather than moving to the page behind. The frame takes no focus
+ * itself: the real component remembers the element focused when it mounts, to return to on close,
+ * and that must still be the opener.
  */
-function useEscape(onClose: () => void, modal = false): void {
+function useModalKeys(onClose: () => void, active = true): void {
     const onCloseRef = useRef(onClose);
     onCloseRef.current = onClose;
     useEffect(() => {
+        if (!active) return;
         const onKeyDown = (event: KeyboardEvent): void => {
-            if (modal && event.key === "Tab") {
+            if (event.key === "Tab") {
                 event.preventDefault();
-                return;
+            } else if (event.key === "Escape") {
+                event.preventDefault();
+                onCloseRef.current();
             }
-            if (event.key !== "Escape") return;
-            event.preventDefault();
-            onCloseRef.current();
         };
         document.addEventListener("keydown", onKeyDown);
         return () => document.removeEventListener("keydown", onKeyDown);
-    }, [modal]);
+    }, [active]);
 }
 
-/**
- * An empty modal sheet in the given classes. It takes no focus: the real sheet remembers the
- * element focused when it mounts, to return to on close, and that must still be the opener. Tab
- * is held instead, so focus stays on the opener until the sheet arrives.
- */
+/** An empty modal sheet in the given classes. */
 export function SheetFrame({
     scrimClassName,
     sheetClassName,
@@ -65,7 +66,7 @@ export function SheetFrame({
     failed: boolean;
     onClose: () => void;
 }): React.ReactElement {
-    useEscape(onClose, true);
+    useModalKeys(onClose);
     return createPortal(
         <div
             className={scrimClassName}
@@ -134,6 +135,9 @@ export const ChatTasksPane = deferred<ChatTasksPaneProps>(
  * chat, including the button that opened it, so the frame must be closable on its own.
  */
 export function ChatTasksFrame({ close, failed }: { close: () => void; failed: boolean }): React.ReactElement {
+    // Beside the chat the pane is not modal; covering it (a narrow window) it is.
+    const [overlay] = useState(() => window.matchMedia?.(CHAT_TASKS_OVERLAY_QUERY).matches ?? false);
+    useModalKeys(close, overlay);
     return (
         <aside className="mj_ChatTasks" aria-label="Tasks and decisions" aria-busy={!failed}>
             <header className="mj_ChatTasks_header">
