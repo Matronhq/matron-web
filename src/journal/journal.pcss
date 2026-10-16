@@ -3427,6 +3427,31 @@ li.mj_AttachmentChip_error {
     margin: 0;
 }
 
+.mj_HandoverKeep {
+    display: grid;
+    gap: 2px;
+}
+
+.mj_HandoverKeep_toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font: var(--mj-font-body-sm-regular);
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.mj_HandoverKeep_toggle:has(input:disabled) {
+    cursor: default;
+    opacity: 0.7;
+}
+
+.mj_HandoverKeep_hint {
+    margin: 0;
+    color: var(--mj-color-text-secondary);
+    font: var(--mj-font-body-sm-regular);
+}
+
 /* "by bob" / "bob's agent": another person's write in one of the user's missions. */
 .mj_TrackerContributor {
     color: var(--mj-color-text-secondary);

@@ -411,7 +411,7 @@ describe("person-to-person card in the timeline", () => {
         expect(buttonLabels(container)).toEqual(["Decline", "Approve"]);
         const approve = [...container.querySelectorAll("button")].find((b) => b.textContent === "Approve")!;
         await act(async () => approve.click());
-        expect(answer).toHaveBeenCalledWith("gr_7", { decision: "approve", exclude_media: [] });
+        expect(answer).toHaveBeenCalledWith("gr_7", { decision: "approve", exclude_media: [], keep_level: "read" });
     });
 
     it("draws no hand-over buttons in a read-only transcript, and never answers there", async () => {

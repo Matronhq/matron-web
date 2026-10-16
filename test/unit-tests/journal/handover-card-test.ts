@@ -256,7 +256,7 @@ describe("hand-over card", () => {
     const button = (el: Element, label: string): HTMLButtonElement | undefined =>
         [...el.querySelectorAll("button")].find((b) => b.textContent?.trim() === label);
     const boxes = (el: Element): HTMLInputElement[] => [
-        ...el.querySelectorAll<HTMLInputElement>("input[type=checkbox]"),
+        ...el.querySelectorAll<HTMLInputElement>(".mj_HandoverFiles input[type=checkbox]"),
     ];
 
     it("owner side: shows the brief, the counts, every file ticked, and the reply hint", async () => {
@@ -283,7 +283,11 @@ describe("hand-over card", () => {
         expect(boxes(container).map((box) => box.checked)).toEqual([true, false]);
         await act(async () => button(container, "Approve")!.click());
 
-        expect(answerGrant).toHaveBeenCalledWith("gr_7", { decision: "approve", exclude_media: ["md_2"] });
+        expect(answerGrant).toHaveBeenCalledWith("gr_7", {
+            decision: "approve",
+            exclude_media: ["md_2"],
+            keep_level: "read",
+        });
         expect(container.querySelector(".mj_HandoverOutcome")?.textContent).toBe(
             "Approved — waiting for bob to accept",
         );
@@ -296,7 +300,54 @@ describe("hand-over card", () => {
         const container = await render(handoverOut, { answerGrant });
 
         await act(async () => button(container, "Approve")!.click());
-        expect(answerGrant).toHaveBeenCalledWith("gr_7", { decision: "approve", exclude_media: [] });
+        expect(answerGrant).toHaveBeenCalledWith("gr_7", {
+            decision: "approve",
+            exclude_media: [],
+            keep_level: "read",
+        });
+    });
+
+    it("owner side: the keep-contributing switch starts from the ask and its answer is sent", async () => {
+        const answerGrant = jest.fn().mockResolvedValue(grant({ state: "pending" }));
+        const container = await render({ ...handoverOut, keep_level: "contribute" }, { answerGrant });
+        const toggle = container.querySelector<HTMLInputElement>(".mj_HandoverKeep input[role=switch]")!;
+
+        expect(toggle.checked).toBe(true);
+        expect(container.querySelector(".mj_HandoverKeep_hint")?.textContent).toBe(
+            "You can keep adding milestones, items and comments to their copy.",
+        );
+        await act(async () => toggle.click());
+        expect(container.querySelector(".mj_HandoverKeep_hint")?.textContent).toBe(
+            "You keep read access to their copy.",
+        );
+        await act(async () => toggle.click());
+        await act(async () => button(container, "Approve")!.click());
+        expect(answerGrant).toHaveBeenCalledWith("gr_7", {
+            decision: "approve",
+            exclude_media: [],
+            keep_level: "contribute",
+        });
+        expect(container.querySelector<HTMLInputElement>(".mj_HandoverKeep input")!.disabled).toBe(true);
+    });
+
+    it("owner side: the switch is off when the ask did not ask to keep contributing", async () => {
+        const container = await render(handoverOut);
+        expect(container.querySelector<HTMLInputElement>(".mj_HandoverKeep input[role=switch]")!.checked).toBe(false);
+    });
+
+    it("recipient side: says whether the owner stays on as a contributor", async () => {
+        const loadGrant = jest.fn().mockResolvedValue(grant({ id: "gr_8", direction: "in", state: "pending" }));
+        const staying = await render({ ...handoverIn, keep_level: "contribute" }, { loadGrant });
+        expect(staying.querySelector(".mj_HandoverKeep_hint")?.textContent).toBe(
+            "alice stays on as a contributor; you can end that any time.",
+        );
+        expect(staying.querySelector("input[role=switch]")).toBeNull();
+    });
+
+    it("recipient side: read-only by default", async () => {
+        const loadGrant = jest.fn().mockResolvedValue(grant({ id: "gr_8", direction: "in", state: "pending" }));
+        const container = await render(handoverIn, { loadGrant });
+        expect(container.querySelector(".mj_HandoverKeep_hint")?.textContent).toBe("alice keeps read access.");
     });
 
     it("Decline sends only the decision", async () => {
