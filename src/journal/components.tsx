@@ -5506,7 +5506,9 @@ export function EventContent({
                         findItem={(convoId, url) => client.findConsentItem(convoId, url)}
                         onOpenItem={(num) => client.openTrackerItem(num)}
                         loadGrant={(grantId) => client.loadGrant(grantId)}
-                        answerGrant={(grantId, answer) => client.answerGrant(grantId, answer)}
+                        // A read-only transcript (a sub-chat or a subagent pane) shows how a
+                        // hand-over stands but never answers it.
+                        answerGrant={isReadOnly ? undefined : (grantId, answer) => client.answerGrant(grantId, answer)}
                     />
                 );
             }

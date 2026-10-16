@@ -291,7 +291,11 @@ describe("person-to-person card in the timeline", () => {
         jest.restoreAllMocks();
     });
 
-    async function render(client: MatronJournalClient, event: JournalEvent): Promise<HTMLDivElement> {
+    async function render(
+        client: MatronJournalClient,
+        event: JournalEvent,
+        isReadOnly = false,
+    ): Promise<HTMLDivElement> {
         const container = document.createElement("div");
         document.body.append(container);
         const root = createRoot(container);
@@ -301,6 +305,7 @@ describe("person-to-person card in the timeline", () => {
                     client,
                     event,
                     answeredPromptReplies: new Map<string, { choice?: string }>(),
+                    isReadOnly,
                 }),
             );
         });
@@ -407,5 +412,37 @@ describe("person-to-person card in the timeline", () => {
         const approve = [...container.querySelectorAll("button")].find((b) => b.textContent === "Approve")!;
         await act(async () => approve.click());
         expect(answer).toHaveBeenCalledWith("gr_7", { decision: "approve", exclude_media: [] });
+    });
+
+    it("draws no hand-over buttons in a read-only transcript, and never answers there", async () => {
+        const client = signedInClient();
+        jest.spyOn(client, "findConsentItem").mockResolvedValue(null);
+        jest.spyOn(client, "loadGrant").mockResolvedValue({
+            id: "gr_7",
+            direction: "out",
+            subject_kind: "mission",
+            level: "owner",
+            state: "awaiting_owner",
+        });
+        const answer = jest.spyOn(client, "answerGrant");
+        const container = await render(
+            client,
+            cardEvent({
+                kind: "mission_handover",
+                direction: "out",
+                grant_id: "gr_7",
+                grantee: { name: "bob" },
+                subject: { kind: "mission", title: "Cover editor" },
+                brief: "Where things stand.",
+                preview: { attachments: [{ media_id: "md_1", name: "palette.png" }] },
+            }),
+            true,
+        );
+
+        expect(container.querySelector(".mj_HandoverBrief")).not.toBeNull();
+        expect(buttonLabels(container)).toEqual([]);
+        expect(container.querySelector<HTMLFieldSetElement>(".mj_HandoverFiles")?.disabled).toBe(true);
+        expect(container.querySelector(".mj_HandoverHint")).toBeNull();
+        expect(answer).not.toHaveBeenCalled();
     });
 });
