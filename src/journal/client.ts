@@ -34,7 +34,7 @@ import {
     sortRoutines,
 } from "./routines";
 import { newestOwnMessageSeq } from "./jump-to-message";
-import { parseOwnTrackerUrl, parseTrackerLinkPath, type TrackerLinkPath } from "./link-path";
+import { othersLinkMessage, parseOwnTrackerUrl, parseTrackerLinkPath, type TrackerLinkPath } from "./link-path";
 import {
     DEFAULT_PIN_LIMIT,
     markPinImportDone,
@@ -5053,14 +5053,18 @@ export class MatronJournalClient {
     /**
      * Opens the `/u/<name>/<n>` link the page was loaded at, once, after the first sign-in. Only
      * the signed-in user's own numbers open: the tracker shows that user's rows, so another user's
-     * number would open the wrong row. A number that names nothing says so.
+     * number would open the wrong row. Such a link says so rather than leaving the page silently
+     * on the user's own tracker. A number that names nothing says so too.
      */
     public async openPathLink(): Promise<void> {
         const link = this.pathLink;
         const user = this.state.session?.username;
         if (!link || !user) return;
         this.pathLink = null;
-        if (link.user.toLowerCase() !== user.toLowerCase()) return;
+        if (link.user.toLowerCase() !== user.toLowerCase()) {
+            this.patch({ controlError: othersLinkMessage(link) });
+            return;
+        }
         await this.openLinkedNumber(link.num);
     }
 
