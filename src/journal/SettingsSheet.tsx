@@ -48,6 +48,7 @@ import {
 import { displayTitle } from "./SessionTag";
 import { getSnapshot, setTheme, subscribe, type ThemePref } from "./theme";
 import type { BoxDefaults, BoxDefaultsState, DefaultsState, Session, UserDefaultKey } from "./types";
+import { AUTO_ARCHIVE_CHOICES, autoArchiveLabel } from "./server-archive";
 
 const APPEARANCE: ReadonlyArray<{ value: "system" | "light" | "dark"; label: string; pref: ThemePref }> = [
     { value: "system", label: "System", pref: null },
@@ -687,6 +688,9 @@ export function SettingsSheet({
     connection,
     notices,
     noticesError,
+    autoArchiveDays,
+    autoArchiveError,
+    onAutoArchiveChange,
     onLoadSettings,
     onNoticesChange,
     onChooseCoordinator,
@@ -701,6 +705,11 @@ export function SettingsSheet({
     notices?: boolean;
     /** The last failed save of the setting. */
     noticesError?: string;
+    /** Days before an idle chat is archived (0 = off); undefined hides the row (an older journal). */
+    autoArchiveDays?: number;
+    /** The last failed save of the auto-archive setting. */
+    autoArchiveError?: string;
+    onAutoArchiveChange?: (days: number) => void;
     /** Fetch the settings (on open). */
     onLoadSettings?: () => void;
     onNoticesChange?: (notices: boolean) => void;
@@ -869,6 +878,43 @@ export function SettingsSheet({
                         {noticesError ? (
                             <p className="mj_SettingsSheet_error" role="alert">
                                 Couldn't save: {noticesError}
+                            </p>
+                        ) : null}
+                    </section>
+                ) : null}
+                {autoArchiveDays !== undefined && onAutoArchiveChange ? (
+                    <section className="mj_SettingsSheet_group" aria-labelledby="mj-settings-archive">
+                        <h3 id="mj-settings-archive" className="mj_SettingsSheet_groupTitle">
+                            Archive
+                        </h3>
+                        <div className="mj_SettingsSheet_rows">
+                            <label className="mj_SettingsSheet_row">
+                                <span>Archive idle chats</span>
+                                <select
+                                    className="mj_SettingsSheet_select"
+                                    data-setting="auto_archive_days"
+                                    aria-describedby="mj-settings-archive-help"
+                                    value={autoArchiveDays}
+                                    onChange={(event) => onAutoArchiveChange(Number(event.target.value))}
+                                >
+                                    {(AUTO_ARCHIVE_CHOICES.includes(autoArchiveDays)
+                                        ? AUTO_ARCHIVE_CHOICES
+                                        : [...AUTO_ARCHIVE_CHOICES, autoArchiveDays].sort((a, b) => a - b)
+                                    ).map((days) => (
+                                        <option key={days} value={days}>
+                                            {autoArchiveLabel(days)}
+                                        </option>
+                                    ))}
+                                </select>
+                            </label>
+                        </div>
+                        <p id="mj-settings-archive-help" className="mj_SettingsSheet_help">
+                            Chats with no activity move to Archived. Pinned chats, running sessions and chats with open
+                            missions or items stay. A new message brings a chat back.
+                        </p>
+                        {autoArchiveError ? (
+                            <p className="mj_SettingsSheet_error" role="alert">
+                                Couldn't save: {autoArchiveError}
                             </p>
                         ) : null}
                     </section>

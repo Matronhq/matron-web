@@ -945,8 +945,16 @@ export class JournalApi {
     }
 
     /** PATCH /settings — change any subset; the whole settings object comes back. */
-    public patchSettings(body: { notices?: boolean }): Promise<{ notices?: unknown }> {
+    public patchSettings(body: { notices?: boolean; auto_archive_days?: number }): Promise<{ notices?: unknown }> {
         return this.json<{ notices?: unknown }>("/settings", { method: "PATCH", body });
+    }
+
+    /** POST /archive — archive or unarchive up to 500 of the user's conversations. */
+    public setArchived(convoIds: string[], archived: boolean): Promise<{ changes?: unknown }> {
+        return this.json<{ changes?: unknown }>("/archive", {
+            method: "POST",
+            body: { convo_ids: convoIds, archived },
+        });
     }
 
     // ── Coordinator briefings (journal /briefings, spec 2026-10-04 latest briefing) ──

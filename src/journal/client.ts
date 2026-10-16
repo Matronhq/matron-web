@@ -50,6 +50,14 @@ import {
 } from "./pins";
 import { isAgentRoomTitle, isStartCommand, NEW_CONVERSATION_STALE_MS, startedSessionIntents } from "./needs-you";
 import { SeenTracker } from "./seen-tracker";
+import {
+    type ArchiveDelta,
+    applyArchiveChanges,
+    archiveBatches,
+    parseArchiveDelta,
+    readArchiveSince,
+    writeArchiveSince,
+} from "./server-archive";
 import { mergeSessionStatus } from "./status";
 import { appendFeedPage, kindsWithMore } from "./tracker/projectActivity";
 import { CHAT_TASKS_DONE_FETCH, chatTaskSections, planTaskMove } from "./tracker/chat-tasks";
@@ -605,6 +613,22 @@ export class MatronJournalClient {
     // timed_out, which no frame announces).
     private briefingGen = 0;
     private settingsGen = 0;
+    // PATCH /settings writes run one at a time, in the order chosen, so the journal ends on the
+    // latest pick even when an earlier request is slow.
+    private settingsWrites: Promise<unknown> = Promise.resolve();
+    // The settings as the journal last confirmed them (GET, PATCH answer, frame or hello): what a
+    // failed save goes back to, rather than an earlier optimistic value that may never have landed.
+    private settingsConfirmed: UserSettings | undefined;
+    // Per setting: bumped by every pick and every journal value for that key, so a failed save only
+    // puts back a key nothing newer has touched (a frame without the key leaves it alone).
+    private settingsKeyGen: Record<keyof UserSettings, number> = { notices: 0, auto_archive_days: 0 };
+    // Per setting: bumped by every journal value from a frame, hello or GET, so a PATCH answer that
+    // was sent before one does not overwrite it as the confirmed value.
+    private settingsHeardGen: Record<keyof UserSettings, number> = { notices: 0, auto_archive_days: 0 };
+    // Journal archive writes per conversation: the state the user last chose, and whether a POST
+    // is in flight. One POST at a time per conversation, always for the latest choice.
+    private archiveWanted = new Map<string, boolean>();
+    private archiveSending = new Set<string>();
     // Coordinator consent switch: bumped by every write, so a GET sent before one is dropped and
     // only the latest write's answer moves the switch; the journal's last known value (where a
     // failed write puts the switch back); and the write chain that keeps PUTs in tap order.
@@ -697,6 +721,10 @@ export class MatronJournalClient {
     // The journal's list while a carry-over is pending or failed: the sidebar keeps the
     // browser-local set until the import lands, so local pins never vanish mid-import.
     private stagedPins: ConvoPin[] | null = null;
+    // Whether this journal syncs the archive (journal protocol "Archived conversations"): learnt from
+    // hello_ok, or assumed from a stored cursor until then, so an Archive tapped before the first
+    // hello still reaches a journal this browser has synced with.
+    private archiveOnJournal = false;
 
     public get sessionGeneration(): number {
         return this.sessionGen;
@@ -2777,7 +2805,7 @@ export class MatronJournalClient {
             if (this.api !== api || this.settingsGen !== gen) return;
             this.patch({
                 userSettingsUnsupported: false,
-                ...(settings ? { userSettings: settings, userSettingsError: undefined } : {}),
+                ...(settings ? { userSettings: this.mergedSettings(settings), userSettingsError: undefined } : {}),
             });
         } catch (error) {
             if (this.api !== api || this.settingsGen !== gen) return;
@@ -2791,21 +2819,67 @@ export class MatronJournalClient {
 
     /** PATCH /settings {notices}. Shows the new value at once and puts the old one back on failure. */
     public async setNoticesSetting(notices: boolean): Promise<boolean> {
+        return this.patchUserSettings({ notices });
+    }
+
+    /** PATCH /settings {auto_archive_days} (0 = off). Same optimistic shape as the notices switch. */
+    public async setAutoArchiveDays(days: number): Promise<boolean> {
+        return this.patchUserSettings({ auto_archive_days: days });
+    }
+
+    private async patchUserSettings(change: { notices?: boolean; auto_archive_days?: number }): Promise<boolean> {
         const api = this.api;
-        if (!api) return false;
         const previous = this.state.userSettings;
-        const gen = ++this.settingsGen;
-        this.patch({ userSettings: { notices }, userSettingsError: undefined });
+        if (!api || !previous) return false;
+        ++this.settingsGen;
+        const keys = Object.keys(change) as (keyof UserSettings)[];
+        const picked = keys.map((key) => ++this.settingsKeyGen[key]);
+        const errorKey = "auto_archive_days" in change ? "autoArchiveError" : "userSettingsError";
+        this.patch({ userSettings: { ...previous, ...change }, [errorKey]: undefined });
+        let heard = { ...this.settingsHeardGen };
+        const write = this.settingsWrites.then(() => {
+            heard = { ...this.settingsHeardGen };
+            return api.patchSettings(change);
+        });
+        this.settingsWrites = write.catch(() => undefined);
+        const ours = (key: keyof UserSettings, i: number): boolean => this.settingsKeyGen[key] === picked[i];
         try {
-            const settings = parseUserSettings(await api.patchSettings({ notices }));
-            if (this.api === api && this.settingsGen === gen && settings) this.patch({ userSettings: settings });
+            const settings = parseUserSettings(await write);
+            if (this.api === api && settings) {
+                // Confirmed unless the journal has said something newer since this was sent; shown
+                // only for the keys this pick still owns.
+                const confirmed = { ...this.settingsConfirmed } as Partial<UserSettings>;
+                for (const key of Object.keys(settings) as (keyof UserSettings)[]) {
+                    if (this.settingsHeardGen[key] === heard[key]) Object.assign(confirmed, { [key]: settings[key] });
+                }
+                this.settingsConfirmed = confirmed as UserSettings;
+                const shown = keys.filter(ours).map((key) => [key, settings[key]] as const);
+                if (shown.length && this.state.userSettings) {
+                    this.patch({ userSettings: { ...this.state.userSettings, ...Object.fromEntries(shown) } });
+                }
+            }
             return true;
         } catch (error) {
-            if (this.api === api && this.settingsGen === gen) {
-                this.patch({ userSettings: previous, userSettingsError: errorMessage(error) });
+            const back = keys.filter(ours).map((key) => [key, (this.settingsConfirmed ?? previous)[key]] as const);
+            if (this.api === api && back.length && this.state.userSettings) {
+                this.patch({
+                    userSettings: { ...this.state.userSettings, ...Object.fromEntries(back) },
+                    [errorKey]: errorMessage(error),
+                });
             }
             return false;
         }
+    }
+
+    /** The journal's word on the settings (GET, frame or hello) over what is known: a key the
+     *  payload lacks keeps its known value, and only the keys it carries supersede a pending pick. */
+    private mergedSettings(settings: UserSettings): UserSettings {
+        for (const key of Object.keys(settings) as (keyof UserSettings)[]) {
+            ++this.settingsKeyGen[key];
+            ++this.settingsHeardGen[key];
+        }
+        this.settingsConfirmed = { ...this.settingsConfirmed, ...settings };
+        return { ...this.state.userSettings, ...settings };
     }
 
     // ── Coordinator consent approval (Settings → Coordinator; GET/PUT /coordinator `consent`) ──
@@ -3154,7 +3228,7 @@ export class MatronJournalClient {
         const settings = parseUserSettings(raw);
         if (!settings) return;
         ++this.settingsGen;
-        this.patch({ userSettings: settings, userSettingsError: undefined });
+        this.patch({ userSettings: this.mergedSettings(settings), userSettingsError: undefined });
     }
 
     public async loadBriefing(opts: { keepRefreshError?: boolean } = {}): Promise<void> {
@@ -4712,6 +4786,8 @@ export class MatronJournalClient {
         this.sessionGen += 1;
         this.pinImportStarted = false;
         this.stagedPins = null;
+        this.archiveOnJournal = readArchiveSince(session) !== undefined;
+        this.settingsConfirmed = undefined;
         this.storeHydrated = { archive: true, pinned: true, favorite: true, unread: true, collapsed: true };
         const writeProbeKey = `${archiveStore.storageKey(session)}:__wprobe__`;
         let storeWritable = false;
@@ -4920,6 +4996,7 @@ export class MatronJournalClient {
 
         this.connection = new JournalConnection(session.serverUrl, session.token, {
             cursor: async () => (await this.database?.cursor()) ?? cursor ?? 0,
+            archiveSince: () => readArchiveSince(session) ?? 0,
             onFrame: async (frame) => this.handleFrame(frame),
             onReady: async (hello) => this.handleReady(hello),
             onSnapshotRequired: async () => this.replaceSnapshot(),
@@ -5033,6 +5110,116 @@ export class MatronJournalClient {
             preferencesUnavailable: this.storageUnavailable("archive"),
         });
         if (archived && conversationId === this.state.selectedConversationId) this.clearSelection();
+        if (this.archiveOnJournal) void this.sendArchive(conversationId, archived);
+    }
+
+    // ── Journal-synced archive (src/journal/server-archive.ts) ──────────────
+
+    /**
+     * POST /archive for an Archive/Unarchive tap. Writes for one conversation go one at a time and
+     * always carry the latest choice, so the journal ends where the user did. A refusal puts the row
+     * back only while that refused state is still the user's latest choice.
+     */
+    private async sendArchive(conversationId: string, archived: boolean): Promise<void> {
+        this.archiveWanted.set(conversationId, archived);
+        if (this.archiveSending.has(conversationId)) return;
+        const api = this.api;
+        const session = this.state.session;
+        if (!api || !session) return;
+        this.archiveSending.add(conversationId);
+        try {
+            let sent: boolean | undefined;
+            while (this.archiveWanted.get(conversationId) !== sent) {
+                const want = this.archiveWanted.get(conversationId)!;
+                try {
+                    await api.setArchived([conversationId], want);
+                    sent = want;
+                } catch (error) {
+                    if (this.api !== api || this.state.session !== session) return;
+                    if (this.archiveWanted.get(conversationId) !== want) continue;
+                    this.archiveWanted.delete(conversationId);
+                    this.writeArchivedIds(
+                        applyArchiveChanges(this.state.archivedIds, [
+                            { convo_id: conversationId, archived_at: want ? null : 0, auto: false },
+                        ]),
+                    );
+                    this.patch({
+                        controlError: `Couldn't ${want ? "archive" : "unarchive"}: ${errorMessage(error)}`,
+                    });
+                    return;
+                }
+            }
+            this.archiveWanted.delete(conversationId);
+        } finally {
+            this.archiveSending.delete(conversationId);
+        }
+    }
+
+    /**
+     * hello_ok's `archive`, on a journal that syncs it. The first sync in this browser asks for the
+     * whole set: the browser-local ids the journal does not have are carried over (Archive on another
+     * device meanwhile is kept too), and only then is the cursor stored, so a failed carry-over is
+     * tried again on the next connect.
+     */
+    private async applyHelloArchive(hello: JournalControlFrame): Promise<void> {
+        const delta = parseArchiveDelta(hello.archive);
+        const session = this.state.session;
+        const api = this.api;
+        // A journal that does not answer archive_since (older, or rolled back) keeps the
+        // browser-local archive; the stored cursor stays for when it syncs again.
+        if (!delta) this.archiveOnJournal = false;
+        if (!delta || !session || !api) return;
+        this.archiveOnJournal = true;
+        if (readArchiveSince(session) !== undefined) {
+            this.applyArchiveDelta(delta);
+            return;
+        }
+        const onJournal = applyArchiveChanges(new Set<string>(), delta.changes);
+        const local = archiveStore.read(session);
+        const toImport = local.ok ? [...local.ids].filter((id) => !onJournal.has(id)) : [];
+        if (!this.writeArchivedIds(new Set([...onJournal, ...toImport]))) return;
+        try {
+            for (const batch of archiveBatches(toImport)) await api.setArchived(batch, true);
+        } catch {
+            return;
+        }
+        if (this.api === api && this.state.session === session) writeArchiveSince(session, delta.at);
+    }
+
+    /** An `archive` frame, or hello_ok's changes since the stored cursor. */
+    private applyArchiveDelta(delta: ArchiveDelta): void {
+        const session = this.state.session;
+        if (!session) return;
+        this.archiveOnJournal = true;
+        const next = applyArchiveChanges(this.state.archivedIds, delta.changes);
+        // The cursor only moves once the set it describes is saved, so a reload never skips a change.
+        // An unwritable store may hold less than is shown, so an unchanged set is written again too.
+        const unsaved = next !== this.state.archivedIds || !this.storeWritable.archive;
+        if (unsaved && !this.writeArchivedIds(next)) return;
+        const since = readArchiveSince(session);
+        if (since !== undefined && delta.at > since) writeArchiveSince(session, delta.at);
+    }
+
+    /** Adopt an archived set from the journal: shown at once, and saved in this browser. Returns
+     *  whether it was saved. */
+    private writeArchivedIds(next: Set<string>): boolean {
+        const session = this.state.session;
+        if (!session) return false;
+        let saved = true;
+        try {
+            archiveStore.write(session, next);
+            this.storeWritable.archive = true;
+        } catch {
+            saved = false;
+            this.storeWritable.archive = false;
+            this.logStorageDiag("write_fail", "archive", false);
+        }
+        const before = this.state.archivedIds;
+        this.patch({ archivedIds: next, preferencesUnavailable: this.storageUnavailable("archive") });
+        // Only a newly archived chat closes; one already open from the Archived tab stays.
+        const selected = this.state.selectedConversationId;
+        if (selected && next.has(selected) && !before.has(selected)) this.clearSelection();
+        return saved;
     }
 
     private setFlag(
@@ -5223,6 +5410,7 @@ export class MatronJournalClient {
     private async handleReady(hello?: JournalControlFrame): Promise<void> {
         // hello_ok carries the pin list on a journal with pins; its absence means an older journal.
         if (hello !== undefined) this.applyJournalPins(pinsFromContainer(hello));
+        if (hello !== undefined) void this.applyHelloArchive(hello);
         const gen = this.sessionGen;
         const db = this.database;
         const connection = this.connection;
@@ -5320,6 +5508,11 @@ export class MatronJournalClient {
         }
         if (frame.kind === "box_defaults") {
             this.handleBoxDefaultsFrame(frame);
+            return;
+        }
+        if (frame.kind === "archive") {
+            const delta = parseArchiveDelta(frame);
+            if (delta) this.applyArchiveDelta(delta);
             return;
         }
         if (frame.kind === "pins") {
@@ -5973,10 +6166,14 @@ function inDoneOrder(rows: TrackerItem[]): TrackerItem[] {
 /** The label of a notice's one-tap answer; the journal closes the notice when it is tapped. */
 const SEEN_ACTION = "Seen";
 
-/** `{notices}` from GET/PATCH /settings or a settings frame, or null when it does not carry a
- *  boolean `notices` (a malformed or future shape must not flip the switch). */
+/** `{notices, auto_archive_days?}` from GET/PATCH /settings or a settings frame, or null when it
+ *  does not carry a boolean `notices` (a malformed or future shape must not flip the switch). */
 function parseUserSettings(raw: unknown): UserSettings | null {
     if (typeof raw !== "object" || raw === null) return null;
-    const notices = (raw as { notices?: unknown }).notices;
-    return typeof notices === "boolean" ? { notices } : null;
+    const { notices, auto_archive_days: days } = raw as { notices?: unknown; auto_archive_days?: unknown };
+    if (typeof notices !== "boolean") return null;
+    return {
+        notices,
+        ...(typeof days === "number" && Number.isInteger(days) && days >= 0 ? { auto_archive_days: days } : {}),
+    };
 }
