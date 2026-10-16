@@ -382,6 +382,10 @@ function HandoverSection({
     const [excluded, setExcluded] = useState<ReadonlySet<string>>(() => new Set());
     // The owner's say on what they keep: the asking agent's choice to start, theirs to change.
     const [keepContributing, setKeepContributing] = useState(() => details.keepLevel === "contribute");
+    // A newer payload for the same card starts the switch again from what it asks.
+    useEffect(() => {
+        setKeepContributing(details.keepLevel === "contribute");
+    }, [details.keepLevel]);
 
     // The card may have been answered on another device, or on the mirror item: ask the journal.
     useEffect(() => {
