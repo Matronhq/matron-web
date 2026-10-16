@@ -28,6 +28,7 @@ import {
     needsUser,
     oneLine,
     closedStatusLabel,
+    contributorWords,
 } from "./format";
 import { CommentBubbleGlyph, ImagePlaceholderGlyph, MissionGlyph, TrackerGlyph } from "./glyphs";
 import { inlineRefsToText } from "./inline-attachments";
@@ -61,6 +62,8 @@ export function ItemRow({
     const urgent = needsUser(item) && !notice;
     const showSeen = !!onSeen && awaitsSeen(item);
     const origin = scope === "all" && originTitle && !isFromViewedConvo(item, currentConvoId) ? originTitle : null;
+    // Filed by another person (or their agent) into one of the user's missions.
+    const by = contributorWords(item.contributor);
     // The preview shows no attachments, so an inline image ref reads as its caption.
     const body = oneLine(inlineRefsToText(item.body));
     // ONE status token: needs-you (orange) → closed-with-resolution → with-the-agent. An open item
@@ -80,6 +83,7 @@ export function ItemRow({
         `number ${item.num}`,
         item.title,
         origin ? `from ${origin}` : "",
+        by ? `by ${by}` : "",
         itemStatusText(item),
     ]
         .filter(Boolean)
@@ -106,6 +110,7 @@ export function ItemRow({
                 {body ? <span className="mj_TrackerItemRow_body">{body}</span> : null}
                 <span className="mj_TrackerItemRow_meta">
                     {origin ? <span className="mj_TrackerItemRow_origin">from {origin}</span> : null}
+                    {by ? <span className="mj_TrackerItemRow_origin mj_TrackerContributor">by {by}</span> : null}
                     {item.mission_num ? (
                         <span className="mj_TrackerItemRow_missionChip">
                             <MissionGlyph state="open" aria-hidden="true" />#{item.mission_num}

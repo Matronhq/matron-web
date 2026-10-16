@@ -3357,6 +3357,82 @@ li.mj_AttachmentChip_error {
     font: var(--mj-font-body-sm-regular);
 }
 
+/* A hand-over card: the brief (scrolls past a few paragraphs), what will be copied, the files
+   with a tick box each on the owner's side, and its own Approve/Accept and Decline. */
+.mj_HandoverBrief {
+    display: grid;
+    gap: 4px;
+    font: var(--mj-font-body-sm-regular);
+}
+
+.mj_HandoverBrief_body {
+    max-height: 220px;
+    overflow: auto;
+    border-radius: 8px;
+    background: var(--mj-color-bg-subtle-secondary);
+    padding: 8px 12px;
+    font: var(--mj-font-body-sm-regular);
+}
+
+.mj_HandoverBrief_body > :first-child {
+    margin-top: 0;
+}
+
+.mj_HandoverBrief_body > :last-child {
+    margin-bottom: 0;
+}
+
+.mj_HandoverFiles {
+    display: grid;
+    gap: 4px;
+    font: var(--mj-font-body-sm-regular);
+    margin: 0;
+    padding: 0;
+    border: 0;
+    min-width: 0;
+}
+
+.mj_HandoverFiles legend {
+    padding: 0;
+    margin-bottom: 4px;
+}
+
+.mj_HandoverFile {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+    font: var(--mj-font-body-sm-regular);
+    cursor: pointer;
+}
+
+.mj_HandoverFiles:disabled .mj_HandoverFile {
+    cursor: default;
+    opacity: 0.7;
+}
+
+.mj_HandoverFile_name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_HandoverFile_meta,
+.mj_HandoverHint {
+    color: var(--mj-color-text-secondary);
+    font: var(--mj-font-body-sm-regular);
+}
+
+.mj_HandoverHint {
+    margin: 0;
+}
+
+/* "by bob" / "bob's agent": another person's write in one of the user's missions. */
+.mj_TrackerContributor {
+    color: var(--mj-color-text-secondary);
+    font-style: italic;
+}
+
 /* An agent request the client can't answer (malformed payload): one inert muted line. */
 .mj_AgentRequestNotice {
     color: var(--mj-color-text-secondary);

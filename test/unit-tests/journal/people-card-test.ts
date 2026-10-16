@@ -371,4 +371,41 @@ describe("person-to-person card in the timeline", () => {
         expect(find).not.toHaveBeenCalled();
         expect(container.querySelector(".mj_PeopleCard_hint")?.textContent).toBe("Answer in your tracker (For you)");
     });
+
+    it("draws a hand-over with its own buttons, answered through the client", async () => {
+        const client = signedInClient();
+        jest.spyOn(client, "findConsentItem").mockResolvedValue(null);
+        const load = jest.spyOn(client, "loadGrant").mockResolvedValue({
+            id: "gr_7",
+            direction: "out",
+            subject_kind: "mission",
+            level: "owner",
+            state: "awaiting_owner",
+        });
+        const answer = jest.spyOn(client, "answerGrant").mockResolvedValue({
+            id: "gr_7",
+            direction: "out",
+            subject_kind: "mission",
+            level: "owner",
+            state: "pending",
+        });
+        const container = await render(
+            client,
+            cardEvent({
+                kind: "mission_handover",
+                direction: "out",
+                grant_id: "gr_7",
+                grantee: { name: "bob" },
+                subject: { kind: "mission", title: "Cover editor" },
+                brief: "Where things stand.",
+                preview: { missions: 1, milestones: 0, items: 0, comments: 0, attachments: [] },
+            }),
+        );
+
+        expect(load).toHaveBeenCalledWith("gr_7");
+        expect(buttonLabels(container)).toEqual(["Decline", "Approve"]);
+        const approve = [...container.querySelectorAll("button")].find((b) => b.textContent === "Approve")!;
+        await act(async () => approve.click());
+        expect(answer).toHaveBeenCalledWith("gr_7", { decision: "approve", exclude_media: [] });
+    });
 });

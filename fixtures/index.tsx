@@ -649,6 +649,94 @@ if (new URLSearchParams(window.location.search).has("notices")) {
 // ?people=talk for the card alice's talk request draws in the People conversation. Both are
 // answered on their tracker item, which the fixture client "finds" as #31.
 const peopleParam = new URLSearchParams(window.location.search).get("people");
+// ?people=handover-out: the user's agent asks to hand a mission over to bob (the owner's card,
+// with the files to tick); ?people=handover-in: alice's hand-over waiting in the People
+// conversation. Neither answer is sent anywhere: the fixture client answers as the journal would.
+if (peopleParam === "handover-out" || peopleParam === "handover-in") {
+    const out = peopleParam === "handover-out";
+    const brief = [
+        "**Where it stands.** The cover editor ships colour themes and the palette tokens are final.",
+        "",
+        "**Next.** The export dialog: PDF works, the PNG path still drops the bleed.",
+        "",
+        "**Watch out.** Proofs print darker than the screen; compare against the printed swatch.",
+    ].join("\n");
+    const card: JournalEvent = {
+        seq: 3,
+        convo_id: "c1",
+        ts: T + 2 * 60_000,
+        sender: "journal",
+        type: "permission_request",
+        payload: {
+            kind: "mission_handover",
+            direction: out ? "out" : "in",
+            grant_id: out ? "gr_1" : "gr_2",
+            level: "owner",
+            owner: { user_id: out ? 1 : 2, name: out ? "operator" : "alice" },
+            grantee: out ? { name: "bob", address: "bob" } : { name: "operator", address: "operator" },
+            subject: out
+                ? { kind: "mission", id: "ms_1", num: 4, title: "Cover editor colour themes" }
+                : { kind: "mission", title: "Cover editor colour themes" },
+            brief,
+            preview: {
+                missions: 1,
+                milestones: 6,
+                items: 4,
+                comments: 11,
+                attachments: out
+                    ? [
+                          {
+                              media_id: "md_1",
+                              name: "palette-tokens.png",
+                              mime: "image/png",
+                              size: 182_000,
+                              item_num: 12,
+                          },
+                          {
+                              media_id: "md_2",
+                              name: "proof-gloss.pdf",
+                              mime: "application/pdf",
+                              size: 2_400_000,
+                              item_num: 14,
+                          },
+                          {
+                              media_id: "md_3",
+                              name: "proof-matte.pdf",
+                              mime: "application/pdf",
+                              size: 2_300_000,
+                              item_num: 14,
+                          },
+                      ]
+                    : 3,
+            },
+            ...(out ? { from_device_id: 1, from_name: "box-a", from_convo_id: "c1" } : {}),
+        },
+    };
+    const lead: JournalEvent[] = out
+        ? [
+              {
+                  seq: 1,
+                  convo_id: "c1",
+                  ts: T,
+                  sender: "user:operator",
+                  type: "text",
+                  payload: { body: "bob is taking over the cover editor. Hand the mission over to him.", from: "user" },
+              },
+              {
+                  seq: 2,
+                  convo_id: "c1",
+                  ts: T + 60_000,
+                  sender: "agent:box-a",
+                  type: "text",
+                  payload: {
+                      body: "I wrote a brief and asked to hand it over; it needs your OK below.",
+                      from: "assistant",
+                  },
+              },
+          ]
+        : [];
+    events.splice(0, events.length, ...lead, card);
+}
 if (peopleParam === "out" || peopleParam === "talk") {
     const out = peopleParam === "out";
     const card: JournalEvent = {
@@ -804,6 +892,22 @@ const signedOutState: ClientState = {
     const stub = client as unknown as Record<string, unknown>;
     stub.loadConversationMissions = async () => undefined;
     if (peopleParam) stub.findConsentItem = async () => 31;
+    if (peopleParam === "handover-out" || peopleParam === "handover-in") {
+        const out = peopleParam === "handover-out";
+        const grant = (state: string) => ({
+            id: out ? "gr_1" : "gr_2",
+            direction: out ? "out" : "in",
+            subject_kind: "mission",
+            level: "owner",
+            state,
+        });
+        // ?answered=1 draws the card as the journal reports it after the answer.
+        const answered = fixtureParams.get("answered") === "1";
+        stub.loadGrant = async () =>
+            grant(answered ? (out ? "pending" : "active") : out ? "awaiting_owner" : "pending");
+        stub.answerGrant = async (_id: string, answer: { decision: string }) =>
+            grant(answer.decision === "decline" ? "declined" : out ? "pending" : "active");
+    }
     if (fixtureParams.get("missions") === "1") {
         const now = Date.now();
         const link = (
@@ -1460,6 +1564,57 @@ if (trackerMode === "inbox" || trackerMode === "item") {
             tracker.inboxItems = [consentItem, ...items];
             tracker.trackerView = { open: true, view: "inbox", selectedItemId: 42 };
             tracker.trackerItem = { item: consentItem, comments: [] };
+        }
+        // ?contributor=1: an item bob's agent filed in one of the user's missions under a
+        // contribute share, with bob's own reply and the user's answer.
+        if (fixtureParams.get("contributor") === "1") {
+            const contributed = {
+                ...baseItem,
+                id: "it_61",
+                num: 61,
+                kind: "question",
+                awaiting: "user",
+                title: "Use the matte paper stock for the cover proofs?",
+                body: "The gloss proofs show banding on the dark gradient. Matte hides it and costs the same.",
+                mission_id: "ms_1706",
+                mission_num: 1706,
+                origin_device_id: 0,
+                created_at: now - 3 * 3_600_000,
+                updated_at: now - 20 * 60_000,
+                comment_count: 2,
+                last_comment_at: now - 20 * 60_000,
+                contributor: { name: "bob", via: "agent" },
+            };
+            const contributedComment = (id: string, over: Record<string, unknown>) => ({
+                id,
+                item_id: "it_61",
+                author: "agent",
+                device_id: 0,
+                kind: "comment",
+                attachments: [],
+                meta: null,
+                convo_id: null,
+                ...over,
+            });
+            tracker.inboxItems = [contributed, ...items];
+            tracker.trackerView = { open: true, view: "inbox", selectedItemId: 61 };
+            tracker.trackerItem = {
+                item: contributed,
+                comments: [
+                    contributedComment("cm_61a", {
+                        body: "I checked both proofs on the light table: matte is the clear winner.",
+                        created_at: now - 2 * 3_600_000,
+                        contributor: { name: "bob", via: "user" },
+                        attribution: "bob",
+                    }),
+                    contributedComment("cm_61b", {
+                        author: "user",
+                        device_id: 1,
+                        body: "Agreed on matte. Can you send the updated proof once it is printed?",
+                        created_at: now - 20 * 60_000,
+                    }),
+                ],
+            };
         }
     }
 }

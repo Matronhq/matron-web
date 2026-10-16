@@ -14,6 +14,8 @@ import {
     type DeviceDTO,
     type DevicesResponse,
     endpointUrl,
+    type Grant,
+    type GrantAnswer,
     type LinkStart,
     type LinkStatus,
     type PairPreview,
@@ -522,6 +524,23 @@ export class JournalApi {
             signal,
         });
         return response?.delivered === true;
+    }
+
+    /** GET /grants/:id — one share, as the caller's side reads it. */
+    public async grant(grantId: string, signal?: AbortSignal): Promise<Grant> {
+        const response = await this.json<{ grant: Grant }>(`/grants/${encodeURIComponent(grantId)}`, { signal });
+        return response.grant;
+    }
+
+    // Answers a mission share or hand-over (client devices only). 409 (answered elsewhere,
+    // expired, or the subject can no longer be handed over) and 404 surface as a JournalApiError.
+    public async answerGrant(grantId: string, answer: GrantAnswer, signal?: AbortSignal): Promise<Grant> {
+        const response = await this.json<{ grant: Grant }>(`/grants/${encodeURIComponent(grantId)}/answer`, {
+            method: "POST",
+            body: answer,
+            signal,
+        });
+        return response.grant;
     }
 
     // ── Tracker: missions / milestones / items (all at journal root, Bearer-auth, user-global) ──

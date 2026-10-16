@@ -14,11 +14,27 @@ import type {
     Mission,
     TrackerActor,
     TrackerComment,
+    TrackerContributor,
     TrackerItem,
     TrackerItemKind,
     TrackerMilestoneKind,
     TrackerResolution,
 } from "../types";
+
+/** Another person's write in words: "bob" when they wrote it, "bob's agent" when their agent did;
+ *  null when there is no usable contributor. */
+export function contributorWords(contributor: TrackerContributor | null | undefined): string | null {
+    const name = typeof contributor?.name === "string" ? contributor.name.trim() : "";
+    if (!name) return null;
+    return contributor?.via === "agent" ? `${name}'s agent` : name;
+}
+
+/** Who wrote a comment when it is not this log's own: the journal's `attribution` first, then the
+ *  contributor; null for the user's and their agents' own comments. */
+export function commentAttribution(comment: Pick<TrackerComment, "attribution" | "contributor">): string | null {
+    const attribution = typeof comment.attribution === "string" ? comment.attribution.trim() : "";
+    return attribution || contributorWords(comment.contributor);
+}
 
 /** An open item that is waiting on the user — the one urgent "needs you" state (orange). */
 export function needsUser(item: Pick<TrackerItem, "state" | "awaiting">): boolean {
@@ -182,10 +198,12 @@ export function resolveActionLabel(resolution: TrackerResolution): string {
  * NEVER the raw body (which may be privacy-elided). Returns null when the transition carries no
  * displayable change, so the caller can fall back to the body if one is present.
  */
-export function statusRowText(comment: Pick<TrackerComment, "author" | "meta">): string | null {
+export function statusRowText(
+    comment: Pick<TrackerComment, "author" | "meta" | "attribution" | "contributor">,
+): string | null {
     const to = comment.meta?.to;
     const from = comment.meta?.from;
-    const who = comment.author === "user" ? "You" : "Agent";
+    const who = commentAttribution(comment) ?? (comment.author === "user" ? "You" : "Agent");
     if (!to) return null;
     if (to.state === "closed") {
         return `${who} closed this${to.resolution ? ` as ${resolutionLabel(to.resolution).toLowerCase()}` : ""}`;
@@ -269,8 +287,15 @@ export function statusByline(
     updatedAt: number | null | undefined,
     by: TrackerActor | null | undefined,
     now: number = Date.now(),
+    contributor?: string | null,
 ): string | null {
     const when = formatRelativeTime(updatedAt, now);
+    const name = contributor?.trim();
+    // A contributor's status names them; the owner's next status clears the field.
+    if (name)
+        return when
+            ? `Status by ${name} · updated ${when.endsWith(" ago") || when === "just now" ? when : `on ${when}`}`
+            : `Status by ${name}`;
     if (!when) return null;
     const phrase = when === "just now" || when.endsWith(" ago") ? when : `on ${when}`;
     const who = by === "user" ? " by you" : by === "agent" ? " by an agent" : "";
