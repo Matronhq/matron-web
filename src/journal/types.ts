@@ -1613,6 +1613,11 @@ export function eventSnippet(type: string, payload: EventPayload): string {
         // flip-flops across a resume (same ruling just applied to the Android client).
         if (asString(payload.kind) === "agent_spawn") return "🤝 Agent spawn request";
         if (asString(payload.kind) === "agent_chat") return "🤝 Agent chat request";
+        // Person-to-person asks: the journal's own snapshot strings, byte-exact for the same reason.
+        if (asString(payload.kind) === "contact_request") return "🤝 Contact request";
+        if (asString(payload.kind) === "mission_share") return "🤝 Mission share request";
+        if (asString(payload.kind) === "person_room") return "🤝 Room with another person";
+        if (asString(payload.kind) === "session_share") return "🤝 Session share request";
         return `Permission: ${asString(payload.description).slice(0, 100)}`;
     }
     if (type === "spawn_outcome") {

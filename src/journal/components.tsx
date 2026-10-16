@@ -44,6 +44,7 @@ import {
     type RememberedAgentChatAnswer,
     unanswerableAgentRequestNotice,
 } from "./agent-chat";
+import { parsePeopleCard, PeopleCardView, PromptPeopleGlyph } from "./people-card";
 import { isMediaExpiredError, JournalApiError } from "./api";
 import {
     type AgentProbe,
@@ -4556,26 +4557,6 @@ function agentChatOutcomeText(
     return settled.approved ? "Approved" : "Declined";
 }
 
-function PromptPeopleGlyph(): React.ReactElement {
-    return (
-        <svg
-            viewBox="0 0 24 24"
-            width="15"
-            height="15"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.7"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-        >
-            <circle cx="9" cy="8" r="3" />
-            <path d="M3.5 19a5.5 5.5 0 0 1 11 0" />
-            <path d="M16 5.5a3 3 0 0 1 0 5" />
-            <path d="M17.5 14a5.5 5.5 0 0 1 3 5" />
-        </svg>
-    );
-}
-
 // Minimal standalone row for the durable spawn_outcome event itself (§ design "Timeline
 // rendering of spawn_outcome itself") — keeps the record legible once the card has scrolled
 // away, and stops the default case's raw JSON <details> dump.
@@ -5509,6 +5490,21 @@ export function EventContent({
                         onStopSession={(convoId) =>
                             void stopSpawnedSession(convoId, (target) => client.sendMessage("/stop", target))
                         }
+                    />
+                );
+            }
+            // A person-to-person ask (contact, mission share, session share, room or talk) is
+            // answered only on its mirror tracker item: nothing reads a prompt_reply to it, so the
+            // card is inert and opens that item.
+            const people = parsePeopleCard(event.payload);
+            if (people) {
+                return (
+                    <PeopleCardView
+                        key={`${event.convo_id}:${event.seq}`}
+                        event={event}
+                        card={people}
+                        findItem={(convoId, url) => client.findConsentItem(convoId, url)}
+                        onOpenItem={(num) => client.openTrackerItem(num)}
                     />
                 );
             }
