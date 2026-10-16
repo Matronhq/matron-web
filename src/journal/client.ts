@@ -121,6 +121,8 @@ const SESSION_KEY = "matron_journal_session_v1";
 const LAST_SERVER_KEY = "matron_journal_last_server";
 const SELECTED_CONVERSATION_KEY_PREFIX = "matron_journal_selected_conversation_v1";
 const HISTORY_PAGE_SIZE = 80;
+// A consent mirror lookup reads at most this many 500-item pages of one conversation's consent items.
+const CONSENT_LOOKUP_PAGES = 4;
 // A jump to a message pages history back at most this many pages (80 rows each) before landing on
 // the oldest row loaded: a hit thousands of messages deep must not fetch the whole conversation
 // while the transcript sits still.
@@ -2498,6 +2500,34 @@ export class MatronJournalClient {
             missionId: null,
             projectId: opts.keepProject ? undefined : null,
         });
+    }
+
+    /**
+     * The number of the consent item the journal filed for a card in `convoId`, found by its exact
+     * `matron://consent/<kind>/<id>` link; null when it is not there or the lookup fails. The
+     * mirror is filed in the same conversation as its card, open or already decided.
+     */
+    public async findConsentItem(convoId: string, consentUrl: string): Promise<number | null> {
+        const api = this.api;
+        if (!api || !convoId || !consentUrl) return null;
+        try {
+            let cursor: string | undefined;
+            for (let page = 0; page < CONSENT_LOOKUP_PAGES; page++) {
+                const { items, next_cursor } = await api.items({
+                    convo: convoId,
+                    label: "consent",
+                    limit: 500,
+                    cursor,
+                });
+                const hit = items.find((item) => (item.links ?? []).some((link) => link?.url === consentUrl));
+                if (hit) return hit.num;
+                if (!next_cursor) return null;
+                cursor = next_cursor;
+            }
+        } catch {
+            // An unreachable tracker reads as "not found": the card then says where to answer.
+        }
+        return null;
     }
 
     /** Opens a project page on the Projects view (the tracker's "missions" view key). */

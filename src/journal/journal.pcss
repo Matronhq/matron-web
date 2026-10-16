@@ -3334,6 +3334,29 @@ li.mj_AttachmentChip_error {
     color: var(--mj-color-text-action-accent);
 }
 
+/* Person-to-person consent card (contact, mission share, session share, room, talk). It is
+   answered on its tracker item, so it carries no Allow/Deny: only a link to that item, or a
+   muted line saying where to answer when the item can't be found. */
+.mj_PeopleCard {
+    border-color: var(--mj-color-border-accent);
+}
+
+.mj_PeopleCard .mj_PromptLabel {
+    color: var(--mj-color-text-action-accent);
+}
+
+.mj_PeopleCard_footer {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    min-height: 30px;
+}
+
+.mj_PeopleCard_hint {
+    color: var(--mj-color-text-secondary);
+    font: var(--mj-font-body-sm-regular);
+}
+
 /* An agent request the client can't answer (malformed payload): one inert muted line. */
 .mj_AgentRequestNotice {
     color: var(--mj-color-text-secondary);
