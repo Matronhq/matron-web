@@ -645,6 +645,61 @@ if (new URLSearchParams(window.location.search).has("notices")) {
     );
 }
 
+// ?people=out swaps c1's thread for the user's own agent asking for a room with bob's agent;
+// ?people=talk for the card alice's talk request draws in the People conversation. Both are
+// answered on their tracker item, which the fixture client "finds" as #31.
+const peopleParam = new URLSearchParams(window.location.search).get("people");
+if (peopleParam === "out" || peopleParam === "talk") {
+    const out = peopleParam === "out";
+    const card: JournalEvent = {
+        seq: 3,
+        convo_id: "c1",
+        ts: T + 2 * 60_000,
+        sender: out ? "agent:box-a" : "journal",
+        type: "permission_request",
+        payload: {
+            kind: "person_room",
+            direction: out ? "out" : "in",
+            room_link_id: out ? "rl_1" : "rl_2",
+            person: { name: out ? "bob" : "alice" },
+            session_title: out ? "Cover editor" : null,
+            topic: "Cover editor colours",
+            justification: out
+                ? "bob's session owns the palette tokens the editor reads."
+                : "We need the palette tokens before the cover editor ships.",
+            mission: null,
+            ...(out
+                ? { from_device_id: 1, from_name: "box-a" }
+                : {
+                      talk: true,
+                      contact_pending: true,
+                      choices: ["New session", "My Coordinator", "Pick a session", "Decline"],
+                  }),
+        },
+    };
+    const lead: JournalEvent[] = out
+        ? [
+              {
+                  seq: 1,
+                  convo_id: "c1",
+                  ts: T,
+                  sender: "user:operator",
+                  type: "text",
+                  payload: { body: "Can you check the cover editor colours with bob's agent?", from: "user" },
+              },
+              {
+                  seq: 2,
+                  convo_id: "c1",
+                  ts: T + 60_000,
+                  sender: "agent:box-a",
+                  type: "text",
+                  payload: { body: "Asking for a room with bob's session now.", from: "assistant" },
+              },
+          ]
+        : [];
+    events.splice(0, events.length, ...lead, card);
+}
+
 // ?toolstream adds a running tool_stream tile with more output than its collapsed pane shows.
 const toolStreams: ClientState["toolStreams"] = {};
 if (new URLSearchParams(window.location.search).has("toolstream")) {
@@ -748,6 +803,7 @@ const signedOutState: ClientState = {
 {
     const stub = client as unknown as Record<string, unknown>;
     stub.loadConversationMissions = async () => undefined;
+    if (peopleParam) stub.findConsentItem = async () => 31;
     if (fixtureParams.get("missions") === "1") {
         const now = Date.now();
         const link = (
