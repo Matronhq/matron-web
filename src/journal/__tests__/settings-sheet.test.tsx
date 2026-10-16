@@ -242,6 +242,36 @@ describe("Settings sheet (Mac grouped form)", () => {
             expect(toggle()).toBeNull();
             expect(sheet()!.textContent).not.toContain("For you");
         });
+
+        it("shows the auto-archive choice when the journal has it, and saves a change", async () => {
+            const select = (): HTMLSelectElement | null =>
+                sheet()?.querySelector<HTMLSelectElement>('select[data-setting="auto_archive_days"]') ?? null;
+            const patchSettings = jest.fn().mockResolvedValue({ notices: true, auto_archive_days: 90 });
+            await openSettings(
+                withApi({
+                    settings: jest.fn().mockResolvedValue({ notices: true, auto_archive_days: 30 }),
+                    patchSettings,
+                }),
+            );
+            expect(select()?.value).toBe("30");
+            expect([...select()!.options].map((o) => o.text)).toEqual([
+                "Off",
+                "After 14 days",
+                "After 30 days",
+                "After 90 days",
+            ]);
+            await act(async () => {
+                select()!.value = "90";
+                select()!.dispatchEvent(new Event("change", { bubbles: true }));
+            });
+            expect(patchSettings).toHaveBeenCalledWith({ auto_archive_days: 90 });
+            expect(select()?.value).toBe("90");
+        });
+
+        it("hides the auto-archive choice on a journal without it", async () => {
+            await openSettings(withApi({ settings: jest.fn().mockResolvedValue({ notices: true }) }));
+            expect(sheet()?.querySelector('select[data-setting="auto_archive_days"]')).toBeNull();
+        });
     });
 });
 

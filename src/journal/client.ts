@@ -50,6 +50,14 @@ import {
 } from "./pins";
 import { isAgentRoomTitle, isStartCommand, NEW_CONVERSATION_STALE_MS, startedSessionIntents } from "./needs-you";
 import { SeenTracker } from "./seen-tracker";
+import {
+    type ArchiveDelta,
+    applyArchiveChanges,
+    archiveBatches,
+    parseArchiveDelta,
+    readArchiveSince,
+    writeArchiveSince,
+} from "./server-archive";
 import { mergeSessionStatus } from "./status";
 import { appendFeedPage, kindsWithMore } from "./tracker/projectActivity";
 import { CHAT_TASKS_DONE_FETCH, chatTaskSections, planTaskMove } from "./tracker/chat-tasks";
@@ -693,6 +701,10 @@ export class MatronJournalClient {
     // The journal's list while a carry-over is pending or failed: the sidebar keeps the
     // browser-local set until the import lands, so local pins never vanish mid-import.
     private stagedPins: ConvoPin[] | null = null;
+    // Whether this journal syncs the archive (journal protocol "Archived conversations"): learnt from
+    // hello_ok, or assumed from a stored cursor until then, so an Archive tapped before the first
+    // hello still reaches a journal this browser has synced with.
+    private archiveOnJournal = false;
 
     public get sessionGeneration(): number {
         return this.sessionGen;
@@ -2747,13 +2759,22 @@ export class MatronJournalClient {
 
     /** PATCH /settings {notices}. Shows the new value at once and puts the old one back on failure. */
     public async setNoticesSetting(notices: boolean): Promise<boolean> {
+        return this.patchUserSettings({ notices });
+    }
+
+    /** PATCH /settings {auto_archive_days} (0 = off). Same optimistic shape as the notices switch. */
+    public async setAutoArchiveDays(days: number): Promise<boolean> {
+        return this.patchUserSettings({ auto_archive_days: days });
+    }
+
+    private async patchUserSettings(change: { notices?: boolean; auto_archive_days?: number }): Promise<boolean> {
         const api = this.api;
-        if (!api) return false;
         const previous = this.state.userSettings;
+        if (!api || !previous) return false;
         const gen = ++this.settingsGen;
-        this.patch({ userSettings: { notices }, userSettingsError: undefined });
+        this.patch({ userSettings: { ...previous, ...change }, userSettingsError: undefined });
         try {
-            const settings = parseUserSettings(await api.patchSettings({ notices }));
+            const settings = parseUserSettings(await api.patchSettings(change));
             if (this.api === api && this.settingsGen === gen && settings) this.patch({ userSettings: settings });
             return true;
         } catch (error) {
@@ -4668,6 +4689,7 @@ export class MatronJournalClient {
         this.sessionGen += 1;
         this.pinImportStarted = false;
         this.stagedPins = null;
+        this.archiveOnJournal = readArchiveSince(session) !== undefined;
         this.storeHydrated = { archive: true, pinned: true, favorite: true, unread: true, collapsed: true };
         const writeProbeKey = `${archiveStore.storageKey(session)}:__wprobe__`;
         let storeWritable = false;
@@ -4876,6 +4898,7 @@ export class MatronJournalClient {
 
         this.connection = new JournalConnection(session.serverUrl, session.token, {
             cursor: async () => (await this.database?.cursor()) ?? cursor ?? 0,
+            archiveSince: () => readArchiveSince(session) ?? 0,
             onFrame: async (frame) => this.handleFrame(frame),
             onReady: async (hello) => this.handleReady(hello),
             onSnapshotRequired: async () => this.replaceSnapshot(),
@@ -4989,6 +5012,84 @@ export class MatronJournalClient {
             preferencesUnavailable: this.storageUnavailable("archive"),
         });
         if (archived && conversationId === this.state.selectedConversationId) this.clearSelection();
+        if (this.archiveOnJournal) void this.sendArchive(conversationId, archived);
+    }
+
+    // ── Journal-synced archive (src/journal/server-archive.ts) ──────────────
+
+    /** POST /archive for one Archive/Unarchive tap; a failure puts the row back and says so. */
+    private async sendArchive(conversationId: string, archived: boolean): Promise<void> {
+        const api = this.api;
+        const session = this.state.session;
+        if (!api || !session) return;
+        try {
+            await api.setArchived([conversationId], archived);
+        } catch (error) {
+            if (this.api !== api || this.state.session !== session) return;
+            this.writeArchivedIds(
+                applyArchiveChanges(this.state.archivedIds, [
+                    { convo_id: conversationId, archived_at: archived ? null : 0, auto: false },
+                ]),
+            );
+            this.patch({
+                controlError: `Couldn't ${archived ? "archive" : "unarchive"}: ${errorMessage(error)}`,
+            });
+        }
+    }
+
+    /**
+     * hello_ok's `archive`, on a journal that syncs it. The first sync in this browser asks for the
+     * whole set: the browser-local ids the journal does not have are carried over (Archive on another
+     * device meanwhile is kept too), and only then is the cursor stored, so a failed carry-over is
+     * tried again on the next connect.
+     */
+    private async applyHelloArchive(hello: JournalControlFrame): Promise<void> {
+        const delta = parseArchiveDelta(hello.archive);
+        const session = this.state.session;
+        const api = this.api;
+        if (!delta || !session || !api) return;
+        this.archiveOnJournal = true;
+        if (readArchiveSince(session) !== undefined) {
+            this.applyArchiveDelta(delta);
+            return;
+        }
+        const onJournal = applyArchiveChanges(new Set<string>(), delta.changes);
+        const local = archiveStore.read(session);
+        const toImport = local.ok ? [...local.ids].filter((id) => !onJournal.has(id)) : [];
+        this.writeArchivedIds(new Set([...onJournal, ...toImport]));
+        try {
+            for (const batch of archiveBatches(toImport)) await api.setArchived(batch, true);
+        } catch {
+            return;
+        }
+        if (this.api === api && this.state.session === session) writeArchiveSince(session, delta.at);
+    }
+
+    /** An `archive` frame, or hello_ok's changes since the stored cursor. */
+    private applyArchiveDelta(delta: ArchiveDelta): void {
+        const session = this.state.session;
+        if (!session) return;
+        this.archiveOnJournal = true;
+        const next = applyArchiveChanges(this.state.archivedIds, delta.changes);
+        if (next !== this.state.archivedIds) this.writeArchivedIds(next);
+        const since = readArchiveSince(session);
+        if (since !== undefined && delta.at > since) writeArchiveSince(session, delta.at);
+    }
+
+    /** Adopt an archived set from the journal: saved in this browser and shown at once. */
+    private writeArchivedIds(next: Set<string>): void {
+        const session = this.state.session;
+        if (!session) return;
+        try {
+            archiveStore.write(session, next);
+            this.storeWritable.archive = true;
+        } catch {
+            this.storeWritable.archive = false;
+            this.logStorageDiag("write_fail", "archive", false);
+        }
+        this.patch({ archivedIds: next, preferencesUnavailable: this.storageUnavailable("archive") });
+        const selected = this.state.selectedConversationId;
+        if (selected && next.has(selected)) this.clearSelection();
     }
 
     private setFlag(
@@ -5179,6 +5280,7 @@ export class MatronJournalClient {
     private async handleReady(hello?: JournalControlFrame): Promise<void> {
         // hello_ok carries the pin list on a journal with pins; its absence means an older journal.
         if (hello !== undefined) this.applyJournalPins(pinsFromContainer(hello));
+        if (hello !== undefined) void this.applyHelloArchive(hello);
         const gen = this.sessionGen;
         const db = this.database;
         const connection = this.connection;
@@ -5276,6 +5378,11 @@ export class MatronJournalClient {
         }
         if (frame.kind === "box_defaults") {
             this.handleBoxDefaultsFrame(frame);
+            return;
+        }
+        if (frame.kind === "archive") {
+            const delta = parseArchiveDelta(frame);
+            if (delta) this.applyArchiveDelta(delta);
             return;
         }
         if (frame.kind === "pins") {
@@ -5929,10 +6036,14 @@ function inDoneOrder(rows: TrackerItem[]): TrackerItem[] {
 /** The label of a notice's one-tap answer; the journal closes the notice when it is tapped. */
 const SEEN_ACTION = "Seen";
 
-/** `{notices}` from GET/PATCH /settings or a settings frame, or null when it does not carry a
- *  boolean `notices` (a malformed or future shape must not flip the switch). */
+/** `{notices, auto_archive_days?}` from GET/PATCH /settings or a settings frame, or null when it
+ *  does not carry a boolean `notices` (a malformed or future shape must not flip the switch). */
 function parseUserSettings(raw: unknown): UserSettings | null {
     if (typeof raw !== "object" || raw === null) return null;
-    const notices = (raw as { notices?: unknown }).notices;
-    return typeof notices === "boolean" ? { notices } : null;
+    const { notices, auto_archive_days: days } = raw as { notices?: unknown; auto_archive_days?: unknown };
+    if (typeof notices !== "boolean") return null;
+    return {
+        notices,
+        ...(typeof days === "number" && Number.isInteger(days) && days >= 0 ? { auto_archive_days: days } : {}),
+    };
 }

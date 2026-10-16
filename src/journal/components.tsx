@@ -2374,6 +2374,8 @@ function ConversationListView({
                     connection={state.connection}
                     notices={state.userSettingsUnsupported ? undefined : state.userSettings?.notices}
                     noticesError={state.userSettingsError}
+                    autoArchiveDays={state.userSettingsUnsupported ? undefined : state.userSettings?.auto_archive_days}
+                    onAutoArchiveChange={(days) => void client.setAutoArchiveDays(days)}
                     onLoadSettings={() => void client.loadSettings()}
                     onNoticesChange={(value) => void client.setNoticesSetting(value)}
                     onChooseCoordinator={() => {

@@ -312,6 +312,8 @@ export interface JournalControlFrame {
     settings?: unknown;
     /** hello_ok: the user's Coordinator conversation (null for none); absent on an older journal. */
     coordinator_convo_id?: unknown;
+    /** hello_ok: archive changes since the hello's `archive_since`; absent on an older journal. */
+    archive?: unknown;
 }
 
 export interface JournalRpcFrame {
@@ -417,6 +419,13 @@ export interface JournalPinsFrame {
     pins: unknown;
 }
 
+// Journal archive fan-out (client sockets only): archive/unarchive changes, the sweep's included.
+export interface JournalArchiveFrame {
+    kind: "archive";
+    changes: unknown;
+    at?: unknown;
+}
+
 export type ServerFrame =
     | JournalEvent
     | JournalControlFrame
@@ -427,7 +436,8 @@ export type ServerFrame =
     | JournalBriefingFrame
     | JournalDefaultsFrame
     | JournalBoxDefaultsFrame
-    | JournalPinsFrame;
+    | JournalPinsFrame
+    | JournalArchiveFrame;
 
 export interface SessionStatus {
     model?: string;
@@ -818,6 +828,8 @@ export interface BoxDefaultsState {
 /** Per-user journal settings. `notices`: agents file things to read as notice items. */
 export interface UserSettings {
     notices: boolean;
+    /** Auto-archive idle conversations after this many days (0 = off); absent on an older journal. */
+    auto_archive_days?: number;
 }
 
 /**

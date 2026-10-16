@@ -9,6 +9,8 @@ import { type ConnectionState, type JournalControlFrame, type RpcReply, type Ser
 
 interface JournalConnectionCallbacks {
     cursor(): Promise<number>;
+    /** The archive cursor for hello's `archive_since` (0 = the whole set); undefined omits it. */
+    archiveSince?(): number | undefined;
     onFrame(frame: ServerFrame): Promise<void>;
     /** Called once the journal welcomes the socket, with the hello_ok frame (it may carry `pins`
      *  and, on a newer journal, the user's settings). */
@@ -144,7 +146,15 @@ export class JournalConnection {
                 .cursor()
                 .then((cursor) => {
                     if (socket !== this.socket || socket.readyState !== WebSocket.OPEN) return;
-                    socket.send(JSON.stringify({ op: "hello", token: this.token, cursor }));
+                    const archiveSince = this.callbacks.archiveSince?.();
+                    socket.send(
+                        JSON.stringify({
+                            op: "hello",
+                            token: this.token,
+                            cursor,
+                            ...(archiveSince !== undefined ? { archive_since: archiveSince } : {}),
+                        }),
+                    );
                 })
                 .catch((error) => {
                     this.callbacks.onState(
