@@ -612,6 +612,9 @@ export class MatronJournalClient {
     // PATCH /settings writes run one at a time, in the order chosen, so the journal ends on the
     // latest pick even when an earlier request is slow.
     private settingsWrites: Promise<unknown> = Promise.resolve();
+    // The settings as the journal last confirmed them (GET, PATCH answer, frame or hello): what a
+    // failed save goes back to, rather than an earlier optimistic value that may never have landed.
+    private settingsConfirmed: UserSettings | undefined;
     // Journal archive writes per conversation: the state the user last chose, and whether a POST
     // is in flight. One POST at a time per conversation, always for the latest choice.
     private archiveWanted = new Map<string, boolean>();
@@ -2791,7 +2794,7 @@ export class MatronJournalClient {
             return true;
         } catch (error) {
             if (this.api === api && this.settingsGen === gen) {
-                this.patch({ userSettings: previous, [errorKey]: errorMessage(error) });
+                this.patch({ userSettings: this.settingsConfirmed ?? previous, [errorKey]: errorMessage(error) });
             }
             return false;
         }
@@ -2799,6 +2802,7 @@ export class MatronJournalClient {
 
     /** A settings payload over what is known: a key the payload lacks keeps its known value. */
     private mergedSettings(settings: UserSettings): UserSettings {
+        this.settingsConfirmed = { ...this.settingsConfirmed, ...settings };
         return { ...this.state.userSettings, ...settings };
     }
 
@@ -4707,6 +4711,7 @@ export class MatronJournalClient {
         this.pinImportStarted = false;
         this.stagedPins = null;
         this.archiveOnJournal = readArchiveSince(session) !== undefined;
+        this.settingsConfirmed = undefined;
         this.storeHydrated = { archive: true, pinned: true, favorite: true, unread: true, collapsed: true };
         const writeProbeKey = `${archiveStore.storageKey(session)}:__wprobe__`;
         let storeWritable = false;

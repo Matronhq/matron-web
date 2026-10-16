@@ -314,6 +314,7 @@ describe("Settings sheet (Mac grouped form)", () => {
             expect(sent).toEqual([14, 90]);
             const group = sheet()!.querySelector('section[aria-labelledby="mj-settings-archive"]')!;
             expect(group.textContent).toContain("Couldn't save: offline");
+            expect(select().value).toBe("14");
             expect(sheet()!.querySelector('section[aria-labelledby="mj-settings-foryou"]')!.textContent).not.toContain(
                 "Couldn't save",
             );
