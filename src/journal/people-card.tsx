@@ -425,11 +425,22 @@ function HandoverSection({
                                 ? `It can no longer be handed over (${blockedBy.replace(/_/g, " ")}).`
                                 : "Already answered.",
                 });
-                if (loadGrant) {
+                if (error.status === 404) {
+                    setPhase("ended");
+                } else if (loadGrant) {
+                    // Answered elsewhere: no buttons until the journal says where it stands, so
+                    // nothing can post a second answer meanwhile. Only a 404 ends the card; an
+                    // unreachable journal leaves it open, as on mount.
+                    setPhase(null);
                     loadGrant(grantId).then(
                         (grant) => setPhase(handoverPhase(grant)),
-                        () => setPhase("ended"),
+                        (reloadError: unknown) =>
+                            setPhase(
+                                reloadError instanceof JournalApiError && reloadError.status === 404 ? "ended" : "open",
+                            ),
                     );
+                } else {
+                    setPhase("ended");
                 }
             } else {
                 setAnswer({ kind: "failed", message: "Not sent — check the connection and try again." });

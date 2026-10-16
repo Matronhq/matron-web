@@ -333,6 +333,49 @@ describe("hand-over card", () => {
         expect(container.querySelector(".mj_HandoverOutcome")?.textContent).toContain("Expired");
     });
 
+    it("hides the buttons as soon as the journal says the card was answered, before the reread lands", async () => {
+        const loadGrant = jest
+            .fn()
+            .mockResolvedValueOnce(grant())
+            .mockReturnValueOnce(new Promise(() => undefined));
+        const answerGrant = jest
+            .fn()
+            .mockRejectedValue(new JournalApiError("conflict", 409, "conflict", undefined, { blocked_by: "pending" }));
+        const container = await render(handoverOut, { loadGrant, answerGrant });
+
+        await act(async () => button(container, "Approve")!.click());
+        expect(container.textContent).toContain("Already answered.");
+        expect(button(container, "Approve")).toBeUndefined();
+        expect(button(container, "Decline")).toBeUndefined();
+        expect(answerGrant).toHaveBeenCalledTimes(1);
+    });
+
+    it("ends the card on a 404 answer without waiting for a reread", async () => {
+        const loadGrant = jest
+            .fn()
+            .mockResolvedValueOnce(grant())
+            .mockReturnValueOnce(new Promise(() => undefined));
+        const answerGrant = jest.fn().mockRejectedValue(new JournalApiError("gone", 404));
+        const container = await render(handoverOut, { loadGrant, answerGrant });
+
+        await act(async () => button(container, "Approve")!.click());
+        expect(container.textContent).toContain("This hand-over is no longer open.");
+        expect(container.querySelector(".mj_HandoverOutcome")?.textContent).toBe("No longer open");
+        expect(button(container, "Approve")).toBeUndefined();
+    });
+
+    it("keeps the card open when the reread after a conflict fails for a passing reason", async () => {
+        const loadGrant = jest.fn().mockResolvedValueOnce(grant()).mockRejectedValueOnce(new Error("offline"));
+        const answerGrant = jest
+            .fn()
+            .mockRejectedValue(new JournalApiError("conflict", 409, "conflict", undefined, { blocked_by: "pending" }));
+        const container = await render(handoverOut, { loadGrant, answerGrant });
+
+        await act(async () => button(container, "Approve")!.click());
+        expect(container.querySelector(".mj_HandoverOutcome")).toBeNull();
+        expect(button(container, "Approve")).toBeDefined();
+    });
+
     it("keeps the buttons after a network failure so the owner can try again", async () => {
         const answerGrant = jest.fn().mockRejectedValue(new Error("offline"));
         const container = await render(handoverOut, { answerGrant });
