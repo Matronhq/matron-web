@@ -59,6 +59,8 @@ import {
     buildSidebarIndex,
     childSidebarPlacement,
     type BoxStatus,
+    type Grant,
+    type GrantAnswer,
     type BriefingLatest,
     type BriefingRefresh,
     type BriefingState,
@@ -2528,6 +2530,18 @@ export class MatronJournalClient {
             // An unreachable tracker reads as "not found": the card then says where to answer.
         }
         return null;
+    }
+
+    /** One share of the user's (or with the user), for a card to show how it was answered. */
+    public async loadGrant(grantId: string, signal?: AbortSignal): Promise<Grant> {
+        if (!this.api) throw new Error("Not signed in.");
+        return this.api.grant(grantId, signal);
+    }
+
+    /** Answers a share or hand-over card. Errors (JournalApiError 409/404) are rethrown unchanged. */
+    public async answerGrant(grantId: string, answer: GrantAnswer, signal?: AbortSignal): Promise<Grant> {
+        if (!this.api) throw new Error("Not signed in.");
+        return this.api.answerGrant(grantId, answer, signal);
     }
 
     /** Opens a project page on the Projects view (the tracker's "missions" view key). */

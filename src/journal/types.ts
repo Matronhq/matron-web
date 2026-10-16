@@ -938,6 +938,39 @@ export type TrackerAwaiting = "user" | "agent";
 export type TrackerMilestoneKind = "user_input" | "progress";
 export type TrackerMissionState = "open" | "closed";
 export type TrackerActor = "user" | "agent";
+
+/**
+ * Another person writing into one of the user's missions under a `contribute` share: their name,
+ * and whether they wrote it themselves or their agent did. Absent (not null) on everything else.
+ */
+export interface TrackerContributor {
+    name: string;
+    via: "user" | "agent";
+}
+
+/** A share of a mission or project with another person (journal `GET /grants/:id`), as much of it
+ *  as the apps read. */
+export interface Grant {
+    id: string;
+    direction: "out" | "in";
+    subject_kind: "mission" | "project";
+    level: "read" | "contribute" | "owner";
+    state: "awaiting_owner" | "pending" | "active" | "declined" | "revoked" | "expired";
+    owner?: { user_id?: number; name?: string };
+    grantee?: { name?: string; address?: string };
+    /** A raise of an active share waiting on its two yeses; null otherwise. */
+    pending_level?: "read" | "contribute" | "owner" | null;
+    pending_state?: "awaiting_owner" | "pending" | null;
+    revoked_by?: "owner" | "grantee" | "contact_removed" | null;
+    /** The recipient's copy once a hand-over is accepted. */
+    copy_id?: string | null;
+}
+
+/** `POST /grants/:id/answer` body. `exclude_media` is the owner's, on a hand-over only. */
+export interface GrantAnswer {
+    decision: "approve" | "decline";
+    exclude_media?: string[];
+}
 export type TrackerCommentKind = "comment" | "status";
 
 export interface TrackerLink {
@@ -1023,6 +1056,8 @@ export interface TrackerItem {
     working?: TrackerWorking | null;
     /** Null when no handover waits; absent on older journals and cached items. */
     handover?: TrackerHandover | null;
+    /** Filed by another person (or their agent) under a `contribute` share. */
+    contributor?: TrackerContributor;
 }
 
 export interface TrackerComment {
@@ -1050,6 +1085,11 @@ export interface TrackerComment {
     device_name?: string | null;
     convo_id?: string | null;
     convo_title?: string | null;
+    /** Written by another person (or their agent) under a `contribute` share. */
+    contributor?: TrackerContributor;
+    /** Who wrote it, in words, when that is not this log's own user or agents: "bob" or "bob's
+     *  agent" on a contributor's comment and on every comment copied in by a hand-over. */
+    attribution?: string;
 }
 
 /** `POST /items/:id/comments` body. `action` + `reply_to` is a tap on a comment's button. */
@@ -1118,6 +1158,10 @@ export interface Mission {
     status?: string | null;
     status_by?: TrackerActor | null;
     status_updated_at?: number | null;
+    /** The contributor who set the current status, until the owner next sets it. */
+    status_contributor?: string;
+    /** Set on a mission closed by handing it over to another person. */
+    handed_over?: { to: string };
 }
 
 export interface Milestone {
@@ -1132,6 +1176,8 @@ export interface Milestone {
     device_id: number;
     created_by: TrackerActor;
     created_at: number;
+    /** Posted by another person (or their agent) under a `contribute` share. */
+    contributor?: TrackerContributor;
 }
 
 /** The reduced open-item shape a mission detail lists (awaiting-user first). */
@@ -1616,6 +1662,7 @@ export function eventSnippet(type: string, payload: EventPayload): string {
         // Person-to-person asks: the journal's own snapshot strings, byte-exact for the same reason.
         if (asString(payload.kind) === "contact_request") return "🤝 Contact request";
         if (asString(payload.kind) === "mission_share") return "🤝 Mission share request";
+        if (asString(payload.kind) === "mission_handover") return "🤝 Hand-over request";
         if (asString(payload.kind) === "person_room") return "🤝 Room with another person";
         if (asString(payload.kind) === "session_share") return "🤝 Session share request";
         return `Permission: ${asString(payload.description).slice(0, 100)}`;

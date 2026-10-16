@@ -5493,9 +5493,9 @@ export function EventContent({
                     />
                 );
             }
-            // A person-to-person ask (contact, mission share, session share, room or talk) is
-            // answered only on its mirror tracker item: nothing reads a prompt_reply to it, so the
-            // card is inert and opens that item.
+            // A person-to-person ask (contact, mission share, hand-over, session share, room or
+            // talk) is answered on its mirror tracker item: nothing reads a prompt_reply to it, so
+            // the card opens that item. A hand-over also answers its grant from the card.
             const people = parsePeopleCard(event.payload);
             if (people) {
                 return (
@@ -5505,6 +5505,10 @@ export function EventContent({
                         card={people}
                         findItem={(convoId, url) => client.findConsentItem(convoId, url)}
                         onOpenItem={(num) => client.openTrackerItem(num)}
+                        loadGrant={(grantId) => client.loadGrant(grantId)}
+                        // A read-only transcript (a sub-chat or a subagent pane) shows how a
+                        // hand-over stands but never answers it.
+                        answerGrant={isReadOnly ? undefined : (grantId, answer) => client.answerGrant(grantId, answer)}
                     />
                 );
             }
