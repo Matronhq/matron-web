@@ -220,6 +220,16 @@ describe("journal-synced archive in the client", () => {
         expect(readArchiveSince(SESSION)).toBe(30);
     });
 
+    it("re-saving an unchanged set keeps an archived chat the user has open", async () => {
+        writeArchiveSince(SESSION, 10);
+        const { i } = client(["b"]);
+        i.state = { ...i.state, selectedConversationId: "b" };
+        (i as unknown as { storeWritable: { archive: boolean } }).storeWritable.archive = false;
+        await i.handleFrame({ kind: "archive", changes: [{ convo_id: "b", archived_at: 30, auto: true }], at: 30 });
+        expect(i.state.selectedConversationId).toBe("b");
+        expect(readArchiveSince(SESSION)).toBe(30);
+    });
+
     it("does not advance the cursor when the archived set cannot be saved", async () => {
         writeArchiveSince(SESSION, 10);
         const { i } = client([]);

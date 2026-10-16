@@ -5170,9 +5170,11 @@ export class MatronJournalClient {
             this.storeWritable.archive = false;
             this.logStorageDiag("write_fail", "archive", false);
         }
+        const before = this.state.archivedIds;
         this.patch({ archivedIds: next, preferencesUnavailable: this.storageUnavailable("archive") });
+        // Only a newly archived chat closes; one already open from the Archived tab stays.
         const selected = this.state.selectedConversationId;
-        if (selected && next.has(selected)) this.clearSelection();
+        if (selected && next.has(selected) && !before.has(selected)) this.clearSelection();
         return saved;
     }
 
