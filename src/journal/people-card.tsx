@@ -84,6 +84,8 @@ export interface HandoverDetails {
     counts: { missions: number; milestones: number; items: number; comments: number; attachments: number };
     /** The owner's card lists every file; the recipient's card carries only the count. */
     attachments: HandoverAttachment[];
+    /** What the owner keeps on the copy afterwards: read access, or contributing to it. */
+    keepLevel: "read" | "contribute";
 }
 
 export function isPeopleCardPayload(payload: EventPayload): boolean {
@@ -143,7 +145,20 @@ function parseHandover(payload: EventPayload, direction: "in" | "out"): Handover
             attachments: files,
         },
         attachments,
+        keepLevel: asString(payload.keep_level) === "contribute" ? "contribute" : "read",
     };
+}
+
+/** The line under the owner's "keep contributing" switch, and the recipient's line about it. */
+export function keepLevelText(keepLevel: "read" | "contribute", direction: "in" | "out", owner: string): string {
+    if (direction === "out") {
+        return keepLevel === "contribute"
+            ? "You can keep adding milestones, items and comments to their copy."
+            : "You keep read access to their copy.";
+    }
+    return keepLevel === "contribute"
+        ? `${owner} stays on as a contributor; you can end that any time.`
+        : `${owner} keeps read access.`;
 }
 
 function consentUrlOf(kind: PeopleCardKind, payload: EventPayload): string | null {
@@ -365,6 +380,12 @@ function HandoverSection({
     const [phase, setPhase] = useState<HandoverPhase | null>(() => (grantId && loadGrant ? null : "open"));
     const [answer, setAnswer] = useState<AnswerState>({ kind: "idle" });
     const [excluded, setExcluded] = useState<ReadonlySet<string>>(() => new Set());
+    // The owner's say on what they keep: the asking agent's choice to start, theirs to change.
+    const [keepContributing, setKeepContributing] = useState(() => details.keepLevel === "contribute");
+    // A newer payload for the same card starts the switch again from what it asks.
+    useEffect(() => {
+        setKeepContributing(details.keepLevel === "contribute");
+    }, [details.keepLevel]);
 
     // The card may have been answered on another device, or on the mirror item: ask the journal.
     useEffect(() => {
@@ -405,6 +426,7 @@ function HandoverSection({
                       exclude_media: details.attachments
                           .filter((file) => excluded.has(file.mediaId))
                           .map((file) => file.mediaId),
+                      keep_level: keepContributing ? "contribute" : "read",
                   }
                 : { decision };
         try {
@@ -490,6 +512,25 @@ function HandoverSection({
                     ))}
                 </fieldset>
             ) : null}
+            {out ? (
+                <div className="mj_HandoverKeep">
+                    <label className="mj_HandoverKeep_toggle">
+                        <input
+                            type="checkbox"
+                            role="switch"
+                            checked={keepContributing}
+                            disabled={!answerable || sending}
+                            onChange={() => setKeepContributing((on) => !on)}
+                        />
+                        <span>Keep contributing after the hand-over</span>
+                    </label>
+                    <p className="mj_HandoverKeep_hint">
+                        {keepLevelText(keepContributing ? "contribute" : "read", "out", card.person)}
+                    </p>
+                </div>
+            ) : (
+                <p className="mj_HandoverKeep_hint">{keepLevelText(details.keepLevel, "in", card.person)}</p>
+            )}
             {answerable ? (
                 <div className="mj_PromptOptions mj_HandoverOptions">
                     <button type="button" disabled={sending} onClick={() => void send("decline")}>

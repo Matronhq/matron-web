@@ -978,12 +978,16 @@ export interface Grant {
     revoked_by?: "owner" | "grantee" | "contact_removed" | null;
     /** The recipient's copy once a hand-over is accepted. */
     copy_id?: string | null;
+    /** On a hand-over: what the old owner keeps on the copy. */
+    keep_level?: "read" | "contribute";
 }
 
 /** `POST /grants/:id/answer` body. `exclude_media` is the owner's, on a hand-over only. */
 export interface GrantAnswer {
     decision: "approve" | "decline";
     exclude_media?: string[];
+    /** The owner's say on what they keep on the copy, on a hand-over approval only. */
+    keep_level?: "read" | "contribute";
 }
 export type TrackerCommentKind = "comment" | "status";
 
