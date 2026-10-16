@@ -2788,8 +2788,10 @@ export class MatronJournalClient {
         this.settingsWrites = write.catch(() => undefined);
         try {
             const settings = parseUserSettings(await write);
-            if (this.api === api && this.settingsGen === gen && settings) {
-                this.patch({ userSettings: this.mergedSettings(settings) });
+            if (this.api === api && settings) {
+                // Every answer is confirmed; only the latest pick's answer is shown.
+                if (this.settingsGen === gen) this.patch({ userSettings: this.mergedSettings(settings) });
+                else this.settingsConfirmed = { ...this.settingsConfirmed, ...settings };
             }
             return true;
         } catch (error) {
