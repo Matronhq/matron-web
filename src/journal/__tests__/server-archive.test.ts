@@ -206,6 +206,20 @@ describe("journal-synced archive in the client", () => {
         expect(readArchiveSince(SESSION)).toBe(5);
     });
 
+    it("an unchanged set that was never saved is saved before the cursor moves", async () => {
+        writeArchiveSince(SESSION, 10);
+        const { i } = client(["b"]);
+        (i as unknown as { storeWritable: { archive: boolean } }).storeWritable.archive = false;
+        const write = jest.spyOn(archiveStore, "write").mockImplementation(() => {
+            throw new Error("quota");
+        });
+        await i.handleFrame({ kind: "archive", changes: [{ convo_id: "b", archived_at: 30, auto: true }], at: 30 });
+        expect(readArchiveSince(SESSION)).toBe(10);
+        write.mockRestore();
+        await i.handleFrame({ kind: "archive", changes: [{ convo_id: "b", archived_at: 30, auto: true }], at: 30 });
+        expect(readArchiveSince(SESSION)).toBe(30);
+    });
+
     it("does not advance the cursor when the archived set cannot be saved", async () => {
         writeArchiveSince(SESSION, 10);
         const { i } = client([]);

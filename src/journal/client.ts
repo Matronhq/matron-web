@@ -615,6 +615,12 @@ export class MatronJournalClient {
     // The settings as the journal last confirmed them (GET, PATCH answer, frame or hello): what a
     // failed save goes back to, rather than an earlier optimistic value that may never have landed.
     private settingsConfirmed: UserSettings | undefined;
+    // Per setting: bumped by every pick and every journal value for that key, so a failed save only
+    // puts back a key nothing newer has touched (a frame without the key leaves it alone).
+    private settingsKeyGen: Record<keyof UserSettings, number> = { notices: 0, auto_archive_days: 0 };
+    // Per setting: bumped by every journal value from a frame, hello or GET, so a PATCH answer that
+    // was sent before one does not overwrite it as the confirmed value.
+    private settingsHeardGen: Record<keyof UserSettings, number> = { notices: 0, auto_archive_days: 0 };
     // Journal archive writes per conversation: the state the user last chose, and whether a POST
     // is in flight. One POST at a time per conversation, always for the latest choice.
     private archiveWanted = new Map<string, boolean>();
@@ -2781,29 +2787,53 @@ export class MatronJournalClient {
         const api = this.api;
         const previous = this.state.userSettings;
         if (!api || !previous) return false;
-        const gen = ++this.settingsGen;
+        ++this.settingsGen;
+        const keys = Object.keys(change) as (keyof UserSettings)[];
+        const picked = keys.map((key) => ++this.settingsKeyGen[key]);
         const errorKey = "auto_archive_days" in change ? "autoArchiveError" : "userSettingsError";
         this.patch({ userSettings: { ...previous, ...change }, [errorKey]: undefined });
-        const write = this.settingsWrites.then(() => api.patchSettings(change));
+        let heard = { ...this.settingsHeardGen };
+        const write = this.settingsWrites.then(() => {
+            heard = { ...this.settingsHeardGen };
+            return api.patchSettings(change);
+        });
         this.settingsWrites = write.catch(() => undefined);
+        const ours = (key: keyof UserSettings, i: number): boolean => this.settingsKeyGen[key] === picked[i];
         try {
             const settings = parseUserSettings(await write);
             if (this.api === api && settings) {
-                // Every answer is confirmed; only the latest pick's answer is shown.
-                if (this.settingsGen === gen) this.patch({ userSettings: this.mergedSettings(settings) });
-                else this.settingsConfirmed = { ...this.settingsConfirmed, ...settings };
+                // Confirmed unless the journal has said something newer since this was sent; shown
+                // only for the keys this pick still owns.
+                const confirmed = { ...this.settingsConfirmed } as Partial<UserSettings>;
+                for (const key of Object.keys(settings) as (keyof UserSettings)[]) {
+                    if (this.settingsHeardGen[key] === heard[key]) Object.assign(confirmed, { [key]: settings[key] });
+                }
+                this.settingsConfirmed = confirmed as UserSettings;
+                const shown = keys.filter(ours).map((key) => [key, settings[key]] as const);
+                if (shown.length && this.state.userSettings) {
+                    this.patch({ userSettings: { ...this.state.userSettings, ...Object.fromEntries(shown) } });
+                }
             }
             return true;
         } catch (error) {
-            if (this.api === api && this.settingsGen === gen) {
-                this.patch({ userSettings: this.settingsConfirmed ?? previous, [errorKey]: errorMessage(error) });
+            const back = keys.filter(ours).map((key) => [key, (this.settingsConfirmed ?? previous)[key]] as const);
+            if (this.api === api && back.length && this.state.userSettings) {
+                this.patch({
+                    userSettings: { ...this.state.userSettings, ...Object.fromEntries(back) },
+                    [errorKey]: errorMessage(error),
+                });
             }
             return false;
         }
     }
 
-    /** A settings payload over what is known: a key the payload lacks keeps its known value. */
+    /** The journal's word on the settings (GET, frame or hello) over what is known: a key the
+     *  payload lacks keeps its known value, and only the keys it carries supersede a pending pick. */
     private mergedSettings(settings: UserSettings): UserSettings {
+        for (const key of Object.keys(settings) as (keyof UserSettings)[]) {
+            ++this.settingsKeyGen[key];
+            ++this.settingsHeardGen[key];
+        }
         this.settingsConfirmed = { ...this.settingsConfirmed, ...settings };
         return { ...this.state.userSettings, ...settings };
     }
@@ -5119,7 +5149,9 @@ export class MatronJournalClient {
         this.archiveOnJournal = true;
         const next = applyArchiveChanges(this.state.archivedIds, delta.changes);
         // The cursor only moves once the set it describes is saved, so a reload never skips a change.
-        if (next !== this.state.archivedIds && !this.writeArchivedIds(next)) return;
+        // An unwritable store may hold less than is shown, so an unchanged set is written again too.
+        const unsaved = next !== this.state.archivedIds || !this.storeWritable.archive;
+        if (unsaved && !this.writeArchivedIds(next)) return;
         const since = readArchiveSince(session);
         if (since !== undefined && delta.at > since) writeArchiveSince(session, delta.at);
     }

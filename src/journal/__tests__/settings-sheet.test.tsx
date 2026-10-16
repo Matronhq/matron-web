@@ -320,6 +320,62 @@ describe("Settings sheet (Mac grouped form)", () => {
             );
         });
 
+        const select = (): HTMLSelectElement =>
+            sheet()!.querySelector<HTMLSelectElement>('select[data-setting="auto_archive_days"]')!;
+        const pick = (value: string): void => {
+            select().value = value;
+            select().dispatchEvent(new Event("change", { bubbles: true }));
+        };
+        const frame = (client: MatronJournalClient, settings: unknown): Promise<void> =>
+            (client as unknown as { handleFrame(frame: unknown): Promise<void> }).handleFrame({
+                kind: "control",
+                op: "settings",
+                settings,
+            });
+
+        it("puts a refused pick back even when a notices-only frame came in meanwhile", async () => {
+            let fail!: (e: Error) => void;
+            const patchSettings = jest.fn(() => new Promise((_resolve, reject) => (fail = reject)));
+            const client = withApi({
+                settings: jest.fn().mockResolvedValue({ notices: true, auto_archive_days: 30 }),
+                patchSettings,
+            });
+            await openSettings(client);
+            await act(async () => pick("90"));
+            await act(async () => frame(client, { notices: false }));
+            expect(select().value).toBe("90");
+            await act(async () => {
+                fail(new Error("offline"));
+                await new Promise((resolve) => setTimeout(resolve, 0));
+            });
+            expect(select().value).toBe("30");
+            expect(sheet()!.querySelector('section[aria-labelledby="mj-settings-archive"]')!.textContent).toContain(
+                "Couldn't save: offline",
+            );
+        });
+
+        it("a failed save goes back to a newer frame's value, not an older save's answer", async () => {
+            const answers: Array<{ resolve: (v: unknown) => void; reject: (e: Error) => void }> = [];
+            const patchSettings = jest.fn(() => new Promise((resolve, reject) => answers.push({ resolve, reject })));
+            const client = withApi({
+                settings: jest.fn().mockResolvedValue({ notices: true, auto_archive_days: 30 }),
+                patchSettings,
+            });
+            await openSettings(client);
+            await act(async () => pick("14"));
+            await act(async () => frame(client, { notices: true, auto_archive_days: 0 }));
+            await act(async () => pick("90"));
+            await act(async () => {
+                answers[0].resolve({ notices: true, auto_archive_days: 14 });
+                await new Promise((resolve) => setTimeout(resolve, 0));
+            });
+            await act(async () => {
+                answers[1].reject(new Error("offline"));
+                await new Promise((resolve) => setTimeout(resolve, 0));
+            });
+            expect(select().value).toBe("0");
+        });
+
         it("hides the auto-archive choice on a journal without it", async () => {
             await openSettings(withApi({ settings: jest.fn().mockResolvedValue({ notices: true }) }));
             expect(sheet()?.querySelector('select[data-setting="auto_archive_days"]')).toBeNull();
