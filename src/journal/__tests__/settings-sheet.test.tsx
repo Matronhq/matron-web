@@ -268,6 +268,57 @@ describe("Settings sheet (Mac grouped form)", () => {
             expect(select()?.value).toBe("90");
         });
 
+        it("keeps the auto-archive choice when a settings frame carries only notices", async () => {
+            const client = withApi({ settings: jest.fn().mockResolvedValue({ notices: true, auto_archive_days: 30 }) });
+            await openSettings(client);
+            await act(async () => {
+                await (client as unknown as { handleFrame(frame: unknown): Promise<void> }).handleFrame({
+                    kind: "control",
+                    op: "settings",
+                    settings: { notices: false },
+                });
+            });
+            expect(sheet()?.querySelector<HTMLSelectElement>('select[data-setting="auto_archive_days"]')?.value).toBe(
+                "30",
+            );
+        });
+
+        it("sends auto-archive picks in order and shows a failure in the Archive group", async () => {
+            const sent: number[] = [];
+            let release!: () => void;
+            const patchSettings = jest.fn(async (body: { auto_archive_days: number }) => {
+                sent.push(body.auto_archive_days);
+                if (sent.length === 1) await new Promise<void>((resolve) => (release = resolve));
+                if (body.auto_archive_days === 90) throw new Error("offline");
+                return { notices: true, auto_archive_days: body.auto_archive_days };
+            });
+            await openSettings(
+                withApi({
+                    settings: jest.fn().mockResolvedValue({ notices: true, auto_archive_days: 30 }),
+                    patchSettings,
+                }),
+            );
+            const select = (): HTMLSelectElement =>
+                sheet()!.querySelector<HTMLSelectElement>('select[data-setting="auto_archive_days"]')!;
+            await act(async () => {
+                select().value = "14";
+                select().dispatchEvent(new Event("change", { bubbles: true }));
+                select().value = "90";
+                select().dispatchEvent(new Event("change", { bubbles: true }));
+            });
+            expect(sent).toEqual([14]);
+            await act(async () => {
+                release();
+                await new Promise((resolve) => setTimeout(resolve, 0));
+            });
+            expect(sent).toEqual([14, 90]);
+            const group = sheet()!.querySelector('section[aria-labelledby="mj-settings-archive"]')!;
+            expect(group.textContent).toContain("Couldn't save: offline");
+            expect(sheet()!.querySelector('section[aria-labelledby="mj-settings-foryou"]')!.textContent).not.toContain(
+                "Couldn't save",
+            );
+        });
+
         it("hides the auto-archive choice on a journal without it", async () => {
             await openSettings(withApi({ settings: jest.fn().mockResolvedValue({ notices: true }) }));
             expect(sheet()?.querySelector('select[data-setting="auto_archive_days"]')).toBeNull();

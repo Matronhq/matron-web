@@ -749,6 +749,8 @@ export interface ClientState {
     userSettingsUnsupported?: boolean;
     /** The last failed settings save; cleared by the next save. */
     userSettingsError?: string;
+    /** The last failed save of the auto-archive setting (shown in Settings → Archive). */
+    autoArchiveError?: string;
     /** Settings → Coordinator: whether the Coordinator may answer chat and spawn asks (`consent`
      *  on GET /coordinator). `enabled` undefined = not known yet, or a journal without the switch. */
     coordinatorConsent?: { enabled?: boolean; error?: string };

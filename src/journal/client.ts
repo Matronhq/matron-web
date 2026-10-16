@@ -609,6 +609,13 @@ export class MatronJournalClient {
     // timed_out, which no frame announces).
     private briefingGen = 0;
     private settingsGen = 0;
+    // PATCH /settings writes run one at a time, in the order chosen, so the journal ends on the
+    // latest pick even when an earlier request is slow.
+    private settingsWrites: Promise<unknown> = Promise.resolve();
+    // Journal archive writes per conversation: the state the user last chose, and whether a POST
+    // is in flight. One POST at a time per conversation, always for the latest choice.
+    private archiveWanted = new Map<string, boolean>();
+    private archiveSending = new Set<string>();
     // Coordinator consent switch: bumped by every write, so a GET sent before one is dropped and
     // only the latest write's answer moves the switch; the journal's last known value (where a
     // failed write puts the switch back); and the write chain that keeps PUTs in tap order.
@@ -2745,7 +2752,7 @@ export class MatronJournalClient {
             if (this.api !== api || this.settingsGen !== gen) return;
             this.patch({
                 userSettingsUnsupported: false,
-                ...(settings ? { userSettings: settings, userSettingsError: undefined } : {}),
+                ...(settings ? { userSettings: this.mergedSettings(settings), userSettingsError: undefined } : {}),
             });
         } catch (error) {
             if (this.api !== api || this.settingsGen !== gen) return;
@@ -2772,17 +2779,27 @@ export class MatronJournalClient {
         const previous = this.state.userSettings;
         if (!api || !previous) return false;
         const gen = ++this.settingsGen;
-        this.patch({ userSettings: { ...previous, ...change }, userSettingsError: undefined });
+        const errorKey = "auto_archive_days" in change ? "autoArchiveError" : "userSettingsError";
+        this.patch({ userSettings: { ...previous, ...change }, [errorKey]: undefined });
+        const write = this.settingsWrites.then(() => api.patchSettings(change));
+        this.settingsWrites = write.catch(() => undefined);
         try {
-            const settings = parseUserSettings(await api.patchSettings(change));
-            if (this.api === api && this.settingsGen === gen && settings) this.patch({ userSettings: settings });
+            const settings = parseUserSettings(await write);
+            if (this.api === api && this.settingsGen === gen && settings) {
+                this.patch({ userSettings: this.mergedSettings(settings) });
+            }
             return true;
         } catch (error) {
             if (this.api === api && this.settingsGen === gen) {
-                this.patch({ userSettings: previous, userSettingsError: errorMessage(error) });
+                this.patch({ userSettings: previous, [errorKey]: errorMessage(error) });
             }
             return false;
         }
+    }
+
+    /** A settings payload over what is known: a key the payload lacks keeps its known value. */
+    private mergedSettings(settings: UserSettings): UserSettings {
+        return { ...this.state.userSettings, ...settings };
     }
 
     // ── Coordinator consent approval (Settings → Coordinator; GET/PUT /coordinator `consent`) ──
@@ -3131,7 +3148,7 @@ export class MatronJournalClient {
         const settings = parseUserSettings(raw);
         if (!settings) return;
         ++this.settingsGen;
-        this.patch({ userSettings: settings, userSettingsError: undefined });
+        this.patch({ userSettings: this.mergedSettings(settings), userSettingsError: undefined });
     }
 
     public async loadBriefing(opts: { keepRefreshError?: boolean } = {}): Promise<void> {
@@ -5017,23 +5034,43 @@ export class MatronJournalClient {
 
     // ── Journal-synced archive (src/journal/server-archive.ts) ──────────────
 
-    /** POST /archive for one Archive/Unarchive tap; a failure puts the row back and says so. */
+    /**
+     * POST /archive for an Archive/Unarchive tap. Writes for one conversation go one at a time and
+     * always carry the latest choice, so the journal ends where the user did. A refusal puts the row
+     * back only while that refused state is still the user's latest choice.
+     */
     private async sendArchive(conversationId: string, archived: boolean): Promise<void> {
+        this.archiveWanted.set(conversationId, archived);
+        if (this.archiveSending.has(conversationId)) return;
         const api = this.api;
         const session = this.state.session;
         if (!api || !session) return;
+        this.archiveSending.add(conversationId);
         try {
-            await api.setArchived([conversationId], archived);
-        } catch (error) {
-            if (this.api !== api || this.state.session !== session) return;
-            this.writeArchivedIds(
-                applyArchiveChanges(this.state.archivedIds, [
-                    { convo_id: conversationId, archived_at: archived ? null : 0, auto: false },
-                ]),
-            );
-            this.patch({
-                controlError: `Couldn't ${archived ? "archive" : "unarchive"}: ${errorMessage(error)}`,
-            });
+            let sent: boolean | undefined;
+            while (this.archiveWanted.get(conversationId) !== sent) {
+                const want = this.archiveWanted.get(conversationId)!;
+                try {
+                    await api.setArchived([conversationId], want);
+                    sent = want;
+                } catch (error) {
+                    if (this.api !== api || this.state.session !== session) return;
+                    if (this.archiveWanted.get(conversationId) !== want) continue;
+                    this.archiveWanted.delete(conversationId);
+                    this.writeArchivedIds(
+                        applyArchiveChanges(this.state.archivedIds, [
+                            { convo_id: conversationId, archived_at: want ? null : 0, auto: false },
+                        ]),
+                    );
+                    this.patch({
+                        controlError: `Couldn't ${want ? "archive" : "unarchive"}: ${errorMessage(error)}`,
+                    });
+                    return;
+                }
+            }
+            this.archiveWanted.delete(conversationId);
+        } finally {
+            this.archiveSending.delete(conversationId);
         }
     }
 
@@ -5047,6 +5084,9 @@ export class MatronJournalClient {
         const delta = parseArchiveDelta(hello.archive);
         const session = this.state.session;
         const api = this.api;
+        // A journal that does not answer archive_since (older, or rolled back) keeps the
+        // browser-local archive; the stored cursor stays for when it syncs again.
+        if (!delta) this.archiveOnJournal = false;
         if (!delta || !session || !api) return;
         this.archiveOnJournal = true;
         if (readArchiveSince(session) !== undefined) {
@@ -5056,7 +5096,7 @@ export class MatronJournalClient {
         const onJournal = applyArchiveChanges(new Set<string>(), delta.changes);
         const local = archiveStore.read(session);
         const toImport = local.ok ? [...local.ids].filter((id) => !onJournal.has(id)) : [];
-        this.writeArchivedIds(new Set([...onJournal, ...toImport]));
+        if (!this.writeArchivedIds(new Set([...onJournal, ...toImport]))) return;
         try {
             for (const batch of archiveBatches(toImport)) await api.setArchived(batch, true);
         } catch {
@@ -5071,25 +5111,30 @@ export class MatronJournalClient {
         if (!session) return;
         this.archiveOnJournal = true;
         const next = applyArchiveChanges(this.state.archivedIds, delta.changes);
-        if (next !== this.state.archivedIds) this.writeArchivedIds(next);
+        // The cursor only moves once the set it describes is saved, so a reload never skips a change.
+        if (next !== this.state.archivedIds && !this.writeArchivedIds(next)) return;
         const since = readArchiveSince(session);
         if (since !== undefined && delta.at > since) writeArchiveSince(session, delta.at);
     }
 
-    /** Adopt an archived set from the journal: saved in this browser and shown at once. */
-    private writeArchivedIds(next: Set<string>): void {
+    /** Adopt an archived set from the journal: shown at once, and saved in this browser. Returns
+     *  whether it was saved. */
+    private writeArchivedIds(next: Set<string>): boolean {
         const session = this.state.session;
-        if (!session) return;
+        if (!session) return false;
+        let saved = true;
         try {
             archiveStore.write(session, next);
             this.storeWritable.archive = true;
         } catch {
+            saved = false;
             this.storeWritable.archive = false;
             this.logStorageDiag("write_fail", "archive", false);
         }
         this.patch({ archivedIds: next, preferencesUnavailable: this.storageUnavailable("archive") });
         const selected = this.state.selectedConversationId;
         if (selected && next.has(selected)) this.clearSelection();
+        return saved;
     }
 
     private setFlag(

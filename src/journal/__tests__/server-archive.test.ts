@@ -155,4 +155,65 @@ describe("journal-synced archive in the client", () => {
         expect([...i.state.archivedIds]).toEqual(["x"]);
         expect(i.state.controlError).toMatch(/Couldn't unarchive/);
     });
+
+    it("sends taps on one conversation one at a time, ending on the latest choice", async () => {
+        writeArchiveSince(SESSION, 1);
+        const { c, i } = client([]);
+        i.archiveOnJournal = true;
+        const calls: boolean[] = [];
+        let release!: () => void;
+        i.api.setArchived.mockImplementation(async (_ids: string[], archived: boolean) => {
+            calls.push(archived);
+            if (calls.length === 1) await new Promise<void>((resolve) => (release = resolve));
+            return { changes: [] };
+        });
+        c.archiveConversation("x");
+        c.unarchiveConversation("x");
+        c.archiveConversation("x");
+        c.unarchiveConversation("x");
+        expect(calls).toEqual([true]);
+        release();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(calls).toEqual([true, false]);
+        expect([...i.state.archivedIds]).toEqual([]);
+    });
+
+    it("a refused write does not undo a newer choice", async () => {
+        writeArchiveSince(SESSION, 1);
+        const { c, i } = client([]);
+        i.archiveOnJournal = true;
+        let fail!: (e: Error) => void;
+        i.api.setArchived
+            .mockImplementationOnce(() => new Promise((_resolve, reject) => (fail = reject)))
+            .mockResolvedValue({ changes: [] });
+        c.archiveConversation("x");
+        c.unarchiveConversation("x");
+        fail(new Error("nope"));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect([...i.state.archivedIds]).toEqual([]);
+        expect(i.state.controlError).toBeUndefined();
+        expect(i.api.setArchived).toHaveBeenLastCalledWith(["x"], false);
+    });
+
+    it("an archive-less hello_ok turns journal sync off again", async () => {
+        writeArchiveSince(SESSION, 5);
+        const { c, i } = client([]);
+        i.archiveOnJournal = true;
+        await i.applyHelloArchive(hello(undefined));
+        expect(i.archiveOnJournal).toBe(false);
+        c.archiveConversation("y");
+        expect(i.api.setArchived).not.toHaveBeenCalled();
+        expect(readArchiveSince(SESSION)).toBe(5);
+    });
+
+    it("does not advance the cursor when the archived set cannot be saved", async () => {
+        writeArchiveSince(SESSION, 10);
+        const { i } = client([]);
+        const write = jest.spyOn(archiveStore, "write").mockImplementation(() => {
+            throw new Error("quota");
+        });
+        await i.handleFrame({ kind: "archive", changes: [{ convo_id: "b", archived_at: 30, auto: true }], at: 30 });
+        write.mockRestore();
+        expect(readArchiveSince(SESSION)).toBe(10);
+    });
 });

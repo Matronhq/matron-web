@@ -689,6 +689,7 @@ export function SettingsSheet({
     notices,
     noticesError,
     autoArchiveDays,
+    autoArchiveError,
     onAutoArchiveChange,
     onLoadSettings,
     onNoticesChange,
@@ -706,6 +707,8 @@ export function SettingsSheet({
     noticesError?: string;
     /** Days before an idle chat is archived (0 = off); undefined hides the row (an older journal). */
     autoArchiveDays?: number;
+    /** The last failed save of the auto-archive setting. */
+    autoArchiveError?: string;
     onAutoArchiveChange?: (days: number) => void;
     /** Fetch the settings (on open). */
     onLoadSettings?: () => void;
@@ -909,6 +912,11 @@ export function SettingsSheet({
                             Chats with no activity move to Archived. Pinned chats, running sessions and chats with open
                             missions or items stay. A new message brings a chat back.
                         </p>
+                        {autoArchiveError ? (
+                            <p className="mj_SettingsSheet_error" role="alert">
+                                Couldn't save: {autoArchiveError}
+                            </p>
+                        ) : null}
                     </section>
                 ) : null}
                 <button type="button" className="mj_SettingsSheet_signOut" data-action="sign-out" onClick={onSignOut}>
