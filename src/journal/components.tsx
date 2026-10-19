@@ -7110,10 +7110,12 @@ function Composer({
             sendingConvos.current.delete(cid);
         }
     };
+    // While the microphone is starting, a send would post the text alone and leave the note to follow
+    // without it; once it records, the recording bar's stop-and-send is the one send, the text with it.
     const send = async (): Promise<void> => {
         const cid = convoIdRef.current;
         const submitted = body;
-        if (!cid || sendingConvos.current.has(cid)) return;
+        if (!cid || sendingConvos.current.has(cid) || voiceState === "requesting") return;
         if ((client.getSnapshot().composerAttachments[cid] ?? []).length > 0) {
             await sendStaged(cid, submitted);
             return;
@@ -7316,7 +7318,7 @@ function Composer({
                             <button
                                 className="mj_ComposerSend"
                                 type="button"
-                                disabled={trayHeld}
+                                disabled={trayHeld || voiceState === "requesting"}
                                 onClick={() => void send()}
                                 aria-label="Send message"
                             >

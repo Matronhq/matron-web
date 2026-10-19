@@ -762,10 +762,12 @@ export function ItemDetail({
     // Send then retries exactly what is left: the failed comment again as the same files, and each
     // comment keeps its key across retries of the same draft so the server can dedupe an
     // ambiguous-delivery replay (F1).
+    // While the microphone is starting for this box, a send would post the text alone and leave the
+    // note to follow as a comment of its own; the recording bar's stop-and-send is the one send then.
     const send = async (): Promise<void> => {
         const body = reply.trim();
         const files = staged;
-        if ((!body && files.length === 0) || busy) return;
+        if ((!body && files.length === 0) || busy || voice.voiceState === "requesting") return;
         setBusy(true);
         setReplyFailure(null);
         try {
@@ -1300,7 +1302,9 @@ export function ItemDetail({
                             type="button"
                             className="mj_TrackerComposer_send"
                             aria-label="Send reply"
-                            disabled={(!reply.trim() && staged.length === 0) || busy}
+                            disabled={
+                                (!reply.trim() && staged.length === 0) || busy || voice.voiceState === "requesting"
+                            }
                             onClick={() => void send()}
                         >
                             <SendIcon />
