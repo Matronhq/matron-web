@@ -2789,7 +2789,8 @@ textarea {
 }
 
 /* §10.4 native text input: explicit background/colour/border in BOTH themes. */
-.mj_NewSessionSheet input[type="text"] {
+.mj_NewSessionSheet input[type="text"],
+.mj_NewSessionSheet input[type="password"] {
     display: block;
     width: 100%;
     min-height: 34px;
@@ -2807,7 +2808,9 @@ textarea {
 }
 
 .mj_NewSessionSheet input[type="text"]:focus,
-.mj_NewSessionSheet input[type="text"]:focus-visible {
+.mj_NewSessionSheet input[type="text"]:focus-visible,
+.mj_NewSessionSheet input[type="password"]:focus,
+.mj_NewSessionSheet input[type="password"]:focus-visible {
     border-color: var(--mj-color-border-interactive-primary);
     outline: none;
 }

@@ -13,6 +13,8 @@ Please see LICENSE files in the repository root for full details.
  * bridge applies to a chat started without a choice of its own.
  * Boxes holds each agent box's own defaults (journal PUT /devices/:id/defaults): the agent, model
  * and effort a session started there gets when nobody names them.
+ * Security (TwoFactor.tsx): two-factor sign-in with an authenticator app — set up, new recovery
+ * codes, move to a new app, turn off, and (admins) require it for everyone.
  * Devices (DevicesSettings.tsx) is the Mac's Devices tab: rename, tag and revoke each device, and
  * the Add Agent and Link a Device pairing flows.
  *
@@ -32,6 +34,7 @@ import React, { useEffect, useRef, useState, useSyncExternalStore } from "react"
 
 import type { MatronJournalClient } from "./client";
 import { DevicesSettings } from "./DevicesSettings";
+import { SecuritySettings } from "./TwoFactor";
 import {
     activeOverrides,
     convoNotifyState,
@@ -840,6 +843,7 @@ export function SettingsSheet({
                         ))}
                     </div>
                 </section>
+                <SecuritySettings client={client} />
                 <DevicesSettings client={client} session={session} />
                 <DesktopNotifications client={client} />
                 <NewChatDefaults client={client} />

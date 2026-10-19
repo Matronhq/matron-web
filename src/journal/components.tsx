@@ -51,9 +51,11 @@ import {
     errorMessage,
     type MatronJournalClient,
     PREFERENCES_UNAVAILABLE_ERROR,
+    type TwoFactorChallenge,
     workerKind,
 } from "./client";
 import { copyText } from "./clipboard";
+import { TwoFactorSignIn } from "./TwoFactor";
 import { type DraftStore, makeDraftStore } from "./composer-drafts";
 import { SentMessageHistory } from "./sent-history";
 import { effectiveUnread } from "./conversation-flags";
@@ -476,6 +478,8 @@ function LoginScreen({ client, state }: { client: MatronJournalClient; state: Cl
     const [password, setPassword] = useState("");
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState(state.connectionError);
+    // Set after a right password on a two-factor account: the code step replaces the form.
+    const [challenge, setChallenge] = useState<TwoFactorChallenge>();
 
     const effectiveServer = fixedServer ?? server;
     const canSubmit = !busy && effectiveServer.trim() !== "" && username.trim() !== "" && password !== "";
@@ -487,7 +491,11 @@ function LoginScreen({ client, state }: { client: MatronJournalClient; state: Cl
         setBusy(true);
         setError(undefined);
         try {
-            await client.login(effectiveServer, username, password);
+            const next = await client.login(effectiveServer, username, password);
+            if (next) {
+                setPassword("");
+                setChallenge(next);
+            }
         } catch (loginError) {
             setError(errorMessage(loginError));
         } finally {
@@ -501,60 +509,71 @@ function LoginScreen({ client, state }: { client: MatronJournalClient; state: Cl
                 <img className="mj_Login_logo" src={matronLogo} alt={brand} />
                 <h1 className="mj_Login_title">Sign in to {brand}</h1>
                 {fixedServer && <p className="mj_LoginServerNote">Signing in to {hostLabel(fixedServer)}</p>}
-                <form className="mj_LoginForm" onSubmit={(event) => void submit(event)}>
-                    {!fixedServer && (
-                        <label className="mj_LoginField" htmlFor="mj_LoginForm_server">
-                            <span className="mj_LoginField_label">Server</span>
+                {challenge ? (
+                    <TwoFactorSignIn
+                        client={client}
+                        challenge={challenge}
+                        onBack={(message) => {
+                            setChallenge(undefined);
+                            setError(message);
+                        }}
+                    />
+                ) : (
+                    <form className="mj_LoginForm" onSubmit={(event) => void submit(event)}>
+                        {!fixedServer && (
+                            <label className="mj_LoginField" htmlFor="mj_LoginForm_server">
+                                <span className="mj_LoginField_label">Server</span>
+                                <input
+                                    id="mj_LoginForm_server"
+                                    type="text"
+                                    inputMode="url"
+                                    value={server}
+                                    onChange={(event) => setServer(event.target.value)}
+                                    placeholder="https://your-server.example.com"
+                                    autoComplete="url"
+                                    autoCorrect="off"
+                                    autoCapitalize="none"
+                                    required
+                                    autoFocus
+                                />
+                            </label>
+                        )}
+                        <label className="mj_LoginField" htmlFor="mj_LoginForm_username">
+                            <span className="mj_LoginField_label">Username</span>
                             <input
-                                id="mj_LoginForm_server"
+                                id="mj_LoginForm_username"
                                 type="text"
-                                inputMode="url"
-                                value={server}
-                                onChange={(event) => setServer(event.target.value)}
-                                placeholder="https://your-server.example.com"
-                                autoComplete="url"
+                                value={username}
+                                onChange={(event) => setUsername(event.target.value)}
+                                placeholder="alice"
+                                autoComplete="username"
                                 autoCorrect="off"
                                 autoCapitalize="none"
                                 required
-                                autoFocus
+                                autoFocus={Boolean(fixedServer)}
                             />
                         </label>
-                    )}
-                    <label className="mj_LoginField" htmlFor="mj_LoginForm_username">
-                        <span className="mj_LoginField_label">Username</span>
-                        <input
-                            id="mj_LoginForm_username"
-                            type="text"
-                            value={username}
-                            onChange={(event) => setUsername(event.target.value)}
-                            placeholder="alice"
-                            autoComplete="username"
-                            autoCorrect="off"
-                            autoCapitalize="none"
-                            required
-                            autoFocus={Boolean(fixedServer)}
-                        />
-                    </label>
-                    <label className="mj_LoginField" htmlFor="mj_LoginForm_password">
-                        <span className="mj_LoginField_label">Password</span>
-                        <input
-                            id="mj_LoginForm_password"
-                            type="password"
-                            value={password}
-                            onChange={(event) => setPassword(event.target.value)}
-                            autoComplete="current-password"
-                            required
-                        />
-                    </label>
-                    {error && (
-                        <div className="mj_Error mj_Login_error" role="alert">
-                            {error}
-                        </div>
-                    )}
-                    <button className="mj_LoginSubmit" type="submit" disabled={!canSubmit}>
-                        {busy ? "Signing in…" : "Sign in"}
-                    </button>
-                </form>
+                        <label className="mj_LoginField" htmlFor="mj_LoginForm_password">
+                            <span className="mj_LoginField_label">Password</span>
+                            <input
+                                id="mj_LoginForm_password"
+                                type="password"
+                                value={password}
+                                onChange={(event) => setPassword(event.target.value)}
+                                autoComplete="current-password"
+                                required
+                            />
+                        </label>
+                        {error && (
+                            <div className="mj_Error mj_Login_error" role="alert">
+                                {error}
+                            </div>
+                        )}
+                        <button className="mj_LoginSubmit" type="submit" disabled={!canSubmit}>
+                            {busy ? "Signing in…" : "Sign in"}
+                        </button>
+                    </form>
+                )}
                 {state.config.privacy_policy_url && (
                     <a
                         className="mj_PrivacyLink"
