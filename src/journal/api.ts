@@ -20,6 +20,9 @@ import {
     type LinkStatus,
     type PairPreview,
     type LoginResponse,
+    type TwoFactorLoginResponse,
+    type TwoFactorSetup,
+    type TwoFactorStatus,
     type MatronConfig,
     type MessagesResponse,
     type ConversationMissionLink,
@@ -382,6 +385,18 @@ export function knownErrorMessage(code: string | undefined): string | undefined 
     switch (code) {
         case "bad_credentials":
             return "The username or password is incorrect.";
+        case "bad_password":
+            return "That password is incorrect.";
+        case "bad_code":
+            return "That code didn't work. Check your authenticator app and try again.";
+        case "two_factor_ticket_invalid":
+            return "Sign-in timed out. Enter your password again.";
+        case "two_factor_unavailable":
+            return "This server isn't set up for two-factor sign-in.";
+        case "no_pending_setup":
+            return "That setup expired. Start again.";
+        case "two_factor_required":
+            return "This server requires two-factor sign-in, so it can't be turned off.";
         case "locked_out":
             return "Too many failed attempts. Try again later.";
         case "rate_limited":
@@ -427,6 +442,68 @@ export class JournalApi {
             authenticated: false,
             body: { username, password, device_name: deviceName },
         });
+    }
+
+    /** POST /login/2fa: trade the sign-in ticket from /login and a code for a token. */
+    public loginTwoFactor(ticket: string, code: string): Promise<TwoFactorLoginResponse> {
+        return this.json<TwoFactorLoginResponse>("/login/2fa", {
+            method: "POST",
+            authenticated: false,
+            body: { ticket, code },
+        });
+    }
+
+    /** POST /login/2fa/setup: a new secret for a user who must enrol before signing in. */
+    public loginTwoFactorSetup(ticket: string): Promise<TwoFactorSetup> {
+        return this.json<TwoFactorSetup>("/login/2fa/setup", {
+            method: "POST",
+            authenticated: false,
+            body: { ticket },
+        });
+    }
+
+    /** POST /login/2fa/enable: confirm that enrolment with a code; returns the token and recovery codes. */
+    public loginTwoFactorEnable(ticket: string, code: string): Promise<LoginResponse & { recovery_codes: string[] }> {
+        return this.json<LoginResponse & { recovery_codes: string[] }>("/login/2fa/enable", {
+            method: "POST",
+            authenticated: false,
+            body: { ticket, code },
+        });
+    }
+
+    public twoFactorStatus(): Promise<TwoFactorStatus> {
+        return this.json<TwoFactorStatus>("/2fa");
+    }
+
+    public twoFactorSetup(password: string, code?: string): Promise<TwoFactorSetup> {
+        return this.json<TwoFactorSetup>("/2fa/setup", {
+            method: "POST",
+            body: code === undefined ? { password } : { password, code },
+        });
+    }
+
+    public twoFactorEnable(
+        code: string,
+        signOutOthers: boolean,
+    ): Promise<{ recovery_codes: string[]; signed_out: number }> {
+        return this.json("/2fa/enable", { method: "POST", body: { code, sign_out_others: signOutOthers } });
+    }
+
+    public async twoFactorDisable(password: string, code: string): Promise<void> {
+        await this.json<unknown>("/2fa/disable", { method: "POST", body: { password, code } });
+    }
+
+    public twoFactorRecoveryCodes(password: string, code: string): Promise<{ recovery_codes: string[] }> {
+        return this.json("/2fa/recovery-codes", { method: "POST", body: { password, code } });
+    }
+
+    public twoFactorPolicy(required: boolean): Promise<{ required: boolean }> {
+        return this.json("/2fa/policy", { method: "PUT", body: { required } });
+    }
+
+    /** GET /me: who this device belongs to (for the admin-only parts of Settings). */
+    public me(): Promise<{ user: { id: number; name: string; is_admin: boolean } }> {
+        return this.json("/me");
     }
 
     public snapshot(signal?: AbortSignal): Promise<SnapshotResponse> {

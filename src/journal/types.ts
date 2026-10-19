@@ -41,6 +41,29 @@ export interface LoginResponse {
     user_id: number;
 }
 
+/** POST /login/2fa: the token, and whether a recovery code was spent to get it. */
+export interface TwoFactorLoginResponse extends LoginResponse {
+    used_recovery_code: boolean;
+    recovery_codes_left: number;
+}
+
+/** POST /2fa/setup and /login/2fa/setup: the new secret, as text and as an otpauth:// URI for the QR. */
+export interface TwoFactorSetup {
+    secret: string;
+    otpauth_uri: string;
+    issuer: string;
+    account: string;
+}
+
+/** GET /2fa. `available` is false on a server that cannot store two-factor secrets. */
+export interface TwoFactorStatus {
+    enabled: boolean;
+    enabled_at: number | null;
+    recovery_codes_left: number;
+    required: boolean;
+    available: boolean;
+}
+
 // A box's last capacity report (protocol.md "Box status (`box_status`)"): served as `status`
 // on GET /devices for agent devices that have ever reported, and pushed live to client sockets
 // as `{kind:'box_status', device_id, reported_at, ...blocks}`. Every block is optional — the

@@ -80,7 +80,7 @@ function useMounted(): React.RefObject<boolean> {
  * phase on window so the Settings sheet underneath (which listens on document) neither closes nor
  * pulls focus back into itself; focus returns to the opener on close.
  */
-function DeviceSheet({
+export function DeviceSheet({
     id,
     title,
     className,
@@ -121,7 +121,7 @@ function DeviceSheet({
             event.stopPropagation();
             const focusable = [
                 ...formRef.current.querySelectorAll<HTMLElement>(
-                    "button:not([disabled]), input:not([disabled]), select:not([disabled])",
+                    "button:not([disabled]), input:not([disabled]), select:not([disabled]), a[href]",
                 ),
             ];
             if (focusable.length === 0) return;
@@ -725,7 +725,15 @@ function loadQrFactory(): Promise<QrFactory> {
 }
 
 /** A QR code as an SVG of dark modules on a light quiet zone (readable in either theme). */
-export function QrCode({ value, size = 200 }: { value: string; size?: number }): React.ReactElement {
+export function QrCode({
+    value,
+    size = 200,
+    label = "Sign-in QR code",
+}: {
+    value: string;
+    size?: number;
+    label?: string;
+}): React.ReactElement {
     const [factory, setFactory] = useState<QrFactory>();
     useEffect(() => {
         let live = true;
@@ -763,7 +771,7 @@ export function QrCode({ value, size = 200 }: { value: string; size?: number }):
             height={size}
             shapeRendering="crispEdges"
             role="img"
-            aria-label="Sign-in QR code"
+            aria-label={label}
         >
             <rect width={full} height={full} fill="#fff" />
             <path d={path} fill="#000" />

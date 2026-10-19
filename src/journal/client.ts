@@ -123,9 +123,30 @@ import {
     trimUtf8Prefix,
     type UserDefaultKey,
     type UserDefaults,
+    type LoginResponse,
     type ToolStreamState,
+    type TwoFactorSetup,
+    type TwoFactorStatus,
     utf8Length,
 } from "./types";
+
+/**
+ * What a right password gets a two-factor user instead of a session: a five-minute sign-in
+ * ticket. `code` asks for a code from their authenticator app (or a recovery code); `enrol` means
+ * the server requires two-factor and this user must set it up before signing in.
+ */
+export interface TwoFactorChallenge {
+    kind: "code" | "enrol";
+    serverUrl: string;
+    username: string;
+    ticket: string;
+}
+
+/** A sign-in that is done on the server but held back so the screen can show something first. */
+export interface HeldSignIn {
+    /** Store the session and open the app. */
+    finish: () => Promise<void>;
+}
 
 const SESSION_KEY = "matron_journal_session_v1";
 const LAST_SERVER_KEY = "matron_journal_last_server";
@@ -348,6 +369,16 @@ export function workerKind(conversation: Conversation): WorkerKind | null {
     if (/:codex:[^:]+$/.test(conversation.id)) return "codex";
     if (/:sub:[^:]+$/.test(conversation.id)) return "claude";
     return null;
+}
+
+/** The two-factor step a /login refusal asks for, or undefined for any other failure. */
+function twoFactorChallengeFrom(error: unknown, serverUrl: string, username: string): TwoFactorChallenge | undefined {
+    if (!(error instanceof JournalApiError) || error.status !== 401) return undefined;
+    const ticket = error.body?.two_factor_ticket;
+    if (typeof ticket !== "string" || !ticket) return undefined;
+    if (error.code === "two_factor_required") return { kind: "code", serverUrl, username, ticket };
+    if (error.code === "two_factor_enrolment_required") return { kind: "enrol", serverUrl, username, ticket };
+    return undefined;
 }
 
 function deviceName(): string {
@@ -814,16 +845,64 @@ export class MatronJournalClient {
         return this.state.config.journal_server_url || localStorage.getItem(LAST_SERVER_KEY) || "";
     }
 
-    public async login(serverInput: string, username: string, password: string): Promise<void> {
+    /**
+     * Sign in with a password. Resolves with nothing once signed in, or with a challenge when the
+     * account has two-factor on (or must set it up): the sign-in screen then asks for a code.
+     */
+    public async login(serverInput: string, username: string, password: string): Promise<TwoFactorChallenge | void> {
         const serverUrl = normalizeServerUrl(serverInput);
         const api = new JournalApi(serverUrl);
-        const response = await api.login(username.trim(), password, deviceName());
+        let response: LoginResponse;
+        try {
+            response = await api.login(username.trim(), password, deviceName());
+        } catch (error) {
+            const challenge = twoFactorChallengeFrom(error, serverUrl, username.trim());
+            if (challenge) return challenge;
+            throw error;
+        }
+        await this.finishLogin(serverUrl, username.trim(), response);
+    }
+
+    /**
+     * The code step: a 6-digit code or a recovery code for the challenge's ticket. When a recovery
+     * code was spent the sign-in is held so the screen can say how many are left.
+     */
+    public async loginWithCode(
+        challenge: TwoFactorChallenge,
+        code: string,
+    ): Promise<{ usedRecoveryCode: boolean; recoveryCodesLeft: number } & HeldSignIn> {
+        const response = await new JournalApi(challenge.serverUrl).loginTwoFactor(challenge.ticket, code.trim());
+        return {
+            usedRecoveryCode: response.used_recovery_code === true,
+            recoveryCodesLeft: response.recovery_codes_left,
+            finish: () => this.finishLogin(challenge.serverUrl, challenge.username, response),
+        };
+    }
+
+    /** Enrolment at sign-in: the new secret to show as a QR code. */
+    public loginTwoFactorSetup(challenge: TwoFactorChallenge): Promise<TwoFactorSetup> {
+        return new JournalApi(challenge.serverUrl).loginTwoFactorSetup(challenge.ticket);
+    }
+
+    /** Enrolment at sign-in, confirmed with a code. Held until the recovery codes have been shown. */
+    public async loginTwoFactorEnable(
+        challenge: TwoFactorChallenge,
+        code: string,
+    ): Promise<{ recoveryCodes: string[] } & HeldSignIn> {
+        const response = await new JournalApi(challenge.serverUrl).loginTwoFactorEnable(challenge.ticket, code.trim());
+        return {
+            recoveryCodes: response.recovery_codes,
+            finish: () => this.finishLogin(challenge.serverUrl, challenge.username, response),
+        };
+    }
+
+    private async finishLogin(serverUrl: string, username: string, response: LoginResponse): Promise<void> {
         const session: Session = {
             serverUrl,
             token: response.token,
             deviceId: response.device_id,
             userId: response.user_id,
-            username: username.trim(),
+            username,
         };
         localStorage.setItem(SESSION_KEY, JSON.stringify(session));
         localStorage.setItem(LAST_SERVER_KEY, serverUrl);
@@ -3459,6 +3538,40 @@ export class MatronJournalClient {
     private deviceAdminApi(): JournalApi {
         if (!this.api) throw new JournalApiError("Not signed in.", 401, "unauthenticated");
         return this.api;
+    }
+
+    // ── Settings → Security (journal /2fa) ──────────────────────────────────────────────────
+
+    public twoFactorStatus(): Promise<TwoFactorStatus> {
+        return this.deviceAdminApi().twoFactorStatus();
+    }
+
+    public twoFactorSetup(password: string, code?: string): Promise<TwoFactorSetup> {
+        return this.deviceAdminApi().twoFactorSetup(password, code);
+    }
+
+    public twoFactorEnable(
+        code: string,
+        signOutOthers: boolean,
+    ): Promise<{ recovery_codes: string[]; signed_out: number }> {
+        return this.deviceAdminApi().twoFactorEnable(code.trim(), signOutOthers);
+    }
+
+    public twoFactorDisable(password: string, code: string): Promise<void> {
+        return this.deviceAdminApi().twoFactorDisable(password, code.trim());
+    }
+
+    public twoFactorRecoveryCodes(password: string, code: string): Promise<{ recovery_codes: string[] }> {
+        return this.deviceAdminApi().twoFactorRecoveryCodes(password, code.trim());
+    }
+
+    public twoFactorPolicy(required: boolean): Promise<{ required: boolean }> {
+        return this.deviceAdminApi().twoFactorPolicy(required);
+    }
+
+    /** Whether this account is a journal admin (GET /me). */
+    public async isAdmin(): Promise<boolean> {
+        return (await this.deviceAdminApi().me()).user.is_admin === true;
     }
 
     /** GET /devices: every device on the account, this one included. */
