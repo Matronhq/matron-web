@@ -22,6 +22,7 @@ type CoordinatorChooserProps = ComponentProps<typeof import("./CoordinatorSheets
 type RoutinesSheetProps = ComponentProps<typeof import("./CoordinatorSheets").RoutinesSheet>;
 type ChatTasksPaneProps = ComponentProps<typeof import("./tracker/ChatTasksPane").ChatTasksPane>;
 type TrackerPaneProps = ComponentProps<typeof import("./tracker/TrackerPane").TrackerPane>;
+type TwoFactorSignInProps = ComponentProps<typeof import("./TwoFactor").TwoFactorSignIn>;
 
 /** Same as the tasks pane's own: below this width it covers the chat. */
 const CHAT_TASKS_OVERLAY_QUERY = "(max-width: 700px)";
@@ -189,3 +190,27 @@ export function TrackerFrame({ close, failed }: { close: () => void; failed: boo
         </div>
     );
 }
+
+/**
+ * The sign-in screen's code step. Only two-factor accounts reach it, so it stays out of the first
+ * download; the screen starts fetching it when the password is submitted.
+ */
+export const TwoFactorSignIn = deferred<TwoFactorSignInProps>(
+    () => import("./TwoFactor").then((module) => module.TwoFactorSignIn),
+    (props, failed) => (
+        <div className="mj_LoginForm mj_TwoFactorStep" aria-busy={!failed}>
+            {failed ? (
+                <div className="mj_Error mj_Login_error" role="alert">
+                    {LOAD_FAILED}
+                </div>
+            ) : (
+                <p className="mj_TwoFactorStep_text" role="status">
+                    Loading…
+                </p>
+            )}
+            <button className="mj_TwoFactorStep_back" type="button" onClick={() => props.onBack()}>
+                Back
+            </button>
+        </div>
+    ),
+);

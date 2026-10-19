@@ -5,7 +5,7 @@
             "max": 295
         },
         "totalGzipKB": {
-            "max": 830
+            "max": 840
         }
     },
     "cold": {

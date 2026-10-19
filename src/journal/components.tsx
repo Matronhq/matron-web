@@ -55,7 +55,6 @@ import {
     workerKind,
 } from "./client";
 import { copyText } from "./clipboard";
-import { TwoFactorSignIn } from "./TwoFactor";
 import { type DraftStore, makeDraftStore } from "./composer-drafts";
 import { SentMessageHistory } from "./sent-history";
 import { effectiveUnread } from "./conversation-flags";
@@ -76,7 +75,14 @@ import {
     type SystemNotice,
 } from "./system-notice";
 import { dateTimeFormat } from "./date-format";
-import { ChatTasksPane, CoordinatorChooserSheet, RoutinesSheet, SettingsSheet, TrackerPane } from "./deferred-ui";
+import {
+    ChatTasksPane,
+    CoordinatorChooserSheet,
+    RoutinesSheet,
+    SettingsSheet,
+    TrackerPane,
+    TwoFactorSignIn,
+} from "./deferred-ui";
 import { FOCUS_HIGHLIGHT_MS, focusScrollTop, jumpToLastOwnShortcutLabel, landingSeq } from "./jump-to-message";
 import { FindInChatBar, useFindInChatShortcut } from "./find-in-chat";
 import { GoToNumberDialog, goToNumberShortcutLabel, NumberSearchResult, useGoToNumberShortcut } from "./goto-number";
@@ -490,6 +496,8 @@ function LoginScreen({ client, state }: { client: MatronJournalClient; state: Cl
         if (!canSubmit) return;
         setBusy(true);
         setError(undefined);
+        // Fetched alongside the request, so a two-factor account's code step is ready when it is.
+        TwoFactorSignIn.preload().catch(() => undefined);
         try {
             const next = await client.login(effectiveServer, username, password);
             if (next) {
