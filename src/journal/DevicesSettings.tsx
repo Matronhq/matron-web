@@ -121,7 +121,7 @@ export function DeviceSheet({
             event.stopPropagation();
             const focusable = [
                 ...formRef.current.querySelectorAll<HTMLElement>(
-                    "button:not([disabled]), input:not([disabled]), select:not([disabled])",
+                    "button:not([disabled]), input:not([disabled]), select:not([disabled]), a[href]",
                 ),
             ];
             if (focusable.length === 0) return;

@@ -80,10 +80,13 @@ export function RecoveryCodes({
     codes,
     doneLabel,
     onDone,
+    busy = false,
 }: {
     codes: string[];
     doneLabel: string;
     onDone: () => void;
+    /** Done is pressed and its work is under way: the button stays disabled. */
+    busy?: boolean;
 }): React.ReactElement {
     const [saved, setSaved] = useState(false);
     const [copied, setCopied] = useState(false);
@@ -126,7 +129,7 @@ export function RecoveryCodes({
                 />
                 I&apos;ve saved these codes
             </label>
-            <button type="button" className="mj_RecoveryCodes_done" disabled={!saved} onClick={onDone}>
+            <button type="button" className="mj_RecoveryCodes_done" disabled={!saved || busy} onClick={onDone}>
                 {doneLabel}
             </button>
         </div>
@@ -167,6 +170,28 @@ function CodeInput({
     );
 }
 
+/**
+ * Finishing a held sign-in, once: a second press while the first is still opening the app would
+ * start a second session. A failure is shown and the button works again.
+ */
+function useFinish(): { finishing: boolean; error?: string; finish: (held: HeldSignIn) => void } {
+    const [finishing, setFinishing] = useState(false);
+    const [error, setError] = useState<string>();
+    const inFlight = useRef(false);
+    const finish = (held: HeldSignIn): void => {
+        if (inFlight.current) return;
+        inFlight.current = true;
+        setFinishing(true);
+        setError(undefined);
+        held.finish().catch((failure: unknown) => {
+            inFlight.current = false;
+            setFinishing(false);
+            setError(messageOf(failure));
+        });
+    };
+    return { finishing, error, finish };
+}
+
 // ── Sign-in step ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -202,6 +227,7 @@ function CodeStep({
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string>();
     const [held, setHeld] = useState<{ left: number } & HeldSignIn>();
+    const finishing = useFinish();
 
     const submit = async (event: React.FormEvent): Promise<void> => {
         event.preventDefault();
@@ -241,7 +267,17 @@ function CodeStep({
                     </strong>{" "}
                     left. Make a new set in Settings → Security.
                 </p>
-                <button className="mj_LoginSubmit" type="button" onClick={() => void held.finish()}>
+                {finishing.error && (
+                    <div className="mj_Error mj_Login_error" role="alert">
+                        {finishing.error}
+                    </div>
+                )}
+                <button
+                    className="mj_LoginSubmit"
+                    type="button"
+                    disabled={finishing.finishing}
+                    onClick={() => finishing.finish(held)}
+                >
                     Continue
                 </button>
             </div>
@@ -285,6 +321,7 @@ function EnrolStep({
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string>();
     const [held, setHeld] = useState<{ codes: string[] } & HeldSignIn>();
+    const finishing = useFinish();
     const onBackRef = useRef(onBack);
     onBackRef.current = onBack;
 
@@ -332,7 +369,17 @@ function EnrolStep({
                 <p className="mj_TwoFactorStep_text">
                     <strong>Two-factor sign-in is on.</strong>
                 </p>
-                <RecoveryCodes codes={held.codes} doneLabel="Continue" onDone={() => void held.finish()} />
+                <RecoveryCodes
+                    codes={held.codes}
+                    doneLabel="Continue"
+                    busy={finishing.finishing}
+                    onDone={() => finishing.finish(held)}
+                />
+                {finishing.error && (
+                    <div className="mj_Error mj_Login_error" role="alert">
+                        {finishing.error}
+                    </div>
+                )}
             </div>
         );
     }

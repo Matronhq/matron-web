@@ -317,3 +317,26 @@ describe("Settings → Security", () => {
         expect($("#mj-settings-security")).toBeNull();
     });
 });
+
+describe("held sign-ins", () => {
+    it("finishes once however often Continue is pressed", async () => {
+        const client = signedOutClient();
+        jest.spyOn(client, "login").mockResolvedValue(CHALLENGE);
+        let release: (() => void) | undefined;
+        const finish = jest.fn().mockImplementationOnce(() => new Promise<void>((resolve) => (release = resolve)));
+        jest.spyOn(client, "loginWithCode").mockResolvedValue({ usedRecoveryCode: true, recoveryCodesLeft: 4, finish });
+        await act(async () => root.render(<MatronApp client={client} />));
+        await act(async () => type($<HTMLInputElement>("#mj_LoginForm_username")!, "alice"));
+        await act(async () => type($<HTMLInputElement>("#mj_LoginForm_password")!, "hunter22"));
+        await submitForm($("form.mj_LoginForm"));
+        await act(async () => type($<HTMLInputElement>("#mj_LoginForm_code")!, "abcd-efgh-ijkl-mnop"));
+        await submitForm($("[data-two-factor-step=code]"));
+
+        const button = $<HTMLButtonElement>("[data-two-factor-step=recovery-used] button")!;
+        await click(button);
+        await click(button);
+        expect(finish).toHaveBeenCalledTimes(1);
+        expect(button.disabled).toBe(true);
+        await act(async () => release!());
+    });
+});
