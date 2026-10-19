@@ -479,7 +479,7 @@ export function SecuritySettings({ client }: { client: MatronJournalClient }): R
                                 New Recovery Codes…
                             </button>
                             <button type="button" data-action="two-factor-move" onClick={() => setDialog("move")}>
-                                Move to a New App…
+                                Change App…
                             </button>
                             {!status.required && (
                                 <button
@@ -533,7 +533,7 @@ export function SecuritySettings({ client }: { client: MatronJournalClient }): R
     );
 }
 
-/** Set Up… and Move to a New App…: password (and, moving, a code from the old app), QR, code, recovery codes. */
+/** Set Up… and Change App…: password (and, moving, a code from the old app), QR, code, recovery codes. */
 function SetupSheet({
     client,
     moving,
@@ -578,7 +578,7 @@ function SetupSheet({
         setBusy(false);
     };
 
-    const title = moving ? "Move to a New App" : "Set Up Two-Factor";
+    const title = moving ? "Change Authenticator App" : "Set Up Two-Factor";
     return (
         <DeviceSheet
             id="mj-two-factor-setup-title"
