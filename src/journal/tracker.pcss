@@ -643,6 +643,20 @@ button.mj_TrackerCrumb:hover {
     overflow-wrap: anywhere;
 }
 
+/* Links in tracker text take the same accent as chat's markdown (`.mj_Markdown a`). Without a
+   rule they fell back to the browser's default blue, which is unreadable on the dark theme. */
+.mj_TrackerProse a,
+.mj_TrackerMissionStatus_text a,
+.mj_HandoverBrief_body a {
+    color: var(--mj-color-text-action-accent);
+}
+
+.mj_TrackerProse a:hover,
+.mj_TrackerMissionStatus_text a:hover,
+.mj_HandoverBrief_body a:hover {
+    text-decoration: underline;
+}
+
 .mj_TrackerProse > :first-child {
     margin-top: 0;
 }
