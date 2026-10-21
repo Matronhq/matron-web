@@ -5358,9 +5358,20 @@ button.mj_File {
     color: inherit;
 }
 
-button.mj_TrackerAttachmentChip_preview {
+button.mj_TrackerAttachmentChip_preview,
+button.mj_TrackerAttachmentChip_download {
     border: 1px solid var(--mj-color-border-interactive-secondary);
     cursor: pointer;
+}
+
+button.mj_TrackerAttachmentChip_download:disabled {
+    cursor: progress;
+}
+
+.mj_TrackerAttachmentChip_icon {
+    width: 14px;
+    height: 14px;
+    flex: none;
 }
 
 @media (max-width: 700px) {
