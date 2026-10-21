@@ -9,12 +9,13 @@ Please see LICENSE files in the repository root for full details.
  * Attachments in a tracker item: the item body and each comment render as segments (text through
  * the markdown renderer, an inline `![caption](attachment:<ref>)` as the attachment in place), then
  * the attachments no ref placed. Images load through the client's authenticated blob cache and open
- * the media viewer lightbox on click; other files keep the name chip.
+ * the media viewer lightbox on click; other files are a name chip that downloads the file.
  */
 
 import React, { useEffect, useMemo, useState } from "react";
 
 import type { MatronJournalClient } from "../client";
+import { DownloadIcon } from "../icons";
 import { MarkdownBody } from "../markdown";
 import { isPreviewableMarkdown, useMarkdownPreview } from "../markdown-preview";
 import { type MediaItem, mediaRenderKind, useMediaViewer } from "../media-viewer";
@@ -85,9 +86,18 @@ export function buildTrackerMediaCorpus(item: TrackerItem, comments: readonly Tr
 /**
  * The name-and-size chip a non-image attachment renders as. A markdown file up to 2 MB is a button
  * that opens the side preview panel (where it can also be downloaded) when the app provides one.
+ * Any other file is a button that downloads it under its own name: a chip that only showed the
+ * name left no way to get the file at all.
  */
-export function AttachmentChip({ attachment }: { attachment: TrackerAttachment }): React.ReactElement {
+export function AttachmentChip({
+    client,
+    attachment,
+}: {
+    client?: MatronJournalClient;
+    attachment: TrackerAttachment;
+}): React.ReactElement {
     const markdownPreview = useMarkdownPreview();
+    const [state, setState] = useState<"idle" | "loading" | "failed">("idle");
     if (markdownPreview && isPreviewableMarkdown(attachment)) {
         return (
             <button
@@ -107,12 +117,54 @@ export function AttachmentChip({ attachment }: { attachment: TrackerAttachment }
             </button>
         );
     }
+    if (client) {
+        const download = async (): Promise<void> => {
+            setState("loading");
+            try {
+                saveBlobUrl(await client.mediaUrl(attachment.blob_ref), attachment.name || "attachment");
+                setState("idle");
+            } catch {
+                setState("failed");
+            }
+        };
+        return (
+            <button
+                type="button"
+                className="mj_TrackerAttachmentChip mj_TrackerAttachmentChip_download"
+                aria-label={`Download ${attachment.name || "attachment"}`}
+                title={`Download ${attachment.name || "attachment"}`}
+                disabled={state === "loading"}
+                onClick={() => void download()}
+            >
+                <DownloadIcon className="mj_TrackerAttachmentChip_icon" aria-hidden />
+                {attachment.name}
+                <span className="mj_TrackerAttachmentChip_size">
+                    {state === "loading"
+                        ? "Preparing download…"
+                        : state === "failed"
+                          ? "Couldn't download, try again"
+                          : humanizeSize(attachment.size)}
+                </span>
+            </button>
+        );
+    }
     return (
         <span className="mj_TrackerAttachmentChip">
             {attachment.name}
             <span className="mj_TrackerAttachmentChip_size">{humanizeSize(attachment.size)}</span>
         </span>
     );
+}
+
+/** Saves an object URL from the media cache as `filename`, through a transient download link. */
+export function saveBlobUrl(url: string, filename: string): void {
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    link.rel = "noopener";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
 }
 
 function useBlobUrl(client: MatronJournalClient, blobRef: string): { url?: string; failed: boolean } {
@@ -160,7 +212,7 @@ export function TrackerImage({
     if (failed || broken) {
         return (
             <span className="mj_TrackerImage_failed" role="note">
-                <AttachmentChip attachment={attachment} />
+                <AttachmentChip client={client} attachment={attachment} />
                 <span className="mj_TrackerImage_failedText">Image failed to load</span>
             </span>
         );
@@ -231,7 +283,7 @@ export function TrailingAttachments({
                 isImageAttachment(attachment) ? (
                     <TrackerImage key={attachment.blob_ref} client={client} attachment={attachment} variant="thumb" />
                 ) : (
-                    <AttachmentChip key={attachment.blob_ref} attachment={attachment} />
+                    <AttachmentChip key={attachment.blob_ref} client={client} attachment={attachment} />
                 ),
             )}
         </div>
@@ -281,7 +333,7 @@ export function InlineBody({
                             />
                         ) : (
                             <div key={`a${index}`} className="mj_TrackerAttachments">
-                                <AttachmentChip attachment={segment.attachment} />
+                                <AttachmentChip client={client} attachment={segment.attachment} />
                             </div>
                         ),
                     )}
