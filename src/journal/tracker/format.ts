@@ -279,6 +279,18 @@ export function humanizeSize(bytes: number): string {
 }
 
 /**
+ * A filename split for middle truncation: `head` may be cut with an ellipsis, `tail` (the last few
+ * characters of the stem and the extension) always shows, so "divider_4867x3071.png" narrows to
+ * "divid…3071.png" rather than losing its extension.
+ */
+export function splitFilenameForMiddleTruncation(name: string): { head: string; tail: string } {
+    const dot = name.lastIndexOf(".");
+    const extension = dot > 0 && name.length - dot <= 10 ? name.length - dot : 0;
+    const cut = Math.max(0, name.length - extension - 4);
+    return { head: name.slice(0, cut), tail: name.slice(cut) };
+}
+
+/**
  * A status line's byline: "Updated 12m ago by an agent" / "… by you", a week or more back
  * "Updated on <date> …". Null when the status carries no time; no "by" clause when the author is
  * unknown.

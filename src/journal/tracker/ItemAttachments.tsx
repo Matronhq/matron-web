@@ -29,7 +29,7 @@ import {
     type TrackerItem,
     type TrackerLinkHandler,
 } from "../types";
-import { humanizeSize } from "./format";
+import { humanizeSize, splitFilenameForMiddleTruncation } from "./format";
 import { splitInlineAttachments } from "./inline-attachments";
 
 export function isImageAttachment(attachment: TrackerAttachment): boolean {
@@ -189,9 +189,43 @@ function useBlobUrl(client: MatronJournalClient, blobRef: string): { url?: strin
 }
 
 /**
+ * The `name · size` line under an image in a thread. The name is truncated in the middle so the
+ * extension stays, the size never truncates, and the line is never wider than the image above it;
+ * the full name and size show on hover. `stacked` puts the size on its own line, for the narrow
+ * thumbnail tiles. Just the size when the attachment has no name, just the name when it has no size.
+ */
+export function ImageNameLine({
+    attachment,
+    stacked = false,
+}: {
+    attachment: TrackerAttachment;
+    stacked?: boolean;
+}): React.ReactElement | null {
+    const name = attachment.name?.trim() ?? "";
+    // A missing size arrives as 0: leave it out rather than claim "0 B".
+    const size = attachment.size > 0 ? humanizeSize(attachment.size) : "";
+    const { head, tail } = splitFilenameForMiddleTruncation(name);
+    const full = [name, size].filter(Boolean).join(" · ");
+    if (!full) return null;
+    return (
+        <span className={`mj_TrackerImageName${stacked ? " mj_TrackerImageName_stacked" : ""}`} title={full}>
+            {name ? (
+                <span className="mj_TrackerImageName_name">
+                    <span className="mj_TrackerImageName_head">{head}</span>
+                    <span className="mj_TrackerImageName_tail">{tail}</span>
+                </span>
+            ) : null}
+            {name && size && !stacked ? <span aria-hidden> · </span> : null}
+            {size ? <span className="mj_TrackerImageName_size">{size}</span> : null}
+        </span>
+    );
+}
+
+/**
  * An image attachment. `inline` is the full in-text view, sized from the attachment's dimensions so
  * the thread does not reflow when it loads (capped by the column width and the shared frame height);
- * `thumb` is the small square tile a trailing image renders as. Either opens the lightbox on click.
+ * `thumb` is the small square tile a trailing image renders as. Either opens the lightbox on click,
+ * and either has its `name · size` line under it.
  */
 export function TrackerImage({
     client,
@@ -242,12 +276,11 @@ export function TrackerImage({
 
     if (variant === "thumb") {
         return (
-            <span
-                className={`mj_TrackerThumb${viewer ? " mj_Image_zoomable" : ""}`}
-                title={`${attachment.name} · ${humanizeSize(attachment.size)}`}
-                {...zoomable}
-            >
-                {img}
+            <span className="mj_TrackerThumbTile">
+                <span className={`mj_TrackerThumb${viewer ? " mj_Image_zoomable" : ""}`} {...zoomable}>
+                    {img}
+                </span>
+                <ImageNameLine attachment={attachment} stacked />
             </span>
         );
     }
@@ -263,6 +296,7 @@ export function TrackerImage({
             >
                 {img}
             </div>
+            <ImageNameLine attachment={attachment} />
             {caption?.trim() ? <figcaption>{caption}</figcaption> : null}
         </figure>
     );

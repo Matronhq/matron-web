@@ -1503,8 +1503,36 @@ if (trackerMode === "inbox" || trackerMode === "item") {
                     author: "agent",
                     device_id: 3,
                     kind: "comment",
-                    body: "A comment whose session is not named shows the box alone.",
-                    attachments: [],
+                    body:
+                        fixtureParams.get("images") === "1"
+                            ? "The divider at full size:\n\n![](attachment:fixture-photo-2)\n\nAnd the two crops:"
+                            : "A comment whose session is not named shows the box alone.",
+                    // ?images=1: an inline image and two trailing ones, each captioned `name · size`.
+                    attachments:
+                        fixtureParams.get("images") === "1"
+                            ? [
+                                  {
+                                      blob_ref: "fixture-photo-2",
+                                      mime: "image/png",
+                                      name: "divider_4867x3071_final_export_for_print_reviewed_v2.png",
+                                      size: 40_789_000,
+                                      width: 320,
+                                      height: 240,
+                                  },
+                                  {
+                                      blob_ref: "fixture-photo-4",
+                                      mime: "image/png",
+                                      name: "crop-left.png",
+                                      size: 812_000,
+                                  },
+                                  {
+                                      blob_ref: "fixture-photo-6",
+                                      mime: "image/jpeg",
+                                      name: "Screenshot 2026-10-22 at 09.14.03.jpg",
+                                      size: 2_300_000,
+                                  },
+                              ]
+                            : [],
                     meta: null,
                     created_at: now - 20 * 60_000,
                     device_name: "build-box",

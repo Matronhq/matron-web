@@ -1233,8 +1233,54 @@ button.mj_TrackerCrumb:hover {
 
 /* — Images: inline in a body or comment, and thumbnails for the attachments no ref placed — */
 .mj_TrackerImage {
+    /* As wide as its image; the name line under it is `contain: inline-size`, so it never widens it. */
+    width: fit-content;
     margin: var(--mj-space-2x) 0;
     max-width: min(560px, 100%);
+}
+.mj_TrackerThumbTile {
+    display: inline-flex;
+    flex-direction: column;
+    gap: 2px;
+    width: 72px;
+}
+/* `name · size` under an image: the name's head ellipsizes, its tail (extension) and the size stay. */
+.mj_TrackerImageName {
+    display: flex;
+    min-width: 0;
+    margin-top: var(--mj-space-1x);
+    color: var(--mj-color-text-tertiary);
+    font: var(--mj-font-meta);
+    white-space: pre;
+    contain: inline-size;
+    overflow: hidden;
+}
+.mj_TrackerImageName_stacked {
+    flex-direction: column;
+    margin-top: 0;
+}
+.mj_TrackerImageName_name {
+    display: flex;
+    min-width: 0;
+    overflow: hidden;
+}
+.mj_TrackerImageName_head {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+/* The tail only gives way once the head is gone (a long extension in a 72px tile). */
+.mj_TrackerImageName_tail {
+    flex: 0 0.0001 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.mj_TrackerImageName_size {
+    flex: none;
+}
+/* A markdown caption wraps at the image's width rather than widening the figure. */
+.mj_TrackerImage figcaption {
+    contain: inline-size;
 }
 .mj_TrackerThumb {
     display: inline-flex;
