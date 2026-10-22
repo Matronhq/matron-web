@@ -6,6 +6,7 @@ Please see LICENSE files in the repository root for full details.
 */
 
 import {
+    type AccountEmail,
     type BoxDefaults,
     type BoxDefaultsPatch,
     type BoxStatus,
@@ -48,6 +49,7 @@ import {
     type ProjectFeedKind,
     type ProjectFeedPage,
     type UserDefaults,
+    type JournalUser,
 } from "./types";
 
 interface ElectronJournalResponse {
@@ -389,6 +391,12 @@ export function knownErrorMessage(code: string | undefined): string | undefined 
             return "That password is incorrect.";
         case "weak_password":
             return "Use at least 8 characters.";
+        case "bad_email":
+            return "Enter a valid email address.";
+        case "email_taken":
+            return "Another account already uses that address.";
+        case "invalid_token":
+            return "This link has expired or has already been used. Ask for a new one.";
         case "bad_code":
             return "That code didn't work. Check your authenticator app and try again.";
         case "two_factor_ticket_invalid":
@@ -424,6 +432,19 @@ export function knownErrorMessage(code: string | undefined): string | undefined 
         default:
             return undefined;
     }
+}
+
+/** One row of GET /users, or undefined for anything malformed. */
+export function parseJournalUser(raw: unknown): JournalUser | undefined {
+    if (typeof raw !== "object" || raw === null) return undefined;
+    const user = raw as Record<string, unknown>;
+    if (typeof user.id !== "number" || typeof user.name !== "string") return undefined;
+    return {
+        id: user.id,
+        name: user.name,
+        email: typeof user.email === "string" && user.email ? user.email : null,
+        is_admin: user.is_admin === true,
+    };
 }
 
 export class JournalApi {
@@ -520,6 +541,71 @@ export class JournalApi {
         });
         const signedOut = result?.signed_out;
         return { signed_out: typeof signedOut === "number" && signedOut > 0 ? signedOut : 0 };
+    }
+
+    // ── Password reset by email (no auth) and the account's address ─────────────────────────
+
+    /** GET /password/forgot: whether this journal can mail reset links. An older journal (404) can't. */
+    public async forgotPasswordEnabled(): Promise<boolean> {
+        try {
+            const result = await this.json<{ enabled?: unknown }>("/password/forgot", { authenticated: false });
+            return result?.enabled === true;
+        } catch (error) {
+            if (error instanceof JournalApiError && error.status === 404) return false;
+            throw error;
+        }
+    }
+
+    /** POST /password/forgot: always `{ok:true}` for a well-formed ask, whether or not the account exists. */
+    public async forgotPassword(identifier: string): Promise<void> {
+        await this.json<unknown>("/password/forgot", { method: "POST", authenticated: false, body: { identifier } });
+    }
+
+    /** POST /password/reset: spend a reset link. Every client device of the account is signed out. */
+    public async resetPassword(token: string, newPassword: string): Promise<{ signed_out: number }> {
+        const result = await this.json<{ signed_out?: unknown }>("/password/reset", {
+            method: "POST",
+            authenticated: false,
+            body: { token, new_password: newPassword },
+        });
+        const signedOut = result?.signed_out;
+        return { signed_out: typeof signedOut === "number" && signedOut > 0 ? signedOut : 0 };
+    }
+
+    /** GET /account/email: this account's address, and whether the journal can mail reset links. */
+    public async accountEmail(): Promise<AccountEmail> {
+        const result = await this.json<{ email?: unknown; reset_by_email?: unknown }>("/account/email");
+        return {
+            email: typeof result?.email === "string" && result.email ? result.email : null,
+            reset_by_email: result?.reset_by_email === true,
+        };
+    }
+
+    /**
+     * PUT /account/email: set (or, with null, remove) this account's address. Needs the current
+     * password; a wrong one is a 401 `bad_password`, which says nothing about this device's token.
+     */
+    public async setAccountEmail(password: string, email: string | null): Promise<{ email: string | null }> {
+        const result = await this.json<{ email?: unknown }>("/account/email", {
+            method: "PUT",
+            body: { password, email },
+        });
+        return { email: typeof result?.email === "string" && result.email ? result.email : null };
+    }
+
+    /** GET /users (admins): every account on the journal. */
+    public async listUsers(): Promise<JournalUser[]> {
+        const result = await this.json<{ users?: unknown }>("/users");
+        return Array.isArray(result?.users) ? result.users.map(parseJournalUser).filter((u) => u !== undefined) : [];
+    }
+
+    /** PUT /users/:id/email (admins): set or (null) clear another account's address. */
+    public async setUserEmail(userId: number, email: string | null): Promise<JournalUser | undefined> {
+        const result = await this.json<{ user?: unknown }>(`/users/${encodeURIComponent(String(userId))}/email`, {
+            method: "PUT",
+            body: { email },
+        });
+        return parseJournalUser(result?.user);
     }
 
     /** GET /me: who this device belongs to (for the admin-only parts of Settings). */

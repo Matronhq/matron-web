@@ -231,6 +231,7 @@ describe("Settings → Security", () => {
                 status instanceof Error ? Promise.reject(status) : Promise.resolve(status),
             ),
             isAdmin: jest.fn().mockResolvedValue(admin),
+            accountEmail: jest.fn().mockRejectedValue(new JournalApiError("nope", 404, "not_found")),
             twoFactorSetup: jest.fn().mockResolvedValue(SETUP),
             twoFactorEnable: jest.fn().mockResolvedValue({ recovery_codes: CODES, signed_out: 2 }),
             twoFactorDisable: jest.fn().mockResolvedValue(undefined),

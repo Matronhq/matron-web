@@ -2079,6 +2079,33 @@ label.mj_SettingsSheet_row {
     font: 400 12px/16px var(--mj-font-family-ui);
 }
 
+/* Settings → Security → Email address: the address itself, under the row's label. */
+.mj_AccountEmail_value {
+    color: var(--mj-color-text-secondary);
+    overflow-wrap: anywhere;
+}
+
+.mj_UploadConfirm_actions button.mj_AccountEmail_remove {
+    margin-right: auto;
+    color: var(--mj-color-text-critical-primary);
+}
+
+/* Sign-in screen: "Forgot password?" under the password field. */
+.mj_LoginForgot {
+    align-self: flex-end;
+    margin-top: calc(-1 * var(--mj-space-2x));
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--mj-color-text-action-accent);
+    font: var(--mj-font-meta);
+    cursor: pointer;
+}
+
+.mj_LoginForgot:hover {
+    text-decoration: underline;
+}
+
 .mj_SettingsSheet_help.mj_ChangePassword_done {
     color: var(--mj-color-text-success);
 }

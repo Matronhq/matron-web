@@ -14,8 +14,8 @@ Please see LICENSE files in the repository root for full details.
  *   When the journal requires two-factor of a user who has not set it up, it walks them through
  *   setup first, then shows their recovery codes before opening the app.
  * - SecuritySettings is Settings → Security: set it up, make new recovery codes, move to a new
- *   app, turn it off, and (admins) require it for everyone. Change Password… (ChangePassword.tsx)
- *   sits at the top of the same group.
+ *   app, turn it off, and (admins) require it for everyone. Email address (AccountEmail.tsx)
+ *   and Change Password… (ChangePassword.tsx) sit at the top of the same group.
  *
  * The secret and the recovery codes are only ever shown here, in the user's own browser.
  */
@@ -24,6 +24,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 
 import { JournalApiError } from "./api";
 import type { HeldSignIn, MatronJournalClient, TwoFactorChallenge } from "./client";
+import { AccountEmailRow } from "./AccountEmail";
 import { ChangePassword } from "./ChangePassword";
 import { copyText } from "./clipboard";
 import { DeviceSheet, QrCode } from "./DevicesSettings";
@@ -495,6 +496,7 @@ export function SecuritySettings({
                 Security
             </h3>
             <div className="mj_SettingsSheet_rows">
+                <AccountEmailRow client={client} />
                 <ChangePassword client={client} onChanged={onPasswordChanged} />
                 {status && (
                     <>

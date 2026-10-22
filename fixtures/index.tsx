@@ -1993,12 +1993,41 @@ if (fixtureParams.get("badges") === "1") {
         required: false,
         available: true,
     });
-    stub.isAdmin = async () => false;
+    // ?admin=1 makes the fixture account an admin, so Settings → Users shows.
+    stub.isAdmin = async () => fixtureParams.has("admin");
     stub.changePassword = async (current: string, _next: string, signOutOthers: boolean) => {
         if (current !== "old-password") throw new JournalApiError("That password is incorrect.", 401, "bad_password");
         if (!signOutOthers) return { signed_out: 0 };
         roster = roster.filter((device) => device.is_self || device.kind === "agent");
         return { signed_out: 1 };
+    };
+    // Email address: ?email=none starts without one; "old-password" is the right password here too.
+    let accountEmail: string | null = fixtureParams.get("email") === "none" ? null : "operator@example.com";
+    stub.accountEmail = async () => ({ email: accountEmail, reset_by_email: !fixtureParams.has("nomail") });
+    stub.setAccountEmail = async (password: string, email: string | null) => {
+        if (password !== "old-password") throw new JournalApiError("That password is incorrect.", 401, "bad_password");
+        if (email === "alice@example.com") {
+            throw new JournalApiError("Another account already uses that address.", 409, "email_taken");
+        }
+        accountEmail = email;
+        return { email };
+    };
+    let users = [
+        { id: 1, name: "alice", email: "alice@example.com", is_admin: true },
+        { id: 2, name: "bob", email: null as string | null, is_admin: false },
+        { id: 3, name: "carol", email: "carol@example.com", is_admin: false },
+        { id: 4, name: "operator", email: accountEmail, is_admin: true },
+    ];
+    stub.listUsers = async () => users;
+    stub.setUserEmail = async (id: number, email: string | null) => {
+        users = users.map((user) => (user.id === id ? { ...user, email } : user));
+        return users.find((user) => user.id === id);
+    };
+    // Password reset: the server mails links; a reset link whose token is "spent" has been used.
+    stub.forgotPasswordEnabled = async () => true;
+    stub.forgotPassword = async () => undefined;
+    stub.resetPassword = async (_server: string, token: string) => {
+        if (token === "spent") throw new JournalApiError("This link has expired.", 400, "invalid_token");
     };
 }
 

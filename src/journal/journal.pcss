@@ -2790,6 +2790,7 @@ textarea {
 
 /* §10.4 native text input: explicit background/colour/border in BOTH themes. */
 .mj_NewSessionSheet input[type="text"],
+.mj_NewSessionSheet input[type="email"],
 .mj_NewSessionSheet input[type="password"] {
     display: block;
     width: 100%;
@@ -2803,12 +2804,15 @@ textarea {
     font: 400 13.5px/20px var(--mj-font-family-ui);
 }
 
-.mj_NewSessionSheet input[type="text"]::placeholder {
+.mj_NewSessionSheet input[type="text"]::placeholder,
+.mj_NewSessionSheet input[type="email"]::placeholder {
     color: var(--mj-color-text-tertiary);
 }
 
 .mj_NewSessionSheet input[type="text"]:focus,
 .mj_NewSessionSheet input[type="text"]:focus-visible,
+.mj_NewSessionSheet input[type="email"]:focus,
+.mj_NewSessionSheet input[type="email"]:focus-visible,
 .mj_NewSessionSheet input[type="password"]:focus,
 .mj_NewSessionSheet input[type="password"]:focus-visible {
     border-color: var(--mj-color-border-interactive-primary);

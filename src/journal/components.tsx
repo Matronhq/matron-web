@@ -21,6 +21,13 @@ import { createPortal } from "react-dom";
 
 import matronLogo from "../../res/matron-logo-simple.svg";
 import {
+    ForgotPasswordForm,
+    leaveResetPage,
+    ResetPasswordPage,
+    takeResetLink,
+    useForgotPasswordEnabled,
+} from "./PasswordReset";
+import {
     AgentSpawnCard,
     isAnswerableAgentSpawn,
     PROMPT_REPLY_CONFIRMATION_TIMEOUT_MS,
@@ -474,7 +481,16 @@ function formatBytes(value: unknown): string | undefined {
     return `${(value / 1024 / 1024).toFixed(1)} MB`;
 }
 
-function LoginScreen({ client, state }: { client: MatronJournalClient; state: ClientState }): React.ReactElement {
+function LoginScreen({
+    client,
+    state,
+    initialForgot = false,
+}: {
+    client: MatronJournalClient;
+    state: ClientState;
+    /** Open on the Forgot password? step (from a spent reset link). */
+    initialForgot?: boolean;
+}): React.ReactElement {
     // unify step 2: the Mac sign-in layout — one column, labels above fields, submit disabled
     // until the form is valid. When config.json fixes the server the field is hidden and the
     // host is named under the title instead.
@@ -486,8 +502,10 @@ function LoginScreen({ client, state }: { client: MatronJournalClient; state: Cl
     const [error, setError] = useState(state.connectionError);
     // Set after a right password on a two-factor account: the code step replaces the form.
     const [challenge, setChallenge] = useState<TwoFactorChallenge>();
+    const [forgot, setForgot] = useState(initialForgot);
 
     const effectiveServer = fixedServer ?? server;
+    const forgotEnabled = useForgotPasswordEnabled(client, effectiveServer);
     const canSubmit = !busy && effectiveServer.trim() !== "" && username.trim() !== "" && password !== "";
     const brand = state.config.brand || "Matron";
 
@@ -517,7 +535,14 @@ function LoginScreen({ client, state }: { client: MatronJournalClient; state: Cl
                 <img className="mj_Login_logo" src={matronLogo} alt={brand} />
                 <h1 className="mj_Login_title">Sign in to {brand}</h1>
                 {fixedServer && <p className="mj_LoginServerNote">Signing in to {hostLabel(fixedServer)}</p>}
-                {challenge ? (
+                {forgot && !challenge ? (
+                    <ForgotPasswordForm
+                        client={client}
+                        server={effectiveServer}
+                        initialIdentifier={username.trim()}
+                        onBack={() => setForgot(false)}
+                    />
+                ) : challenge ? (
                     <TwoFactorSignIn
                         client={client}
                         challenge={challenge}
@@ -572,6 +597,19 @@ function LoginScreen({ client, state }: { client: MatronJournalClient; state: Cl
                                 required
                             />
                         </label>
+                        {forgotEnabled && (
+                            <button
+                                type="button"
+                                className="mj_LoginForgot"
+                                data-action="forgot-password"
+                                onClick={() => {
+                                    setError(undefined);
+                                    setForgot(true);
+                                }}
+                            >
+                                Forgot password?
+                            </button>
+                        )}
                         {error && (
                             <div className="mj_Error mj_Login_error" role="alert">
                                 {error}
@@ -8039,12 +8077,32 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
 
 export function MatronApp({ client }: { client: MatronJournalClient }): React.ReactElement {
     const state = useSyncExternalStore(client.subscribe, client.getSnapshot);
+    // /app/reset-password#token=…: the page for a reset link, signed in or not.
+    const [resetLink, setResetLink] = useState(takeResetLink);
+    const [openForgot, setOpenForgot] = useState(false);
     if (state.phase === "loading")
         return (
             <div className="mj_App_splash mj_Loading">
                 <img src={matronLogo} alt="Matron" />
             </div>
         );
-    if (state.phase === "signed-out") return <LoginScreen client={client} state={state} />;
+    if (resetLink) {
+        return (
+            <ResetPasswordPage
+                client={client}
+                server={state.config.journal_server_url?.trim() || window.location.origin}
+                token={resetLink.token}
+                brand={state.config.brand || "Matron"}
+                logo={matronLogo}
+                signedIn={state.phase !== "signed-out"}
+                onLeave={(next) => {
+                    leaveResetPage();
+                    setResetLink(null);
+                    setOpenForgot(next === "forgot");
+                }}
+            />
+        );
+    }
+    if (state.phase === "signed-out") return <LoginScreen client={client} state={state} initialForgot={openForgot} />;
     return <SignedInApp client={client} state={state} />;
 }
