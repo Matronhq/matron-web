@@ -866,12 +866,12 @@ export class MatronJournalClient {
     }
 
     /** Whether the server typed on the sign-in screen mails reset links (no auth). */
-    public forgotPasswordEnabled(serverInput: string): Promise<boolean> {
+    public async forgotPasswordEnabled(serverInput: string): Promise<boolean> {
         return new JournalApi(normalizeServerUrl(serverInput)).forgotPasswordEnabled();
     }
 
     /** Ask for a reset link for a username or email address (no auth; the answer reveals nothing). */
-    public forgotPassword(serverInput: string, identifier: string): Promise<void> {
+    public async forgotPassword(serverInput: string, identifier: string): Promise<void> {
         return new JournalApi(normalizeServerUrl(serverInput)).forgotPassword(identifier.trim());
     }
 

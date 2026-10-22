@@ -481,17 +481,20 @@ function LoginScreen({
     client,
     state,
     initialForgot = false,
+    initialServer,
 }: {
     client: MatronJournalClient;
     state: ClientState;
     /** Open on the Forgot password? step (from a spent reset link). */
     initialForgot?: boolean;
+    /** The server to start with (the journal a reset link came from), else the usual suggestion. */
+    initialServer?: string;
 }): React.ReactElement {
     // unify step 2: the Mac sign-in layout — one column, labels above fields, submit disabled
     // until the form is valid. When config.json fixes the server the field is hidden and the
     // host is named under the title instead.
     const fixedServer = state.config.journal_server_url?.trim() || undefined;
-    const [server, setServer] = useState(client.suggestedServer());
+    const [server, setServer] = useState(() => initialServer ?? client.suggestedServer());
     const [username, setUsername] = useState("");
     const [password, setPassword] = useState("");
     const [busy, setBusy] = useState(false);
@@ -8078,18 +8081,21 @@ export function MatronApp({ client }: { client: MatronJournalClient }): React.Re
     const state = useSyncExternalStore(client.subscribe, client.getSnapshot);
     // /app/reset-password#token=…: the page for a reset link, signed in or not.
     const [resetLink, setResetLink] = useState(takeResetLink);
-    const [openForgot, setOpenForgot] = useState(false);
+    // Where a reset link sent the user next: the sign-in screen (or its Forgot password? step) for
+    // the link's own journal, which may not be the one this browser last signed in to.
+    const [afterReset, setAfterReset] = useState<{ server: string; forgot: boolean }>();
     if (state.phase === "loading")
         return (
             <div className="mj_App_splash mj_Loading">
                 <img src={matronLogo} alt="Matron" />
             </div>
         );
+    const resetServer = state.config.journal_server_url?.trim() || window.location.origin;
     if (resetLink) {
         return (
             <ResetPasswordPage
                 client={client}
-                server={state.config.journal_server_url?.trim() || window.location.origin}
+                server={resetServer}
                 token={resetLink.token}
                 brand={state.config.brand || "Matron"}
                 logo={matronLogo}
@@ -8097,11 +8103,19 @@ export function MatronApp({ client }: { client: MatronJournalClient }): React.Re
                 onLeave={(next) => {
                     leaveResetPage();
                     setResetLink(null);
-                    setOpenForgot(next === "forgot");
+                    setAfterReset({ server: resetServer, forgot: next === "forgot" });
                 }}
             />
         );
     }
-    if (state.phase === "signed-out") return <LoginScreen client={client} state={state} initialForgot={openForgot} />;
+    if (state.phase === "signed-out")
+        return (
+            <LoginScreen
+                client={client}
+                state={state}
+                initialForgot={afterReset?.forgot}
+                initialServer={afterReset?.server}
+            />
+        );
     return <SignedInApp client={client} state={state} />;
 }

@@ -229,6 +229,24 @@ describe("/app/reset-password", () => {
         expect($("#mj_LoginForm_identifier")).not.toBeNull();
     });
 
+    it("asks for a new link from the journal the link came from, not the last one used", async () => {
+        localStorage.setItem("matron_journal_last_server", "https://other.example.com");
+        window.history.replaceState(null, "", "/app/reset-password#token=old");
+        const client = signedOutClient({});
+        jest.spyOn(client, "resetPassword").mockRejectedValue(new JournalApiError("x", 400, "invalid_token"));
+        jest.spyOn(client, "forgotPasswordEnabled").mockResolvedValue(true);
+        const forgot = jest.spyOn(client, "forgotPassword").mockResolvedValue(undefined);
+        await render(client);
+        await fill("new-secret", "new-secret");
+        await submitForm();
+        await click([...container.querySelectorAll("button")].find((b) => b.textContent === "Forgot password?")!);
+        await act(async () => type($<HTMLInputElement>("#mj_LoginForm_identifier")!, "alice"));
+        await submitForm();
+        expect(forgot).toHaveBeenCalledWith(window.location.origin, "alice");
+        await click([...container.querySelectorAll("button")].find((b) => b.textContent === "Back to sign in")!);
+        expect($<HTMLInputElement>("#mj_LoginForm_server")!.value).toBe(window.location.origin);
+    });
+
     it("says so at once when the link has no token", async () => {
         window.history.replaceState(null, "", "/app/reset-password");
         await render(signedOutClient());
@@ -243,6 +261,17 @@ describe("/app/reset-password", () => {
         await fill("new-secret", "new-secret");
         await submitForm();
         expect(reset).toHaveBeenCalledWith(window.location.origin, "tok-2", "new-secret");
+    });
+});
+
+describe("MatronJournalClient.forgotPasswordEnabled", () => {
+    it("rejects, rather than throws, for a server address that can't be used", async () => {
+        const client = new MatronJournalClient();
+        let pending: Promise<boolean> | undefined;
+        expect(() => {
+            pending = client.forgotPasswordEnabled("https://");
+        }).not.toThrow();
+        await expect(pending).rejects.toThrow();
     });
 });
 
