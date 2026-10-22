@@ -17,7 +17,7 @@ Please see LICENSE files in the repository root for full details.
 import React, { useCallback, useEffect, useRef, useState } from "react";
 
 import { JournalApiError, knownErrorMessage } from "./api";
-import { lockedOutMessage } from "./ChangePassword";
+import { lockedOutMessage } from "./password-rules";
 import type { MatronJournalClient } from "./client";
 import { DeviceSheet } from "./DevicesSettings";
 import type { AccountEmail, JournalUser } from "./types";

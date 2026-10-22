@@ -15,20 +15,23 @@ Please see LICENSE files in the repository root for full details.
  *   and signed in: the journal signs out every browser and app of the account, so this one signs
  *   itself out too when it was signed in to the same journal.
  *
- * The token is read from the address once and removed from it at once, so it is not left in the
- * browser's history.
+ * Both load in their own chunk (deferred-ui.tsx); reading the link and asking whether the server
+ * sends mail stay in the first download (reset-link.ts).
  */
 
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 
 import { JournalApiError } from "./api";
-import { newPasswordProblem } from "./ChangePassword";
+import { newPasswordProblem } from "./password-rules";
 import { errorMessage, type MatronJournalClient } from "./client";
 
-/** How long the sign-in screen waits after the last keystroke in Server before asking it. */
-export const FORGOT_CHECK_DEBOUNCE_MS = 400;
-
-const RESET_PATH = /(?:^|\/)reset-password\/?$/;
+export {
+    FORGOT_CHECK_DEBOUNCE_MS,
+    leaveResetPage,
+    resetTakenLinkForTests,
+    takeResetLink,
+    useForgotPasswordEnabled,
+} from "./reset-link";
 
 /** The sentence for a refused forgot-password or reset ask. */
 export function resetFailure(error: unknown): string {
@@ -37,67 +40,6 @@ export function resetFailure(error: unknown): string {
         if (error.status === 0) return "Couldn't reach the journal. Check your connection and try again.";
     }
     return errorMessage(error);
-}
-
-// ── The reset link ───────────────────────────────────────────────────────────────────────────
-
-let taken: { token: string } | null | undefined;
-
-/**
- * The reset link this page was opened with, or null when it is not the reset page. The first
- * call reads the token and strips it from the address bar; later calls answer the same.
- */
-export function takeResetLink(): { token: string } | null {
-    if (taken !== undefined) return taken;
-    if (!RESET_PATH.test(window.location.pathname)) {
-        taken = null;
-        return taken;
-    }
-    const token = new URLSearchParams(window.location.hash.replace(/^#/, "")).get("token") ?? "";
-    if (window.location.hash) {
-        window.history.replaceState(window.history.state, "", window.location.pathname + window.location.search);
-    }
-    taken = { token };
-    return taken;
-}
-
-/** Leave the reset page for the app's own address (…/app/reset-password → …/app/). */
-export function leaveResetPage(): void {
-    taken = null;
-    const base = window.location.pathname.replace(RESET_PATH, "/");
-    window.history.replaceState(window.history.state, "", base);
-}
-
-/** Tests only: forget what takeResetLink read. */
-export function resetTakenLinkForTests(): void {
-    taken = undefined;
-}
-
-// ── Sign-in screen: Forgot password? ─────────────────────────────────────────────────────────
-
-/** Whether `server` mails reset links. Asked again (debounced) as the address changes; off until it answers. */
-export function useForgotPasswordEnabled(client: MatronJournalClient, server: string): boolean {
-    const [enabled, setEnabled] = useState<{ server: string; enabled: boolean }>();
-    useEffect(() => {
-        const target = server.trim();
-        if (!target) return;
-        let live = true;
-        const timer = window.setTimeout(() => {
-            client.forgotPasswordEnabled(target).then(
-                (yes) => {
-                    if (live) setEnabled({ server: target, enabled: yes });
-                },
-                () => {
-                    if (live) setEnabled({ server: target, enabled: false });
-                },
-            );
-        }, FORGOT_CHECK_DEBOUNCE_MS);
-        return () => {
-            live = false;
-            window.clearTimeout(timer);
-        };
-    }, [client, server]);
-    return enabled?.server === server.trim() && enabled.enabled;
 }
 
 export const RESET_LINK_SENT =

@@ -20,13 +20,7 @@ import React, {
 import { createPortal } from "react-dom";
 
 import matronLogo from "../../res/matron-logo-simple.svg";
-import {
-    ForgotPasswordForm,
-    leaveResetPage,
-    ResetPasswordPage,
-    takeResetLink,
-    useForgotPasswordEnabled,
-} from "./PasswordReset";
+import { leaveResetPage, takeResetLink, useForgotPasswordEnabled } from "./reset-link";
 import {
     AgentSpawnCard,
     isAnswerableAgentSpawn,
@@ -89,6 +83,8 @@ import {
     SettingsSheet,
     TrackerPane,
     TwoFactorSignIn,
+    ForgotPasswordForm,
+    ResetPasswordPage,
 } from "./deferred-ui";
 import { FOCUS_HIGHLIGHT_MS, focusScrollTop, jumpToLastOwnShortcutLabel, landingSeq } from "./jump-to-message";
 import { FindInChatBar, useFindInChatShortcut } from "./find-in-chat";
@@ -506,6 +502,9 @@ function LoginScreen({
 
     const effectiveServer = fixedServer ?? server;
     const forgotEnabled = useForgotPasswordEnabled(client, effectiveServer);
+    useEffect(() => {
+        if (forgotEnabled || initialForgot) ForgotPasswordForm.preload().catch(() => undefined);
+    }, [forgotEnabled, initialForgot]);
     const canSubmit = !busy && effectiveServer.trim() !== "" && username.trim() !== "" && password !== "";
     const brand = state.config.brand || "Matron";
 
