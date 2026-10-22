@@ -15,7 +15,7 @@ Please see LICENSE files in the repository root for full details.
  * and go with it when it closes.
  */
 
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 
 import { JournalApiError, knownErrorMessage } from "./api";
 import type { MatronJournalClient } from "./client";
@@ -59,7 +59,10 @@ export function ChangePassword({
     client: MatronJournalClient;
     onChanged?: (signedOut: number) => void;
 }): React.ReactElement {
-    const [open, setOpen] = useState(false);
+    // Which sheet is open (each opening gets a new number), so a change that finishes after its
+    // sheet was closed still reports, but never closes a sheet opened since.
+    const [sheet, setSheet] = useState<number>();
+    const opened = useRef(0);
     const [done, setDone] = useState<string>();
 
     return (
@@ -81,18 +84,19 @@ export function ChangePassword({
                     data-action="change-password"
                     onClick={() => {
                         setDone(undefined);
-                        setOpen(true);
+                        setSheet(++opened.current);
                     }}
                 >
                     Change Password…
                 </button>
             </div>
-            {open && (
+            {sheet !== undefined && (
                 <ChangePasswordSheet
+                    key={sheet}
                     client={client}
-                    onClose={() => setOpen(false)}
+                    onClose={() => setSheet(undefined)}
                     onChanged={(signedOut) => {
-                        setOpen(false);
+                        setSheet((current) => (current === sheet ? undefined : current));
                         setDone(passwordChangedMessage(signedOut));
                         onChanged?.(signedOut);
                     }}

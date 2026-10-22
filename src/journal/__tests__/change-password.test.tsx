@@ -173,6 +173,33 @@ describe("Settings → Security → Change Password…", () => {
         expect($<HTMLInputElement>("#mj-change-password-new")!.value).toBe("");
     });
 
+    it("reports a change that finishes after its sheet closed, without closing a newer sheet", async () => {
+        let finish!: (result: { signed_out: number }) => void;
+        const client = {
+            changePassword: jest.fn(
+                () =>
+                    new Promise<{ signed_out: number }>((resolve) => {
+                        finish = resolve;
+                    }),
+            ),
+        };
+        const onChanged = jest.fn();
+        await open(client, onChanged);
+        await fill("old-secret", "new-secret", "new-secret");
+        await submitForm();
+        await click($(".mj_ChangePasswordSheet button[type=button]")); // Cancel while it runs
+        expect($(".mj_ChangePasswordSheet")).toBeNull();
+        await click($("[data-action=change-password]"));
+        expect($(".mj_ChangePasswordSheet")).not.toBeNull();
+
+        await act(async () => finish({ signed_out: 1 }));
+        expect($(".mj_ChangePasswordSheet")).not.toBeNull();
+        expect(onChanged).toHaveBeenCalledWith(1);
+        expect($("[data-change-password] [role=status]")?.textContent).toBe(
+            "Password changed. Signed out of 1 other device.",
+        );
+    });
+
     it("sends the flag off when unticked", async () => {
         const client = fakeClient({ signed_out: 0 });
         await open(client);
