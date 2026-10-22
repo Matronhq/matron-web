@@ -1253,6 +1253,7 @@ button.mj_TrackerCrumb:hover {
     font: var(--mj-font-meta);
     white-space: pre;
     contain: inline-size;
+    overflow: hidden;
 }
 .mj_TrackerImageName_stacked {
     flex-direction: column;
@@ -1267,9 +1268,19 @@ button.mj_TrackerCrumb:hover {
     overflow: hidden;
     text-overflow: ellipsis;
 }
-.mj_TrackerImageName_tail,
+/* The tail only gives way once the head is gone (a long extension in a 72px tile). */
+.mj_TrackerImageName_tail {
+    flex: 0 0.0001 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
 .mj_TrackerImageName_size {
     flex: none;
+}
+/* A markdown caption wraps at the image's width rather than widening the figure. */
+.mj_TrackerImage figcaption {
+    contain: inline-size;
 }
 .mj_TrackerThumb {
     display: inline-flex;

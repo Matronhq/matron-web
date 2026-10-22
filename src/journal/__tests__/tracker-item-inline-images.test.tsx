@@ -208,6 +208,21 @@ describe("ItemDetail inline images", () => {
         expect(view.querySelector(".mj_TrackerImageName")?.textContent).toBe("4 KB");
     });
 
+    it("leaves out a missing size rather than showing 0 B", async () => {
+        const client = fakeClient();
+        const view = await mount(
+            <ItemDetail
+                item={trackerItem({ body: "", attachments: [{ ...extra, size: 0 }] })}
+                comments={[]}
+                client={client as unknown as MatronJournalClient}
+                onBack={jest.fn()}
+            />,
+        );
+        const line = view.querySelector(".mj_TrackerImageName")!;
+        expect(line.textContent).toBe("extra.jpg");
+        expect(line.getAttribute("title")).toBe("extra.jpg");
+    });
+
     it("falls back to the chip when an image fails to load", async () => {
         const client = fakeClient();
         client.mediaUrl.mockRejectedValue(new Error("nope"));

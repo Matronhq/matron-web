@@ -192,7 +192,7 @@ function useBlobUrl(client: MatronJournalClient, blobRef: string): { url?: strin
  * The `name · size` line under an image in a thread. The name is truncated in the middle so the
  * extension stays, the size never truncates, and the line is never wider than the image above it;
  * the full name and size show on hover. `stacked` puts the size on its own line, for the narrow
- * thumbnail tiles. Just the size when the attachment has no name.
+ * thumbnail tiles. Just the size when the attachment has no name, just the name when it has no size.
  */
 export function ImageNameLine({
     attachment,
@@ -200,23 +200,23 @@ export function ImageNameLine({
 }: {
     attachment: TrackerAttachment;
     stacked?: boolean;
-}): React.ReactElement {
+}): React.ReactElement | null {
     const name = attachment.name?.trim() ?? "";
-    const size = humanizeSize(attachment.size);
+    // A missing size arrives as 0: leave it out rather than claim "0 B".
+    const size = attachment.size > 0 ? humanizeSize(attachment.size) : "";
     const { head, tail } = splitFilenameForMiddleTruncation(name);
+    const full = [name, size].filter(Boolean).join(" · ");
+    if (!full) return null;
     return (
-        <span
-            className={`mj_TrackerImageName${stacked ? " mj_TrackerImageName_stacked" : ""}`}
-            title={name ? `${name} · ${size}` : size}
-        >
+        <span className={`mj_TrackerImageName${stacked ? " mj_TrackerImageName_stacked" : ""}`} title={full}>
             {name ? (
                 <span className="mj_TrackerImageName_name">
                     <span className="mj_TrackerImageName_head">{head}</span>
                     <span className="mj_TrackerImageName_tail">{tail}</span>
                 </span>
             ) : null}
-            {name && !stacked ? <span aria-hidden> · </span> : null}
-            <span className="mj_TrackerImageName_size">{size}</span>
+            {name && size && !stacked ? <span aria-hidden> · </span> : null}
+            {size ? <span className="mj_TrackerImageName_size">{size}</span> : null}
         </span>
     );
 }
