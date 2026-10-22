@@ -731,6 +731,8 @@ export function SettingsSheet({
     const pressStartedOnScrim = useRef(false);
     const onLoadSettingsRef = useRef(onLoadSettings);
     onLoadSettingsRef.current = onLoadSettings;
+    // Bumped by a password change, so Devices re-reads a roster that may have lost devices.
+    const [devicesRevision, setDevicesRevision] = useState(0);
 
     useEffect(() => {
         onLoadSettingsRef.current?.();
@@ -843,8 +845,8 @@ export function SettingsSheet({
                         ))}
                     </div>
                 </section>
-                <SecuritySettings client={client} />
-                <DevicesSettings client={client} session={session} />
+                <SecuritySettings client={client} onPasswordChanged={() => setDevicesRevision((n) => n + 1)} />
+                <DevicesSettings client={client} session={session} revision={devicesRevision} />
                 <DesktopNotifications client={client} />
                 <NewChatDefaults client={client} />
                 <BoxesDefaults client={client} />

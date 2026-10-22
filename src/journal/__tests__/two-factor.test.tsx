@@ -306,7 +306,7 @@ describe("Settings → Security", () => {
         expect(client.twoFactorPolicy).toHaveBeenCalledWith(true);
     });
 
-    it("says so on a server that cannot store secrets, and disappears on a journal without /2fa", async () => {
+    it("says so on a server that cannot store secrets, and keeps only Password on a journal without /2fa", async () => {
         await render(fakeClient({ ...OFF, available: false }));
         expect(container.textContent).toContain("isn't set up for two-factor");
         expect($("[data-action=two-factor-setup]")).toBeNull();
@@ -314,7 +314,8 @@ describe("Settings → Security", () => {
         await act(async () => root.unmount());
         root = createRoot(container);
         await render(fakeClient(new JournalApiError("nope", 404, "not_found")));
-        expect($("#mj-settings-security")).toBeNull();
+        expect($("[data-two-factor]")).toBeNull();
+        expect($("[data-change-password]")).not.toBeNull();
     });
 });
 

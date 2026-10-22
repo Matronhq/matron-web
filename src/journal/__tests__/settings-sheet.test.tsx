@@ -29,7 +29,7 @@ const CONVERSATION: Conversation = {
     read_up_to_seq: 1,
 };
 
-/** GET /2fa on a journal without two-factor: the Security section stays hidden. */
+/** GET /2fa on a journal without two-factor: Security shows only Password. */
 const olderJournal = (): jest.Mock => jest.fn().mockRejectedValue(new JournalApiError("Not found", 404, "not_found"));
 
 function signedInClient(): MatronJournalClient {
@@ -556,7 +556,7 @@ describe("Settings sheet: New chats defaults", () => {
             defaults: jest.fn().mockResolvedValue(stored),
             putDefaults: jest.fn((body: Partial<UserDefaults>) => Promise.resolve({ ...stored, ...body })),
             devices: jest.fn().mockResolvedValue({ devices: [] }),
-            // An older journal: no Security section.
+            // An older journal: no two-factor rows.
             twoFactorStatus: olderJournal(),
         };
         (client as unknown as { api: DefaultsApi }).api = api;
@@ -796,7 +796,7 @@ describe("Settings sheet: Boxes defaults", () => {
             [...document.querySelectorAll(".mj_SettingsSheet .mj_SettingsSheet_groupTitle")].map(
                 (el) => el.textContent,
             ),
-        ).toEqual(["Account", "Appearance", "Devices", "Notifications", "New chats", "Boxes"]);
+        ).toEqual(["Account", "Appearance", "Security", "Devices", "Notifications", "New chats", "Boxes"]);
         expect(box(10).querySelector(".mj_SettingsSheet_boxName")?.textContent).toBe("elm");
         expect(optionValues(10, "agent")).toEqual(["", "claude", "codex"]);
         expect([...field(10, "agent").options].map((option) => option.textContent)).toEqual([

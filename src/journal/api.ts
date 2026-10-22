@@ -387,6 +387,8 @@ export function knownErrorMessage(code: string | undefined): string | undefined 
             return "The username or password is incorrect.";
         case "bad_password":
             return "That password is incorrect.";
+        case "weak_password":
+            return "Use at least 8 characters.";
         case "bad_code":
             return "That code didn't work. Check your authenticator app and try again.";
         case "two_factor_ticket_invalid":
@@ -499,6 +501,25 @@ export class JournalApi {
 
     public twoFactorPolicy(required: boolean): Promise<{ required: boolean }> {
         return this.json("/2fa/policy", { method: "PUT", body: { required } });
+    }
+
+    /**
+     * POST /password: change this account's password, and optionally revoke the account's other
+     * client devices (agent boxes are never signed out). A wrong current password is a 401
+     * `bad_password`, which says nothing about this device's token. An older journal answers
+     * without `signed_out`; that reads as 0.
+     */
+    public async changePassword(
+        oldPassword: string,
+        newPassword: string,
+        signOutOthers: boolean,
+    ): Promise<{ signed_out: number }> {
+        const result = await this.json<{ signed_out?: unknown }>("/password", {
+            method: "POST",
+            body: { old_password: oldPassword, new_password: newPassword, sign_out_others: signOutOthers },
+        });
+        const signedOut = result?.signed_out;
+        return { signed_out: typeof signedOut === "number" && signedOut > 0 ? signedOut : 0 };
     }
 
     /** GET /me: who this device belongs to (for the admin-only parts of Settings). */

@@ -986,9 +986,12 @@ type DeviceDialog =
 export function DevicesSettings({
     client,
     session,
+    revision = 0,
 }: {
     client: MatronJournalClient;
     session?: Session;
+    /** A change here re-reads the roster (another part of Settings changed it). */
+    revision?: number;
 }): React.ReactElement | null {
     const [devices, setDevices] = useState<DeviceDTO[]>();
     const [loading, setLoading] = useState(false);
@@ -1016,7 +1019,7 @@ export function DevicesSettings({
     const signedIn = session !== undefined;
     useEffect(() => {
         if (signedIn) void refresh();
-    }, [refresh, signedIn]);
+    }, [refresh, signedIn, revision]);
 
     if (!session) return null;
     const close = (): void => setDialog(undefined);
