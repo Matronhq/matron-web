@@ -127,6 +127,8 @@ import {
     type ToolStreamState,
     type TwoFactorSetup,
     type TwoFactorStatus,
+    type JournalUser,
+    type AccountEmail,
     utf8Length,
 } from "./types";
 
@@ -861,6 +863,27 @@ export class MatronJournalClient {
             throw error;
         }
         await this.finishLogin(serverUrl, username.trim(), response);
+    }
+
+    /** Whether the server typed on the sign-in screen mails reset links (no auth). */
+    public async forgotPasswordEnabled(serverInput: string): Promise<boolean> {
+        return new JournalApi(normalizeServerUrl(serverInput)).forgotPasswordEnabled();
+    }
+
+    /** Ask for a reset link for a username or email address (no auth; the answer reveals nothing). */
+    public async forgotPassword(serverInput: string, identifier: string): Promise<void> {
+        return new JournalApi(normalizeServerUrl(serverInput)).forgotPassword(identifier.trim());
+    }
+
+    /**
+     * Spend a reset link (no auth). The journal signs out every client device of the account, so
+     * a browser signed in to that journal signs itself out locally as well. (It may be signed in
+     * as someone else, but a reset on a shared browser should leave nobody signed in on it.)
+     */
+    public async resetPassword(serverInput: string, token: string, newPassword: string): Promise<void> {
+        const serverUrl = normalizeServerUrl(serverInput);
+        await new JournalApi(serverUrl).resetPassword(token, newPassword);
+        if (this.state.session?.serverUrl === serverUrl) await this.logout();
     }
 
     /**
@@ -3580,6 +3603,28 @@ export class MatronJournalClient {
         signOutOthers: boolean,
     ): Promise<{ signed_out: number }> {
         return this.deviceAdminApi().changePassword(oldPassword, newPassword, signOutOthers);
+    }
+
+    /** Settings → Security → Email address (GET /account/email). */
+    public async accountEmail(): Promise<AccountEmail> {
+        return this.deviceAdminApi().accountEmail();
+    }
+
+    /**
+     * Set or (null) remove this account's address. Like changePassword, a 401 here is a wrong
+     * current password and is only ever thrown back to the form, never taken as a sign-out.
+     */
+    public async setAccountEmail(password: string, email: string | null): Promise<{ email: string | null }> {
+        return this.deviceAdminApi().setAccountEmail(password, email === null ? null : email.trim());
+    }
+
+    /** Settings → Users (admins): every account with its address. */
+    public async listUsers(): Promise<JournalUser[]> {
+        return this.deviceAdminApi().listUsers();
+    }
+
+    public async setUserEmail(userId: number, email: string | null): Promise<JournalUser | undefined> {
+        return this.deviceAdminApi().setUserEmail(userId, email === null ? null : email.trim());
     }
 
     /** Whether this account is a journal admin (GET /me). */

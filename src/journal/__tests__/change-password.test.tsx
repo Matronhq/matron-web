@@ -232,6 +232,7 @@ describe("Settings → Security → Change Password…", () => {
         const client = {
             twoFactorStatus: jest.fn().mockRejectedValue(new JournalApiError("nope", 404, "not_found")),
             isAdmin: jest.fn().mockResolvedValue(false),
+            accountEmail: jest.fn().mockRejectedValue(new JournalApiError("nope", 404, "not_found")),
             changePassword: jest.fn(),
         };
         await act(async () => root.render(<SecuritySettings client={client as unknown as MatronJournalClient} />));

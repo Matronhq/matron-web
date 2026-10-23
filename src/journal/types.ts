@@ -64,6 +64,20 @@ export interface TwoFactorStatus {
     available: boolean;
 }
 
+/** GET /account/email. `reset_by_email` is false while the journal cannot send mail. */
+export interface AccountEmail {
+    email: string | null;
+    reset_by_email: boolean;
+}
+
+/** A row of GET /users (admins), as far as this client uses it. */
+export interface JournalUser {
+    id: number;
+    name: string;
+    email: string | null;
+    is_admin: boolean;
+}
+
 // A box's last capacity report (protocol.md "Box status (`box_status`)"): served as `status`
 // on GET /devices for agent devices that have ever reported, and pushed live to client sockets
 // as `{kind:'box_status', device_id, reported_at, ...blocks}`. Every block is optional — the

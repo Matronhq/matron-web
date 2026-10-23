@@ -20,6 +20,7 @@ import React, {
 import { createPortal } from "react-dom";
 
 import matronLogo from "../../res/matron-logo-simple.svg";
+import { leaveResetPage, takeResetLink, useForgotPasswordEnabled } from "./reset-link";
 import {
     AgentSpawnCard,
     isAnswerableAgentSpawn,
@@ -82,6 +83,8 @@ import {
     SettingsSheet,
     TrackerPane,
     TwoFactorSignIn,
+    ForgotPasswordForm,
+    ResetPasswordPage,
 } from "./deferred-ui";
 import { FOCUS_HIGHLIGHT_MS, focusScrollTop, jumpToLastOwnShortcutLabel, landingSeq } from "./jump-to-message";
 import { FindInChatBar, useFindInChatShortcut } from "./find-in-chat";
@@ -474,20 +477,37 @@ function formatBytes(value: unknown): string | undefined {
     return `${(value / 1024 / 1024).toFixed(1)} MB`;
 }
 
-function LoginScreen({ client, state }: { client: MatronJournalClient; state: ClientState }): React.ReactElement {
+function LoginScreen({
+    client,
+    state,
+    initialForgot = false,
+    initialServer,
+}: {
+    client: MatronJournalClient;
+    state: ClientState;
+    /** Open on the Forgot password? step (from a spent reset link). */
+    initialForgot?: boolean;
+    /** The server to start with (the journal a reset link came from), else the usual suggestion. */
+    initialServer?: string;
+}): React.ReactElement {
     // unify step 2: the Mac sign-in layout — one column, labels above fields, submit disabled
     // until the form is valid. When config.json fixes the server the field is hidden and the
     // host is named under the title instead.
     const fixedServer = state.config.journal_server_url?.trim() || undefined;
-    const [server, setServer] = useState(client.suggestedServer());
+    const [server, setServer] = useState(() => initialServer ?? client.suggestedServer());
     const [username, setUsername] = useState("");
     const [password, setPassword] = useState("");
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState(state.connectionError);
     // Set after a right password on a two-factor account: the code step replaces the form.
     const [challenge, setChallenge] = useState<TwoFactorChallenge>();
+    const [forgot, setForgot] = useState(initialForgot);
 
     const effectiveServer = fixedServer ?? server;
+    const forgotEnabled = useForgotPasswordEnabled(client, effectiveServer);
+    useEffect(() => {
+        if (forgotEnabled || initialForgot) ForgotPasswordForm.preload().catch(() => undefined);
+    }, [forgotEnabled, initialForgot]);
     const canSubmit = !busy && effectiveServer.trim() !== "" && username.trim() !== "" && password !== "";
     const brand = state.config.brand || "Matron";
 
@@ -517,7 +537,14 @@ function LoginScreen({ client, state }: { client: MatronJournalClient; state: Cl
                 <img className="mj_Login_logo" src={matronLogo} alt={brand} />
                 <h1 className="mj_Login_title">Sign in to {brand}</h1>
                 {fixedServer && <p className="mj_LoginServerNote">Signing in to {hostLabel(fixedServer)}</p>}
-                {challenge ? (
+                {forgot && !challenge ? (
+                    <ForgotPasswordForm
+                        client={client}
+                        server={effectiveServer}
+                        initialIdentifier={username.trim()}
+                        onBack={() => setForgot(false)}
+                    />
+                ) : challenge ? (
                     <TwoFactorSignIn
                         client={client}
                         challenge={challenge}
@@ -572,6 +599,19 @@ function LoginScreen({ client, state }: { client: MatronJournalClient; state: Cl
                                 required
                             />
                         </label>
+                        {forgotEnabled && (
+                            <button
+                                type="button"
+                                className="mj_LoginForgot"
+                                data-action="forgot-password"
+                                onClick={() => {
+                                    setError(undefined);
+                                    setForgot(true);
+                                }}
+                            >
+                                Forgot password?
+                            </button>
+                        )}
                         {error && (
                             <div className="mj_Error mj_Login_error" role="alert">
                                 {error}
@@ -8039,12 +8079,43 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
 
 export function MatronApp({ client }: { client: MatronJournalClient }): React.ReactElement {
     const state = useSyncExternalStore(client.subscribe, client.getSnapshot);
+    // /app/reset-password#token=…: the page for a reset link, signed in or not.
+    const [resetLink, setResetLink] = useState(takeResetLink);
+    // Where a reset link sent the user next: the sign-in screen (or its Forgot password? step) for
+    // the link's own journal, which may not be the one this browser last signed in to.
+    const [afterReset, setAfterReset] = useState<{ server: string; forgot: boolean }>();
     if (state.phase === "loading")
         return (
             <div className="mj_App_splash mj_Loading">
                 <img src={matronLogo} alt="Matron" />
             </div>
         );
-    if (state.phase === "signed-out") return <LoginScreen client={client} state={state} />;
+    const resetServer = state.config.journal_server_url?.trim() || window.location.origin;
+    if (resetLink) {
+        return (
+            <ResetPasswordPage
+                client={client}
+                server={resetServer}
+                token={resetLink.token}
+                brand={state.config.brand || "Matron"}
+                logo={matronLogo}
+                signedIn={state.phase !== "signed-out"}
+                onLeave={(next) => {
+                    leaveResetPage();
+                    setResetLink(null);
+                    setAfterReset({ server: resetServer, forgot: next === "forgot" });
+                }}
+            />
+        );
+    }
+    if (state.phase === "signed-out")
+        return (
+            <LoginScreen
+                client={client}
+                state={state}
+                initialForgot={afterReset?.forgot}
+                initialServer={afterReset?.server}
+            />
+        );
     return <SignedInApp client={client} state={state} />;
 }

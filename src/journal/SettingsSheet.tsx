@@ -33,6 +33,7 @@ Please see LICENSE files in the repository root for full details.
 import React, { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import type { MatronJournalClient } from "./client";
+import { UsersSettings } from "./AccountEmail";
 import { DevicesSettings } from "./DevicesSettings";
 import { SecuritySettings } from "./TwoFactor";
 import {
@@ -847,6 +848,7 @@ export function SettingsSheet({
                 </section>
                 <SecuritySettings client={client} onPasswordChanged={() => setDevicesRevision((n) => n + 1)} />
                 <DevicesSettings client={client} session={session} revision={devicesRevision} />
+                <UsersSettings client={client} />
                 <DesktopNotifications client={client} />
                 <NewChatDefaults client={client} />
                 <BoxesDefaults client={client} />

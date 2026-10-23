@@ -29,7 +29,7 @@ const CONVERSATION: Conversation = {
     read_up_to_seq: 1,
 };
 
-/** GET /2fa on a journal without two-factor: Security shows only Password. */
+/** GET /2fa or /account/email on an older journal: Security shows only Password. */
 const olderJournal = (): jest.Mock => jest.fn().mockRejectedValue(new JournalApiError("Not found", 404, "not_found"));
 
 function signedInClient(): MatronJournalClient {
@@ -195,10 +195,19 @@ describe("Settings sheet (Mac grouped form)", () => {
     });
 
     describe("For you: the notices switch", () => {
-        type Api = { settings: jest.Mock; patchSettings: jest.Mock; twoFactorStatus: jest.Mock };
+        type Api = {
+            settings: jest.Mock;
+            patchSettings: jest.Mock;
+            twoFactorStatus: jest.Mock;
+            accountEmail: jest.Mock;
+        };
         const withApi = (api: Partial<Api>): MatronJournalClient => {
             const client = signedInClient();
-            (client as unknown as { api: Partial<Api> }).api = { twoFactorStatus: olderJournal(), ...api };
+            (client as unknown as { api: Partial<Api> }).api = {
+                twoFactorStatus: olderJournal(),
+                accountEmail: olderJournal(),
+                ...api,
+            };
             return client;
         };
         const toggle = (): HTMLButtonElement | null =>
@@ -416,8 +425,13 @@ describe("Settings sheet: Coordinator consent approval", () => {
 
     function withApi(api: Partial<CoordinatorApi>): MatronJournalClient {
         const client = signedInClient();
-        (client as unknown as { api: Partial<CoordinatorApi> & { twoFactorStatus: jest.Mock } }).api = {
+        (
+            client as unknown as {
+                api: Partial<CoordinatorApi> & { twoFactorStatus: jest.Mock; accountEmail: jest.Mock };
+            }
+        ).api = {
             twoFactorStatus: olderJournal(),
+            accountEmail: olderJournal(),
             ...api,
         };
         return client;
@@ -525,6 +539,7 @@ describe("Settings sheet: New chats defaults", () => {
         putDefaults: jest.Mock<Promise<UserDefaults>, [Partial<UserDefaults>]>;
         devices: jest.Mock;
         twoFactorStatus: jest.Mock;
+        accountEmail: jest.Mock;
     };
 
     beforeAll(() => {
@@ -558,6 +573,7 @@ describe("Settings sheet: New chats defaults", () => {
             devices: jest.fn().mockResolvedValue({ devices: [] }),
             // An older journal: no two-factor rows.
             twoFactorStatus: olderJournal(),
+            accountEmail: olderJournal(),
         };
         (client as unknown as { api: DefaultsApi }).api = api;
         return { client, api };
@@ -704,6 +720,7 @@ describe("Settings sheet: Boxes defaults", () => {
         putDefaults: jest.Mock;
         devices: jest.Mock<Promise<{ devices: DeviceDTO[] }>, []>;
         twoFactorStatus: jest.Mock;
+        accountEmail: jest.Mock;
         putBoxDefaults: jest.Mock<Promise<Record<string, unknown>>, [number, BoxPut]>;
     };
 
@@ -754,6 +771,7 @@ describe("Settings sheet: Boxes defaults", () => {
             putDefaults: jest.fn(),
             devices: jest.fn().mockResolvedValue({ devices }),
             twoFactorStatus: olderJournal(),
+            accountEmail: olderJournal(),
             putBoxDefaults: jest.fn((deviceId: number, body: BoxPut) => {
                 const current = devices.find((device) => device.device_id === deviceId)!.defaults!;
                 return Promise.resolve({

@@ -20,24 +20,15 @@ import React, { useRef, useState } from "react";
 import { JournalApiError, knownErrorMessage } from "./api";
 import type { MatronJournalClient } from "./client";
 import { DeviceSheet } from "./DevicesSettings";
+import { lockedOutMessage, passwordProblem } from "./password-rules";
 
-/** The journal's shortest accepted password. */
-export const PASSWORD_MIN_LENGTH = 8;
-
-/** What is wrong with the form before anything is sent, or undefined when it can go. */
-export function passwordProblem(current: string, next: string, confirm: string): string | undefined {
-    if (next.length < PASSWORD_MIN_LENGTH) return "Use at least 8 characters.";
-    if (next !== confirm) return "The new passwords don't match.";
-    if (next === current) return "Choose a password different from your current one.";
-    return undefined;
-}
+export { lockedOutMessage, newPasswordProblem, PASSWORD_MIN_LENGTH, passwordProblem } from "./password-rules";
 
 /** The sentence for a failed change. */
 export function changePasswordFailure(error: unknown): string {
     if (error instanceof JournalApiError) {
         if (error.code === "locked_out" && typeof error.retryAfter === "number" && error.retryAfter > 0) {
-            const minutes = Math.max(1, Math.ceil(error.retryAfter / 60));
-            return `Too many attempts. Try again in ${minutes} ${minutes === 1 ? "minute" : "minutes"}.`;
+            return lockedOutMessage(error.retryAfter);
         }
         if (error.code === "bad_password" || error.code === "weak_password") return knownErrorMessage(error.code)!;
         if (error.status === 0) return "Couldn't reach the journal. Check your connection and try again.";
