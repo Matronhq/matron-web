@@ -39,7 +39,7 @@ export function isGoToNumberShortcut(
 
 const isMac = (): boolean => /Mac|iPhone|iPad/.test(navigator.platform);
 
-/** The shortcut's name for a button tooltip. */
+/** The shortcut's name for a button tooltip (it opens Search). */
 export const goToNumberShortcutLabel = (): string => (isMac() ? "⌘J" : "Ctrl+J");
 
 /** Binds the shortcut for as long as the host is mounted; `enabled` false leaves the key alone. */
@@ -49,7 +49,8 @@ export function useGoToNumberShortcut(client: MatronJournalClient, enabled: bool
         const onKeyDown = (event: KeyboardEvent): void => {
             if (event.defaultPrevented || !isGoToNumberShortcut(event, isMac())) return;
             event.preventDefault();
-            client.openGoToNumber();
+            // Search does Go to as well: a number typed there comes up first and Enter opens it.
+            client.openSearch();
         };
         document.addEventListener("keydown", onKeyDown);
         return () => document.removeEventListener("keydown", onKeyDown);
@@ -83,7 +84,7 @@ function useNumberLookup(client: MatronJournalClient, num: number | null): Numbe
 }
 
 /** A milestone whose mission is unknown has nowhere to go. */
-const canOpen = (hit: NumberLookup): boolean => hit.kind !== "milestone" || Boolean(hit.mission);
+export const canOpen = (hit: NumberLookup): boolean => hit.kind !== "milestone" || Boolean(hit.mission);
 
 /** The found row, shared by the dialog and the sidebar search. */
 function NumberHitRow({

@@ -10,7 +10,12 @@ import { createRoot, type Root } from "react-dom/client";
 
 import { MatronJournalClient } from "../../../src/journal/client";
 import { NavRail } from "../../../src/journal/NavRail";
-import { matchingConversations, SearchPage } from "../../../src/journal/tracker/SearchPage";
+import {
+    goToNumber,
+    matchingConversations,
+    SearchPage,
+    snippetBeyondTitle,
+} from "../../../src/journal/tracker/SearchPage";
 import type { ClientState, Conversation, GlobalSearchResponse, GlobalSearchResult } from "../../../src/journal/types";
 
 function result(over: Partial<GlobalSearchResult>): GlobalSearchResult {
@@ -119,6 +124,43 @@ describe("client.searchEverything", () => {
     });
 });
 
+describe("snippetBeyondTitle", () => {
+    it("drops the name and title the journal runs into the snippet", () => {
+        expect(
+            snippetBeyondTitle("**Postgres** 16 **Postgres** 16 migration Move the app to **Postgres** 16.", [
+                "Postgres 16",
+                "Postgres 16 migration",
+            ]),
+        ).toBe("Move the app to **Postgres** 16.");
+        expect(
+            snippetBeyondTitle("Pick the **Postgres** window Saturday or Sunday?", [null, "Pick the Postgres window"]),
+        ).toBe("Saturday or Sunday?");
+    });
+
+    it("keeps a snippet that does not start with the title, and drops one that is only the title", () => {
+        expect(snippetBeyondTitle("…restarted **nginx** on box-a", [null, "Proxy"])).toBe(
+            "…restarted **nginx** on box-a",
+        );
+        expect(snippetBeyondTitle("**Proxy** hardening", [null, "Proxy hardening"])).toBeNull();
+    });
+});
+
+describe("goToNumber (Enter on the Search field)", () => {
+    it("opens what a bare number names and leaves any other query alone", async () => {
+        const client = makeClient(jest.fn());
+        const lookup = jest
+            .spyOn(client, "lookupNumber")
+            .mockResolvedValue({ status: "found", hit: { kind: "item", id: "it_1", num: 12 } });
+        const open = jest.spyOn(client, "openNumberHit").mockReturnValue(true);
+        expect(await goToNumber(client, "#12")).toBe(true);
+        expect(open).toHaveBeenCalledWith({ kind: "item", id: "it_1", num: 12 }, 12);
+        expect(await goToNumber(client, "nginx")).toBe(false);
+        expect(lookup).toHaveBeenCalledTimes(1);
+        lookup.mockResolvedValueOnce({ status: "none" });
+        expect(await goToNumber(client, "99")).toBe(false);
+    });
+});
+
 describe("matchingConversations", () => {
     it("matches every word across the title and latest message", () => {
         const list = [convo("a", "matron-web deploy", "restarted nginx"), convo("b", "backup rotation")];
@@ -206,14 +248,15 @@ describe("SearchPage", () => {
 });
 
 describe("NavRail Search entry", () => {
-    it("comes first and selects the search key", async () => {
+    it("sits at the foot of the rail and selects the search key", async () => {
         const onSelect = jest.fn();
         const container = document.createElement("div");
         const root = createRoot(container);
         await act(async () => {
             root.render(React.createElement(NavRail, { active: "search", counts: {}, onSelect }));
         });
-        const first = container.querySelector<HTMLButtonElement>(".mj_NavRail_entry")!;
+        const entries = container.querySelectorAll<HTMLButtonElement>(".mj_NavRail_entry");
+        const first = entries[entries.length - 1];
         expect(first.dataset.nav).toBe("search");
         expect(first.getAttribute("aria-current")).toBe("page");
         await act(async () => first.click());

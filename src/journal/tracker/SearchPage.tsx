@@ -17,7 +17,7 @@ Please see LICENSE files in the repository root for full details.
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
 import type { MatronJournalClient } from "../client";
-import { NumberSearchResult } from "../goto-number";
+import { canOpen, NumberSearchResult, parseTrackerNumber } from "../goto-number";
 import { ConversationsIcon, DecisionsIcon, MemoriesIcon, ProjectsIcon, SearchIcon } from "../icons";
 import { renderSnippet } from "../snippet";
 import type { ClientState, Conversation, GlobalSearchChat, GlobalSearchKind, GlobalSearchResult } from "../types";
@@ -53,6 +53,30 @@ const WHY_LABEL: Record<string, string> = {
     similar: "similar meaning",
     some_words: "some words",
 };
+
+/**
+ * The journal's tracker snippets run the entity's own name and title into the matched text
+ * ("**Postgres** 16 migration Move the app…"). The row already shows the title, so drop those
+ * leading words (markers and all) and keep what follows; a snippet that is only the title is null.
+ */
+export function snippetBeyondTitle(snippet: string, heads: Array<string | null | undefined>): string | null {
+    let rest = snippet;
+    for (const head of heads) {
+        if (!head) continue;
+        const words = head.trim().split(/\s+/);
+        let i = 0;
+        let cursor = rest.trimStart();
+        for (const word of words) {
+            const bare = cursor.replace(/^\*\*/, "");
+            if (!bare.toLowerCase().startsWith(word.toLowerCase())) break;
+            cursor = bare.slice(word.length).replace(/^\*\*/, "").trimStart();
+            i += 1;
+        }
+        if (i === words.length) rest = cursor;
+    }
+    rest = rest.trim();
+    return rest && rest !== "…" ? rest : null;
+}
 
 /** Conversations whose title or latest message holds every word of the query. */
 export function matchingConversations(conversations: Conversation[], query: string): Conversation[] {
@@ -114,6 +138,8 @@ export function SearchPage({ client, state }: { client: MatronJournalClient; sta
                             if (event.key === "Escape" && query) {
                                 event.stopPropagation();
                                 client.setGlobalSearchQuery("");
+                            } else if (event.key === "Enter") {
+                                void goToNumber(client, query);
                             }
                         }}
                         placeholder="Search conversations, items, missions, memories…"
@@ -198,6 +224,18 @@ export function SearchPage({ client, state }: { client: MatronJournalClient; sta
     );
 }
 
+/**
+ * Enter on a query that is just a number opens what carries it, as "Go to number" did; any other
+ * query, or a number nothing carries, leaves the results on screen.
+ */
+export async function goToNumber(client: MatronJournalClient, query: string): Promise<boolean> {
+    const num = parseTrackerNumber(query);
+    if (num === null) return false;
+    const outcome = await client.lookupNumber(num);
+    if (outcome.status !== "found" || !canOpen(outcome.hit)) return false;
+    return client.openNumberHit(outcome.hit, num);
+}
+
 function Section({ title, children }: { title: string; children: React.ReactNode }): React.ReactElement {
     return (
         <section className="mj_SearchPage_section" aria-label={title}>
@@ -247,11 +285,8 @@ function ResultRow({
 }): React.ReactElement {
     const { kind, num, name } = result;
     const label = kind === "memory" ? (name ?? result.title) : num != null ? `#${num} ${result.title}` : result.title;
-    const subtitle = result.snippet
-        ? renderSnippet(result.snippet)
-        : kind === "memory" && name
-          ? result.title
-          : result.state;
+    const beyond = result.snippet ? snippetBeyondTitle(result.snippet, [name, result.title]) : null;
+    const subtitle = beyond ? renderSnippet(beyond) : kind === "memory" && name ? result.title : result.state;
     const icon =
         kind === "item" ? (
             <DecisionsIcon />

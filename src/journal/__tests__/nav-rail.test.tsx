@@ -90,20 +90,20 @@ describe("NavRail", () => {
     it("shows the Mac entries in order and marks Conversations current", async () => {
         await render(signedInClient([convo("c1")]));
         expect(entries().map((button) => button.dataset.nav)).toEqual([
-            "search",
             "coordinator",
             "projects",
             "decisions",
             "conversations",
             "memories",
+            "search",
         ]);
         expect(entries().map((button) => button.textContent)).toEqual([
-            "Search",
             "Coordinator",
             "Projects",
             "For you",
             "Conversations",
             "Memories",
+            "Search",
         ]);
         expect(entry("conversations").getAttribute("aria-current")).toBe("page");
         expect(entry("projects").getAttribute("aria-current")).toBeNull();

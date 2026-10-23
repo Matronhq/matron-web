@@ -60,23 +60,6 @@ export function NavRail({
 }): React.ReactElement {
     return (
         <nav className="mj_NavRail" aria-label="Sections" data-testid="nav-rail">
-            {/* Search sits first and is always there: it reaches every section. */}
-            <button
-                type="button"
-                className="mj_NavRail_entry"
-                data-nav="search"
-                aria-current={active === "search" ? "page" : undefined}
-                aria-label="Search"
-                title={`Search (${shortcutLabel("k")})`}
-                onClick={() => onSelect("search")}
-            >
-                <span className="mj_NavRail_icon" aria-hidden="true">
-                    <SearchIcon />
-                </span>
-                <span className="mj_NavRail_label" aria-hidden="true">
-                    Search
-                </span>
-            </button>
             {coordinator && (
                 <button
                     type="button"
@@ -125,6 +108,24 @@ export function NavRail({
                     </button>
                 );
             })}
+            <div className="mj_NavRail_spacer" />
+            {/* Search sits at the foot, where the Mac had "Go to": it reaches every section and every number. */}
+            <button
+                type="button"
+                className="mj_NavRail_entry mj_NavRail_search"
+                data-nav="search"
+                aria-current={active === "search" ? "page" : undefined}
+                aria-label="Search"
+                title={`Search (${shortcutLabel("k")})`}
+                onClick={() => onSelect("search")}
+            >
+                <span className="mj_NavRail_icon" aria-hidden="true">
+                    <SearchIcon />
+                </span>
+                <span className="mj_NavRail_label" aria-hidden="true">
+                    Search
+                </span>
+            </button>
             {footer && <div className="mj_NavRail_footer">{footer}</div>}
         </nav>
     );

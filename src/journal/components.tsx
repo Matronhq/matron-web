@@ -88,7 +88,7 @@ import {
 } from "./deferred-ui";
 import { FOCUS_HIGHLIGHT_MS, focusScrollTop, jumpToLastOwnShortcutLabel, landingSeq } from "./jump-to-message";
 import { FindInChatBar, useFindInChatShortcut } from "./find-in-chat";
-import { GoToNumberDialog, goToNumberShortcutLabel, NumberSearchResult, useGoToNumberShortcut } from "./goto-number";
+import { GoToNumberDialog, NumberSearchResult, useGoToNumberShortcut } from "./goto-number";
 import { renderSnippet } from "./snippet";
 
 export { renderSnippet };
@@ -125,7 +125,6 @@ import {
     VideoFileIcon,
     MarkdownIcon,
     MarkAllReadIcon,
-    NumberSignIcon,
     MarkReadIcon,
     MarkUnreadIcon,
     OpenAIMark,
@@ -2244,15 +2243,6 @@ function ConversationListView({
                                 <MarkAllReadIcon />
                             </button>
                         )}
-                        <button
-                            className="mj_IconButton"
-                            type="button"
-                            aria-label="Go to number"
-                            title={`Go to number (${goToNumberShortcutLabel()})`}
-                            onClick={() => client.openGoToNumber()}
-                        >
-                            <NumberSignIcon />
-                        </button>
                         {/* Mac: New Chat is the toolbar's square.and.pencil glyph, not a button row. */}
                         <button
                             className="mj_IconButton"
