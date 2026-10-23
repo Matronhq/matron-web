@@ -17,12 +17,15 @@ Please see LICENSE files in the repository root for full details.
 import { dateTimeFormat } from "./date-format";
 import { formatRelativeTime } from "./tracker/format";
 
-export type RoutineTriggerKind = "context_over" | "stalled" | "disk_under";
+export type RoutineTriggerKind = "context_over" | "stalled" | "disk_under" | "allowance_expiring";
 
 /** What a triggered routine fires on instead of a clock; `threshold` is `pct` or `reset_minutes`. */
 export interface RoutineTrigger {
     kind: RoutineTriggerKind;
     threshold: number;
+    /** allowance_expiring only: how far off the weekly reset is, in hours (journal default 6–12). */
+    fromHours?: number;
+    toHours?: number;
 }
 
 export interface Routine {
@@ -61,6 +64,7 @@ export const ROUTINE_TRIGGER_KINDS: ReadonlyArray<{ kind: RoutineTriggerKind; la
     { kind: "context_over", label: "Session context", initial: 40 },
     { kind: "stalled", label: "Stalled session", initial: 120 },
     { kind: "disk_under", label: "Low disk", initial: 20 },
+    { kind: "allowance_expiring", label: "Spare weekly allowance", initial: 70 },
 ];
 
 /** The journal's routine rules (`src/routines.js`). */
@@ -90,13 +94,30 @@ export function parseRoutineTrigger(raw: unknown): RoutineTrigger | null {
     if (typeof kind !== "string" || !TRIGGER_KINDS.has(kind)) return null;
     if (kind === "stalled") return { kind, threshold: finite(value.reset_minutes) ?? 120 };
     const pct = finite(value.pct);
-    return pct === null ? null : { kind: kind as RoutineTriggerKind, threshold: pct };
+    if (pct === null) return null;
+    if (kind === "allowance_expiring") {
+        return {
+            kind,
+            threshold: pct,
+            fromHours: finite(value.from_hours) ?? 6,
+            toHours: finite(value.to_hours) ?? 12,
+        };
+    }
+    return { kind: kind as RoutineTriggerKind, threshold: pct };
 }
 
 export function routineTriggerJson(trigger: RoutineTrigger): Record<string, unknown> {
-    return trigger.kind === "stalled"
-        ? { kind: "stalled", reset_minutes: trigger.threshold }
-        : { kind: trigger.kind, pct: trigger.threshold };
+    if (trigger.kind === "stalled") return { kind: "stalled", reset_minutes: trigger.threshold };
+    if (trigger.kind === "allowance_expiring") {
+        // The window is kept as the journal has it; the editor changes only the percent.
+        return {
+            kind: trigger.kind,
+            pct: trigger.threshold,
+            ...(trigger.fromHours !== undefined ? { from_hours: trigger.fromHours } : {}),
+            ...(trigger.toHours !== undefined ? { to_hours: trigger.toHours } : {}),
+        };
+    }
+    return { kind: trigger.kind, pct: trigger.threshold };
 }
 
 /**
@@ -174,6 +195,8 @@ export function triggerWords(trigger: RoutineTrigger): string {
                 : "When a session stalls on a usage limit";
         case "disk_under":
             return `When a box drops under ${trigger.threshold}% free disk`;
+        case "allowance_expiring":
+            return `When a weekly limit resets within ${trigger.fromHours ?? 6}–${trigger.toHours ?? 12} h and is under ${trigger.threshold}%`;
     }
 }
 
@@ -184,6 +207,8 @@ export function triggerThresholdLabel(trigger: RoutineTrigger): string {
             return `${trigger.threshold}% of the context window`;
         case "disk_under":
             return `${trigger.threshold}% free disk`;
+        case "allowance_expiring":
+            return `Weekly limit under ${trigger.threshold}%`;
         case "stalled":
             return trigger.threshold === 0 ? "Any reset time" : `No reset within ${routineDuration(trigger.threshold)}`;
     }
