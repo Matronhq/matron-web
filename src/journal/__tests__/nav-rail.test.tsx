@@ -90,6 +90,7 @@ describe("NavRail", () => {
     it("shows the Mac entries in order and marks Conversations current", async () => {
         await render(signedInClient([convo("c1")]));
         expect(entries().map((button) => button.dataset.nav)).toEqual([
+            "search",
             "coordinator",
             "projects",
             "decisions",
@@ -97,6 +98,7 @@ describe("NavRail", () => {
             "memories",
         ]);
         expect(entries().map((button) => button.textContent)).toEqual([
+            "Search",
             "Coordinator",
             "Projects",
             "For you",

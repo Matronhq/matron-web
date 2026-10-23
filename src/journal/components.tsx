@@ -89,6 +89,9 @@ import {
 import { FOCUS_HIGHLIGHT_MS, focusScrollTop, jumpToLastOwnShortcutLabel, landingSeq } from "./jump-to-message";
 import { FindInChatBar, useFindInChatShortcut } from "./find-in-chat";
 import { GoToNumberDialog, goToNumberShortcutLabel, NumberSearchResult, useGoToNumberShortcut } from "./goto-number";
+import { renderSnippet } from "./snippet";
+
+export { renderSnippet };
 import { PinDialog, type PinDialogTarget } from "./PinDialogs";
 import { CommandPalette } from "./CommandPalette";
 import { shortcutLabel, useAppShortcuts, useShortcutCommand } from "./shortcuts";
@@ -271,11 +274,12 @@ import {
 import { voiceNoteSessionFor } from "./voice-note-session";
 import { type ListPlace, useWindowedList } from "./windowing";
 
-const NAV_VIEW = { projects: "missions", decisions: "inbox", memories: "memories" } as const;
-const NAV_KEY_FOR_VIEW: Record<"missions" | "inbox" | "memories", NavKey> = {
+const NAV_VIEW = { search: "search", projects: "missions", decisions: "inbox", memories: "memories" } as const;
+const NAV_KEY_FOR_VIEW: Record<"missions" | "inbox" | "memories" | "search", NavKey> = {
     missions: "projects",
     inbox: "decisions",
     memories: "memories",
+    search: "search",
 };
 const LEFT_PANEL_SIZE_KEY = "matron_sidebar_width";
 // The key earlier versions stored the width under; moved to the current key on first read.
@@ -1332,26 +1336,6 @@ function OutcomeGlyph({
 
 // Debounce keystrokes before firing a message-content search request.
 const MESSAGE_SEARCH_DEBOUNCE_MS = 200;
-
-/**
- * Render a server search snippet, turning its `**…**` match markers into <mark> highlights.
- * The snippet is plain text (server-escaped), so we only split on the markers — no HTML is
- * interpreted. Unbalanced markers degrade to literal text rather than swallowing the rest.
- */
-export function renderSnippet(snippet: string): React.ReactNode[] {
-    const parts = snippet.split("**");
-    return parts.map((part, index) =>
-        // Odd segments sat between a matched pair of markers → highlight. If the count is even
-        // (a dangling marker), the trailing odd segment is still highlighted, which is harmless.
-        index % 2 === 1 ? (
-            <mark key={index} className="mj_SearchHit_mark">
-                {part}
-            </mark>
-        ) : (
-            <React.Fragment key={index}>{part}</React.Fragment>
-        ),
-    );
-}
 
 export function MessageSearchResults({
     query,
@@ -7910,7 +7894,7 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
             setDraftReloadTicks((ticks) => ({ ...ticks, [conversationId]: (ticks[conversationId] ?? 0) + 1 })),
         [],
     );
-    // ⌘K: the slash palette, for a conversation with a composer on screen (Mac: the chat view's).
+    // ⇧⌘K: the slash palette, for a conversation with a composer on screen (Mac: the chat view's).
     const [paletteOpen, setPaletteOpen] = useState(false);
     const composerConvo =
         state.selectedConversationId && !state.trackerView?.open && !childMode ? state.selectedConversationId : null;

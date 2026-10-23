@@ -289,6 +289,53 @@ export interface SearchResponse {
     hits: SearchHit[];
 }
 
+/** What `GET /search/all` can find besides conversations. */
+export type GlobalSearchKind = "mission" | "item" | "memory" | "project";
+
+/**
+ * One tracker hit from `GET /search/all`: the entity a match rolled up to (a milestone's mission,
+ * a comment's item). `why` is the tier it was found in ("number", "exact", "words", "stemmed",
+ * "similar", "some_words"); `snippet` carries `**…**` markers like a message hit. A memory has a
+ * `name` and no `num`; its `title` is the memory's one-line description.
+ */
+export interface GlobalSearchResult {
+    kind: GlobalSearchKind;
+    id: string;
+    num: number | null;
+    name: string | null;
+    title: string;
+    state: string | null;
+    mission_num: number | null;
+    why: string;
+    field: string;
+    snippet: string | null;
+}
+
+/** A conversation whose messages match, from `GET /search/all`: its newest matching message. */
+export interface GlobalSearchChat {
+    convo_id: string;
+    title: string;
+    parent_title?: string | null;
+    count: number;
+    exact: boolean;
+    live: boolean;
+    top: { seq: number; ts: number; sender: string; excerpt: string };
+}
+
+export interface GlobalSearchResponse {
+    results: GlobalSearchResult[];
+    chats?: GlobalSearchChat[];
+}
+
+/** The Search page's results, bound to the query that produced them (like MessageSearchState). */
+export interface GlobalSearchState {
+    query: string;
+    results: GlobalSearchResult[];
+    chats: GlobalSearchChat[];
+    loading: boolean;
+    failed: boolean;
+}
+
 /**
  * What a tracker number is (`GET /lookup`). Items, missions, milestones and projects share one
  * per-user number space, so a number alone does not say which kind it names. `num` and `title`
@@ -723,6 +770,9 @@ export interface ClientState {
     //   trackerMission       = the open mission detail, null = none.
     // Undefined = never loaded this session.
     trackerView?: TrackerViewState;
+    /** The Search page's text and results; kept when the page is left, so returning shows them. */
+    globalSearchQuery?: string;
+    globalSearch?: GlobalSearchState;
     /** The "Go to number" field is open (the shortcut and both header buttons set it). */
     goToNumberOpen?: boolean;
     /** The subagent open in the pane beside its parent chat (see chatSidePane). It belongs to
@@ -937,7 +987,7 @@ export interface BriefingState {
 /** Which tracker surface the pane shows; `selected*Id` are #num values (integers). */
 export interface TrackerViewState {
     open: boolean;
-    view?: "missions" | "inbox" | "memories";
+    view?: "missions" | "inbox" | "memories" | "search";
     selectedItemId?: number;
     selectedMissionId?: number;
     /** Projects view: the open project's number; undefined = the dashboard. */

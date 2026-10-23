@@ -16,9 +16,10 @@ Please see LICENSE files in the repository root for full details.
 
 import React from "react";
 
-import { ConversationsIcon, DecisionsIcon, MemoriesIcon, PersonCheckIcon, ProjectsIcon } from "./icons";
+import { shortcutLabel } from "./shortcuts";
+import { ConversationsIcon, DecisionsIcon, MemoriesIcon, PersonCheckIcon, ProjectsIcon, SearchIcon } from "./icons";
 
-export type NavKey = "projects" | "decisions" | "conversations" | "memories";
+export type NavKey = "search" | "projects" | "decisions" | "conversations" | "memories";
 
 /** Width of the rail in CSS px; the list panel's resizer subtracts it. */
 export const NAV_RAIL_WIDTH = 72;
@@ -59,6 +60,23 @@ export function NavRail({
 }): React.ReactElement {
     return (
         <nav className="mj_NavRail" aria-label="Sections" data-testid="nav-rail">
+            {/* Search sits first and is always there: it reaches every section. */}
+            <button
+                type="button"
+                className="mj_NavRail_entry"
+                data-nav="search"
+                aria-current={active === "search" ? "page" : undefined}
+                aria-label="Search"
+                title={`Search (${shortcutLabel("k")})`}
+                onClick={() => onSelect("search")}
+            >
+                <span className="mj_NavRail_icon" aria-hidden="true">
+                    <SearchIcon />
+                </span>
+                <span className="mj_NavRail_label" aria-hidden="true">
+                    Search
+                </span>
+            </button>
             {coordinator && (
                 <button
                     type="button"

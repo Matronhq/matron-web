@@ -1057,6 +1057,102 @@ const signedOutState: ClientState = {
 // ?tracker=inbox | ?tracker=item opens the tracker pane on canned data (unify step 5); the
 // network loads are stubbed so the fixture stays offline.
 const trackerMode = fixtureParams.get("tracker");
+// ?tracker=search opens the Search page with canned results (?q= sets its text; default "nginx").
+if (trackerMode === "search") {
+    const stub = client as unknown as Record<string, unknown>;
+    for (const name of ["loadInbox", "loadMissions", "loadItem", "loadMemories", "loadMission"]) {
+        stub[name] = async () => undefined;
+    }
+    const q = fixtureParams.get("q") ?? "nginx";
+    const results = [
+        {
+            kind: "item",
+            id: "it_1",
+            num: 1755,
+            name: null,
+            title: "Pick the nginx timeout for the proxy",
+            state: "open",
+            mission_num: 1706,
+            why: "exact",
+            field: "title",
+            snippet: null,
+        },
+        {
+            kind: "item",
+            id: "it_2",
+            num: 1712,
+            name: null,
+            title: "Roll the nginx config to box-b",
+            state: "open",
+            mission_num: 1706,
+            why: "words",
+            field: "title",
+            snippet: null,
+        },
+        {
+            kind: "mission",
+            id: "ms_1",
+            num: 1706,
+            name: "Proxy",
+            title: "Proxy hardening",
+            state: "open",
+            mission_num: null,
+            why: "exact",
+            field: "milestone",
+            snippet: "**nginx** reload is now zero-downtime",
+        },
+        {
+            kind: "project",
+            id: "pj_1",
+            num: 1700,
+            name: null,
+            title: "Platform launch",
+            state: "open",
+            mission_num: null,
+            why: "similar",
+            field: "project",
+            snippet: null,
+        },
+        {
+            kind: "memory",
+            id: "proxy-timeouts",
+            num: null,
+            name: "proxy-timeouts",
+            title: "Keep nginx proxy_read_timeout at 120s on every box",
+            state: null,
+            mission_num: null,
+            why: "exact",
+            field: "description",
+            snippet: null,
+        },
+    ];
+    const chats = [
+        {
+            convo_id: "c1",
+            title: "🐣 [dc] matron-web · deploy",
+            count: 3,
+            exact: true,
+            live: true,
+            top: {
+                seq: 4,
+                ts: Date.now(),
+                sender: "agent:box-a",
+                excerpt: "…restarted **nginx** on box-a, then checked the error rate…",
+            },
+        },
+    ];
+    stub.searchEverything = async (raw: string) => {
+        const query = raw.trim();
+        if (!query) return;
+        (client as unknown as { patch(p: Partial<ClientState>): void }).patch({
+            globalSearch: { query, results, chats, loading: false, failed: false },
+        } as Partial<ClientState>);
+    };
+    const tracker = state as unknown as Record<string, unknown>;
+    tracker.globalSearchQuery = q;
+    tracker.trackerView = { open: true, view: "search" };
+}
+
 if (trackerMode === "projects" || trackerMode === "project" || trackerMode === "mission") {
     const now = Date.now();
     const project = (

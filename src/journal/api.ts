@@ -31,6 +31,7 @@ import {
     type MissionDetail,
     type NumberLookup,
     type SearchResponse,
+    type GlobalSearchResponse,
     type SnapshotResponse,
     type TrackerAwaiting,
     type TrackerComment,
@@ -1197,6 +1198,15 @@ export class JournalApi {
     public search(query: string, limit = 20, signal?: AbortSignal): Promise<SearchResponse> {
         const params = new URLSearchParams({ q: query, limit: String(limit) });
         return this.json<SearchResponse>(`/search?${params.toString()}`, { signal });
+    }
+
+    /**
+     * Search everything (`GET /search/all`): missions, items, memories and projects, best match
+     * first, plus the conversations whose messages match. Same query rules as `search`.
+     */
+    public searchAll(query: string, limit = 30, signal?: AbortSignal): Promise<GlobalSearchResponse> {
+        const params = new URLSearchParams({ q: query, limit: String(limit) });
+        return this.json<GlobalSearchResponse>(`/search/all?${params.toString()}`, { signal });
     }
 
     /**

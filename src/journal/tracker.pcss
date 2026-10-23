@@ -452,6 +452,95 @@ Please see LICENSE files in the repository root for full details.
 .mj_TrackerInboxSearch {
     padding: var(--mj-space-3x) var(--mj-space-4x) 0;
 }
+.mj_TrackerInboxSearchAll {
+    align-self: center;
+    margin-top: var(--mj-space-4x);
+}
+
+/* The Search page: the Conversations field, kind chips, then one section per kind. */
+.mj_SearchPage {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    max-width: 720px;
+    margin: 0 auto;
+    padding: var(--mj-space-3x) 0 var(--mj-space-8x);
+}
+.mj_SearchPage_field {
+    padding: 0 var(--mj-space-4x);
+}
+.mj_SearchPage_filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--mj-space-1x);
+    padding: var(--mj-space-2x) var(--mj-space-4x) var(--mj-space-1x);
+}
+.mj_SearchPage_chip {
+    border: 0;
+    border-radius: var(--mj-radius-pill);
+    background: var(--mj-color-bg-subtle-primary);
+    color: var(--mj-color-text-primary);
+    font-size: 12px;
+    font-weight: 500;
+    padding: 4px 10px;
+    cursor: pointer;
+}
+.mj_SearchPage_chip_active {
+    background: var(--mj-color-text-action-accent);
+    color: var(--mj-color-bg-canvas-default);
+}
+.mj_SearchPage_section {
+    margin-top: var(--mj-space-2x);
+}
+.mj_SearchPage_row {
+    display: flex;
+    width: calc(100% - var(--mj-space-3x));
+    box-sizing: border-box;
+    align-items: flex-start;
+    gap: var(--mj-space-3x);
+    margin: 0 var(--mj-space-2x) 1px;
+    padding: 8px 10px;
+    border: 0;
+    border-radius: var(--mj-radius-md);
+    background: transparent;
+    color: var(--mj-color-text-primary);
+    text-align: left;
+    cursor: pointer;
+}
+.mj_SearchPage_row:hover {
+    background: var(--mj-state-hover);
+}
+.mj_SearchPage_icon {
+    display: flex;
+    flex: 0 0 auto;
+    color: var(--mj-color-text-action-accent);
+    padding-top: 1px;
+}
+.mj_SearchPage_icon svg {
+    width: 16px;
+    height: 16px;
+}
+.mj_SearchPage_text {
+    display: flex;
+    min-width: 0;
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: 2px;
+}
+.mj_SearchPage_why {
+    flex: 0 0 auto;
+    border-radius: var(--mj-radius-pill);
+    background: var(--mj-color-bg-subtle-primary);
+    color: var(--mj-color-text-secondary);
+    font-size: 11px;
+    padding: 1px 8px;
+}
+.mj_SearchPage_status {
+    padding: var(--mj-space-3x) var(--mj-space-4x);
+    color: var(--mj-color-text-secondary);
+    font-size: 13px;
+}
+
 .mj_TrackerInboxToggle {
     display: inline-flex;
     align-self: center;

@@ -47,12 +47,15 @@ export function ItemsInbox({
     done,
     client,
     onOpenItem,
+    onSearchEverything,
 }: {
     items: TrackerItem[];
     /** The Done tab's rows; undefined until the tab is first opened. */
     done?: InboxDone;
     client: MatronJournalClient;
     onOpenItem: (num: number) => void;
+    /** "Search everything for …" under a search: opens the Search page with the same text. */
+    onSearchEverything?: (query: string) => void;
 }): React.ReactElement {
     const [filter, setFilter] = useState<InboxFilter>("needs-you");
     const [query, setQuery] = useState("");
@@ -218,6 +221,15 @@ export function ItemsInbox({
                     ) : null}
                 </section>
             )}
+            {searching && onSearchEverything ? (
+                <button
+                    type="button"
+                    className="mj_TrackerTextButton mj_TrackerInboxSearchAll"
+                    onClick={() => onSearchEverything(query.trim())}
+                >
+                    Search everything for “{query.trim()}” →
+                </button>
+            ) : null}
         </div>
     );
 }

@@ -29,6 +29,7 @@ import { MissionDetail } from "./MissionDetail";
 import { MissionsList } from "./MissionsList";
 import { ProjectPage } from "./ProjectPage";
 import { ProjectsDashboard } from "./ProjectsDashboard";
+import { SearchPage } from "./SearchPage";
 
 export function TrackerPane({
     client,
@@ -139,6 +140,7 @@ export function TrackerPane({
         client.moveTrackerMission(missionId, projectId);
 
     const body = ((): React.ReactElement => {
+        if (view === "search") return <SearchPage client={client} state={state} />;
         // Render a cached detail ONLY when it belongs to the current selection. A detail loaded for
         // a previously selected row is cleared to null on selection change (openTracker*), but the
         // id/num match here is the belt-and-braces guard so a stale record can never drive the detail
@@ -445,6 +447,7 @@ export function TrackerPane({
                 done={state.inboxDone}
                 client={client}
                 onOpenItem={(num) => client.openTrackerItem(num)}
+                onSearchEverything={(query) => client.openSearch(query)}
             />
         );
     })();
@@ -460,7 +463,7 @@ export function TrackerPane({
                 >
                     <CloseIcon />
                 </button>
-                <h1 className="mj_TrackerPane_title">Tracker</h1>
+                <h1 className="mj_TrackerPane_title">{view === "search" ? "Search" : "Tracker"}</h1>
                 <button
                     type="button"
                     className="mj_IconButton mj_TrackerPane_goTo"
@@ -470,35 +473,37 @@ export function TrackerPane({
                 >
                     <NumberSignIcon />
                 </button>
-                <div className="mj_TrackerViewSwitch" role="tablist" aria-label="Tracker view">
-                    <button
-                        type="button"
-                        role="tab"
-                        aria-selected={view === "missions"}
-                        className={`mj_TrackerViewSwitch_tab${view === "missions" ? " mj_TrackerViewSwitch_tab_active" : ""}`}
-                        onClick={() => switchView("missions")}
-                    >
-                        {state.projectsUnsupported ? "Missions" : "Projects"}
-                    </button>
-                    <button
-                        type="button"
-                        role="tab"
-                        aria-selected={view === "inbox"}
-                        className={`mj_TrackerViewSwitch_tab${view === "inbox" ? " mj_TrackerViewSwitch_tab_active" : ""}`}
-                        onClick={() => switchView("inbox")}
-                    >
-                        For you
-                    </button>
-                    <button
-                        type="button"
-                        role="tab"
-                        aria-selected={view === "memories"}
-                        className={`mj_TrackerViewSwitch_tab${view === "memories" ? " mj_TrackerViewSwitch_tab_active" : ""}`}
-                        onClick={() => switchView("memories")}
-                    >
-                        Memories
-                    </button>
-                </div>
+                {view === "search" ? null : (
+                    <div className="mj_TrackerViewSwitch" role="tablist" aria-label="Tracker view">
+                        <button
+                            type="button"
+                            role="tab"
+                            aria-selected={view === "missions"}
+                            className={`mj_TrackerViewSwitch_tab${view === "missions" ? " mj_TrackerViewSwitch_tab_active" : ""}`}
+                            onClick={() => switchView("missions")}
+                        >
+                            {state.projectsUnsupported ? "Missions" : "Projects"}
+                        </button>
+                        <button
+                            type="button"
+                            role="tab"
+                            aria-selected={view === "inbox"}
+                            className={`mj_TrackerViewSwitch_tab${view === "inbox" ? " mj_TrackerViewSwitch_tab_active" : ""}`}
+                            onClick={() => switchView("inbox")}
+                        >
+                            For you
+                        </button>
+                        <button
+                            type="button"
+                            role="tab"
+                            aria-selected={view === "memories"}
+                            className={`mj_TrackerViewSwitch_tab${view === "memories" ? " mj_TrackerViewSwitch_tab_active" : ""}`}
+                            onClick={() => switchView("memories")}
+                        >
+                            Memories
+                        </button>
+                    </div>
+                )}
                 {state.trackerLoading ? <span className="mj_TrackerPane_spinner" aria-label="Loading" /> : null}
             </div>
 
