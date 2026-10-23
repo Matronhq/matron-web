@@ -1004,3 +1004,65 @@ describe("JournalApi project filing", () => {
         expect(body).toEqual({ project: "pj_2" });
     });
 });
+
+describe("JournalApi changePassword", () => {
+    beforeAll(() => {
+        globalThis.TextDecoder = NodeTextDecoder as typeof TextDecoder;
+    });
+
+    beforeEach(() => {
+        fetchMock.mockReset();
+        globalThis.fetch = fetchMock as unknown as typeof fetch;
+        delete (window as Window & { electron?: unknown }).electron;
+    });
+
+    it("POSTs both passwords and the sign-out flag to /password", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ ok: true, signed_out: 2 }));
+        const api = new JournalApi("https://journal.example", "token");
+
+        await expect(api.changePassword("old-secret", "new-secret", true)).resolves.toEqual({ signed_out: 2 });
+
+        const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+        expect(String(url)).toBe("https://journal.example/password");
+        expect(init.method).toBe("POST");
+        expect((init.headers as Record<string, string>).Authorization).toBe("Bearer token");
+        expect(JSON.parse(String(init.body))).toEqual({
+            old_password: "old-secret",
+            new_password: "new-secret",
+            sign_out_others: true,
+        });
+    });
+
+    it("reads an older journal's bare { ok: true } as nobody signed out", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ ok: true }));
+        const api = new JournalApi("https://journal.example", "token");
+
+        await expect(api.changePassword("old-secret", "new-secret", false)).resolves.toEqual({ signed_out: 0 });
+        expect(JSON.parse(String(fetchMock.mock.calls[0][1].body)).sign_out_others).toBe(false);
+    });
+
+    it.each([
+        [401, { error: "bad_password" }, "bad_password", "That password is incorrect."],
+        [400, { error: "weak_password" }, "weak_password", "Use at least 8 characters."],
+        [400, { error: "bad_request" }, "bad_request", "The journal server returned HTTP 400."],
+        [403, { error: "forbidden" }, "forbidden", "This device is not allowed to perform that action."],
+    ])("maps HTTP %i %j to a typed error", async (status, body, code, message) => {
+        fetchMock.mockResolvedValue(jsonResponse(body, status));
+        const api = new JournalApi("https://journal.example", "token");
+
+        const error = await api.changePassword("old-secret", "new-secret", true).catch((e: unknown) => e);
+        expect(error).toBeInstanceOf(JournalApiError);
+        expect(error).toMatchObject({ status, code, message });
+    });
+
+    it("carries a lockout's retry_after", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ error: "locked_out", retry_after: 600 }, 429));
+        const api = new JournalApi("https://journal.example", "token");
+
+        await expect(api.changePassword("old-secret", "new-secret", true)).rejects.toMatchObject({
+            status: 429,
+            code: "locked_out",
+            retryAfter: 600,
+        });
+    });
+});

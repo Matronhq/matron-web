@@ -108,7 +108,7 @@ function signedInClient(devices: DeviceDTO[]): { client: MatronJournalClient; ap
     const api: DevicesApi = {
         devices: jest.fn(() => Promise.resolve({ devices: roster })),
         defaults: jest.fn(() => new Promise(() => undefined)),
-        // An older journal: no Security section beside Devices.
+        // An older journal: no two-factor rows beside Devices.
         twoFactorStatus: jest.fn().mockRejectedValue(new JournalApiError("Not found", 404, "not_found")),
         renameDevice: jest.fn(async (id: number, name: string) => {
             roster = roster.map((device) => (device.device_id === id ? { ...device, name } : device));

@@ -3569,6 +3569,19 @@ export class MatronJournalClient {
         return this.deviceAdminApi().twoFactorPolicy(required);
     }
 
+    /**
+     * Change this account's password (POST /password). This device stays signed in either way: a
+     * 401 here is a wrong current password, not an expired session, so it is only ever thrown back
+     * to the form and never taken as a reason to sign out.
+     */
+    public changePassword(
+        oldPassword: string,
+        newPassword: string,
+        signOutOthers: boolean,
+    ): Promise<{ signed_out: number }> {
+        return this.deviceAdminApi().changePassword(oldPassword, newPassword, signOutOthers);
+    }
+
     /** Whether this account is a journal admin (GET /me). */
     public async isAdmin(): Promise<boolean> {
         return (await this.deviceAdminApi().me()).user.is_admin === true;

@@ -14,7 +14,8 @@ Please see LICENSE files in the repository root for full details.
  *   When the journal requires two-factor of a user who has not set it up, it walks them through
  *   setup first, then shows their recovery codes before opening the app.
  * - SecuritySettings is Settings → Security: set it up, make new recovery codes, move to a new
- *   app, turn it off, and (admins) require it for everyone.
+ *   app, turn it off, and (admins) require it for everyone. Change Password… (ChangePassword.tsx)
+ *   sits at the top of the same group.
  *
  * The secret and the recovery codes are only ever shown here, in the user's own browser.
  */
@@ -23,6 +24,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 
 import { JournalApiError } from "./api";
 import type { HeldSignIn, MatronJournalClient, TwoFactorChallenge } from "./client";
+import { ChangePassword } from "./ChangePassword";
 import { copyText } from "./clipboard";
 import { DeviceSheet, QrCode } from "./DevicesSettings";
 import type { TwoFactorSetup, TwoFactorStatus } from "./types";
@@ -414,7 +416,14 @@ function EnrolStep({
 
 type SecurityDialog = "setup" | "move" | "recovery" | "disable";
 
-export function SecuritySettings({ client }: { client: MatronJournalClient }): React.ReactElement | null {
+export function SecuritySettings({
+    client,
+    onPasswordChanged,
+}: {
+    client: MatronJournalClient;
+    /** After a password change, with how many other devices it signed out. */
+    onPasswordChanged?: (signedOut: number) => void;
+}): React.ReactElement | null {
     const [status, setStatus] = useState<TwoFactorStatus>();
     const [admin, setAdmin] = useState(false);
     const [missing, setMissing] = useState(false);
@@ -451,8 +460,9 @@ export function SecuritySettings({ client }: { client: MatronJournalClient }): R
         };
     }, [client, refresh]);
 
-    // Nothing until the first answer, so an older journal's section never flashes up and goes.
-    if (missing || (!status && !error)) return null;
+    // Nothing until the first answer, so the two-factor rows never flash up and go. A journal
+    // without /2fa still has Password.
+    if (!missing && !status && !error) return null;
 
     const setRequired = async (required: boolean): Promise<void> => {
         setPolicyBusy(true);
@@ -484,88 +494,93 @@ export function SecuritySettings({ client }: { client: MatronJournalClient }): R
             <h3 id="mj-settings-security" className="mj_SettingsSheet_groupTitle">
                 Security
             </h3>
-            {status && (
-                <div className="mj_SettingsSheet_rows">
-                    <div
-                        className="mj_SettingsSheet_row mj_SettingsSheet_switchRow"
-                        data-two-factor={status.enabled ? "on" : "off"}
-                    >
-                        <span className="mj_SettingsSheet_switchText">
-                            <span>Two-factor sign-in</span>
-                            <span className="mj_SettingsSheet_help">
-                                {status.enabled
-                                    ? `On since ${since} · ${status.recovery_codes_left} recovery ${status.recovery_codes_left === 1 ? "code" : "codes"} left`
-                                    : status.available
-                                      ? "Off. Signing in takes only your password."
-                                      : "This server isn't set up for two-factor sign-in."}
+            <div className="mj_SettingsSheet_rows">
+                <ChangePassword client={client} onChanged={onPasswordChanged} />
+                {status && (
+                    <>
+                        <div
+                            className="mj_SettingsSheet_row mj_SettingsSheet_switchRow"
+                            data-two-factor={status.enabled ? "on" : "off"}
+                        >
+                            <span className="mj_SettingsSheet_switchText">
+                                <span>Two-factor sign-in</span>
+                                <span className="mj_SettingsSheet_help">
+                                    {status.enabled
+                                        ? `On since ${since} · ${status.recovery_codes_left} recovery ${status.recovery_codes_left === 1 ? "code" : "codes"} left`
+                                        : status.available
+                                          ? "Off. Signing in takes only your password."
+                                          : "This server isn't set up for two-factor sign-in."}
+                                </span>
                             </span>
-                        </span>
-                        {!status.enabled && status.available && (
-                            <button
-                                type="button"
-                                className="mj_SettingsSheet_clear"
-                                data-action="two-factor-setup"
-                                onClick={() => setDialog("setup")}
-                            >
-                                Set Up…
-                            </button>
-                        )}
-                    </div>
-                    {status.enabled && status.recovery_codes_left < RECOVERY_CODES_LOW && (
-                        <p className="mj_SettingsSheet_error" data-two-factor-low>
-                            You&apos;re running out of recovery codes. Make a new set.
-                        </p>
-                    )}
-                    {status.enabled && (
-                        <div className="mj_DevicesList_footer">
-                            <button
-                                type="button"
-                                data-action="two-factor-recovery"
-                                onClick={() => setDialog("recovery")}
-                            >
-                                New Recovery Codes…
-                            </button>
-                            <button type="button" data-action="two-factor-move" onClick={() => setDialog("move")}>
-                                Change App…
-                            </button>
-                            {!status.required && (
+                            {!status.enabled && status.available && (
                                 <button
                                     type="button"
-                                    data-action="two-factor-disable"
-                                    onClick={() => setDialog("disable")}
+                                    className="mj_SettingsSheet_clear"
+                                    data-action="two-factor-setup"
+                                    onClick={() => setDialog("setup")}
                                 >
-                                    Turn Off…
+                                    Set Up…
                                 </button>
                             )}
                         </div>
-                    )}
-                    {admin && status.available && (
-                        <div className="mj_SettingsSheet_row mj_SettingsSheet_switchRow">
-                            <span className="mj_SettingsSheet_switchText">
-                                <span id="mj-settings-two-factor-required">Require two-factor for everyone</span>
-                                <span id="mj-settings-two-factor-required-help" className="mj_SettingsSheet_help">
-                                    Anyone without it sets it up the next time they sign in with a password. Devices
-                                    that are already signed in stay signed in.
+                        {status.enabled && status.recovery_codes_left < RECOVERY_CODES_LOW && (
+                            <p className="mj_SettingsSheet_error" data-two-factor-low>
+                                You&apos;re running out of recovery codes. Make a new set.
+                            </p>
+                        )}
+                        {status.enabled && (
+                            <div className="mj_DevicesList_footer">
+                                <button
+                                    type="button"
+                                    data-action="two-factor-recovery"
+                                    onClick={() => setDialog("recovery")}
+                                >
+                                    New Recovery Codes…
+                                </button>
+                                <button type="button" data-action="two-factor-move" onClick={() => setDialog("move")}>
+                                    Change App…
+                                </button>
+                                {!status.required && (
+                                    <button
+                                        type="button"
+                                        data-action="two-factor-disable"
+                                        onClick={() => setDialog("disable")}
+                                    >
+                                        Turn Off…
+                                    </button>
+                                )}
+                            </div>
+                        )}
+                        {admin && status.available && (
+                            <div className="mj_SettingsSheet_row mj_SettingsSheet_switchRow">
+                                <span className="mj_SettingsSheet_switchText">
+                                    <span id="mj-settings-two-factor-required">Require two-factor for everyone</span>
+                                    <span id="mj-settings-two-factor-required-help" className="mj_SettingsSheet_help">
+                                        Anyone without it sets it up the next time they sign in with a password. Devices
+                                        that are already signed in stay signed in.
+                                    </span>
                                 </span>
-                            </span>
-                            <button
-                                type="button"
-                                role="switch"
-                                className="mj_SettingsSheet_switch"
-                                data-setting="two-factor-required"
-                                aria-checked={status.required}
-                                aria-labelledby="mj-settings-two-factor-required"
-                                aria-describedby="mj-settings-two-factor-required-help"
-                                disabled={policyBusy}
-                                onClick={() => void setRequired(!status.required)}
-                            />
-                        </div>
-                    )}
-                    {!admin && status.required && (
-                        <p className="mj_SettingsSheet_help">This server requires two-factor sign-in for everyone.</p>
-                    )}
-                </div>
-            )}
+                                <button
+                                    type="button"
+                                    role="switch"
+                                    className="mj_SettingsSheet_switch"
+                                    data-setting="two-factor-required"
+                                    aria-checked={status.required}
+                                    aria-labelledby="mj-settings-two-factor-required"
+                                    aria-describedby="mj-settings-two-factor-required-help"
+                                    disabled={policyBusy}
+                                    onClick={() => void setRequired(!status.required)}
+                                />
+                            </div>
+                        )}
+                        {!admin && status.required && (
+                            <p className="mj_SettingsSheet_help">
+                                This server requires two-factor sign-in for everyone.
+                            </p>
+                        )}
+                    </>
+                )}
+            </div>
             {error && (
                 <p className="mj_SettingsSheet_error" role="alert">
                     {error}

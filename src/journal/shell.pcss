@@ -1894,6 +1894,11 @@ label.mj_SettingsSheet_row {
     font-weight: 500;
 }
 
+/* An error under a sheet's fields reads as one, not as the grey lead-in text of a sheet. */
+.mj_DeviceSheet > .mj_UploadConfirm_error {
+    color: var(--mj-color-text-critical-primary);
+}
+
 .mj_DeviceSheet .mj_DeviceSheet_success {
     color: var(--mj-color-text-success);
 }
@@ -2058,6 +2063,24 @@ label.mj_SettingsSheet_row {
     margin: 0;
     color: var(--mj-color-text-primary);
     font: 400 13px/18px var(--mj-font-family-ui);
+}
+
+/* Settings → Security → Change Password…: the sign-out checkbox with its note under the label. */
+.mj_ChangePasswordSheet .mj_RecoveryCodes_saved {
+    display: flex;
+    margin: 0;
+    color: var(--mj-color-text-primary);
+    font: 400 13px/18px var(--mj-font-family-ui);
+}
+
+.mj_ChangePasswordSheet .mj_ChangePassword_hint {
+    margin: 2px 0 0 21px;
+    color: var(--mj-color-text-secondary);
+    font: 400 12px/16px var(--mj-font-family-ui);
+}
+
+.mj_SettingsSheet_help.mj_ChangePassword_done {
+    color: var(--mj-color-text-success);
 }
 
 /* ⌘K slash-command palette: a sheet near the top of the window, the composer palette's rows under

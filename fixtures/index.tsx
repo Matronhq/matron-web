@@ -1984,6 +1984,22 @@ if (fixtureParams.get("badges") === "1") {
             : { status: "waiting", expires_in: 290 };
     stub.linkApprove = async () => undefined;
     stub.linkDeny = async () => undefined;
+    // Settings → Security: two-factor on, and Change Password… accepts "old-password" as the
+    // current password (anything else is a wrong password), signing out the phone when asked.
+    stub.twoFactorStatus = async () => ({
+        enabled: true,
+        enabled_at: now - 12 * DAY_MS,
+        recovery_codes_left: 8,
+        required: false,
+        available: true,
+    });
+    stub.isAdmin = async () => false;
+    stub.changePassword = async (current: string, _next: string, signOutOthers: boolean) => {
+        if (current !== "old-password") throw new JournalApiError("That password is incorrect.", 401, "bad_password");
+        if (!signOutOthers) return { signed_out: 0 };
+        roster = roster.filter((device) => device.is_self || device.kind === "agent");
+        return { signed_out: 1 };
+    };
 }
 
 // Media stubs: a short generated tone for the voice note, a 404 for the reaped blob.
