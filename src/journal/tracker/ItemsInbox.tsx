@@ -18,16 +18,29 @@ Please see LICENSE files in the repository root for full details.
  * has answered, the one they last acted on first, so something answered or read can be found
  * again. It is loaded when the tab is first
  * opened and a page at a time after that; tasks stay out, as they are the agents' work list.
+ *
+ * A search field above the toggle filters whichever tab is showing, the way the Conversations
+ * search filters that list: every word typed must appear in the item's number, title, text or the
+ * name of the conversation it came from. The query survives a tab switch.
  */
 
 import React, { useEffect, useMemo, useState } from "react";
 
 import type { MatronJournalClient } from "../client";
+import { SearchIcon } from "../icons";
 import type { InboxDone, TrackerItem } from "../types";
 import { itemOriginTitle, needsUser } from "./format";
 import { ItemRow } from "./ItemRow";
 
 type InboxFilter = "needs-you" | "all-open" | "done";
+
+/** Whether every word of `query` appears in the item's number, title, text or origin title. */
+export function itemMatchesQuery(item: TrackerItem, query: string, originTitle: string): boolean {
+    const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+    if (words.length === 0) return true;
+    const haystack = `#${item.num} ${item.title} ${item.body} ${originTitle}`.toLowerCase();
+    return words.every((word) => haystack.includes(word));
+}
 
 export function ItemsInbox({
     items,
@@ -42,6 +55,7 @@ export function ItemsInbox({
     onOpenItem: (num: number) => void;
 }): React.ReactElement {
     const [filter, setFilter] = useState<InboxFilter>("needs-you");
+    const [query, setQuery] = useState("");
     // Notices whose Seen tap is in flight, so a double tap cannot post twice.
     const [seenBusy, setSeenBusy] = useState<ReadonlySet<number>>(() => new Set());
     const markSeen = async (num: number): Promise<void> => {
@@ -72,16 +86,44 @@ export function ItemsInbox({
         if (filter === "done") void client.loadInboxDone();
     }, [client, filter]);
 
-    const shown = useMemo(() => {
+    const originTitle = (item: TrackerItem): string =>
+        originTitles.get(item.origin_convo_id) ?? itemOriginTitle(item) ?? "Another chat";
+
+    const tabItems = useMemo(() => {
         if (filter === "done") return done?.items ?? [];
         if (filter === "needs-you") {
             return items.filter(needsUser).sort((a, b) => b.updated_at - a.updated_at);
         }
         return items.filter((item) => item.state === "open").sort((a, b) => b.updated_at - a.updated_at);
     }, [items, done, filter]);
+    const searching = query.trim() !== "";
+    const shown = searching ? tabItems.filter((item) => itemMatchesQuery(item, query, originTitle(item))) : tabItems;
 
     return (
         <div className="mj_TrackerList">
+            <div className="mj_ConversationSearch mj_TrackerInboxSearch" role="search">
+                <label className="mj_ConversationSearch_inputWrapper mj_noTextInput" htmlFor="for-you-search-input">
+                    <SearchIcon aria-hidden />
+                    <input
+                        id="for-you-search-input"
+                        data-testid="for-you-search"
+                        className="mj_ConversationSearch_input"
+                        type="search"
+                        value={query}
+                        onChange={(event) => setQuery(event.target.value)}
+                        onKeyDown={(event) => {
+                            if (event.key === "Escape" && query) {
+                                event.stopPropagation();
+                                setQuery("");
+                            }
+                        }}
+                        placeholder="Search For you"
+                        aria-label="Search For you"
+                        autoComplete="off"
+                        maxLength={256}
+                    />
+                </label>
+            </div>
             <div className="mj_TrackerInboxToggle" role="tablist" aria-label="Inbox filter">
                 <button
                     type="button"
@@ -119,7 +161,12 @@ export function ItemsInbox({
             ) : null}
 
             {shown.length === 0 ? (
-                filter === "needs-you" ? (
+                searching && tabItems.length > 0 ? (
+                    <div className="mj_TrackerEmpty">
+                        <p className="mj_TrackerEmpty_title">No matches</p>
+                        <p className="mj_TrackerEmpty_hint">Nothing in this list matches your search.</p>
+                    </div>
+                ) : filter === "needs-you" ? (
                     <div className="mj_TrackerEmpty">
                         <p className="mj_TrackerEmpty_title">Nothing needs you</p>
                         <p className="mj_TrackerEmpty_hint">
@@ -152,9 +199,7 @@ export function ItemsInbox({
                             key={item.id}
                             item={item}
                             scope="all"
-                            originTitle={
-                                originTitles.get(item.origin_convo_id) ?? itemOriginTitle(item) ?? "Another chat"
-                            }
+                            originTitle={originTitle(item)}
                             currentConvoId={client.getSnapshot().selectedConversationId}
                             onOpen={onOpenItem}
                             onSeen={(num) => void markSeen(num)}
