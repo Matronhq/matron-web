@@ -78,6 +78,16 @@ describe("itemMatchesQuery", () => {
     it("lets an empty query through", () => {
         expect(itemMatchesQuery(it1, "   ", "")).toBe(true);
     });
+
+    it("matches an item's new text once the item changes, and a renamed origin", () => {
+        const before = item(1, "Old title");
+        expect(itemMatchesQuery(before, "old", "chat")).toBe(true);
+        const after = { ...before, title: "New title" };
+        expect(itemMatchesQuery(after, "new", "chat")).toBe(true);
+        expect(itemMatchesQuery(after, "old", "chat")).toBe(false);
+        expect(itemMatchesQuery(after, "renamed", "renamed chat")).toBe(true);
+        expect(itemMatchesQuery(after, "chat", "other")).toBe(false);
+    });
 });
 
 describe("For you search field", () => {

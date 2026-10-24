@@ -29,7 +29,7 @@ Please see LICENSE files in the repository root for full details.
  * name of the conversation it came from. The query survives a tab switch.
  */
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 
 import type { MatronJournalClient } from "../client";
 import { SearchIcon } from "../icons";
@@ -48,11 +48,22 @@ export function spareAllowanceBacklog(items: TrackerItem[]): TrackerItem[] {
         .sort((a, b) => a.rank - b.rank);
 }
 
+// Lowercased search text per item, so a keystroke doesn't lowercase every body again. Keyed on the
+// item object: the client replaces an item's object when it changes, which drops the entry.
+const haystacks = new WeakMap<TrackerItem, { originTitle: string; text: string }>();
+function itemHaystack(item: TrackerItem, originTitle: string): string {
+    const cached = haystacks.get(item);
+    if (cached && cached.originTitle === originTitle) return cached.text;
+    const text = `#${item.num} ${item.title} ${item.body} ${originTitle}`.toLowerCase();
+    haystacks.set(item, { originTitle, text });
+    return text;
+}
+
 /** Whether every word of `query` appears in the item's number, title, text or origin title. */
 export function itemMatchesQuery(item: TrackerItem, query: string, originTitle: string): boolean {
     const words = query.toLowerCase().split(/\s+/).filter(Boolean);
     if (words.length === 0) return true;
-    const haystack = `#${item.num} ${item.title} ${item.body} ${originTitle}`.toLowerCase();
+    const haystack = itemHaystack(item, originTitle);
     return words.every((word) => haystack.includes(word));
 }
 
@@ -75,19 +86,27 @@ export function ItemsInbox({
     const [query, setQuery] = useState("");
     // Notices whose Seen tap is in flight, so a double tap cannot post twice.
     const [seenBusy, setSeenBusy] = useState<ReadonlySet<number>>(() => new Set());
-    const markSeen = async (num: number): Promise<void> => {
-        if (seenBusy.has(num)) return;
-        setSeenBusy((current) => new Set(current).add(num));
-        try {
-            await client.markItemSeen(num);
-        } finally {
-            setSeenBusy((current) => {
-                const next = new Set(current);
-                next.delete(num);
-                return next;
-            });
-        }
-    };
+    // Stable across renders (it reads the busy set through a ref), so memoised rows skip a
+    // re-render on every keystroke in the search field.
+    const seenBusyRef = useRef(seenBusy);
+    seenBusyRef.current = seenBusy;
+    const markSeen = useCallback(
+        async (num: number): Promise<void> => {
+            if (seenBusyRef.current.has(num)) return;
+            setSeenBusy((current) => new Set(current).add(num));
+            try {
+                await client.markItemSeen(num);
+            } finally {
+                setSeenBusy((current) => {
+                    const next = new Set(current);
+                    next.delete(num);
+                    return next;
+                });
+            }
+        },
+        [client],
+    );
+    const onSeen = useCallback((num: number) => void markSeen(num), [markSeen]);
 
     // Keyed on the conversation list itself, not the client: the client replaces the list when a
     // conversation is renamed or loaded, and the rows must pick that up without a remount.
@@ -114,8 +133,16 @@ export function ItemsInbox({
         }
         return items.filter((item) => item.state === "open").sort((a, b) => b.updated_at - a.updated_at);
     }, [items, done, filter]);
-    const searching = query.trim() !== "";
-    const shown = searching ? tabItems.filter((item) => itemMatchesQuery(item, query, originTitle(item))) : tabItems;
+    // The field shows each key at once; the list follows the deferred query, so filtering and
+    // redrawing rows never hold up typing.
+    const deferredQuery = useDeferredValue(query);
+    const searching = deferredQuery.trim() !== "";
+    const shown = useMemo(
+        () =>
+            searching ? tabItems.filter((item) => itemMatchesQuery(item, deferredQuery, originTitle(item))) : tabItems,
+        // originTitle is rebuilt each render but only reads originTitles.
+        [tabItems, deferredQuery, searching, originTitles],
+    );
 
     return (
         <div className="mj_TrackerList">
@@ -237,7 +264,7 @@ export function ItemsInbox({
                             originTitle={originTitle(item)}
                             currentConvoId={client.getSnapshot().selectedConversationId}
                             onOpen={onOpenItem}
-                            onSeen={(num) => void markSeen(num)}
+                            onSeen={onSeen}
                             seenBusy={seenBusy.has(item.num)}
                         />
                     ))}
