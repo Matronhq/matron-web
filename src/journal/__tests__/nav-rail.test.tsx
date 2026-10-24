@@ -95,6 +95,7 @@ describe("NavRail", () => {
             "decisions",
             "conversations",
             "memories",
+            "search",
         ]);
         expect(entries().map((button) => button.textContent)).toEqual([
             "Coordinator",
@@ -102,6 +103,7 @@ describe("NavRail", () => {
             "For you",
             "Conversations",
             "Memories",
+            "Search",
         ]);
         expect(entry("conversations").getAttribute("aria-current")).toBe("page");
         expect(entry("projects").getAttribute("aria-current")).toBeNull();

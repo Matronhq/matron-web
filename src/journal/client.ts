@@ -104,6 +104,8 @@ import {
     rendersAsTopLevelRow,
     type RpcReply,
     type SearchHit,
+    type GlobalSearchChat,
+    type GlobalSearchResult,
     type ServerFrame,
     type Session,
     type SnapshotResponse,
@@ -173,6 +175,38 @@ const MESSAGE_SEARCH_LIMIT = 20;
 const MESSAGE_SEARCH_MAX_QUERY_LEN = 256;
 // Transport-agnostic deadline: abort a /search that never settles so "Searching…" can't hang.
 const MESSAGE_SEARCH_TIMEOUT_MS = 15_000;
+// The Search page asks for up to this many tracker hits (the journal caps it at 50).
+const GLOBAL_SEARCH_LIMIT = 40;
+const GLOBAL_SEARCH_KINDS = new Set(["mission", "item", "memory", "project"]);
+
+/** `GET /search/all`'s tracker hits, dropping any a version-skewed journal sent malformed. */
+function sanitizeGlobalResults(response: unknown): GlobalSearchResult[] {
+    const results = (response as { results?: unknown } | null)?.results;
+    if (!Array.isArray(results)) return [];
+    return results.filter(
+        (r): r is GlobalSearchResult =>
+            !!r &&
+            typeof r === "object" &&
+            GLOBAL_SEARCH_KINDS.has((r as GlobalSearchResult).kind) &&
+            typeof (r as GlobalSearchResult).id === "string" &&
+            typeof (r as GlobalSearchResult).title === "string" &&
+            ((r as GlobalSearchResult).snippet == null || typeof (r as GlobalSearchResult).snippet === "string"),
+    );
+}
+
+/** `GET /search/all`'s matching conversations; absent on a request that asked for none. */
+function sanitizeGlobalChats(response: unknown): GlobalSearchChat[] {
+    const chats = (response as { chats?: unknown } | null)?.chats;
+    if (!Array.isArray(chats)) return [];
+    return chats.filter(
+        (c): c is GlobalSearchChat =>
+            !!c &&
+            typeof c === "object" &&
+            typeof (c as GlobalSearchChat).convo_id === "string" &&
+            typeof (c as GlobalSearchChat).top?.seq === "number" &&
+            typeof (c as GlobalSearchChat).top?.excerpt === "string",
+    );
+}
 /** How long "go to number" waits for the journal before reporting a failed lookup. */
 export const NUMBER_LOOKUP_TIMEOUT_MS = 15_000;
 /** A mission page's closed items come in pages of this many (the Mac's closed-items page). */
@@ -569,6 +603,8 @@ export class MatronJournalClient {
     // The in-flight message-search request, so a superseding query / clear / logout can abort it
     // (bounded exit — a stalled /search never leaves the section stuck "Searching…").
     private searchAbort?: AbortController;
+    private globalSearchSeq = 0;
+    private globalSearchAbort?: AbortController;
     private database?: JournalDatabase;
     private connection?: JournalConnection;
     // Read state: which timeline rows and tracker items were actually on screen, reported as
@@ -1222,6 +1258,80 @@ export class MatronJournalClient {
             clearTimeout(timeoutTimer!);
             if (this.searchAbort === controller) this.searchAbort = undefined;
         }
+    }
+
+    /** Opens the Search page; `query`, when given, replaces the text it shows (For you's link). */
+    public openSearch(query?: string): void {
+        if (query !== undefined && query !== this.state.globalSearchQuery) this.setGlobalSearchQuery(query);
+        if (this.state.trackerItem) this.patch({ trackerItem: null });
+        if (this.state.trackerMission) this.patch({ trackerMission: null });
+        this.openTrackerView({ view: "search", itemId: null, missionId: null, projectId: null, memoryName: null });
+        // Already open, the page is not remounted: this tells it to take the focus again.
+        this.patch({ globalSearchFocus: (this.state.globalSearchFocus ?? 0) + 1 });
+    }
+
+    /** The Search page's text. The page debounces the request (searchEverything). */
+    public setGlobalSearchQuery(query: string): void {
+        this.patch({ globalSearchQuery: query });
+    }
+
+    /**
+     * Search everything (the Search page): tracker entities and matching conversations from
+     * `GET /search/all`, with the same guarantees as searchMessages — only the newest request
+     * applies, a prior one is aborted, a timeout bounds it, and a failure is a "failed" state.
+     */
+    public async searchEverything(rawQuery: string): Promise<void> {
+        const query = rawQuery.trim();
+        // The same text again (a trailing space, a return to the page) keeps the request in
+        // flight or the answer on screen; aborting it here would report an outage.
+        if (query && this.state.globalSearch?.query === query && !this.state.globalSearch.failed) return;
+        this.globalSearchAbort?.abort();
+        this.globalSearchAbort = undefined;
+        if (!query || query.length > MESSAGE_SEARCH_MAX_QUERY_LEN) {
+            this.globalSearchSeq += 1;
+            if (this.state.globalSearch) this.patch({ globalSearch: undefined });
+            return;
+        }
+        if (!this.api) return;
+        const seq = ++this.globalSearchSeq;
+        const controller = new AbortController();
+        this.globalSearchAbort = controller;
+        this.patch({ globalSearch: { query, results: [], chats: [], loading: true, failed: false } });
+        const call = this.api.searchAll(query, GLOBAL_SEARCH_LIMIT, controller.signal);
+        void call.catch(() => undefined);
+        let timeoutTimer: ReturnType<typeof setTimeout>;
+        const timeoutReject = new Promise<never>((_resolve, reject) => {
+            timeoutTimer = setTimeout(() => {
+                reject(new Error("timeout"));
+                controller.abort();
+            }, MESSAGE_SEARCH_TIMEOUT_MS);
+        });
+        try {
+            const response = await Promise.race([call, timeoutReject]);
+            if (seq !== this.globalSearchSeq) return;
+            this.patch({
+                globalSearch: {
+                    query,
+                    results: sanitizeGlobalResults(response),
+                    chats: sanitizeGlobalChats(response),
+                    loading: false,
+                    failed: false,
+                },
+            });
+        } catch {
+            if (seq !== this.globalSearchSeq) return;
+            this.patch({ globalSearch: { query, results: [], chats: [], loading: false, failed: true } });
+        } finally {
+            clearTimeout(timeoutTimer!);
+            if (this.globalSearchAbort === controller) this.globalSearchAbort = undefined;
+        }
+    }
+
+    /** A Search page conversation hit: open it on its newest matching message, find bar up. */
+    public openGlobalSearchChat(chat: GlobalSearchChat): void {
+        const query = this.state.globalSearch?.query;
+        if (query) void this.beginChatSearch(query, { conversationId: chat.convo_id, startingAt: chat.top.seq });
+        else void this.focusMessage(chat.convo_id, chat.top.seq);
     }
 
     public async selectConversation(
@@ -2562,7 +2672,7 @@ export class MatronJournalClient {
     // selection. `null ?? prev` would resolve to prev, so the clear needs the explicit === null arm.
     public openTrackerView(
         opts: {
-            view?: "missions" | "inbox" | "memories";
+            view?: "missions" | "inbox" | "memories" | "search";
             itemId?: number | null;
             missionId?: number | null;
             memoryName?: string | null;

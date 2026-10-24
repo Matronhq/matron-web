@@ -16,9 +16,10 @@ Please see LICENSE files in the repository root for full details.
 
 import React from "react";
 
-import { ConversationsIcon, DecisionsIcon, MemoriesIcon, PersonCheckIcon, ProjectsIcon } from "./icons";
+import { shortcutLabel } from "./shortcuts";
+import { ConversationsIcon, DecisionsIcon, MemoriesIcon, PersonCheckIcon, ProjectsIcon, SearchIcon } from "./icons";
 
-export type NavKey = "projects" | "decisions" | "conversations" | "memories";
+export type NavKey = "search" | "projects" | "decisions" | "conversations" | "memories";
 
 /** Width of the rail in CSS px; the list panel's resizer subtracts it. */
 export const NAV_RAIL_WIDTH = 72;
@@ -107,6 +108,24 @@ export function NavRail({
                     </button>
                 );
             })}
+            <div className="mj_NavRail_spacer" />
+            {/* Search sits at the foot, where the Mac had "Go to": it reaches every section and every number. */}
+            <button
+                type="button"
+                className="mj_NavRail_entry mj_NavRail_search"
+                data-nav="search"
+                aria-current={active === "search" ? "page" : undefined}
+                aria-label="Search"
+                title={`Search (${shortcutLabel("k")})`}
+                onClick={() => onSelect("search")}
+            >
+                <span className="mj_NavRail_icon" aria-hidden="true">
+                    <SearchIcon />
+                </span>
+                <span className="mj_NavRail_label" aria-hidden="true">
+                    Search
+                </span>
+            </button>
             {footer && <div className="mj_NavRail_footer">{footer}</div>}
         </nav>
     );
