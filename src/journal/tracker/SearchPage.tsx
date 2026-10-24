@@ -97,10 +97,11 @@ export function SearchPage({ client, state }: { client: MatronJournalClient; sta
     const [filter, setFilter] = useState<Filter>("all");
     const inputRef = useRef<HTMLInputElement>(null);
 
+    // On mount, and again whenever ⌘K or ⌘J opens Search while it is already showing.
     useEffect(() => {
         inputRef.current?.focus();
         inputRef.current?.select();
-    }, []);
+    }, [state.globalSearchFocus]);
 
     useEffect(() => {
         const timer = setTimeout(() => void client.searchEverything(query), GLOBAL_SEARCH_DEBOUNCE_MS);

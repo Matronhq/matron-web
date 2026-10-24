@@ -771,6 +771,8 @@ export interface ClientState {
     // Undefined = never loaded this session.
     trackerView?: TrackerViewState;
     /** The Search page's text and results; kept when the page is left, so returning shows them. */
+    /** Bumped each time Search is opened, so an open page focuses its field again. */
+    globalSearchFocus?: number;
     globalSearchQuery?: string;
     globalSearch?: GlobalSearchState;
     /** The "Go to number" field is open (the shortcut and both header buttons set it). */

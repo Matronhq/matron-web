@@ -189,7 +189,8 @@ function sanitizeGlobalResults(response: unknown): GlobalSearchResult[] {
             typeof r === "object" &&
             GLOBAL_SEARCH_KINDS.has((r as GlobalSearchResult).kind) &&
             typeof (r as GlobalSearchResult).id === "string" &&
-            typeof (r as GlobalSearchResult).title === "string",
+            typeof (r as GlobalSearchResult).title === "string" &&
+            ((r as GlobalSearchResult).snippet == null || typeof (r as GlobalSearchResult).snippet === "string"),
     );
 }
 
@@ -202,7 +203,8 @@ function sanitizeGlobalChats(response: unknown): GlobalSearchChat[] {
             !!c &&
             typeof c === "object" &&
             typeof (c as GlobalSearchChat).convo_id === "string" &&
-            typeof (c as GlobalSearchChat).top?.seq === "number",
+            typeof (c as GlobalSearchChat).top?.seq === "number" &&
+            typeof (c as GlobalSearchChat).top?.excerpt === "string",
     );
 }
 /** How long "go to number" waits for the journal before reporting a failed lookup. */
@@ -1246,6 +1248,8 @@ export class MatronJournalClient {
         if (this.state.trackerItem) this.patch({ trackerItem: null });
         if (this.state.trackerMission) this.patch({ trackerMission: null });
         this.openTrackerView({ view: "search", itemId: null, missionId: null, projectId: null, memoryName: null });
+        // Already open, the page is not remounted: this tells it to take the focus again.
+        this.patch({ globalSearchFocus: (this.state.globalSearchFocus ?? 0) + 1 });
     }
 
     /** The Search page's text. The page debounces the request (searchEverything). */
@@ -1260,6 +1264,9 @@ export class MatronJournalClient {
      */
     public async searchEverything(rawQuery: string): Promise<void> {
         const query = rawQuery.trim();
+        // The same text again (a trailing space, a return to the page) keeps the request in
+        // flight or the answer on screen; aborting it here would report an outage.
+        if (query && this.state.globalSearch?.query === query && !this.state.globalSearch.failed) return;
         this.globalSearchAbort?.abort();
         this.globalSearchAbort = undefined;
         if (!query || query.length > MESSAGE_SEARCH_MAX_QUERY_LEN) {
@@ -1268,7 +1275,6 @@ export class MatronJournalClient {
             return;
         }
         if (!this.api) return;
-        if (this.state.globalSearch?.query === query && !this.state.globalSearch.failed) return;
         const seq = ++this.globalSearchSeq;
         const controller = new AbortController();
         this.globalSearchAbort = controller;

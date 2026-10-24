@@ -7,6 +7,7 @@ import React, { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 
 import type { MatronJournalClient } from "./client";
+import { modalDialogOpen } from "./jump-to-message";
 import { SheetHead, useSheetLifecycle } from "./PinDialogs";
 import type { NumberLookup, NumberLookupKind, NumberLookupOutcome } from "./types";
 
@@ -48,6 +49,8 @@ export function useGoToNumberShortcut(client: MatronJournalClient, enabled: bool
         if (!enabled) return undefined;
         const onKeyDown = (event: KeyboardEvent): void => {
             if (event.defaultPrevented || !isGoToNumberShortcut(event, isMac())) return;
+            // A sheet or dialog owns the keyboard; Search would open beneath it.
+            if (modalDialogOpen()) return;
             event.preventDefault();
             // Search does Go to as well: a number typed there comes up first and Enter opens it.
             client.openSearch();

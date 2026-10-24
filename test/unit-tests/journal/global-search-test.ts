@@ -109,6 +109,30 @@ describe("client.searchEverything", () => {
         expect(client.getSnapshot().globalSearch).toMatchObject({ query: "nginx", results: [] });
     });
 
+    it("keeps an in-flight request when the same text is searched again", async () => {
+        let resolve!: (value: GlobalSearchResponse) => void;
+        const searchAll = jest.fn().mockImplementationOnce(() => new Promise((r) => (resolve = r)));
+        const client = makeClient(searchAll);
+        const first = client.searchEverything("nginx");
+        await client.searchEverything("nginx ");
+        expect(searchAll).toHaveBeenCalledTimes(1);
+        expect((searchAll.mock.calls[0][2] as AbortSignal).aborted).toBe(false);
+        resolve(RESPONSE);
+        await first;
+        expect(client.getSnapshot().globalSearch).toMatchObject({ query: "nginx", failed: false, loading: false });
+    });
+
+    it("drops hits whose snippet or excerpt is not text", async () => {
+        const client = makeClient(
+            jest.fn().mockResolvedValue({
+                results: [result({}), { ...result({ id: "it_2" }), snippet: 7 }],
+                chats: [{ ...RESPONSE.chats![0], top: { seq: 7, ts: 1, sender: "agent:box-a" } }],
+            }),
+        );
+        await client.searchEverything("nginx");
+        expect(client.getSnapshot().globalSearch).toMatchObject({ results: [{ id: "it_1" }], chats: [] });
+    });
+
     it("clears the results for an empty query", async () => {
         const client = makeClient(jest.fn().mockResolvedValue(RESPONSE));
         await client.searchEverything("nginx");
@@ -121,6 +145,14 @@ describe("client.searchEverything", () => {
         client.openSearch("design");
         expect(client.getSnapshot().trackerView).toMatchObject({ open: true, view: "search" });
         expect(client.getSnapshot().globalSearchQuery).toBe("design");
+    });
+
+    it("asks an open Search page to take the focus again", () => {
+        const client = makeClient(jest.fn());
+        client.openSearch();
+        const first = client.getSnapshot().globalSearchFocus;
+        client.openSearch();
+        expect(client.getSnapshot().globalSearchFocus).toBe((first ?? 0) + 1);
     });
 });
 
