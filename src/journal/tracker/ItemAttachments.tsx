@@ -32,8 +32,11 @@ import {
 import { humanizeSize, splitFilenameForMiddleTruncation } from "./format";
 import { splitInlineAttachments } from "./inline-attachments";
 
+// SVG is left out: fetched media blobs carry no SVG type (api.ts: inertMediaType), so an <img>
+// could not paint one, and an SVG attachment shows as a file chip instead.
 export function isImageAttachment(attachment: TrackerAttachment): boolean {
-    return attachment.mime.toLowerCase().startsWith("image/");
+    const mime = attachment.mime.toLowerCase();
+    return mime.startsWith("image/") && !mime.startsWith("image/svg");
 }
 
 function attachmentDims(attachment: TrackerAttachment): MediaDims | undefined {

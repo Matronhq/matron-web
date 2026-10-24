@@ -2459,7 +2459,7 @@ function ConversationListView({
                     }}
                     onSignOut={() => {
                         setAccountOpen(false);
-                        void client.logout();
+                        void client.signOut();
                     }}
                     onClose={closeSettings}
                 />
