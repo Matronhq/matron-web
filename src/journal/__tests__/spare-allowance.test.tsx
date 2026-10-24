@@ -69,4 +69,25 @@ describe("allowance_expiring trigger", () => {
         expect(triggerThresholdLabel(trigger)).toBe("Weekly limit under 70%");
         expect(parseRoutineTrigger({ kind: "allowance_expiring" })).toBeNull();
     });
+
+    it("parses tiers and sends them back in the journal's words", () => {
+        const raw = {
+            kind: "allowance_expiring",
+            tiers: [
+                { unused_pct: 50, hours_left: 12 },
+                { unused_pct: 25, hours_left: 2 },
+            ],
+        };
+        const trigger = parseRoutineTrigger(raw)!;
+        expect(trigger.tiers).toEqual([
+            { unusedPct: 50, hoursLeft: 12 },
+            { unusedPct: 25, hoursLeft: 2 },
+        ]);
+        expect(routineTriggerJson(trigger)).toEqual(raw);
+        expect(triggerWords(trigger)).toBe(
+            "When a weekly limit has 50% unused with 12 h left or 25% unused with 2 h left",
+        );
+        expect(parseRoutineTrigger({ kind: "allowance_expiring", tiers: [] })).toBeNull();
+        expect(parseRoutineTrigger({ kind: "allowance_expiring", tiers: [{ unused_pct: 50 }] })).toBeNull();
+    });
 });
