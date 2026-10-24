@@ -421,6 +421,9 @@ function blankState(): ClientState {
     };
 }
 
+// How long Sign out waits for the journal to revoke this device before signing out locally anyway.
+const SIGN_OUT_REVOKE_TIMEOUT_MS = 3000;
+
 function storedSession(): Session | undefined {
     try {
         const parsed = JSON.parse(localStorage.getItem(SESSION_KEY) ?? "null") as Partial<Session> | null;
@@ -930,6 +933,21 @@ export class MatronJournalClient {
         localStorage.setItem(SESSION_KEY, JSON.stringify(session));
         localStorage.setItem(LAST_SERVER_KEY, serverUrl);
         await this.startSession(session);
+    }
+
+    /**
+     * Sign out from Settings. The journal is told first, so the token stops working everywhere
+     * and not just in this browser (revoking your own device is the journal's logout). That call
+     * is best effort: offline, or a slow journal, must not keep the user signed in.
+     */
+    public async signOut(): Promise<void> {
+        const api = this.api;
+        const deviceId = this.state.session?.deviceId;
+        if (api && deviceId !== undefined) {
+            const revoke = api.revokeDevice(deviceId).catch(() => undefined);
+            await Promise.race([revoke, new Promise((resolve) => setTimeout(resolve, SIGN_OUT_REVOKE_TIMEOUT_MS))]);
+        }
+        await this.logout();
     }
 
     public async logout(message?: string): Promise<void> {
@@ -5109,6 +5127,13 @@ export class MatronJournalClient {
         this.storageListener = (event: StorageEvent): void => {
             const currentSession = this.state.session;
             if (!currentSession) return;
+            if (event.key === SESSION_KEY) {
+                // Another tab signed out, or signed in as someone else: this tab's session is
+                // over too, rather than carrying on with a token the user has let go of.
+                const next = storedSession();
+                if (!next || next.token !== currentSession.token) void this.logout("You signed out in another tab.");
+                return;
+            }
             if (event.key === archiveStore.storageKey(currentSession)) {
                 const read = archiveStore.read(currentSession);
                 this.storeHydrated.archive = read.ok;
