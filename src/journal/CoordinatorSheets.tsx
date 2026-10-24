@@ -499,7 +499,15 @@ interface EditorDraft {
     cron: string[];
     triggerKind: RoutineTriggerKind;
     threshold: number;
+    /** An allowance_expiring routine's reset window, kept as it is: the editor changes the percent. */
+    window: Pick<RoutineTrigger, "fromHours" | "toHours">;
     enabled: boolean;
+}
+
+function draftTrigger(draft: EditorDraft): RoutineTrigger {
+    return draft.triggerKind === "allowance_expiring"
+        ? { kind: draft.triggerKind, threshold: draft.threshold, ...draft.window }
+        : { kind: draft.triggerKind, threshold: draft.threshold };
 }
 
 function initialDraft(routine: Routine | undefined): EditorDraft {
@@ -513,6 +521,7 @@ function initialDraft(routine: Routine | undefined): EditorDraft {
             cron: DEFAULT_CRON,
             triggerKind: "context_over",
             threshold: 40,
+            window: {},
             enabled: true,
         };
     }
@@ -526,6 +535,7 @@ function initialDraft(routine: Routine | undefined): EditorDraft {
         cron: cron.length === 5 ? cron : DEFAULT_CRON,
         triggerKind: routine.trigger?.kind ?? "context_over",
         threshold: routine.trigger?.threshold ?? 40,
+        window: { fromHours: routine.trigger?.fromHours, toHours: routine.trigger?.toHours },
         enabled: routine.enabled,
     };
 }
@@ -534,7 +544,7 @@ function initialDraft(routine: Routine | undefined): EditorDraft {
 function editorRoutineDraft(draft: EditorDraft, isNew: boolean): RoutineDraft {
     const out: RoutineDraft = { title: draft.title, prompt: draft.prompt, tz: draft.tz };
     if (draft.mode === "schedule") out.schedule = draft.cron.map((field) => field.trim()).join(" ");
-    else out.trigger = { kind: draft.triggerKind, threshold: draft.threshold };
+    else out.trigger = draftTrigger(draft);
     if (isNew) out.enabled = draft.enabled;
     return out;
 }
@@ -556,7 +566,7 @@ function RoutineEditor({
     const [confirmingDelete, setConfirmingDelete] = useState(false);
     const update = (change: Partial<EditorDraft>): void => setDraft((current) => ({ ...current, ...change }));
     const schedule = draft.cron.map((field) => field.trim()).join(" ");
-    const trigger: RoutineTrigger = { kind: draft.triggerKind, threshold: draft.threshold };
+    const trigger = draftTrigger(draft);
     const range = triggerThresholdRange(draft.triggerKind);
 
     const save = async (): Promise<void> => {

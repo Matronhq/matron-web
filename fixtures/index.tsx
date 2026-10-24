@@ -1406,6 +1406,33 @@ if (trackerMode === "inbox" || trackerMode === "item") {
         stub[name] = async () => undefined;
     }
     const tracker = state as unknown as Record<string, unknown>;
+    // The spare-allowance backlog tab: two tasks in order, the first already started.
+    items.push(
+        {
+            ...baseItem,
+            id: "it_1801",
+            num: 1801,
+            kind: "task",
+            awaiting: "agent",
+            rank: 1,
+            labels: ["spare-allowance", "dispatched"],
+            title: "Flaky-test hunt: storefront suite",
+            created_at: now - 2 * day,
+            updated_at: now - 3_600_000,
+        } as (typeof items)[number],
+        {
+            ...baseItem,
+            id: "it_1802",
+            num: 1802,
+            kind: "task",
+            awaiting: "agent",
+            rank: 2,
+            labels: ["spare-allowance"],
+            title: "Dependency upgrade sweep: infrastructure repo",
+            created_at: now - 2 * day,
+            updated_at: now - 2 * day,
+        } as (typeof items)[number],
+    );
     tracker.inboxItems = items;
     tracker.missions = [
         {
@@ -1872,6 +1899,19 @@ if (fixtureParams.get("badges") === "1") {
             last_fired_at: null,
             last_outcome: null,
         },
+        {
+            ...base,
+            id: "rt_6",
+            name: "spare-allowance",
+            title: "Spare weekly allowance before its reset",
+            schedule: null,
+            trigger: { kind: "allowance_expiring", threshold: 70, fromHours: 6, toHours: 12 },
+            prompt: "Routine spare-allowance: follow the Spare weekly allowance section of your playbook.",
+            enabled: true,
+            next_at: null,
+            last_fired_at: null,
+            last_outcome: null,
+        },
     ];
     state.coordinatorConvoId = fixtureParams.get("coordinator") === "none" ? null : "c2";
     const current = (): Routine[] => client.getSnapshot().routines?.list ?? routines;
@@ -2242,6 +2282,39 @@ const runbook = (): File => new File([new Uint8Array(1024)], "deploy-runbook.pdf
 const errorLog = (): File => new File([new Uint8Array(512)], "error-log.txt", { type: "text/plain" });
 
 // Expose hooks so the Playwright driver can drive states (stage files → attachment tray, etc.).
+// ?boxes=1: the New session sheet's box list with each box's limits, their resets (session and
+// week, with how long until a far one) and capacity — open it with the rail's New session button.
+if (fixtureParams.get("boxes") === "1") {
+    const stub = client as unknown as Record<string, unknown>;
+    const now = Date.now();
+    const hours = (h: number): string => new Date(now + h * 3_600_000).toISOString();
+    const box = (device_id: number, name: string) => ({
+        device_id,
+        kind: "agent",
+        name,
+        connected: true,
+        is_self: false,
+    });
+    stub.listAgents = async () => [box(52, "box-a"), box(56, "box-b"), box(63, "box-c")];
+    const status = (session: number, sessionReset: number, week: number, weekReset: number, live: number) => ({
+        reported_at: now - 4 * 60_000,
+        activity: { live_sessions: live, last_hour: [] },
+        limits: {
+            as_of: now - 4 * 60_000,
+            lines: [
+                { id: "session", label: "Session", percent: session, resets_at: hours(sessionReset) },
+                { id: "week_all", label: "Week (all models)", percent: week, resets_at: hours(weekReset) },
+            ],
+        },
+        disk: { free_bytes: 35 * 1024 ** 3, total_bytes: 145 * 1024 ** 3 },
+    });
+    state.boxStatuses = {
+        52: status(0, 4.3, 53, 6.2, 2),
+        56: status(4, 3, 88, 21, 3),
+        63: status(7, 3, 5, 162, 6),
+    } as ClientState["boxStatuses"];
+}
+
 (window as unknown as { __matron: unknown }).__matron = {
     client,
     stageImage: (name = "screenshot.png") => client.stageFiles([imageFile(name)]),
