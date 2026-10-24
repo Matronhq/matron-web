@@ -1905,7 +1905,14 @@ if (fixtureParams.get("badges") === "1") {
             name: "spare-allowance",
             title: "Spare weekly allowance before its reset",
             schedule: null,
-            trigger: { kind: "allowance_expiring", threshold: 70, fromHours: 6, toHours: 12 },
+            trigger: {
+                kind: "allowance_expiring",
+                threshold: 50,
+                tiers: [
+                    { unusedPct: 50, hoursLeft: 12 },
+                    { unusedPct: 25, hoursLeft: 2 },
+                ],
+            },
             prompt: "Routine spare-allowance: follow the Spare weekly allowance section of your playbook.",
             enabled: true,
             next_at: null,

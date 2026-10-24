@@ -26,7 +26,22 @@ export interface RoutineTrigger {
     /** allowance_expiring only: how far off the weekly reset is, in hours (journal default 6–12). */
     fromHours?: number;
     toHours?: number;
+    /** allowance_expiring only, instead of the threshold and window: fires when any tier is met. */
+    tiers?: AllowanceTier[];
 }
+
+/** At least `unusedPct`% of a weekly limit unused with its reset at most `hoursLeft` away. */
+export interface AllowanceTier {
+    unusedPct: number;
+    hoursLeft: number;
+}
+
+/** The journal's tier rules (`validateTrigger`), and the tiers a new routine starts with. */
+export const AllowanceTierRules = { maxTiers: 4, maxHours: 7 * 24 } as const;
+export const DEFAULT_ALLOWANCE_TIERS: ReadonlyArray<AllowanceTier> = [
+    { unusedPct: 50, hoursLeft: 12 },
+    { unusedPct: 25, hoursLeft: 2 },
+];
 
 export interface Routine {
     id: string;
@@ -93,6 +108,18 @@ export function parseRoutineTrigger(raw: unknown): RoutineTrigger | null {
     const kind = value.kind;
     if (typeof kind !== "string" || !TRIGGER_KINDS.has(kind)) return null;
     if (kind === "stalled") return { kind, threshold: finite(value.reset_minutes) ?? 120 };
+    if (kind === "allowance_expiring" && Array.isArray(value.tiers)) {
+        const tiers: AllowanceTier[] = [];
+        for (const tier of value.tiers as unknown[]) {
+            const row = (tier ?? {}) as Record<string, unknown>;
+            const unusedPct = finite(row.unused_pct);
+            const hoursLeft = finite(row.hours_left);
+            if (unusedPct === null || hoursLeft === null) return null;
+            tiers.push({ unusedPct, hoursLeft });
+        }
+        if (!tiers.length) return null;
+        return { kind, threshold: tiers[0].unusedPct, tiers };
+    }
     const pct = finite(value.pct);
     if (pct === null) return null;
     if (kind === "allowance_expiring") {
@@ -108,6 +135,12 @@ export function parseRoutineTrigger(raw: unknown): RoutineTrigger | null {
 
 export function routineTriggerJson(trigger: RoutineTrigger): Record<string, unknown> {
     if (trigger.kind === "stalled") return { kind: "stalled", reset_minutes: trigger.threshold };
+    if (trigger.kind === "allowance_expiring" && trigger.tiers) {
+        return {
+            kind: trigger.kind,
+            tiers: trigger.tiers.map((tier) => ({ unused_pct: tier.unusedPct, hours_left: tier.hoursLeft })),
+        };
+    }
     if (trigger.kind === "allowance_expiring") {
         // The window is kept as the journal has it; the editor changes only the percent.
         return {
@@ -196,8 +229,13 @@ export function triggerWords(trigger: RoutineTrigger): string {
         case "disk_under":
             return `When a box drops under ${trigger.threshold}% free disk`;
         case "allowance_expiring":
+            if (trigger.tiers) return `When a weekly limit has ${tierWords(trigger.tiers)}`;
             return `When a weekly limit resets within ${trigger.fromHours ?? 6}–${trigger.toHours ?? 12} h and is under ${trigger.threshold}%`;
     }
+}
+
+export function tierWords(tiers: ReadonlyArray<AllowanceTier>): string {
+    return tiers.map((tier) => `${tier.unusedPct}% unused with ${tier.hoursLeft} h left`).join(" or ");
 }
 
 /** The editor's label for a trigger's one number. */
@@ -524,7 +562,24 @@ export function routineFormError(name: string, draft: RoutineDraft): string | nu
         const problem = routineScheduleError(draft.schedule);
         if (problem) return problem;
     }
-    if (draft.trigger) {
+    if (draft.trigger?.tiers) {
+        const { tiers } = draft.trigger;
+        if (tiers.length < 1 || tiers.length > AllowanceTierRules.maxTiers) {
+            return `Give 1 to ${AllowanceTierRules.maxTiers} tiers.`;
+        }
+        for (const tier of tiers) {
+            if (!Number.isInteger(tier.unusedPct) || tier.unusedPct < 1 || tier.unusedPct > 99) {
+                return "Each tier's unused share is a percentage from 1 to 99.";
+            }
+            if (
+                !Number.isInteger(tier.hoursLeft) ||
+                tier.hoursLeft < 1 ||
+                tier.hoursLeft > AllowanceTierRules.maxHours
+            ) {
+                return `Each tier's hours left is a whole number from 1 to ${AllowanceTierRules.maxHours}.`;
+            }
+        }
+    } else if (draft.trigger) {
         const { min, max } = triggerThresholdRange(draft.trigger.kind);
         const value = draft.trigger.threshold;
         if (!Number.isInteger(value) || value < min || value > max) {
