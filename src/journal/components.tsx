@@ -211,6 +211,7 @@ import {
     isSampleStale,
     modelLine,
     normalizePercent,
+    resetCountdown,
     resetDisplay,
     sampleAgeMs,
     usageAccessibleLabel,
@@ -780,8 +781,9 @@ function BoxUsage({ status, now }: { status: BoxStatus | undefined; now: number 
     const lines: string[] = [];
     for (const line of status.limits?.lines ?? []) {
         const reset = resetDisplay(line.resets_at, line.resets, now);
+        const countdown = resetCountdown(line.resets_at, now);
         const usage = `${line.label} ${Math.round(line.percent)}%`;
-        lines.push(reset ? `${usage} · resets ${reset}` : usage);
+        lines.push(reset ? `${usage} · resets ${reset}${countdown ? ` · ${countdown}` : ""}` : usage);
     }
     if (status.activity) {
         const count = status.activity.live_sessions;
@@ -2431,7 +2433,7 @@ function ConversationListView({
                     }}
                     onSignOut={() => {
                         setAccountOpen(false);
-                        void client.logout();
+                        void client.signOut();
                     }}
                     onClose={closeSettings}
                 />

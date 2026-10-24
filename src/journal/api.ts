@@ -110,6 +110,34 @@ interface ItemPatch {
     mission?: string | number | null;
 }
 
+// Media bytes are uploaded by agents and other people, and every blob: URL made from them has the
+// app's own origin. A blob typed text/html or image/svg+xml would run as a document on that origin
+// if the user opened its URL in a new tab (the `download` attribute does not apply there), so a
+// fetched blob keeps its type only when the browser can never treat it as a scriptable document:
+// raster images, audio and video. Everything else becomes application/octet-stream. The viewer
+// re-types bytes for the kinds it paints itself (media-viewer.tsx: viewerRetypeMime).
+const INERT_IMAGE_TYPES = new Set([
+    "image/png",
+    "image/jpeg",
+    "image/gif",
+    "image/webp",
+    "image/avif",
+    "image/bmp",
+    "image/heic",
+    "image/heif",
+    "image/tiff",
+    "image/x-icon",
+    "image/vnd.microsoft.icon",
+]);
+
+export function inertMediaType(contentType: string | null | undefined): string {
+    const type = (contentType ?? "").trim().toLowerCase();
+    const base = type.split(";")[0].trim();
+    if (INERT_IMAGE_TYPES.has(base)) return base;
+    if (/^(?:audio|video)\/[a-z0-9.+-]+$/.test(base)) return type;
+    return "application/octet-stream";
+}
+
 export class JournalApiError extends Error {
     public constructor(
         message: string,
@@ -1240,9 +1268,11 @@ export class JournalApi {
     }
 
     public async media(mediaId: string): Promise<Blob> {
+        // encodeURIComponent leaves "." and ".." intact, and as a whole path segment those would
+        // resolve to a different journal path than /media/<id>. No real media id looks like that.
+        if (mediaId === "" || mediaId === "." || mediaId === "..") throw new JournalApiError("Media not found", 404);
         const response = await this.request(`/media/${encodeURIComponent(mediaId)}`);
-        const contentType = response.headers.get("content-type") ?? "application/octet-stream";
-        return new Blob([response.body], { type: contentType });
+        return new Blob([response.body], { type: inertMediaType(response.headers.get("content-type")) });
     }
 
     public async uploadMedia(

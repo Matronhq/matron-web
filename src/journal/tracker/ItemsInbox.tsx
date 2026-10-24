@@ -19,6 +19,11 @@ Please see LICENSE files in the repository root for full details.
  * again. It is loaded when the tab is first
  * opened and a page at a time after that; tasks stay out, as they are the agents' work list.
  *
+ * "Spare allowance" is the backlog of heavy, non-urgent tasks (open tasks labelled
+ * `spare-allowance`) that the Coordinator's spare-allowance routine starts on a box whose weekly
+ * limit is about to reset with room left. It is in the task list's own order, the next one first;
+ * a task already started carries the `dispatched` label.
+ *
  * A search field above the toggle filters whichever tab is showing, the way the Conversations
  * search filters that list: every word typed must appear in the item's number, title, text or the
  * name of the conversation it came from. The query survives a tab switch.
@@ -32,7 +37,16 @@ import type { InboxDone, TrackerItem } from "../types";
 import { itemOriginTitle, needsUser } from "./format";
 import { ItemRow } from "./ItemRow";
 
-type InboxFilter = "needs-you" | "all-open" | "done";
+type InboxFilter = "needs-you" | "all-open" | "done" | "spare";
+
+/** The label that puts a task in the spare-allowance backlog (journal `BACKLOG_LABEL`). */
+export const SPARE_ALLOWANCE_LABEL = "spare-allowance";
+
+export function spareAllowanceBacklog(items: TrackerItem[]): TrackerItem[] {
+    return items
+        .filter((item) => item.state === "open" && item.kind === "task" && item.labels.includes(SPARE_ALLOWANCE_LABEL))
+        .sort((a, b) => a.rank - b.rank);
+}
 
 /** Whether every word of `query` appears in the item's number, title, text or origin title. */
 export function itemMatchesQuery(item: TrackerItem, query: string, originTitle: string): boolean {
@@ -94,6 +108,7 @@ export function ItemsInbox({
 
     const tabItems = useMemo(() => {
         if (filter === "done") return done?.items ?? [];
+        if (filter === "spare") return spareAllowanceBacklog(items);
         if (filter === "needs-you") {
             return items.filter(needsUser).sort((a, b) => b.updated_at - a.updated_at);
         }
@@ -155,6 +170,15 @@ export function ItemsInbox({
                 >
                     Done
                 </button>
+                <button
+                    type="button"
+                    role="tab"
+                    aria-selected={filter === "spare"}
+                    className={`mj_TrackerToggleTab${filter === "spare" ? " mj_TrackerToggleTab_active" : ""}`}
+                    onClick={() => setFilter("spare")}
+                >
+                    Spare allowance
+                </button>
             </div>
 
             {filter === "done" && done?.error ? (
@@ -174,6 +198,14 @@ export function ItemsInbox({
                         <p className="mj_TrackerEmpty_title">Nothing needs you</p>
                         <p className="mj_TrackerEmpty_hint">
                             Questions, things to read and secret requests from every conversation appear here.
+                        </p>
+                    </div>
+                ) : filter === "spare" ? (
+                    <div className="mj_TrackerEmpty">
+                        <p className="mj_TrackerEmpty_title">The backlog is empty</p>
+                        <p className="mj_TrackerEmpty_hint">
+                            Tasks labelled spare-allowance run on a box whose weekly limit is about to reset with room
+                            left, in this order.
                         </p>
                     </div>
                 ) : filter === "done" ? (
