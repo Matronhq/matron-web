@@ -10,7 +10,13 @@ import { createRoot } from "react-dom/client";
 
 import { MatronJournalClient } from "../client";
 import { ItemsInbox, spareAllowanceBacklog } from "../tracker/ItemsInbox";
-import { parseRoutineTrigger, routineTriggerJson, triggerWords, triggerThresholdLabel } from "../routines";
+import {
+    parseRoutineTrigger,
+    routineFormError,
+    routineTriggerJson,
+    triggerWords,
+    triggerThresholdLabel,
+} from "../routines";
 import type { TrackerItem } from "../types";
 import { trackerItem } from "./tracker-fixtures";
 
@@ -89,5 +95,30 @@ describe("allowance_expiring trigger", () => {
         );
         expect(parseRoutineTrigger({ kind: "allowance_expiring", tiers: [] })).toBeNull();
         expect(parseRoutineTrigger({ kind: "allowance_expiring", tiers: [{ unused_pct: 50 }] })).toBeNull();
+    });
+
+    it("checks every tier before saving", () => {
+        const draft = (tiers: Array<{ unusedPct: number; hoursLeft: number }>) =>
+            routineFormError("spare", {
+                title: "Spare",
+                prompt: "p",
+                tz: "Europe/London",
+                trigger: { kind: "allowance_expiring", threshold: tiers[0]?.unusedPct ?? 0, tiers },
+            });
+        expect(draft([{ unusedPct: 50, hoursLeft: 12 }])).toBeNull();
+        expect(draft([])).toMatch(/1 to 4 tiers/);
+        expect(
+            draft([
+                { unusedPct: 50, hoursLeft: 12 },
+                { unusedPct: 25, hoursLeft: NaN },
+            ]),
+        ).toMatch(/hours left/);
+        expect(draft([{ unusedPct: 50, hoursLeft: 0 }])).toMatch(/hours left/);
+        expect(
+            draft([
+                { unusedPct: 50, hoursLeft: 12 },
+                { unusedPct: 100, hoursLeft: 2 },
+            ]),
+        ).toMatch(/unused share/);
     });
 });

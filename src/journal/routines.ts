@@ -562,7 +562,24 @@ export function routineFormError(name: string, draft: RoutineDraft): string | nu
         const problem = routineScheduleError(draft.schedule);
         if (problem) return problem;
     }
-    if (draft.trigger) {
+    if (draft.trigger?.tiers) {
+        const { tiers } = draft.trigger;
+        if (tiers.length < 1 || tiers.length > AllowanceTierRules.maxTiers) {
+            return `Give 1 to ${AllowanceTierRules.maxTiers} tiers.`;
+        }
+        for (const tier of tiers) {
+            if (!Number.isInteger(tier.unusedPct) || tier.unusedPct < 1 || tier.unusedPct > 99) {
+                return "Each tier's unused share is a percentage from 1 to 99.";
+            }
+            if (
+                !Number.isInteger(tier.hoursLeft) ||
+                tier.hoursLeft < 1 ||
+                tier.hoursLeft > AllowanceTierRules.maxHours
+            ) {
+                return `Each tier's hours left is a whole number from 1 to ${AllowanceTierRules.maxHours}.`;
+            }
+        }
+    } else if (draft.trigger) {
         const { min, max } = triggerThresholdRange(draft.trigger.kind);
         const value = draft.trigger.threshold;
         if (!Number.isInteger(value) || value < min || value > max) {
