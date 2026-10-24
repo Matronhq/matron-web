@@ -33,7 +33,7 @@ import {
 import { CommentBubbleGlyph, ImagePlaceholderGlyph, MissionGlyph, TrackerGlyph } from "./glyphs";
 import { inlineRefsToText } from "./inline-attachments";
 
-export function ItemRow({
+export const ItemRow = React.memo(function ItemRow({
     item,
     scope = "chat",
     originTitle,
@@ -147,4 +147,4 @@ export function ItemRow({
             </button>
         </div>
     );
-}
+});
