@@ -927,9 +927,12 @@ export function ItemDetail({
     // label gets a fresh one. Both the slot and the marker name the item they belong to: this view
     // is reused when another item is opened, and a key from one item's failed tap must never be
     // replayed as another item's answer.
-    // A spawn item whose full card is drawn above answers on the card's own buttons; the item's
-    // Approve and Decline (the same answer on the journal) would only repeat them.
-    const cardAnswers = !!spawnRequestId && !!spawnRows?.request;
+    // A spawn item whose answerable card is drawn above answers on the card's own buttons; the
+    // item's Approve and Decline (the same answer on the journal) would only repeat them. Until the
+    // card read finishes neither is offered, so a button cannot appear and then vanish under a tap.
+    const cardAnswers =
+        !!spawnRequestId &&
+        (spawnRows === undefined || (!!spawnRows.request && isAnswerableAgentSpawn(spawnRows.request.payload)));
     const offeredActions = cardAnswers ? [] : offeredItemActions(item);
     const [sendingAction, setSendingAction] = useState<{ itemId: string; label: string } | null>(null);
     const itemTapKeyRef = useRef<{ itemId: string; label: string; key: string } | null>(null);

@@ -1489,6 +1489,14 @@ describe("ItemDetail spawn consent", () => {
         expect(container.querySelector(".mj_TrackerItemActions")).toBeNull();
     });
 
+    it("offers neither the card's nor the item's buttons while the card read is in flight", async () => {
+        const client = fakeClient();
+        client.spawnConsentRows.mockReturnValue(new Promise(() => undefined));
+        const { container } = await render(client, consentItem({ actions: ["Approve", "Decline"] }));
+
+        expect(container.querySelector(".mj_TrackerItemActions")).toBeNull();
+    });
+
     it("without the card, the item's own Approve and Decline answer it, and the note says so", async () => {
         const client = fakeClient();
         const { container } = await render(client, consentItem({ actions: ["Approve", "Decline"] }));
