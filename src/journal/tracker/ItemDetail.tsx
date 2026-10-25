@@ -181,12 +181,15 @@ function useSpawnConsentRows(
 function SpawnConsentCard({
     rows,
     closed,
+    answersBelow,
     onAnswer,
     onOpenRoom,
     onStopSession,
 }: {
     rows: SpawnConsentRows;
     closed: boolean;
+    /** The item carries its own Approve and Decline, drawn under its body. */
+    answersBelow: boolean;
     onAnswer: (decision: AgentSpawnDecision, signal?: AbortSignal) => Promise<void>;
     onOpenRoom: (roomId: string) => void;
     onStopSession: (convoId: string) => void;
@@ -221,7 +224,10 @@ function SpawnConsentCard({
                         ? spawnOutcomeSnippet(outcome)
                         : closed
                           ? "This request is no longer waiting for an answer."
-                          : "The request card hasn't reached this browser yet. It can be approved once it arrives, or from the conversation it was asked in."}
+                          : "The request card hasn't reached this browser yet." +
+                            (answersBelow
+                                ? " Approve or Decline below answers it as the card would."
+                                : " It can be approved once it arrives, or from the conversation it was asked in.")}
                 </p>
                 {roomId ? (
                     <div className="mj_PromptResolved">
@@ -921,7 +927,10 @@ export function ItemDetail({
     // label gets a fresh one. Both the slot and the marker name the item they belong to: this view
     // is reused when another item is opened, and a key from one item's failed tap must never be
     // replayed as another item's answer.
-    const offeredActions = offeredItemActions(item);
+    // A spawn item whose full card is drawn above answers on the card's own buttons; the item's
+    // Approve and Decline (the same answer on the journal) would only repeat them.
+    const cardAnswers = !!spawnRequestId && !!spawnRows?.request;
+    const offeredActions = cardAnswers ? [] : offeredItemActions(item);
     const [sendingAction, setSendingAction] = useState<{ itemId: string; label: string } | null>(null);
     const itemTapKeyRef = useRef<{ itemId: string; label: string; key: string } | null>(null);
     const chosenAction =
@@ -1144,6 +1153,7 @@ export function ItemDetail({
 
                 {spawnRequestId && spawnRows ? (
                     <SpawnConsentCard
+                        answersBelow={offeredActions.length > 0}
                         rows={spawnRows}
                         closed={item.state === "closed"}
                         onAnswer={answerSpawn}

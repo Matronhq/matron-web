@@ -4576,6 +4576,21 @@ export class MatronJournalClient {
     }
 
     /**
+     * A consent request's Approve / Decline tapped on its For you row: the same action tap the item
+     * detail sends, which the journal answers exactly as the request card. A refused tap (most often
+     * "Already answered", decided on the card, on another device or by the Coordinator) refetches
+     * the inbox so the stale row leaves, and then shows the journal's own sentence in the banner.
+     */
+    public async answerConsentItem(num: number, label: string, idempotencyKey: string): Promise<boolean> {
+        const outcome = await this.postTrackerComment(num, { action: label, body: label }, idempotencyKey);
+        if (outcome.ok) return true;
+        if (outcome.reason === undefined) return false;
+        if (this.inboxTracked()) await this.loadInbox();
+        this.patch({ trackerError: outcome.reason });
+        return false;
+    }
+
+    /**
      * commentItem for the reply box: the same write and refetches, but a failure comes back with
      * its reason instead of raising the tracker's error banner, so the box can say beside the kept
      * draft which reply did not go and why.
