@@ -1529,6 +1529,39 @@ if (trackerMode === "inbox" || trackerMode === "item") {
             updated_at: now - 2 * day,
         } as (typeof items)[number],
     );
+    // ?consentrows=1: consent requests waiting on the user, each answered from its own row.
+    if (fixtureParams.has("consentrows")) {
+        const ask = (num: number, title: string, body: string, origin: string): (typeof items)[number] =>
+            ({
+                ...baseItem,
+                id: `it_${num}`,
+                num,
+                kind: "question",
+                awaiting: "user",
+                labels: ["consent"],
+                actions: ["Approve", "Decline"],
+                title,
+                body,
+                origin_convo_id: origin,
+                created_at: now - 4 * 60_000,
+                updated_at: now - 4 * 60_000,
+            }) as (typeof items)[number];
+        items.unshift(
+            ask(1901, "box-b asks to chat with box-a — review", "**box-b** asks to open a chat with **box-a**.", "c2"),
+            ask(
+                1902,
+                "Approve spawn on box-a — Run the suite and fix flakes",
+                "**box-b** asks to start a new agent session on **box-a**.",
+                "c2",
+            ),
+            ask(
+                1903,
+                "Approve file transfer: build.log (2.1 MB) from box-b to review",
+                '**box-b** asks to send a file into the room "review".',
+                "c3",
+            ),
+        );
+    }
     tracker.inboxItems = items;
     tracker.missions = [
         {

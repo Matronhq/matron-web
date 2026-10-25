@@ -68,6 +68,31 @@ export function awaitsSeen(item: Pick<TrackerItem, "kind" | "state">): boolean {
     return item.kind === "notice" && item.state === "open";
 }
 
+/** The label the journal puts on every consent request's item (journal `CONSENT_LABEL`). */
+export const CONSENT_LABEL = "consent";
+// The answers a For you row may offer in place: each is final in one tap. A request whose buttons
+// need more (a hand-over's "Pick a box" opens a picker) is answered from its item instead.
+const ROW_ANSWERS: ReadonlySet<string> = new Set(["Approve", "Accept", "Decline"]);
+const AFFIRMATIVE_ANSWERS: ReadonlySet<string> = new Set(["Approve", "Accept"]);
+
+/**
+ * A consent request's one-tap answers for its For you row: its own Approve and Decline (or Accept
+ * and Decline) while it waits on the user, so it can be answered without finding the request card.
+ * The journal answers the tap exactly as the card. Empty for anything else.
+ */
+export function rowConsentAnswers(
+    item: Pick<TrackerItem, "kind" | "state" | "awaiting" | "labels" | "actions">,
+): string[] {
+    if (item.kind !== "question" || !needsUser(item) || !item.labels.includes(CONSENT_LABEL)) return [];
+    const actions = item.actions ?? [];
+    return actions.length > 0 && actions.every((label) => ROW_ANSWERS.has(label)) ? actions : [];
+}
+
+/** Whether a consent answer says yes, for the filled button. */
+export function isAffirmativeAnswer(label: string): boolean {
+    return AFFIRMATIVE_ANSWERS.has(label);
+}
+
 /**
  * The item's own one-tap answers to draw under its body: all of them while the item is open, none
  * once it is closed (a closed item takes a reply, not a button press). A journal that predates item

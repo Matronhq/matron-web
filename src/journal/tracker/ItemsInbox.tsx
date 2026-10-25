@@ -12,7 +12,10 @@ Please see LICENSE files in the repository root for full details.
  * the client's conversation list, then from the title the journal carries on the item
  * (origin_convo_title); an unresolved origin reads "Another chat". Rows filed from the conversation
  * being viewed carry no origin note. An open notice carries a one-tap Seen button on its row; the
- * tap closes it, so it leaves "Needs you" (and the rail badge) as soon as the write lands.
+ * tap closes it, so it leaves "Needs you" (and the rail badge) as soon as the write lands. A consent
+ * request (a chat, join, spawn or file transfer waiting on the user) carries its own Approve and
+ * Decline under its row: the journal answers the tap exactly as the request card, and closes the
+ * item, so the row leaves "Needs you" the same way.
  *
  * "Done" is where it goes next: questions, decisions and notices that are closed or that the user
  * has answered, the one they last acted on first, so something answered or read can be found
@@ -107,6 +110,33 @@ export function ItemsInbox({
         [client],
     );
     const onSeen = useCallback((num: number) => void markSeen(num), [markSeen]);
+
+    // Consent requests whose answer is in flight, so a double tap cannot answer twice. A retry of
+    // the same answer reuses its idempotency key.
+    const [answerBusy, setAnswerBusy] = useState<ReadonlySet<number>>(() => new Set());
+    const answerBusyRef = useRef(answerBusy);
+    answerBusyRef.current = answerBusy;
+    const answerKeys = useRef(new Map<string, string>());
+    const answer = useCallback(
+        async (num: number, label: string): Promise<void> => {
+            if (answerBusyRef.current.has(num)) return;
+            const slot = `${num}\n${label}`;
+            const key = answerKeys.current.get(slot) ?? crypto.randomUUID();
+            answerKeys.current.set(slot, key);
+            setAnswerBusy((current) => new Set(current).add(num));
+            try {
+                if (await client.answerConsentItem(num, label, key)) answerKeys.current.delete(slot);
+            } finally {
+                setAnswerBusy((current) => {
+                    const next = new Set(current);
+                    next.delete(num);
+                    return next;
+                });
+            }
+        },
+        [client],
+    );
+    const onAnswer = useCallback((num: number, label: string) => void answer(num, label), [answer]);
 
     // Keyed on the conversation list itself, not the client: the client replaces the list when a
     // conversation is renamed or loaded, and the rows must pick that up without a remount.
@@ -266,6 +296,8 @@ export function ItemsInbox({
                             onOpen={onOpenItem}
                             onSeen={onSeen}
                             seenBusy={seenBusy.has(item.num)}
+                            onAnswer={onAnswer}
+                            answerBusy={answerBusy.has(item.num)}
                         />
                     ))}
                     {filter === "done" && done?.nextCursor ? (

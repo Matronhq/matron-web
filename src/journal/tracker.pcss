@@ -290,6 +290,20 @@ Please see LICENSE files in the repository root for full details.
     right: 12px;
     transform: translateY(-50%);
 }
+/* A consent request's Approve and Decline sit under the row, aligned with its title (row padding
+   12 + glyph 20 + gap 10); the row's divider moves below them. */
+.mj_TrackerItemRow_answerWrap {
+    border-bottom: 1px solid var(--mj-color-border-subtle);
+}
+.mj_TrackerItemRow_withAnswers {
+    border-bottom: 0;
+}
+.mj_TrackerItemRow_answers {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 2px 12px 10px 42px;
+}
 
 .mj_TrackerItemRow_glyph,
 .mj_TrackerMissionRow_glyph {
@@ -1294,6 +1308,13 @@ button.mj_TrackerCrumb:hover {
 .mj_TrackerItemActions {
     margin-top: 0;
     margin-bottom: 18px;
+}
+/* A consent request's yes, as the request card draws its Approve: filled with the accent. */
+.mj_TrackerAction_affirmative,
+.mj_TrackerAction_affirmative:hover:not(:disabled) {
+    background: var(--mj-color-bg-accent);
+    border-color: var(--mj-color-bg-accent);
+    color: var(--mj-color-text-on-accent);
 }
 /* The user's answer: filled, and it stays fully legible on a closed item. */
 .mj_TrackerAction_chosen,
