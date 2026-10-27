@@ -75,7 +75,7 @@ describe("tracker link titles", () => {
         const info = jest.fn().mockResolvedValue(found("item", "Late orders after the cut-off"));
         const view = await render(`[#12 Merge: printer export](${OWN}/12)`, info);
 
-        expect(chip(view)?.textContent).toBe("item · Late orders after the cut-off");
+        expect(chip(view)?.textContent).toBe("⚠ item · Late orders after the cut-off");
         expect(chip(view)?.classList.contains("mj_TrackerLinkTarget--mismatch")).toBe(true);
         expect(chip(view)?.getAttribute("title")).toContain("#12 is not");
     });
@@ -96,7 +96,7 @@ describe("tracker link titles", () => {
         const info = jest.fn().mockResolvedValue({ status: "none" });
         const view = await render(`[#99](${OWN}/99)`, info);
 
-        expect(chip(view)?.textContent).toBe("not found");
+        expect(chip(view)?.textContent).toBe("⚠ not found");
         expect(chip(view)?.classList.contains("mj_TrackerLinkTarget--mismatch")).toBe(true);
     });
 

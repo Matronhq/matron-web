@@ -132,7 +132,7 @@ export function TrackerLinkTarget({ user, num, linkText }: TrackerLinkTargetProp
                 className="mj_TrackerLinkTarget mj_TrackerLinkTarget--mismatch"
                 title={`#${num} does not exist, or is not visible to you`}
             >
-                not found
+                ⚠ not found
             </span>
         );
     }
@@ -159,6 +159,7 @@ export function TrackerLinkTarget({ user, num, linkText }: TrackerLinkTargetProp
             className={mismatch ? "mj_TrackerLinkTarget mj_TrackerLinkTarget--mismatch" : "mj_TrackerLinkTarget"}
             title={hint}
         >
+            {mismatch ? "⚠ " : ""}
             {kind} · {title}
         </span>
     );
