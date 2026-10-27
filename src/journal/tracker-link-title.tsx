@@ -83,6 +83,9 @@ const TEXT_RE =
 
 /** The number and title written in a link's text: "#12 Title", "item #12: Title", "Title". */
 export function writtenLink(text: string): { num: number | null; title: string } {
+    // A link whose text is a URL (an autolinked `matron://item/68` or `/u/…` link) names no
+    // title: it is a bare link.
+    if (/^[a-z][a-z0-9+.-]*:\/\/\S*$/i.test(text.trim())) return { num: null, title: "" };
     const plain = text.replace(/[*_`~]+/g, " ").trim();
     const match = TEXT_RE.exec(plain);
     const title = (match ? match[2] : plain)

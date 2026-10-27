@@ -80,6 +80,18 @@ describe("tracker link titles", () => {
         expect(chip(view)?.getAttribute("title")).toContain("#12 is not");
     });
 
+    it("treats a link whose text is its own URL as a bare link, not a wrong title", async () => {
+        const info = jest.fn().mockResolvedValue(found("item", "Ship the release notes", 68));
+        const view = await render(`The steps are on matron://item/68 and ${OWN}/68.`, info);
+
+        const chips = view.querySelectorAll<HTMLElement>("a.mj_TrackerLink .mj_TrackerLinkTarget");
+        expect(chips).toHaveLength(2);
+        for (const c of chips) {
+            expect(c.textContent).toBe("item · Ship the release notes");
+            expect(c.classList.contains("mj_TrackerLinkTarget--mismatch")).toBe(false);
+        }
+    });
+
     it("flags a number that does not exist", async () => {
         const info = jest.fn().mockResolvedValue({ status: "none" });
         const view = await render(`[#99](${OWN}/99)`, info);
