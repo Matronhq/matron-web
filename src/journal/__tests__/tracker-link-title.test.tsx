@@ -72,10 +72,10 @@ describe("tracker link titles", () => {
     });
 
     it("flags a link whose written title is not its target's", async () => {
-        const info = jest.fn().mockResolvedValue(found("item", "Late orders after the cut-off"));
-        const view = await render(`[#12 Merge: printer export](${OWN}/12)`, info);
+        const info = jest.fn().mockResolvedValue(found("item", "Office move to the new building"));
+        const view = await render(`[#12 Merge: release notes export](${OWN}/12)`, info);
 
-        expect(chip(view)?.textContent).toBe("⚠ item · Late orders after the cut-off");
+        expect(chip(view)?.textContent).toBe("⚠ item · Office move to the new building");
         expect(chip(view)?.classList.contains("mj_TrackerLinkTarget--mismatch")).toBe(true);
         expect(chip(view)?.getAttribute("title")).toContain("#12 is not");
     });
@@ -90,6 +90,24 @@ describe("tracker link titles", () => {
             expect(c.textContent).toBe("item · Ship the release notes");
             expect(c.classList.contains("mj_TrackerLinkTarget--mismatch")).toBe(false);
         }
+    });
+
+    it('does not read a generic label like "click here" as a wrong title', async () => {
+        const info = jest.fn().mockResolvedValue(found("item", "Ship the release notes"));
+        const view = await render(`[click here](${OWN}/12) or [read more](${OWN}/12)`, info);
+
+        for (const c of view.querySelectorAll<HTMLElement>("a.mj_TrackerLink .mj_TrackerLinkTarget")) {
+            expect(c.textContent).toBe("item · Ship the release notes");
+            expect(c.classList.contains("mj_TrackerLinkTarget--mismatch")).toBe(false);
+        }
+    });
+
+    it("flags a link whose text names another number, even when the journal sends no title", async () => {
+        const info = jest.fn().mockResolvedValue({ status: "found", hit: { kind: "item", id: "it_12", num: 12 } });
+        const view = await render(`[#13](${OWN}/12)`, info);
+
+        expect(chip(view)?.textContent).toBe("⚠ item");
+        expect(chip(view)?.classList.contains("mj_TrackerLinkTarget--mismatch")).toBe(true);
     });
 
     it("flags a number that does not exist", async () => {
@@ -132,14 +150,14 @@ describe("tracker link titles", () => {
 
 describe("titleMatches", () => {
     it("accepts the title, a prefix of it, an abbreviation or a close paraphrase", () => {
-        expect(titleMatches("Merge: printer XML…", "Merge: printer XML export for the run")).toBe(true);
-        expect(titleMatches("late-orders item", "Late orders shipped after the cut-off: options")).toBe(true);
+        expect(titleMatches("Merge: release notes…", "Merge: release notes export for the launch")).toBe(true);
+        expect(titleMatches("office-move item", "Office move to the new building: options")).toBe(true);
         expect(titleMatches("CAFÉ menu", "Cafe menu update")).toBe(true);
     });
 
     it("refuses a title about something else, and an empty one", () => {
-        expect(titleMatches("the new merge question", "Late orders shipped after the cut-off")).toBe(false);
-        expect(titleMatches("here", "Merge: printer XML export")).toBe(false);
+        expect(titleMatches("the new merge question", "Office move to the new building")).toBe(false);
+        expect(titleMatches("here", "Merge: release notes export")).toBe(false);
         expect(titleMatches("", "Merge")).toBe(false);
     });
 });

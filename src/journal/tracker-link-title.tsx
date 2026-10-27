@@ -45,6 +45,22 @@ const STOPWORDS = new Set([
     "new",
 ]);
 
+// Words a link label uses without naming anything ("click here", "read more").
+const GENERIC = new Set([
+    "here",
+    "click",
+    "read",
+    "more",
+    "see",
+    "link",
+    "open",
+    "view",
+    "details",
+    "this",
+    "that",
+    "it",
+]);
+
 function tokens(text: string): string[] {
     return text
         .normalize("NFKD")
@@ -139,7 +155,18 @@ export function TrackerLinkTarget({ user, num, linkText }: TrackerLinkTargetProp
     const { kind, title } = outcome.hit;
     const written = writtenLink(linkText);
     const wrongNumber = written.num !== null && written.num !== num;
-    if (!title) return <span className="mj_TrackerLinkTarget">{kind}</span>;
+    if (!title) {
+        return wrongNumber ? (
+            <span
+                className="mj_TrackerLinkTarget mj_TrackerLinkTarget--mismatch"
+                title={`This link says #${written.num} but goes to #${num}.`}
+            >
+                ⚠ {kind}
+            </span>
+        ) : (
+            <span className="mj_TrackerLinkTarget">{kind}</span>
+        );
+    }
     if (!wrongNumber && written.title && titleMatches(written.title, title)) {
         return (
             <span className="mj_TrackerLinkTarget" title={title}>
@@ -148,8 +175,9 @@ export function TrackerLinkTarget({ user, num, linkText }: TrackerLinkTargetProp
         );
     }
     // Link text that names something ("#12 Some title", or a few words) and does not match is
-    // flagged; a one-word "here" is not a claim about the target.
-    const claims = written.num !== null || tokens(written.title).length >= 2;
+    // flagged; a label like "here" or "read more" is not a claim about the target.
+    const claims =
+        written.num !== null || tokens(written.title).filter((t) => !STOPWORDS.has(t) && !GENERIC.has(t)).length >= 2;
     const mismatch = wrongNumber || (claims && !!written.title);
     let hint = title;
     if (wrongNumber) hint = `This link says #${written.num} but goes to #${num}, the ${kind} "${title}".`;

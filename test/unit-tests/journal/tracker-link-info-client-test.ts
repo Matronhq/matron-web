@@ -51,7 +51,7 @@ describe("MatronJournalClient.trackerLinkInfo", () => {
         expect(lookup).toHaveBeenCalledTimes(1);
     });
 
-    it("remembers a missing number but asks again after a failure", async () => {
+    it("keeps only found answers: a missing number or a failure is asked about again", async () => {
         const lookup = jest
             .fn()
             .mockRejectedValueOnce(new JournalApiError("not_found", 404, "not_found"))
@@ -59,13 +59,11 @@ describe("MatronJournalClient.trackerLinkInfo", () => {
             .mockResolvedValue({ kind: "item", id: "it_2", num: 2, title: "Two" });
         const client = makeClient(lookup);
 
-        expect(await client.trackerLinkInfo(null, 1)).toEqual({ status: "none" });
-        expect(await client.trackerLinkInfo(null, 1)).toEqual({ status: "none" });
+        expect(await client.trackerLinkInfo(null, 2)).toEqual({ status: "none" });
         expect(await client.trackerLinkInfo(null, 2)).toEqual({ status: "failed" });
-        expect(await client.trackerLinkInfo(null, 2)).toEqual({
-            status: "found",
-            hit: { kind: "item", id: "it_2", num: 2, title: "Two" },
-        });
+        const found = { status: "found", hit: { kind: "item", id: "it_2", num: 2, title: "Two" } };
+        expect(await client.trackerLinkInfo(null, 2)).toEqual(found);
+        expect(await client.trackerLinkInfo(null, 2)).toEqual(found);
         expect(lookup).toHaveBeenCalledTimes(3);
     });
 

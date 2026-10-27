@@ -2954,7 +2954,8 @@ export class MatronJournalClient {
      * What a tracker link points at, for the title shown beside it (tracker-link-title.tsx).
      * `user` is the name in a `/u/<name>/<n>` link, or null for an own-number link
      * (`matron://item/<n>`). Answers are kept for a few minutes per session, so a chat full of
-     * links to the same number asks once; a failure is not kept, so the next render asks again.
+     * links to the same number asks once; anything but a found answer is not kept, so the next
+     * render asks again.
      */
     public trackerLinkInfo(user: string | null, num: number): Promise<NumberLookupOutcome> {
         if (!Number.isSafeInteger(num) || num <= 0) return Promise.resolve({ status: "failed" });
@@ -2969,8 +2970,9 @@ export class MatronJournalClient {
             if (oldest !== undefined) this.trackerLinkCache.delete(oldest);
         }
         this.trackerLinkCache.set(key, { outcome, until: now + TRACKER_LINK_CACHE_MS });
+        // Only a found answer is kept: a missing number may be made a moment later.
         void outcome.then((result) => {
-            if (result.status === "failed") this.trackerLinkCache.delete(key);
+            if (result.status !== "found") this.trackerLinkCache.delete(key);
         });
         return outcome;
     }

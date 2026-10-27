@@ -890,7 +890,7 @@ const signedOutState: ClientState = {
 // (title shown), a link that carries the right title (kind only), one whose title belongs to
 // another number (flagged), and a number that does not exist (flagged).
 if (fixtureParams.get("links") === "1") {
-    const own = `${window.location.origin}/u/operator`;
+    const own = `${window.location.origin}/u/${encodeURIComponent(SESSION.username)}`;
     state.events = [
         ...state.events,
         {

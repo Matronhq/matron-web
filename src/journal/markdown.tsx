@@ -588,7 +588,15 @@ function componentsFor(source: string, onTrackerLink?: TrackerLinkHandler): Comp
                         }}
                     >
                         {children}
-                        {target && <TrackerLinkTarget user={target.user} num={target.num} linkText={hastText(node)} />}
+                        {target && (
+                            // Keyed by its target, so a re-rendered link never shows the previous one's chip.
+                            <TrackerLinkTarget
+                                key={`${target.user ?? ""}/${target.num}`}
+                                user={target.user}
+                                num={target.num}
+                                linkText={hastText(node)}
+                            />
+                        )}
                     </a>
                 );
             }
