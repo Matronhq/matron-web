@@ -207,6 +207,10 @@ function sanitizeGlobalChats(response: unknown): GlobalSearchChat[] {
             typeof (c as GlobalSearchChat).top?.excerpt === "string",
     );
 }
+/** How long a tracker link's looked-up title is kept before it is asked for again. */
+const TRACKER_LINK_CACHE_MS = 5 * 60_000;
+/** At most this many tracker link answers are kept. */
+const TRACKER_LINK_CACHE_MAX = 500;
 /** How long "go to number" waits for the journal before reporting a failed lookup. */
 export const NUMBER_LOOKUP_TIMEOUT_MS = 15_000;
 /** A mission page's closed items come in pages of this many (the Mac's closed-items page). */
@@ -597,6 +601,8 @@ export class MatronJournalClient {
     private readonly listeners = new Set<() => void>();
     private readonly liveListeners = new Set<LiveListener>();
     private api?: JournalApi;
+    // What tracker links point at, per session generation (trackerLinkInfo).
+    private readonly trackerLinkCache = new Map<string, { outcome: Promise<NumberLookupOutcome>; until: number }>();
     // Monotonic guard so only the latest message-search request writes its results — an earlier
     // slow response (or a cleared box) can never clobber a newer query's hits. See searchMessages.
     private searchSeq = 0;
@@ -2945,13 +2951,40 @@ export class MatronJournalClient {
     }
 
     /**
+     * What a tracker link points at, for the title shown beside it (tracker-link-title.tsx).
+     * `user` is the name in a `/u/<name>/<n>` link, or null for an own-number link
+     * (`matron://item/<n>`). Answers are kept for a few minutes per session, so a chat full of
+     * links to the same number asks once; anything but a found answer is not kept, so the next
+     * render asks again.
+     */
+    public trackerLinkInfo(user: string | null, num: number): Promise<NumberLookupOutcome> {
+        if (!Number.isSafeInteger(num) || num <= 0) return Promise.resolve({ status: "failed" });
+        const owner = user ?? this.state.session?.username ?? "";
+        const key = `${this.sessionGeneration}:${owner}/${num}`;
+        const now = Date.now();
+        const cached = this.trackerLinkCache.get(key);
+        if (cached && cached.until > now) return cached.outcome;
+        const outcome = this.lookupNumber(num, undefined, owner || undefined);
+        if (this.trackerLinkCache.size >= TRACKER_LINK_CACHE_MAX) {
+            const oldest = this.trackerLinkCache.keys().next().value;
+            if (oldest !== undefined) this.trackerLinkCache.delete(oldest);
+        }
+        this.trackerLinkCache.set(key, { outcome, until: now + TRACKER_LINK_CACHE_MS });
+        // Only a found answer is kept: a missing number may be made a moment later.
+        void outcome.then((result) => {
+            if (result.status !== "found") this.trackerLinkCache.delete(key);
+        });
+        return outcome;
+    }
+
+    /**
      * Asks the journal what the signed-in user's number `num` is. Never throws: a 404 is `none`
      * (no such number), anything else that goes wrong is `failed`. The payload is checked field
      * by field, since the journal is a separate service that may be older or newer than this app.
      */
-    public async lookupNumber(num: number, signal?: AbortSignal): Promise<NumberLookupOutcome> {
+    public async lookupNumber(num: number, signal?: AbortSignal, owner?: string): Promise<NumberLookupOutcome> {
         const api = this.api;
-        const user = this.state.session?.username;
+        const user = owner ?? this.state.session?.username;
         if (!api || !user || !Number.isSafeInteger(num) || num <= 0) return { status: "failed" };
         // Bounded like searchMessages: a transport that ignores the abort signal must not leave
         // the field waiting for ever.

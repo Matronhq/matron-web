@@ -1182,6 +1182,27 @@ button.mj_TrackerCrumb:hover {
     white-space: nowrap;
     text-overflow: ellipsis;
 }
+/* What a tracker link in markdown points at: its kind, and its title unless the link says it. */
+.mj_TrackerLinkTarget {
+    display: inline-block;
+    max-width: 40ch;
+    margin-left: var(--mj-space-1x);
+    padding: 0 var(--mj-space-2x);
+    border-radius: var(--mj-radius-pill);
+    background: var(--mj-color-bg-subtle-secondary);
+    color: var(--mj-color-text-secondary);
+    font: var(--mj-font-meta);
+    vertical-align: baseline;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    text-decoration: none;
+}
+/* The link's text names something else, or the number does not exist. */
+.mj_TrackerLinkTarget--mismatch {
+    color: var(--mj-color-text-critical-primary);
+    box-shadow: inset 0 0 0 1px var(--mj-color-text-critical-primary);
+}
 /* A link whose scheme the client will not open (not http(s), not a valid in-app item link). */
 .mj_TrackerLinkChip_inert {
     color: var(--mj-color-text-secondary);
