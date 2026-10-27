@@ -886,6 +886,41 @@ const signedOutState: ClientState = {
 // The client keeps its state private; mirror the test harness's internal override.
 (client as unknown as { state: ClientState }).state = fixtureParams.get("screen") === "login" ? signedOutState : state;
 
+// ?links=1: an agent message whose tracker links show what each number points at — a bare link
+// (title shown), a link that carries the right title (kind only), one whose title belongs to
+// another number (flagged), and a number that does not exist (flagged).
+if (fixtureParams.get("links") === "1") {
+    const own = `${window.location.origin}/u/operator`;
+    state.events = [
+        ...state.events,
+        {
+            seq: 40,
+            convo_id: "c1",
+            ts: T + 900,
+            sender: "agent:claude",
+            type: "text",
+            payload: {
+                body: [
+                    `Filed the follow-ups: [#412](${own}/412) for the backup check, and [#415 Rotate the API keys](${own}/415).`,
+                    "",
+                    `The merge question is [#418 Merge: nginx config](${own}/418). The old runbook was [#9999](${own}/9999).`,
+                ].join("\n"),
+            },
+        },
+    ];
+    const titles: Record<number, { kind: "item" | "mission"; title: string }> = {
+        412: { kind: "item", title: "Verify last night's backup with a test restore" },
+        415: { kind: "item", title: "Rotate the API keys before Friday" },
+        418: { kind: "mission", title: "Postgres upgrade dry-run" },
+    };
+    (client as unknown as Record<string, unknown>).trackerLinkInfo = async (_user: string | null, num: number) => {
+        const row = titles[num];
+        return row
+            ? { status: "found", hit: { kind: row.kind, id: `x${num}`, num, title: row.title } }
+            : { status: "none" };
+    };
+}
+
 // ?missions=1 puts the selected conversation on missions, so the header shows its mission chip
 // (current one, +2 for an also-on and an earlier one).
 {

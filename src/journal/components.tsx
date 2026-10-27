@@ -175,6 +175,7 @@ import {
     useMarkdownPreview,
     useMarkdownPreviewPanel,
 } from "./markdown-preview";
+import { TrackerLinkInfoContext, type TrackerLinkInfo } from "./tracker-link-title";
 import { MediaBrowserSheet } from "./media-browser";
 import { paneCoversChat, SubChatPane, type SubChatRow, useChatArea } from "./subchat-pane";
 import { chatSidePane, subtaskDescription } from "./subtask";
@@ -7832,6 +7833,8 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
 
     // Markdown attachment preview: a side panel to the right of the conversation or item.
     const markdownPreview = useMarkdownPreviewPanel();
+    // Every tracker link in markdown shows what its number points at (tracker-link-title.tsx).
+    const trackerLinkInfo = useCallback<TrackerLinkInfo>((user, num) => client.trackerLinkInfo(user, num), [client]);
     const closeMarkdownPreview = markdownPreview.close;
     // It belongs to the view it was opened from: moving to another conversation or item closes it.
     useEffect(() => {
@@ -7921,134 +7924,137 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
 
     return (
         <MarkdownPreviewContext.Provider value={markdownPreview.context}>
-            <div className="mj_App_wrapper">
-                <div ref={appContent} className="mj_App">
-                    <ConversationList client={client} state={state} width={leftPanel.width} />
-                    <div
-                        className="mj_ResizeHandle mj_ResizeHandle--horizontal"
-                        data-id="lp-resizer"
-                        onPointerDown={leftPanel.onPointerDown}
-                    >
-                        <div />
-                    </div>
-                    <div
-                        ref={chatAreaRef}
-                        // Covered by the subagent pane, the chat stays mounted but out of reach.
-                        inert={sidePane?.kind === "subchat" && paneCoversChat(chatArea)}
-                        className={`mj_ChatView_wrapper ${state.trackerView?.open || state.selectedConversationId ? "" : "mj_Chat_mobileHidden"}${voiceNoteBarVisible ? " mj_ChatView_wrapper_voiceNote" : ""}`}
-                    >
-                        {state.trackerView?.open ? (
-                            <TrackerPane client={client} state={state} />
-                        ) : state.selectedConversationId ? (
-                            <div
-                                className={`mj_ChatView${dragActive ? " mj_ChatView_dragActive" : ""}`}
-                                onDragOver={(event) => {
-                                    if (!isFileDrag(event)) return;
-                                    event.preventDefault();
-                                    setDragActive(true);
-                                }}
-                                onDrop={(event) => {
-                                    if (!isFileDrag(event)) return;
-                                    event.preventDefault();
-                                    setDragActive(false);
-                                    if (childMode) return;
-                                    const files = [...event.dataTransfer.files];
-                                    if (files.length > 0) client.stageFiles(files);
-                                }}
-                                onDragLeave={(event) => {
-                                    const nextTarget = event.relatedTarget;
-                                    if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) return;
-                                    setDragActive(false);
-                                }}
-                                onDragEnd={() => setDragActive(false)}
-                            >
-                                {dragActive && (
-                                    <div className="mj_DragOverlay" aria-hidden="true">
-                                        Drop files to attach
-                                    </div>
-                                )}
-                                <div ref={setBodyEl} className="mj_ChatView_body" data-layout="bubble">
-                                    {childMode ? (
-                                        <SubChatHeader client={client} state={state} collapse={collapse} />
-                                    ) : (
-                                        <ChatHeader client={client} state={state} collapse={collapse} />
+            <TrackerLinkInfoContext.Provider value={trackerLinkInfo}>
+                <div className="mj_App_wrapper">
+                    <div ref={appContent} className="mj_App">
+                        <ConversationList client={client} state={state} width={leftPanel.width} />
+                        <div
+                            className="mj_ResizeHandle mj_ResizeHandle--horizontal"
+                            data-id="lp-resizer"
+                            onPointerDown={leftPanel.onPointerDown}
+                        >
+                            <div />
+                        </div>
+                        <div
+                            ref={chatAreaRef}
+                            // Covered by the subagent pane, the chat stays mounted but out of reach.
+                            inert={sidePane?.kind === "subchat" && paneCoversChat(chatArea)}
+                            className={`mj_ChatView_wrapper ${state.trackerView?.open || state.selectedConversationId ? "" : "mj_Chat_mobileHidden"}${voiceNoteBarVisible ? " mj_ChatView_wrapper_voiceNote" : ""}`}
+                        >
+                            {state.trackerView?.open ? (
+                                <TrackerPane client={client} state={state} />
+                            ) : state.selectedConversationId ? (
+                                <div
+                                    className={`mj_ChatView${dragActive ? " mj_ChatView_dragActive" : ""}`}
+                                    onDragOver={(event) => {
+                                        if (!isFileDrag(event)) return;
+                                        event.preventDefault();
+                                        setDragActive(true);
+                                    }}
+                                    onDrop={(event) => {
+                                        if (!isFileDrag(event)) return;
+                                        event.preventDefault();
+                                        setDragActive(false);
+                                        if (childMode) return;
+                                        const files = [...event.dataTransfer.files];
+                                        if (files.length > 0) client.stageFiles(files);
+                                    }}
+                                    onDragLeave={(event) => {
+                                        const nextTarget = event.relatedTarget;
+                                        if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget))
+                                            return;
+                                        setDragActive(false);
+                                    }}
+                                    onDragEnd={() => setDragActive(false)}
+                                >
+                                    {dragActive && (
+                                        <div className="mj_DragOverlay" aria-hidden="true">
+                                            Drop files to attach
+                                        </div>
                                     )}
-                                    {!childMode && (
-                                        <CompactNudge
-                                            key={state.selectedConversationId}
-                                            context={state.sessionStatus?.context}
-                                            send={(command) =>
-                                                client.sendMessage(command, state.selectedConversationId)
-                                            }
-                                        />
-                                    )}
-                                    <SubagentStrip
-                                        client={client}
-                                        state={state}
-                                        mode={childMode ? "child" : "parent"}
-                                    />
-                                    {state.chatSearch?.conversationId === state.selectedConversationId && (
-                                        <FindInChatBar client={client} search={state.chatSearch} />
-                                    )}
-                                    <Timeline client={client} state={state} isReadOnly={childMode} />
-                                    {childMode ? (
-                                        <ReadOnlyHint />
-                                    ) : (
-                                        <Composer
+                                    <div ref={setBodyEl} className="mj_ChatView_body" data-layout="bubble">
+                                        {childMode ? (
+                                            <SubChatHeader client={client} state={state} collapse={collapse} />
+                                        ) : (
+                                            <ChatHeader client={client} state={state} collapse={collapse} />
+                                        )}
+                                        {!childMode && (
+                                            <CompactNudge
+                                                key={state.selectedConversationId}
+                                                context={state.sessionStatus?.context}
+                                                send={(command) =>
+                                                    client.sendMessage(command, state.selectedConversationId)
+                                                }
+                                            />
+                                        )}
+                                        <SubagentStrip
                                             client={client}
                                             state={state}
-                                            drafts={drafts}
-                                            draftReloadTick={draftReloadTicks[state.selectedConversationId] ?? 0}
-                                            reloadDraft={reloadDraft}
-                                            sendingConvos={sendingConvos}
-                                            draftRevisions={draftRevisions}
-                                            sentHistory={sentHistory}
+                                            mode={childMode ? "child" : "parent"}
                                         />
-                                    )}
+                                        {state.chatSearch?.conversationId === state.selectedConversationId && (
+                                            <FindInChatBar client={client} search={state.chatSearch} />
+                                        )}
+                                        <Timeline client={client} state={state} isReadOnly={childMode} />
+                                        {childMode ? (
+                                            <ReadOnlyHint />
+                                        ) : (
+                                            <Composer
+                                                client={client}
+                                                state={state}
+                                                drafts={drafts}
+                                                draftReloadTick={draftReloadTicks[state.selectedConversationId] ?? 0}
+                                                reloadDraft={reloadDraft}
+                                                sendingConvos={sendingConvos}
+                                                draftRevisions={draftRevisions}
+                                                sentHistory={sentHistory}
+                                            />
+                                        )}
+                                    </div>
                                 </div>
-                            </div>
-                        ) : (
-                            <main className="mj_HomePage mj_HomePage_default">
-                                <div className="mj_HomePage_default_wrapper">
-                                    <img src={matronLogo} alt={state.config.brand || "Matron"} />
-                                    <h1>Welcome to {state.config.brand || "Matron"}</h1>
-                                </div>
-                            </main>
-                        )}
-                        <VoiceNoteBar client={client} onOpen={openVoiceNoteTarget} />
+                            ) : (
+                                <main className="mj_HomePage mj_HomePage_default">
+                                    <div className="mj_HomePage_default_wrapper">
+                                        <img src={matronLogo} alt={state.config.brand || "Matron"} />
+                                        <h1>Welcome to {state.config.brand || "Matron"}</h1>
+                                    </div>
+                                </main>
+                            )}
+                            <VoiceNoteBar client={client} onOpen={openVoiceNoteTarget} />
+                        </div>
+                        {/* One slot beside the chat, decided by chatSidePane: never both panes at once. */}
+                        {sidePane?.kind === "subchat" ? (
+                            <SubChatPane
+                                key={sidePane.parentId}
+                                client={client}
+                                conversations={state.conversations}
+                                parentId={sidePane.parentId}
+                                childId={sidePane.childId}
+                                area={chatArea}
+                                transcript={subChatTranscript}
+                            />
+                        ) : sidePane?.kind === "tasks" && state.chatTasks ? (
+                            <ChatTasksPane
+                                client={client}
+                                pane={state.chatTasks}
+                                convoId={sidePane.convoId}
+                                conversations={state.conversations}
+                            />
+                        ) : null}
+                        {markdownPreview.target ? (
+                            <MarkdownPreviewPanel
+                                client={client}
+                                target={markdownPreview.target}
+                                onClose={markdownPreview.close}
+                            />
+                        ) : null}
                     </div>
-                    {/* One slot beside the chat, decided by chatSidePane: never both panes at once. */}
-                    {sidePane?.kind === "subchat" ? (
-                        <SubChatPane
-                            key={sidePane.parentId}
-                            client={client}
-                            conversations={state.conversations}
-                            parentId={sidePane.parentId}
-                            childId={sidePane.childId}
-                            area={chatArea}
-                            transcript={subChatTranscript}
-                        />
-                    ) : sidePane?.kind === "tasks" && state.chatTasks ? (
-                        <ChatTasksPane
-                            client={client}
-                            pane={state.chatTasks}
-                            convoId={sidePane.convoId}
-                            conversations={state.conversations}
-                        />
-                    ) : null}
-                    {markdownPreview.target ? (
-                        <MarkdownPreviewPanel
-                            client={client}
-                            target={markdownPreview.target}
-                            onClose={markdownPreview.close}
-                        />
-                    ) : null}
+                    {state.goToNumberOpen && <GoToNumberDialog client={client} />}
+                    {paletteOpen && composerConvo && (
+                        <CommandPalette onPick={pickCommand} onClose={() => setPaletteOpen(false)} />
+                    )}
                 </div>
-                {state.goToNumberOpen && <GoToNumberDialog client={client} />}
-                {paletteOpen && composerConvo && (
-                    <CommandPalette onPick={pickCommand} onClose={() => setPaletteOpen(false)} />
-                )}
-            </div>
+            </TrackerLinkInfoContext.Provider>
         </MarkdownPreviewContext.Provider>
     );
 }
