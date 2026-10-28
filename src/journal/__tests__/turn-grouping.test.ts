@@ -154,6 +154,18 @@ describe("groupTurn — segments, outcomes and the running step", () => {
         expect(groupRowText(groupsOf(groupTurn(steps))[0])).toBe("Ran the tests: failed 2×, then passed");
     });
 
+    it("a later pass of another command never marks a failed run as fixed", () => {
+        const text = groupRowText(
+            groupsOf(
+                groupTurn([
+                    S("a", "Bash", { command: "./deploy.sh" }, { status: "failed", exit: 1 }),
+                    S("b", "Bash", { command: "./cleanup.sh" }),
+                ]),
+            )[0],
+        );
+        expect(text).not.toContain("then passed");
+    });
+
     it("a pass of a different run says so instead of claiming the failure was fixed", () => {
         const text = (failed: string, later: string): string =>
             groupRowText(

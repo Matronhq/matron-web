@@ -282,7 +282,7 @@ function rerunPassed(failed: Step, later: Step): boolean {
     return !failedRun || failedRun === runWords(commandOf(later));
 }
 
-function outcome(steps: Step[], key: ActivityClass): Outcome {
+function outcome(steps: Step[]): Outcome {
     const failed = steps.filter((step) => step.status === "failed").length;
     const last = steps[steps.length - 1];
     if (last.status === "running") return { status: "running", text: "" };
@@ -291,13 +291,11 @@ function outcome(steps: Step[], key: ActivityClass): Outcome {
     if (!failed) return { status: "ok", text: "passed" };
     if (last.status !== "ok") return { status: "failed", text: "failed" };
     const times = failed === 1 ? "failed once" : `failed ${failed}×`;
-    // Tests and checks: "then passed" only when each failing run was itself rerun and passed.
-    const allRerun =
-        (key !== "test" && key !== "check") ||
-        steps.every(
-            (step, index) =>
-                step.status !== "failed" || steps.slice(index + 1).some((later) => rerunPassed(step, later)),
-        );
+    // "Then passed" only when each failing run was itself rerun and passed: two different
+    // commands can share a group, and a later pass of another one fixes nothing.
+    const allRerun = steps.every(
+        (step, index) => step.status !== "failed" || steps.slice(index + 1).some((later) => rerunPassed(step, later)),
+    );
     // A failure no rerun settled stays failed (red), with the later pass named for what it is.
     return allRerun
         ? { status: "recovered", text: `${times}, then passed` }
@@ -393,7 +391,7 @@ export function groupTurn(items: readonly TurnItem[], running?: Step | null): Se
     flush();
     for (const entry of seq) {
         if (entry.type !== "group") continue;
-        const o = outcome(entry.steps, entry.key);
+        const o = outcome(entry.steps);
         entry.status = o.status;
         entry.sentence = groupSentence(entry.key, entry.steps);
         entry.outcomeText =
