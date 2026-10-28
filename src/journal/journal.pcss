@@ -5811,7 +5811,7 @@ li.mj_EventTile[data-layout="bubble"].mj_EventTile_systemNotice {
 .mj_AgentTurn_blocks {
     display: flex;
     flex-direction: column;
-    gap: var(--cpd-space-2x);
+    gap: var(--mj-space-2x);
     min-width: 0;
 }
 
@@ -5822,9 +5822,9 @@ li.mj_EventTile[data-layout="bubble"].mj_EventTile_systemNotice {
 .mj_TurnCard {
     min-width: 0;
     overflow: hidden;
-    border: 1px solid var(--cpd-color-border-subtle);
-    border-radius: var(--cpd-radius-lg);
-    background: var(--cpd-color-bg-canvas-raised);
+    border: 1px solid var(--mj-color-border-subtle);
+    border-radius: var(--mj-radius-card);
+    background: var(--mj-color-bg-canvas-raised);
 }
 
 .mj_TurnCard_row {
@@ -5835,29 +5835,29 @@ li.mj_EventTile[data-layout="bubble"].mj_EventTile_systemNotice {
     display: grid;
     grid-template-columns: 16px minmax(0, 1fr) 13px;
     align-items: center;
-    column-gap: var(--cpd-space-2x);
+    column-gap: var(--mj-space-2x);
     width: 100%;
     min-height: 36px;
     padding: 9px 12px;
     border: 0;
     background: transparent;
-    color: var(--cpd-color-text-primary);
+    color: var(--mj-color-text-primary);
     text-align: left;
-    transition: background var(--cpd-dur-fast) var(--cpd-ease);
+    transition: background var(--mj-dur-fast) var(--mj-ease);
 }
 
 .mj_TurnCard_toggle:hover {
-    background: var(--cpd-state-hover);
+    background: var(--mj-state-hover);
 }
 
 .mj_TurnCard_toggle:focus-visible {
-    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline: 2px solid var(--mj-color-text-action-accent);
     outline-offset: -2px;
-    border-radius: var(--cpd-radius-lg);
+    border-radius: var(--mj-radius-card);
 }
 
 .mj_TurnCard.is-open .mj_TurnCard_row {
-    border-bottom: 1px solid var(--cpd-color-border-subtle);
+    border-bottom: 1px solid var(--mj-color-border-subtle);
 }
 
 .mj_TurnCard_glyph {
@@ -5865,7 +5865,7 @@ li.mj_EventTile[data-layout="bubble"].mj_EventTile_systemNotice {
     width: 16px;
     height: 16px;
     place-items: center;
-    color: var(--cpd-color-icon-secondary);
+    color: var(--mj-color-icon-secondary);
 }
 
 .mj_TurnCard_glyph > * {
@@ -5880,7 +5880,7 @@ li.mj_EventTile[data-layout="bubble"].mj_EventTile_systemNotice {
 /* The spinner is excluded: this animation would otherwise replace its rotation. */
 .mj_TurnCard.is-resolved .mj_TurnCard_glyph > :not(.mj_TurnCard_spinner),
 .mj_TurnCard.is-resolved .mj_TurnCard_meta {
-    animation: mj-turn-fade-in var(--cpd-dur-resolve) var(--cpd-ease);
+    animation: mj-turn-fade-in var(--mj-dur-resolve) var(--mj-ease);
 }
 
 .mj_TurnCard_dot {
@@ -5891,11 +5891,11 @@ li.mj_EventTile[data-layout="bubble"].mj_EventTile_systemNotice {
 }
 
 .mj_TurnCard_dot_warn {
-    background: var(--cpd-color-usage-medium);
+    background: var(--mj-color-usage-medium);
 }
 
 .mj_TurnCard_dot_wait {
-    background: var(--cpd-color-icon-accent-primary);
+    background: var(--mj-color-icon-accent-primary);
 }
 
 /* Running: a small rotating ring. Muted track, accent arc; amber arc once the step runs slow. */
@@ -5904,14 +5904,14 @@ li.mj_EventTile[data-layout="bubble"].mj_EventTile_systemNotice {
     width: 12px;
     height: 12px;
     box-sizing: border-box;
-    border: 2px solid var(--cpd-color-border-strong);
-    border-top-color: var(--cpd-color-icon-accent-primary);
+    border: 2px solid var(--mj-color-border-strong);
+    border-top-color: var(--mj-color-icon-accent-primary);
     border-radius: 50%;
     animation: mj-spin 0.8s linear infinite;
 }
 
 .mj_TurnCard_slow .mj_TurnCard_row .mj_TurnCard_spinner {
-    border-top-color: var(--cpd-color-usage-medium);
+    border-top-color: var(--mj-color-usage-medium);
 }
 
 .mj_TurnCard_meta,
@@ -5921,12 +5921,12 @@ li.mj_EventTile[data-layout="bubble"].mj_EventTile_systemNotice {
     display: flex;
     min-width: 0;
     align-items: center;
-    gap: var(--cpd-space-1x);
+    gap: var(--mj-space-1x);
 }
 
 .mj_TurnCard_meta {
-    font: var(--cpd-font-meta);
-    color: var(--cpd-color-text-secondary);
+    font: var(--mj-font-meta);
+    color: var(--mj-color-text-secondary);
 }
 
 .mj_TurnCard_sep,
@@ -5955,11 +5955,11 @@ li.mj_EventTile[data-layout="bubble"].mj_EventTile_systemNotice {
 }
 
 .mj_TurnCard_liveText_entering {
-    animation: mj-turn-fade-in var(--cpd-dur-live-xfade) var(--cpd-ease);
+    animation: mj-turn-fade-in var(--mj-dur-live-xfade) var(--mj-ease);
 }
 
 .mj_TurnCard_liveText_leaving {
-    animation: mj-turn-fade-out var(--cpd-dur-live-xfade) var(--cpd-ease) forwards;
+    animation: mj-turn-fade-out var(--mj-dur-live-xfade) var(--mj-ease) forwards;
 }
 
 .mj_TurnCard_elapsed {
@@ -5967,7 +5967,7 @@ li.mj_EventTile[data-layout="bubble"].mj_EventTile_systemNotice {
 }
 
 .mj_TurnCard_waiting .mj_TurnCard_meta {
-    color: var(--cpd-color-text-action-accent);
+    color: var(--mj-color-text-action-accent);
 }
 
 .mj_TurnCard_slow .mj_TurnCard_meta {
@@ -5977,9 +5977,9 @@ li.mj_EventTile[data-layout="bubble"].mj_EventTile_systemNotice {
 .mj_TurnCard_chevron {
     width: 13px;
     height: 13px;
-    color: var(--cpd-color-text-tertiary);
+    color: var(--mj-color-text-tertiary);
     transform: rotate(-90deg);
-    transition: transform var(--cpd-dur-card-expand) var(--cpd-ease);
+    transition: transform var(--mj-dur-card-expand) var(--mj-ease);
 }
 
 .mj_TurnCard.is-open .mj_TurnCard_row .mj_TurnCard_chevron,
@@ -5992,14 +5992,14 @@ li.mj_EventTile[data-layout="bubble"].mj_EventTile_systemNotice {
     flex-direction: column;
     gap: 2px;
     padding: 6px 6px 8px;
-    background: var(--cpd-color-bg-canvas-default);
-    animation: mj-turn-fade-in var(--cpd-dur-card-expand) var(--cpd-ease);
+    background: var(--mj-color-bg-canvas-default);
+    animation: mj-turn-fade-in var(--mj-dur-card-expand) var(--mj-ease);
 }
 
 .mj_TurnCard_label {
     padding: 6px 6px 4px;
-    font: var(--cpd-font-label-sm);
-    color: var(--cpd-color-text-secondary);
+    font: var(--mj-font-label-sm);
+    color: var(--mj-color-text-secondary);
 }
 
 .mj_TurnCard_changed {
@@ -6007,7 +6007,7 @@ li.mj_EventTile[data-layout="bubble"].mj_EventTile_systemNotice {
     flex-direction: column;
     margin-bottom: 6px;
     padding: 2px 0 4px;
-    border-bottom: 1px solid var(--cpd-color-border-subtle);
+    border-bottom: 1px solid var(--mj-color-border-subtle);
 }
 
 .mj_TurnCard_file,
@@ -6016,25 +6016,25 @@ li.mj_EventTile[data-layout="bubble"].mj_EventTile_systemNotice {
     display: grid;
     width: 100%;
     align-items: center;
-    column-gap: var(--cpd-space-2x);
+    column-gap: var(--mj-space-2x);
     border: 0;
-    border-radius: var(--cpd-radius-md);
+    border-radius: var(--mj-radius-md);
     background: transparent;
-    color: var(--cpd-color-text-primary);
+    color: var(--mj-color-text-primary);
     text-align: left;
-    transition: background var(--cpd-dur-fast) var(--cpd-ease);
+    transition: background var(--mj-dur-fast) var(--mj-ease);
 }
 
 .mj_TurnCard_file {
     grid-template-columns: 16px minmax(0, 1fr) auto 12px;
     padding: 6px;
-    font: var(--cpd-font-body-sm-regular);
+    font: var(--mj-font-body-sm-regular);
 }
 
 .mj_TurnCard_file:hover,
 .mj_TurnCard_groupRow:hover,
 .mj_TurnCard_step:hover:not(:disabled) {
-    background: var(--cpd-state-hover);
+    background: var(--mj-state-hover);
 }
 
 .mj_TurnCard_file:focus-visible,
@@ -6042,7 +6042,7 @@ li.mj_EventTile[data-layout="bubble"].mj_EventTile_systemNotice {
 .mj_TurnCard_step:focus-visible,
 .mj_TurnCard_back:focus-visible,
 .mj_TurnCard_more:focus-visible {
-    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline: 2px solid var(--mj-color-text-action-accent);
     outline-offset: -2px;
 }
 
@@ -6056,16 +6056,16 @@ li.mj_EventTile[data-layout="bubble"].mj_EventTile_systemNotice {
 .mj_TurnCard_counts {
     display: flex;
     gap: 6px;
-    font: var(--cpd-font-label-sm);
+    font: var(--mj-font-label-sm);
     font-variant-numeric: tabular-nums;
 }
 
 .mj_TurnCard_add {
-    color: var(--cpd-color-icon-accent-primary);
+    color: var(--mj-color-icon-accent-primary);
 }
 
 .mj_TurnCard_del {
-    color: var(--cpd-color-text-critical-primary);
+    color: var(--mj-color-text-critical-primary);
 }
 
 .mj_TurnCard_icon {
@@ -6073,20 +6073,20 @@ li.mj_EventTile[data-layout="bubble"].mj_EventTile_systemNotice {
     width: 16px;
     height: 16px;
     place-items: center;
-    color: var(--cpd-color-icon-secondary);
+    color: var(--mj-color-icon-secondary);
 }
 
 .mj_TurnCard_go {
     width: 12px;
     height: 12px;
-    color: var(--cpd-color-icon-tertiary);
+    color: var(--mj-color-icon-tertiary);
 }
 
 .mj_TurnCard_narration {
     margin: 0;
     padding: 8px 6px 4px 30px;
-    font: var(--cpd-font-body);
-    color: var(--cpd-color-text-secondary);
+    font: var(--mj-font-body);
+    color: var(--mj-color-text-secondary);
     overflow-wrap: anywhere;
 }
 
@@ -6103,11 +6103,11 @@ li.mj_EventTile[data-layout="bubble"].mj_EventTile_systemNotice {
 .mj_TurnCard_groupRow {
     grid-template-columns: 16px minmax(0, 1fr) auto auto 13px;
     padding: 6px;
-    font: var(--cpd-font-body);
+    font: var(--mj-font-body);
 }
 
 .mj_TurnCard_groupRow .mj_TurnCard_chevron {
-    transition-duration: var(--cpd-dur-group-expand);
+    transition-duration: var(--mj-dur-group-expand);
 }
 
 /* Group sentences are prose: they wrap, never ellipsize. */
@@ -6117,7 +6117,7 @@ li.mj_EventTile[data-layout="bubble"].mj_EventTile_systemNotice {
 }
 
 .mj_TurnCard_outcome {
-    color: var(--cpd-color-text-secondary);
+    color: var(--mj-color-text-secondary);
 }
 
 /* Recovered outcome text is amber and never red; red is only for a group whose last step failed. */
@@ -6127,11 +6127,11 @@ li.mj_EventTile[data-layout="bubble"].mj_EventTile_systemNotice {
 }
 
 .mj_TurnCard_group_failed .mj_TurnCard_outcome {
-    color: var(--cpd-color-text-critical-primary);
+    color: var(--mj-color-text-critical-primary);
 }
 
 .mj_TurnCard_group_running .mj_TurnCard_sentence {
-    color: var(--cpd-color-text-secondary);
+    color: var(--mj-color-text-secondary);
 }
 
 .mj_TurnCard_status {
@@ -6147,17 +6147,17 @@ li.mj_EventTile[data-layout="bubble"].mj_EventTile_systemNotice {
 }
 
 .mj_TurnCard_status_ok {
-    color: var(--cpd-color-usage-low);
+    color: var(--mj-color-usage-low);
 }
 
 .mj_TurnCard_status_failed {
-    color: var(--cpd-color-text-critical-primary);
+    color: var(--mj-color-text-critical-primary);
 }
 
 .mj_TurnCard_count {
     min-width: 48px;
-    font: var(--cpd-font-meta);
-    color: var(--cpd-color-text-secondary);
+    font: var(--mj-font-meta);
+    color: var(--mj-color-text-secondary);
     font-variant-numeric: tabular-nums;
     text-align: right;
     white-space: nowrap;
@@ -6183,8 +6183,8 @@ li.mj_EventTile[data-layout="bubble"].mj_EventTile_systemNotice {
 .mj_TurnCard_step {
     grid-template-columns: minmax(0, 1fr) auto 12px;
     padding: 4px 6px;
-    font: var(--cpd-font-body-sm-regular);
-    color: var(--cpd-color-text-secondary);
+    font: var(--mj-font-body-sm-regular);
+    color: var(--mj-color-text-secondary);
 }
 
 .mj_TurnCard_step:disabled {
@@ -6193,7 +6193,7 @@ li.mj_EventTile[data-layout="bubble"].mj_EventTile_systemNotice {
 
 .mj_TurnCard_step:hover:not(:disabled),
 .mj_TurnCard_step[aria-expanded="true"] {
-    color: var(--cpd-color-text-primary);
+    color: var(--mj-color-text-primary);
 }
 
 .mj_TurnCard_step[aria-expanded="true"] .mj_TurnCard_go,
@@ -6202,8 +6202,8 @@ li.mj_EventTile[data-layout="bubble"].mj_EventTile_systemNotice {
 }
 
 .mj_TurnCard_stepNote {
-    font: var(--cpd-font-meta);
-    color: var(--cpd-color-text-secondary);
+    font: var(--mj-font-meta);
+    color: var(--mj-color-text-secondary);
     white-space: nowrap;
 }
 
@@ -6216,24 +6216,24 @@ li.mj_EventTile[data-layout="bubble"].mj_EventTile_systemNotice {
     margin: 2px 0;
     padding: 4px 6px;
     border: 0;
-    border-radius: var(--cpd-radius-sm);
+    border-radius: var(--mj-radius-sm);
     background: transparent;
-    color: var(--cpd-color-text-action-accent);
-    font: var(--cpd-font-label);
+    color: var(--mj-color-text-action-accent);
+    font: var(--mj-font-label);
 }
 
 .mj_TurnCard_more:hover {
-    background: var(--cpd-state-hover);
+    background: var(--mj-state-hover);
 }
 
 .mj_TurnCard_now {
     display: grid;
     grid-template-columns: 16px minmax(0, 1fr);
     align-items: center;
-    column-gap: var(--cpd-space-2x);
+    column-gap: var(--mj-space-2x);
     padding: 6px;
-    font: var(--cpd-font-body);
-    color: var(--cpd-color-text-secondary);
+    font: var(--mj-font-body);
+    color: var(--mj-color-text-secondary);
 }
 
 .mj_TurnCard_now .mj_TurnCard_glyph {
@@ -6244,10 +6244,10 @@ li.mj_EventTile[data-layout="bubble"].mj_EventTile_systemNotice {
 .mj_TurnCard_deep {
     overflow: hidden;
     margin: 4px 0 8px;
-    border: 1px solid var(--cpd-color-border-subtle);
-    border-radius: var(--cpd-radius-md);
-    background: var(--cpd-color-bg-canvas-default);
-    animation: mj-turn-fade-in var(--cpd-dur-deep-open) var(--cpd-ease);
+    border: 1px solid var(--mj-color-border-subtle);
+    border-radius: var(--mj-radius-md);
+    background: var(--mj-color-bg-canvas-default);
+    animation: mj-turn-fade-in var(--mj-dur-deep-open) var(--mj-ease);
 }
 
 .mj_TurnCard_changed .mj_TurnCard_deep {
@@ -6257,27 +6257,27 @@ li.mj_EventTile[data-layout="bubble"].mj_EventTile_systemNotice {
 .mj_TurnCard_deepHead {
     display: flex;
     align-items: center;
-    gap: var(--cpd-space-2x);
+    gap: var(--mj-space-2x);
     padding: 4px 6px 4px 4px;
-    border-bottom: 1px solid var(--cpd-color-border-subtle);
-    background: var(--cpd-color-bg-canvas-raised);
+    border-bottom: 1px solid var(--mj-color-border-subtle);
+    background: var(--mj-color-bg-canvas-raised);
 }
 
 .mj_TurnCard_back {
     display: inline-flex;
     align-items: center;
-    gap: var(--cpd-space-1x);
+    gap: var(--mj-space-1x);
     padding: 4px 8px 4px 4px;
     border: 0;
-    border-radius: var(--cpd-radius-sm);
+    border-radius: var(--mj-radius-sm);
     background: transparent;
-    color: var(--cpd-color-text-secondary);
-    font: var(--cpd-font-label);
+    color: var(--mj-color-text-secondary);
+    font: var(--mj-font-label);
 }
 
 .mj_TurnCard_back:hover {
-    background: var(--cpd-state-hover);
-    color: var(--cpd-color-text-primary);
+    background: var(--mj-state-hover);
+    color: var(--mj-color-text-primary);
 }
 
 .mj_TurnCard_back .mj_TurnIcon {
@@ -6287,8 +6287,8 @@ li.mj_EventTile[data-layout="bubble"].mj_EventTile_systemNotice {
 
 .mj_TurnCard_deepMeta {
     margin-left: auto;
-    font: var(--cpd-font-meta);
-    color: var(--cpd-color-text-secondary);
+    font: var(--mj-font-meta);
+    color: var(--mj-color-text-secondary);
     white-space: nowrap;
 }
 
@@ -6305,11 +6305,11 @@ li.mj_EventTile[data-layout="bubble"].mj_EventTile_systemNotice {
 }
 
 .mj_TurnCard_deep .mj_ToolCard + .mj_ToolCard {
-    border-top: 1px solid var(--cpd-color-border-subtle);
+    border-top: 1px solid var(--mj-color-border-subtle);
 }
 
 .mj_TurnCard_detailText {
-    padding: var(--cpd-space-3x);
+    padding: var(--mj-space-3x);
 }
 
 /* Turn-ending error — breaks out of the card. */
@@ -6317,13 +6317,13 @@ li.mj_EventTile[data-layout="bubble"].mj_EventTile_systemNotice {
     display: grid;
     grid-template-columns: 16px minmax(0, 1fr);
     align-items: start;
-    column-gap: var(--cpd-space-2x);
+    column-gap: var(--mj-space-2x);
     padding: 8px 12px;
     border: 1px solid var(--mj-critical-border);
-    border-radius: var(--cpd-radius-md);
-    background: linear-gradient(var(--mj-critical-tint), var(--mj-critical-tint)), var(--cpd-color-bg-canvas-default);
-    color: var(--cpd-color-text-critical-primary);
-    font: var(--cpd-font-body-sm-regular);
+    border-radius: var(--mj-radius-md);
+    background: linear-gradient(var(--mj-critical-tint), var(--mj-critical-tint)), var(--mj-color-bg-canvas-default);
+    color: var(--mj-color-text-critical-primary);
+    font: var(--mj-font-body-sm-regular);
 }
 
 .mj_TurnError .mj_TurnIcon {
@@ -6334,8 +6334,8 @@ li.mj_EventTile[data-layout="bubble"].mj_EventTile_systemNotice {
 .mj_TurnNotice {
     margin: 12px 20px 0;
     padding: 0 2px;
-    font: var(--cpd-font-meta);
-    color: var(--cpd-color-text-tertiary);
+    font: var(--mj-font-meta);
+    color: var(--mj-color-text-tertiary);
     list-style: none;
     overflow-wrap: anywhere;
 }

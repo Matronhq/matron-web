@@ -72,19 +72,20 @@ Please see LICENSE files in the repository root for full details.
 
     /* --- Turn card: amber "went wrong along the way", the critical error row, a label type
        role and the live-line / expand timings. --- */
-    /* Amber TEXT that clears 4.5:1 on canvas + raised; --cpd-color-usage-medium is a fill (2.2:1 as text). */
+    /* Amber TEXT that clears 4.5:1 on canvas + raised; --mj-color-usage-medium is a fill (2.2:1 as text). */
     --mj-warn-ink: #9a5700;
     --mj-critical-tint: rgb(189 32 32 / 10%);
     --mj-critical-border: rgb(189 32 32 / 45%);
-    --cpd-font-label-sm: 500 12px/16px var(--cpd-font-family-ui);
-    --cpd-dur-live-xfade: 240ms;
-    --cpd-dur-card-expand: var(--cpd-dur-fast);
-    --cpd-dur-group-expand: var(--cpd-dur-fast);
-    --cpd-dur-deep-open: var(--cpd-dur-med);
-    --cpd-dur-resolve: var(--cpd-dur-med);
+    --mj-font-label-sm: 500 12px/16px var(--mj-font-family-ui);
+    --mj-dur-live-xfade: 240ms;
+    --mj-dur-card-expand: var(--mj-dur-fast);
+    --mj-dur-group-expand: var(--mj-dur-fast);
+    --mj-dur-deep-open: var(--mj-dur-med);
+    --mj-dur-resolve: var(--mj-dur-med);
 
     /* --- v2 motion + focus --- */
     --mj-dur-fast: 120ms;
+    --mj-dur-med: 180ms;
     --mj-ease: cubic-bezier(0.2, 0, 0, 1);
 
     /* --- radii: the Mac is uniformly squarer (bubbles/tool/diff 8, composer 10, prompt cards 12) --- */

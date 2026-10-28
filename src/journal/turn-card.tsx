@@ -37,7 +37,7 @@ import { TurnIcon, type TurnIconName } from "./turn-icons";
 
 /** The live line changes at most once per interval; a newer text replaces a queued one. */
 export const LIVE_MIN_INTERVAL_MS = 1200;
-/** Cross-fade of the outgoing and incoming live line (--cpd-dur-live-xfade). */
+/** Cross-fade of the outgoing and incoming live line (--mj-dur-live-xfade). */
 export const LIVE_XFADE_MS = 240;
 /** The elapsed counter appears once the current step passes this. */
 export const LIVE_ELAPSED_AFTER_S = 10;
