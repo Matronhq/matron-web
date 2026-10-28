@@ -11,6 +11,7 @@ import { TextEncoder as NodeTextEncoder } from "node:util";
 
 import { favoriteStore, MatronJournalClient, pinnedStore, unreadStore } from "../client";
 import { MatronApp } from "../components";
+import { resetDeveloperViewForTests, DEVELOPER_VIEW_KEY } from "../developer-view";
 import type { ClientState, Conversation, JournalEvent, Session } from "../types";
 
 jest.mock("../../../res/matron-logo-simple.svg", () => "matron-logo.svg");
@@ -74,6 +75,9 @@ describe("tool card summary", () => {
 
     beforeEach(() => {
         localStorage.clear();
+        // The raw per-event rows these tests read are the Developer view rendering.
+        resetDeveloperViewForTests();
+        localStorage.setItem(DEVELOPER_VIEW_KEY, "true");
         container = document.createElement("div");
         document.body.append(container);
         root = createRoot(container);

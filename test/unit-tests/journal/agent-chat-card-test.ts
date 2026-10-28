@@ -30,6 +30,15 @@ import {
 import { EventContent, MatronApp } from "../../../src/journal/components";
 import { eventSnippet } from "../../../src/journal/types";
 import type { ClientState, Conversation, JournalEvent, Session } from "../../../src/journal/types";
+import { DEVELOPER_VIEW_KEY, resetDeveloperViewForTests } from "../../../src/journal/developer-view";
+
+// These suites pin the per-event thread (Developer view on); the default view is covered in
+// __tests__/turn-thread.test.tsx.
+beforeEach(() => {
+    window.localStorage.clear();
+    window.localStorage.setItem(DEVELOPER_VIEW_KEY, "true");
+    resetDeveloperViewForTests();
+});
 
 jest.mock("../../../res/matron-logo-simple.svg", () => "matron-logo.svg");
 
@@ -123,8 +132,6 @@ const consentMarker = (
 beforeAll(() => {
     (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 });
-
-beforeEach(() => window.localStorage.clear());
 
 describe("parseAgentChatRequest", () => {
     it("parses an invite with its display fields", () => {
