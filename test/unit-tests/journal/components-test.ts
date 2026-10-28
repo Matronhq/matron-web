@@ -857,7 +857,7 @@ describe("multi-select question cards", () => {
         const card = rendered.container.querySelector(".mj_PromptCard")!;
 
         expect(card.querySelector(".mj_PromptOption_toggle")).toBeNull();
-        expect(card.querySelector(".mj_PromptResolved")?.textContent).toBe("Answered");
+        expect(card.querySelector(".mj_PromptResolved")?.textContent).toBe("Answered: lint, unit");
     });
 
     it("leaves a single-choice question sending on the first tap", async () => {
