@@ -511,8 +511,8 @@ describe("subagent card + sidebar child row (rendered)", () => {
         expect(container.textContent).not.toContain("🔀 Subtask");
         const row = container.querySelector(".mj_ConversationListItem_sub");
         expect(row?.querySelector(".mj_ConversationListSnippet")?.textContent).toBe("Reading paths.py…");
-        expect(row?.getAttribute("aria-label")).toMatch(/^Open Claude subagent Part 2: units, /);
-        expect(row?.querySelector(".mj_ConversationListName")?.textContent).toBe("Part 2: units");
+        expect(row?.getAttribute("aria-label")).toMatch(/^Open subagent Part 2: units, /);
+        expect(row?.querySelector(".mj_ConversationListName")?.textContent).toBe("↳ Part 2: units");
     });
 
     it("Developer view on keeps the raw lines: the sidebar snippet and the card's steps", async () => {

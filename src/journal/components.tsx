@@ -218,7 +218,6 @@ import {
 } from "./turn-assembly";
 import { noticeText, TurnCard, type TurnCardMode, TurnErrorRow } from "./turn-card";
 import { applyPaneBand } from "./pane-width";
-import { TurnIcon } from "./turn-icons";
 import { sameCall, type Step, stepSentence, stepsOf } from "./turn-grouping";
 import { helperForStep, helpersByTurn, SubagentCard } from "./subagent-card";
 import { HeadlineList } from "./headline-list";
