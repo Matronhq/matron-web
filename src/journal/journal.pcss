@@ -5788,3 +5788,637 @@ li.mj_EventTile[data-layout="bubble"].mj_EventTile_systemNotice {
 .mj_EventTile_systemNotice[data-self="false"] .mj_EventTile_line {
     padding: 0;
 }
+
+/* ===========================================================================================
+   The turn card. With Developer view off the thread renders one
+   agent tile per operator turn: the card, then break-throughs, then a turn-ending error, then
+   the answer prose. No height animation anywhere; the collapsed card is one row in every state.
+   =========================================================================================== */
+
+.mj_TurnIcon {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 auto;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.75;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+/* The agent tile's blocks share one constant gap. */
+.mj_AgentTurn_blocks {
+    display: flex;
+    flex-direction: column;
+    gap: var(--mj-space-2x);
+    min-width: 0;
+}
+
+.mj_TurnBlock {
+    min-width: 0;
+}
+
+.mj_TurnCard {
+    min-width: 0;
+    overflow: hidden;
+    border: 1px solid var(--mj-color-border-subtle);
+    border-radius: var(--mj-radius-card);
+    background: var(--mj-color-bg-canvas-raised);
+}
+
+.mj_TurnCard_row {
+    position: relative;
+}
+
+.mj_TurnCard_toggle {
+    display: grid;
+    grid-template-columns: 16px minmax(0, 1fr) 13px;
+    align-items: center;
+    column-gap: var(--mj-space-2x);
+    width: 100%;
+    min-height: 36px;
+    padding: 9px 12px;
+    border: 0;
+    background: transparent;
+    color: var(--mj-color-text-primary);
+    text-align: left;
+    transition: background var(--mj-dur-fast) var(--mj-ease);
+}
+
+.mj_TurnCard_toggle:hover {
+    background: var(--mj-state-hover);
+}
+
+.mj_TurnCard_toggle:focus-visible {
+    outline: 2px solid var(--mj-color-text-action-accent);
+    outline-offset: -2px;
+    border-radius: var(--mj-radius-card);
+}
+
+.mj_TurnCard.is-open .mj_TurnCard_row {
+    border-bottom: 1px solid var(--mj-color-border-subtle);
+}
+
+.mj_TurnCard_glyph {
+    display: grid;
+    width: 16px;
+    height: 16px;
+    place-items: center;
+    color: var(--mj-color-icon-secondary);
+}
+
+.mj_TurnCard_glyph > * {
+    grid-area: 1 / 1;
+}
+
+.mj_TurnCard_glyph .mj_TurnIcon {
+    width: 14px;
+    height: 14px;
+}
+
+/* The spinner is excluded: this animation would otherwise replace its rotation. */
+.mj_TurnCard.is-resolved .mj_TurnCard_glyph > :not(.mj_TurnCard_spinner),
+.mj_TurnCard.is-resolved .mj_TurnCard_meta {
+    animation: mj-turn-fade-in var(--mj-dur-resolve) var(--mj-ease);
+}
+
+.mj_TurnCard_dot {
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+}
+
+.mj_TurnCard_dot_warn {
+    background: var(--mj-color-usage-medium);
+}
+
+.mj_TurnCard_dot_wait {
+    background: var(--mj-color-icon-accent-primary);
+}
+
+/* Running: a small rotating ring. Muted track, accent arc; amber arc once the step runs slow. */
+.mj_TurnCard_spinner {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    box-sizing: border-box;
+    border: 2px solid var(--mj-color-border-strong);
+    border-top-color: var(--mj-color-icon-accent-primary);
+    border-radius: 50%;
+    animation: mj-spin 0.8s linear infinite;
+}
+
+.mj_TurnCard_slow .mj_TurnCard_row .mj_TurnCard_spinner {
+    border-top-color: var(--mj-color-usage-medium);
+}
+
+.mj_TurnCard_meta,
+.mj_TurnCard_statusRegion,
+.mj_TurnCard_metaVisible,
+.mj_TurnCard_elapsedWrap {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: var(--mj-space-1x);
+}
+
+.mj_TurnCard_meta {
+    font: var(--mj-font-meta);
+    color: var(--mj-color-text-secondary);
+}
+
+.mj_TurnCard_sep,
+.mj_TurnCard_elapsedWrap,
+.mj_TurnCard_count_meta,
+.mj_TurnCard_countLabel,
+.mj_TurnCard_elapsedTotal,
+.mj_TurnCard_stoppedLabel {
+    flex: 0 0 auto;
+    white-space: nowrap;
+}
+
+/* Outgoing and incoming live lines share one grid cell: opacity only, the row never grows. */
+.mj_TurnCard_live {
+    display: grid;
+    min-width: 0;
+    flex: 0 1 auto;
+}
+
+.mj_TurnCard_liveText {
+    grid-area: 1 / 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_TurnCard_liveText_entering {
+    animation: mj-turn-fade-in var(--mj-dur-live-xfade) var(--mj-ease);
+}
+
+.mj_TurnCard_liveText_leaving {
+    animation: mj-turn-fade-out var(--mj-dur-live-xfade) var(--mj-ease) forwards;
+}
+
+.mj_TurnCard_elapsed {
+    font-variant-numeric: tabular-nums;
+}
+
+.mj_TurnCard_waiting .mj_TurnCard_meta {
+    color: var(--mj-color-text-action-accent);
+}
+
+.mj_TurnCard_slow .mj_TurnCard_meta {
+    color: var(--mj-warn-ink);
+}
+
+.mj_TurnCard_chevron {
+    width: 13px;
+    height: 13px;
+    color: var(--mj-color-text-tertiary);
+    transform: rotate(-90deg);
+    transition: transform var(--mj-dur-card-expand) var(--mj-ease);
+}
+
+.mj_TurnCard.is-open .mj_TurnCard_row .mj_TurnCard_chevron,
+.mj_TurnCard_group.is-open > .mj_TurnCard_groupRow .mj_TurnCard_chevron {
+    transform: rotate(0deg);
+}
+
+.mj_TurnCard_body {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 6px 6px 8px;
+    background: var(--mj-color-bg-canvas-default);
+    animation: mj-turn-fade-in var(--mj-dur-card-expand) var(--mj-ease);
+}
+
+.mj_TurnCard_label {
+    padding: 6px 6px 4px;
+    font: var(--mj-font-label-sm);
+    color: var(--mj-color-text-secondary);
+}
+
+.mj_TurnCard_changed {
+    display: flex;
+    flex-direction: column;
+    margin-bottom: 6px;
+    padding: 2px 0 4px;
+    border-bottom: 1px solid var(--mj-color-border-subtle);
+}
+
+.mj_TurnCard_file,
+.mj_TurnCard_groupRow,
+.mj_TurnCard_step {
+    display: grid;
+    width: 100%;
+    align-items: center;
+    column-gap: var(--mj-space-2x);
+    border: 0;
+    border-radius: var(--mj-radius-md);
+    background: transparent;
+    color: var(--mj-color-text-primary);
+    text-align: left;
+    transition: background var(--mj-dur-fast) var(--mj-ease);
+}
+
+.mj_TurnCard_file {
+    grid-template-columns: 16px minmax(0, 1fr) auto 12px;
+    padding: 6px;
+    font: var(--mj-font-body-sm-regular);
+}
+
+.mj_TurnCard_file:hover,
+.mj_TurnCard_groupRow:hover,
+.mj_TurnCard_step:hover:not(:disabled) {
+    background: var(--mj-state-hover);
+}
+
+.mj_TurnCard_file:focus-visible,
+.mj_TurnCard_groupRow:focus-visible,
+.mj_TurnCard_step:focus-visible,
+.mj_TurnCard_back:focus-visible,
+.mj_TurnCard_more:focus-visible {
+    outline: 2px solid var(--mj-color-text-action-accent);
+    outline-offset: -2px;
+}
+
+.mj_TurnCard_name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_TurnCard_counts {
+    display: flex;
+    gap: 6px;
+    font: var(--mj-font-label-sm);
+    font-variant-numeric: tabular-nums;
+}
+
+.mj_TurnCard_add {
+    color: var(--mj-color-icon-accent-primary);
+}
+
+.mj_TurnCard_del {
+    color: var(--mj-color-text-critical-primary);
+}
+
+.mj_TurnCard_icon {
+    display: grid;
+    width: 16px;
+    height: 16px;
+    place-items: center;
+    color: var(--mj-color-icon-secondary);
+}
+
+.mj_TurnCard_go {
+    width: 12px;
+    height: 12px;
+    color: var(--mj-color-icon-tertiary);
+}
+
+.mj_TurnCard_narration {
+    margin: 0;
+    padding: 8px 6px 4px 30px;
+    font: var(--mj-font-body);
+    color: var(--mj-color-text-secondary);
+    overflow-wrap: anywhere;
+}
+
+.markdown-body .mj_TurnCard_narration,
+.mj_TurnCard_narration p {
+    margin: 0;
+}
+
+.mj_TurnCard_group {
+    display: flex;
+    flex-direction: column;
+}
+
+.mj_TurnCard_groupRow {
+    grid-template-columns: 16px minmax(0, 1fr) auto auto 13px;
+    padding: 6px;
+    font: var(--mj-font-body);
+}
+
+.mj_TurnCard_groupRow .mj_TurnCard_chevron {
+    transition-duration: var(--mj-dur-group-expand);
+}
+
+/* Group sentences are prose: they wrap, never ellipsize. */
+.mj_TurnCard_sentence {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.mj_TurnCard_outcome {
+    color: var(--mj-color-text-secondary);
+}
+
+/* Recovered outcome text is amber and never red; red is only for a group whose last step failed. */
+.mj_TurnCard_group_recovered .mj_TurnCard_outcome,
+.mj_TurnCard_group_stopped .mj_TurnCard_outcome {
+    color: var(--mj-warn-ink);
+}
+
+.mj_TurnCard_group_failed .mj_TurnCard_outcome {
+    color: var(--mj-color-text-critical-primary);
+}
+
+.mj_TurnCard_group_running .mj_TurnCard_sentence {
+    color: var(--mj-color-text-secondary);
+}
+
+.mj_TurnCard_status {
+    display: grid;
+    width: 16px;
+    height: 16px;
+    place-items: center;
+}
+
+.mj_TurnCard_status .mj_TurnIcon {
+    width: 14px;
+    height: 14px;
+}
+
+.mj_TurnCard_status_ok {
+    color: var(--mj-color-usage-low);
+}
+
+.mj_TurnCard_status_failed {
+    color: var(--mj-color-text-critical-primary);
+}
+
+.mj_TurnCard_count {
+    min-width: 48px;
+    font: var(--mj-font-meta);
+    color: var(--mj-color-text-secondary);
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    white-space: nowrap;
+}
+
+.mj_TurnCard_steps {
+    display: flex;
+    flex-direction: column;
+    margin: 0 0 4px;
+    padding: 0 0 0 24px;
+    list-style: none;
+}
+
+.markdown-body .mj_TurnCard_steps {
+    margin: 0 0 4px;
+    padding-left: 24px;
+}
+
+.mj_TurnCard_steps > li {
+    margin: 0;
+}
+
+.mj_TurnCard_step {
+    grid-template-columns: minmax(0, 1fr) auto 12px;
+    padding: 4px 6px;
+    font: var(--mj-font-body-sm-regular);
+    color: var(--mj-color-text-secondary);
+}
+
+.mj_TurnCard_step:disabled {
+    cursor: default;
+}
+
+.mj_TurnCard_step:hover:not(:disabled),
+.mj_TurnCard_step[aria-expanded="true"] {
+    color: var(--mj-color-text-primary);
+}
+
+.mj_TurnCard_step[aria-expanded="true"] .mj_TurnCard_go,
+.mj_TurnCard_file[aria-expanded="true"] .mj_TurnCard_go {
+    transform: rotate(90deg);
+}
+
+.mj_TurnCard_stepNote {
+    font: var(--mj-font-meta);
+    color: var(--mj-color-text-secondary);
+    white-space: nowrap;
+}
+
+.mj_TurnCard_stepNote_failed {
+    color: var(--mj-warn-ink);
+}
+
+.mj_TurnCard_more {
+    align-self: flex-start;
+    margin: 2px 0;
+    padding: 4px 6px;
+    border: 0;
+    border-radius: var(--mj-radius-sm);
+    background: transparent;
+    color: var(--mj-color-text-action-accent);
+    font: var(--mj-font-label);
+}
+
+.mj_TurnCard_more:hover {
+    background: var(--mj-state-hover);
+}
+
+.mj_TurnCard_now {
+    display: grid;
+    grid-template-columns: 16px minmax(0, 1fr);
+    align-items: center;
+    column-gap: var(--mj-space-2x);
+    padding: 6px;
+    font: var(--mj-font-body);
+    color: var(--mj-color-text-secondary);
+}
+
+.mj_TurnCard_now .mj_TurnCard_glyph {
+    height: 21px;
+}
+
+/* Deep detail — the only level with monospace and exit codes. Opens in place, fades in. */
+.mj_TurnCard_deep {
+    overflow: hidden;
+    margin: 4px 0 8px;
+    border: 1px solid var(--mj-color-border-subtle);
+    border-radius: var(--mj-radius-md);
+    background: var(--mj-color-bg-canvas-default);
+    animation: mj-turn-fade-in var(--mj-dur-deep-open) var(--mj-ease);
+}
+
+.mj_TurnCard_changed .mj_TurnCard_deep {
+    margin: 4px 0 6px 24px;
+}
+
+.mj_TurnCard_deepHead {
+    display: flex;
+    align-items: center;
+    gap: var(--mj-space-2x);
+    padding: 4px 6px 4px 4px;
+    border-bottom: 1px solid var(--mj-color-border-subtle);
+    background: var(--mj-color-bg-canvas-raised);
+}
+
+.mj_TurnCard_back {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--mj-space-1x);
+    padding: 4px 8px 4px 4px;
+    border: 0;
+    border-radius: var(--mj-radius-sm);
+    background: transparent;
+    color: var(--mj-color-text-secondary);
+    font: var(--mj-font-label);
+}
+
+.mj_TurnCard_back:hover {
+    background: var(--mj-state-hover);
+    color: var(--mj-color-text-primary);
+}
+
+.mj_TurnCard_back .mj_TurnIcon {
+    width: 14px;
+    height: 14px;
+}
+
+.mj_TurnCard_deepMeta {
+    margin-left: auto;
+    font: var(--mj-font-meta);
+    color: var(--mj-color-text-secondary);
+    white-space: nowrap;
+}
+
+/* The panel owns the chrome; the reused cards drop their own border + radius. */
+.mj_TurnCard_deep .mj_DiffCard,
+.mj_TurnCard_deep .mj_ToolCard {
+    border: 0;
+    border-radius: 0;
+}
+
+/* The summary row already names the command; the deep panel shows its output directly. */
+.mj_TurnCard_deep .mj_ToolCommand {
+    display: none;
+}
+
+.mj_TurnCard_deep .mj_ToolCard + .mj_ToolCard {
+    border-top: 1px solid var(--mj-color-border-subtle);
+}
+
+.mj_TurnCard_detailText {
+    padding: var(--mj-space-3x);
+}
+
+/* Turn-ending error — breaks out of the card. */
+.mj_TurnError {
+    display: grid;
+    grid-template-columns: 16px minmax(0, 1fr);
+    align-items: start;
+    column-gap: var(--mj-space-2x);
+    padding: 8px 12px;
+    border: 1px solid var(--mj-critical-border);
+    border-radius: var(--mj-radius-md);
+    background: linear-gradient(var(--mj-critical-tint), var(--mj-critical-tint)), var(--mj-color-bg-canvas-default);
+    color: var(--mj-color-text-critical-primary);
+    font: var(--mj-font-body-sm-regular);
+}
+
+.mj_TurnError .mj_TurnIcon {
+    margin-top: 2px;
+}
+
+/* Bridge system notice: one tertiary meta line, no avatar (tertiary is the brief's call). */
+.mj_TurnNotice {
+    margin: 12px 20px 0;
+    padding: 0 2px;
+    font: var(--mj-font-meta);
+    color: var(--mj-color-text-tertiary);
+    list-style: none;
+    overflow-wrap: anywhere;
+}
+
+@keyframes mj-turn-fade-in {
+    from {
+        opacity: 0;
+    }
+
+    to {
+        opacity: 1;
+    }
+}
+
+@keyframes mj-turn-fade-out {
+    from {
+        opacity: 1;
+    }
+
+    to {
+        opacity: 0;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .mj_TurnCard_body,
+    .mj_TurnCard_deep,
+    .mj_TurnCard_liveText_entering,
+    .mj_TurnCard_liveText_leaving,
+    .mj_TurnCard.is-resolved .mj_TurnCard_glyph > :not(.mj_TurnCard_spinner),
+    .mj_TurnCard.is-resolved .mj_TurnCard_meta {
+        animation: none;
+    }
+
+    /* Reduced motion: the ring still turns, but slowly, so "working" stays legible. */
+    .mj_TurnCard_spinner {
+        animation-duration: 3s;
+    }
+
+    .mj_TurnCard_chevron {
+        transition: none;
+    }
+}
+
+/* ---- Chat-pane breakpoints (data-pane on .mj_ChatView_body, set by a ResizeObserver).
+   Order of sacrifice at narrow: card row drops the total duration;
+   group rows drop the count column, then the step indent shrinks 24 → 12; the deep panel
+   pulls out to the card edge. Glyph, the live line / step summary and chevron are never
+   dropped. ---- */
+[data-pane="narrow"] .mj_TurnCard_count,
+[data-pane="narrow"] .mj_TurnCard_elapsedTotal {
+    display: none;
+}
+
+[data-pane="narrow"] .mj_TurnCard_groupRow {
+    grid-template-columns: 16px minmax(0, 1fr) auto 13px;
+}
+
+[data-pane="narrow"] .mj_TurnCard_steps,
+[data-pane="narrow"] .markdown-body .mj_TurnCard_steps {
+    padding-left: 12px;
+}
+
+[data-pane="narrow"] .mj_TurnCard_narration {
+    padding-left: 18px;
+}
+
+[data-pane="narrow"] .mj_TurnCard_changed .mj_TurnCard_deep {
+    margin-left: 0;
+}
+
+[data-pane="narrow"] .mj_TurnCard_steps .mj_TurnCard_deep {
+    margin-left: -12px;
+}
+
+/* Very tight panes: the stopped-state count and the done duration go too; the live line keeps
+   what is left. The done-state step count stays: it is the row's only label. */
+@container (max-width: 340px) {
+    .mj_TurnCard_count_meta,
+    .mj_TurnCard_elapsedTotal {
+        display: none;
+    }
+}
+
+.mj_TurnCard {
+    container-type: inline-size;
+}
