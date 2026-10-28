@@ -62,29 +62,37 @@ const GENERIC = new Set([
     "it",
 ]);
 
-// An address in a title is one word, compared whole: its pieces (https, the host, the path's
-// words) would otherwise match any other title that carries an address on the same site.
-const URL_IN_TITLE_RE = /[a-z][a-z0-9+.-]*:\/\/[^\s<>()"']+/gu;
+// An address in a title is one word, compared whole and as written (paths are case-sensitive): its
+// pieces (https, the host, the path's words) would otherwise match any other title that carries an
+// address on the same site.
+const URL_IN_TITLE_RE = /[a-z][a-z0-9+.-]*:\/\/[^\s<>"'[\]]+/giu;
 
-function plainWords(text: string): string[] {
-    return text.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+// The address as written, without what wraps or follows it: a full stop, a trailing slash, or a
+// closing parenthesis it did not open ("(see https://…)"). A trailing "..." becomes "…": cut short.
+function trimAddress(text: string): string {
+    let t = text.replace(/\.\.\.$/u, "…");
+    for (;;) {
+        const before = t;
+        t = t.replace(/[.,;:!?/]+$/u, "");
+        if (t.endsWith(")") && t.split("(").length < t.split(")").length) t = t.slice(0, -1);
+        if (t === before) return t;
+    }
 }
 
-/** The words of a title; `cut` is set when it ends with an ellipsis. */
-function tokens(text: string): string[] & { cut?: boolean } {
-    const full = text
-        .normalize("NFKD")
-        .replace(/\p{M}+/gu, "")
-        .toLowerCase();
-    const plain = full.replace(/(\.\.\.|…)\s*$/u, "");
-    const out: string[] & { cut?: boolean } = [];
-    // Marked cut short with an ellipsis: only then may an address at the end be a prefix of the
-    // real one.
-    out.cut = plain !== full;
+function plainWords(text: string): string[] {
+    return text
+        .toLowerCase()
+        .split(/[^\p{L}\p{N}]+/u)
+        .filter(Boolean);
+}
+
+function tokens(text: string): string[] {
+    const plain = text.normalize("NFKD").replace(/\p{M}+/gu, "");
+    const out: string[] = [];
     let last = 0;
     for (const m of plain.matchAll(URL_IN_TITLE_RE)) {
         out.push(...plainWords(plain.slice(last, m.index)));
-        out.push(m[0].replace(/[.,;:!?/]+$/u, ""));
+        out.push(trimAddress(m[0]));
         last = m.index + m[0].length;
     }
     out.push(...plainWords(plain.slice(last)));
@@ -93,9 +101,14 @@ function tokens(text: string): string[] & { cut?: boolean } {
 
 const isAddress = (t: string): boolean => t.includes("://");
 
+// The same address, or one cut short with an ellipsis and the address it starts: ".../pull/1" is
+// not ".../pull/10", ".../pu…" is.
+function sameAddress(t: string, x: string | undefined): boolean {
+    return t === x || (t.endsWith("…") && !!x && isAddress(x) && x.startsWith(t.slice(0, -1)));
+}
+
 function sameWord(a: string, b: string): boolean {
     if (a === b) return true;
-    // Addresses match whole: ".../pull/1" is not ".../pull/10".
     if (isAddress(a) || isAddress(b)) return false;
     return Math.min(a.length, b.length) >= 3 && (a.startsWith(b) || b.startsWith(a));
 }
@@ -103,20 +116,36 @@ function sameWord(a: string, b: string): boolean {
 /**
  * Does a title written in a link name this record? The same rule the bridge checks agents' links
  * with: a prefix (the last word possibly cut short), an abbreviation, or a paraphrase that keeps
- * most of the words passes; a title about something else does not.
+ * most of the words passes; a title about something else does not, and neither does one naming an
+ * address the record's title does not have.
  */
 export function titleMatches(written: string, actual: string): boolean {
     const w = tokens(written);
     const a = tokens(actual);
     if (!w.length || !a.length) return false;
-    const cutShort = (t: string, x: string): boolean => x.startsWith(t) && (!isAddress(t) || !!w.cut);
-    if (w.length <= a.length && w.every((t, i) => t === a[i] || (i === w.length - 1 && cutShort(t, a[i])))) {
-        return true;
-    }
+    // An address names one thing: every address written must be in the title.
+    if (!w.every((t) => !isAddress(t) || a.some((x) => sameAddress(t, x)))) return false;
+    const atPosition = (t: string, i: number): boolean =>
+        isAddress(t) ? sameAddress(t, a[i]) : t === a[i] || (i === w.length - 1 && a[i].startsWith(t));
+    if (w.length <= a.length && w.every(atPosition)) return true;
+    // Most of the written words appear in the title (each address already does).
     const content = w.filter((t) => !STOPWORDS.has(t));
     const words = content.length ? content : w;
-    const hits = words.filter((t) => a.some((x) => sameWord(t, x))).length;
+    const hits = words.filter((t) => isAddress(t) || a.some((x) => sameWord(t, x))).length;
     return hits >= Math.min(2, words.length) && hits / words.length >= 0.6;
+}
+
+/**
+ * Does a link's text say which record it means? A number does, an address does, and so do two or
+ * more words beyond the stopwords and pointing words ("here", "read more").
+ */
+function claims(written: { num: number | null; title: string }): boolean {
+    const words = tokens(written.title);
+    return (
+        written.num !== null ||
+        words.some(isAddress) ||
+        words.filter((t) => !STOPWORDS.has(t) && !GENERIC.has(t)).length >= 2
+    );
 }
 
 const TEXT_RE =
@@ -192,13 +221,13 @@ export function TrackerLinkTarget({ user, num, linkText }: TrackerLinkTargetProp
             <span className="mj_TrackerLinkTarget">{kind}</span>
         );
     }
-    // The link already says what it points at: a chip would only repeat it.
-    if (!wrongNumber && written.title && titleMatches(written.title, title)) return null;
+    // The link already says what it points at: a chip would only repeat it. A label like "here" or
+    // a lone word that happens to start the title says nothing, so it keeps the chip.
+    const claimed = claims(written);
+    if (!wrongNumber && claimed && written.title && titleMatches(written.title, title)) return null;
     // Link text that names something ("#12 Some title", or a few words) and does not match is
     // flagged; a label like "here" or "read more" is not a claim about the target.
-    const claims =
-        written.num !== null || tokens(written.title).filter((t) => !STOPWORDS.has(t) && !GENERIC.has(t)).length >= 2;
-    const mismatch = wrongNumber || (claims && !!written.title);
+    const mismatch = wrongNumber || (claimed && !!written.title);
     let hint = title;
     if (wrongNumber) hint = `This link says #${written.num} but goes to #${num}, the ${kind} "${title}".`;
     else if (mismatch) hint = `#${num} is not "${written.title}": it is the ${kind} "${title}".`;

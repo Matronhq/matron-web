@@ -72,6 +72,18 @@ describe("tracker link titles", () => {
         expect(chip(view)).toBeNull();
     });
 
+    it("keeps the chip on a label that names nothing, even when it starts the title", async () => {
+        const info = jest.fn().mockResolvedValue(found("item", "Here is the release plan"));
+        const view = await render(`[here](${OWN}/12) and [Here](${OWN}/12)`, info);
+
+        const chips = view.querySelectorAll<HTMLElement>("a.mj_TrackerLink .mj_TrackerLinkTarget");
+        expect(chips).toHaveLength(2);
+        for (const c of chips) {
+            expect(c.textContent).toBe("item · Here is the release plan");
+            expect(c.classList.contains("mj_TrackerLinkTarget--mismatch")).toBe(false);
+        }
+    });
+
     it("flags a link titled after another record with an address on the same site", async () => {
         const info = jest
             .fn()
@@ -182,5 +194,13 @@ describe("titleMatches", () => {
         expect(titleMatches("Merge https://example.com/org/repo/pull/10", actual)).toBe(true);
         expect(titleMatches("Merge https://example.com/org/repo/pu…", actual)).toBe(true);
         expect(titleMatches("Merge (live tracking fix)", actual)).toBe(true);
+        // Every other word the same: the address alone tells them apart.
+        expect(titleMatches("Merge https://example.com/org/repo/pull/11 (live tracking fix)", actual)).toBe(false);
+        expect(titleMatches("Fix https://example.com/Files/A", "Fix https://example.com/Files/a")).toBe(false);
+        expect(titleMatches("Fix https://example.com/item(1) docs", "Fix https://example.com/item(2) docs")).toBe(
+            false,
+        );
+        expect(titleMatches("Fix [https://example.com/a]", "Fix https://example.com/a")).toBe(true);
+        expect(titleMatches("Fix (see https://example.com/a)", "Fix: see https://example.com/a")).toBe(true);
     });
 });
