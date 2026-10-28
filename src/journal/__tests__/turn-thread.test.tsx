@@ -409,7 +409,12 @@ describe("Developer view OFF (default)", () => {
                 cmd("routine_list", 0, 1),
                 ev("routine", { routine_id: "r1", name: "morning", action: "deleted" }, "user:op", 2),
                 ev("summary", { text: "a long summary" }, "agent:box", 3),
-                ev("consent_decision", { kind: "chat", decision: "approve", by: "coordinator", reason: "fits" }, "journal", 4),
+                ev(
+                    "consent_decision",
+                    { kind: "chat", decision: "approve", by: "coordinator", reason: "fits" },
+                    "journal",
+                    4,
+                ),
                 say("Done.", 5),
                 ev("coordinator", { role: "assigned" }, "user:op", 6),
             ]),

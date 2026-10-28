@@ -510,7 +510,9 @@ describe("the bridge's structured flags", () => {
         expect(bridgeEventKind(tagged("Anything at all", "compaction"))).toBe("notice");
         expect(bridgeEventKind(tagged("Anything at all", "restart"))).toBe("notice");
         expect(bridgeEventKind(ev("text", { body: "Anything at all", from: "assistant", notice: [] }))).toBeNull();
-        expect(bridgeEventKind(ev("text", { body: "x", notice: { kind: "control" } }, { sender: "user:op" }))).toBeNull();
+        expect(
+            bridgeEventKind(ev("text", { body: "x", notice: { kind: "control" } }, { sender: "user:op" })),
+        ).toBeNull();
     });
 
     it("keeps a flagged notice out of the card and the answer", () => {

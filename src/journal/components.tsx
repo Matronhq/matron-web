@@ -6581,7 +6581,11 @@ function Timeline({
                 const newDay = !previous || !sameCalendarDay(slot.start, previous.end);
                 if (newDay) out.push(dayDivider(slot.start));
                 if (slot.message) {
-                    out.push({ key: `${conversation}:m-${slot.message.message.localId}`, kind: "pending", message: slot.message.message });
+                    out.push({
+                        key: `${conversation}:m-${slot.message.message.localId}`,
+                        kind: "pending",
+                        message: slot.message.message,
+                    });
                 } else if (slot.row?.kind === "turn") {
                     out.push({ key: `${conversation}:t-${slot.row.turn.key}`, kind: "turn", turn: slot.row.turn });
                 } else if (slot.row?.kind === "notice") {
@@ -6956,7 +6960,6 @@ function Timeline({
     // ⇧⌘U / Ctrl+Shift+U, the floating pill's shortcut, is bound with the app's other shortcuts
     // (shortcuts.ts useAppShortcuts), live whenever a conversation is open.
 
-
     const timelineMain = (
         <main className="mj_ChatView_timeline" data-testid="timeline">
             <div className="mj_ScreenReaderOnly" aria-live="polite" aria-atomic="true">
@@ -7001,7 +7004,12 @@ function Timeline({
                                     live={
                                         row.turn === lastTurn
                                             ? lastTurnLive
-                                            : { mode: stepsOf(row.turn.items).at(-1)?.status === "stopped" ? "stopped" : "done" }
+                                            : {
+                                                  mode:
+                                                      stepsOf(row.turn.items).at(-1)?.status === "stopped"
+                                                          ? "stopped"
+                                                          : "done",
+                                              }
                                     }
                                     answeredPromptReplies={answeredPromptReplies}
                                     spawnOutcomes={spawnOutcomes}
