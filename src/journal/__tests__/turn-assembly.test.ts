@@ -504,6 +504,15 @@ describe("the bridge's structured flags", () => {
         expect(bridgeEventKind(ev("text", { body: "x", notice: "control" }, { sender: "user:op" }))).toBeNull();
     });
 
+    it("reads the tag object {kind, icon, summary} the bridge sends as payload.notice", () => {
+        const tagged = (body: string, kind: string): JournalEvent =>
+            ev("text", { body, from: "assistant", notice: { kind, icon: "🗜️", summary: body } });
+        expect(bridgeEventKind(tagged("Anything at all", "compaction"))).toBe("notice");
+        expect(bridgeEventKind(tagged("Anything at all", "restart"))).toBe("notice");
+        expect(bridgeEventKind(ev("text", { body: "Anything at all", from: "assistant", notice: [] }))).toBeNull();
+        expect(bridgeEventKind(ev("text", { body: "x", notice: { kind: "control" } }, { sender: "user:op" }))).toBeNull();
+    });
+
     it("keeps a flagged notice out of the card and the answer", () => {
         const [turn] = assembleTurns([
             user("go"),
