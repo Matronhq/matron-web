@@ -7100,6 +7100,7 @@ function Timeline({
                         </li>
                     ))}
                     {sessionRunning &&
+                        developerView &&
                         Object.values(state.toolStreams).map((stream) => (
                             <ToolStream key={stream.messageRef} stream={stream} />
                         ))}
