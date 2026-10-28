@@ -199,52 +199,6 @@ Please see LICENSE files in the repository root for full details.
     width: 100%;
 }
 
-/* ---- sidebar child rows ---- */
-
-/* The child row hangs off its parent on a hairline rail under the parent's status dot (its
-   centre sits at 12px: 8px padding + half the dot's 8px), with a short elbow into its own
-   status glyph. The glyph sits where the parent's title starts (24px: padding, dot and gap),
-   so the hierarchy reads as one column step. The last child's rail stops at its elbow. */
-.mj_RoomListSubStatus {
-    display: grid;
-    width: 14px;
-    height: 14px;
-    flex: 0 0 14px;
-    place-items: center;
-    color: var(--mj-color-icon-secondary);
-}
-
-.mj_RoomListSubStatus > * {
-    grid-area: 1 / 1;
-}
-
-.mj_RoomListSubStatus .mj_TurnIcon {
-    width: 14px;
-    height: 14px;
-}
-
-.mj_RoomListSubStatus_failed {
-    color: var(--mj-color-text-critical-primary);
-}
-
-.mj_RoomListSubStatus_dot {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: var(--mj-color-border-strong);
-}
-
-.mj_RoomListSubStatus_interrupted .mj_RoomListSubStatus_dot {
-    background: var(--mj-color-usage-medium);
-}
-
-/* The header's subagent pills carry the same glyph. */
-.mj_SubagentPill .mj_RoomListSubStatus {
-    width: 13px;
-    height: 13px;
-    flex-basis: 13px;
-}
-
 /* ---- helper thread: headlines ---- */
 
 /* Inside a helper's own thread (Developer view off) its steps read as a list of plain-English

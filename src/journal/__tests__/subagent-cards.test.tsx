@@ -512,8 +512,6 @@ describe("subagent card + sidebar child row (rendered)", () => {
         const row = container.querySelector(".mj_ConversationListItem_sub");
         expect(row?.querySelector(".mj_ConversationListSnippet")?.textContent).toBe("Reading paths.py…");
         expect(row?.getAttribute("aria-label")).toMatch(/^Open Claude subagent Part 2: units, /);
-        expect(row?.querySelector(".mj_RoomListSubStatus_running .mj_TurnCard_spinner")).not.toBeNull();
-        expect(row?.querySelector(".mj_AnthropicMark, .mj_OpenAIMark")).toBeNull();
         expect(row?.querySelector(".mj_ConversationListName")?.textContent).toBe("Part 2: units");
     });
 

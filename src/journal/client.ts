@@ -1344,15 +1344,6 @@ export class MatronJournalClient {
         const query = this.state.globalSearch?.query;
         if (query) void this.beginChatSearch(query, { conversationId: chat.convo_id, startingAt: chat.top.seq });
         else void this.focusMessage(chat.convo_id, chat.top.seq);
-    /**
-     * The stored events of a conversation that is NOT (necessarily) selected — a subagent card
-     * reads its child's steps here. Every live frame lands in IndexedDB whatever is selected, so
-     * this is local and immediate; refreshConversationTail() tops it up from the server.
-     */
-    public async conversationEvents(conversationId: string): Promise<JournalEvent[]> {
-        const database = this.database;
-        if (!database) return [];
-        return database.events(conversationId);
     }
 
     /**
@@ -6401,11 +6392,8 @@ export class MatronJournalClient {
         this.pendingAck = 0;
         this.historyError = undefined;
         this.history.clear();
-<<<<<<< HEAD
         this.consentHistoryFetches.clear();
-=======
         this.conversationTailFetches.clear();
->>>>>>> 24ebcd9 (feat(journal): helper cards, plain-English helper activity and child rows)
         this.activities.clear();
         this.statuses.clear();
         this.textStreams.clear();

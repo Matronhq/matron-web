@@ -1353,28 +1353,6 @@ function OutcomeGlyph({
     return <InactiveIcon className={`${className} mj_InactiveOutcomeGlyph`} />;
 }
 
-/**
- * A subagent row's status glyph, one per state: the turn card's spinner while
- * running, a check once completed, a cross when it failed, an amber dot when interrupted, a
- * muted dot when the state is unknown.
- */
-function SubRowStatus({ conversation }: { conversation: Conversation }): React.ReactElement {
-    const classification = classifyOutcome(conversation);
-    return (
-        <span className={`mj_RoomListSubStatus mj_RoomListSubStatus_${classification}`} aria-hidden="true">
-            {classification === "running" ? (
-                <span className="mj_TurnCard_spinner" />
-            ) : classification === "completed" ? (
-                <TurnIcon name="check" />
-            ) : classification === "failed" ? (
-                <TurnIcon name="x" />
-            ) : (
-                <span className="mj_RoomListSubStatus_dot" />
-            )}
-        </span>
-    );
-}
-
 // Debounce keystrokes before firing a message-content search request.
 const MESSAGE_SEARCH_DEBOUNCE_MS = 200;
 
@@ -1571,7 +1549,9 @@ const ConversationRow = React.memo(function ConversationRow({
                         ) : (
                             (preview ?? conversation.snippet) && (
                                 <>
-                                    <span className="mj_ConversationListSnippet">{preview ?? conversation.snippet}</span>
+                                    <span className="mj_ConversationListSnippet">
+                                        {preview ?? conversation.snippet}
+                                    </span>
                                     <span className="mj_ConversationListDot"> · </span>
                                 </>
                             )
@@ -7279,24 +7259,23 @@ function Timeline({
                         if (row.kind === "event") {
                             return (
                                 <React.Fragment key={row.key}>
-
-                                <MemoEventRow
-                                                                        client={client}
-                                    event={row.event}
-                                    answeredPromptReplies={answeredPromptReplies}
-                                    spawnOutcomes={spawnOutcomes}
-                                    agentChatResolutions={agentChatResolutions}
-                                    coordinatorDecisions={coordinatorDecisions}
-                                    itemCards={itemCards}
-                                    isReadOnly={isReadOnly}
-                                    resolvedAction={resolvedAction}
-                                    continuation={row.continuation}
-                                    lastInSection={row.lastInSection}
-                                    rowHandlers={menu.rowHandlers}
-                                />
-                                    {eventHelpers
-                                        .get(row.event.seq)
-                                        ?.map((child) => <DevHelperRow key={`h-${child.id}`} client={client} child={child} />)}
+                                    <MemoEventRow
+                                        client={client}
+                                        event={row.event}
+                                        answeredPromptReplies={answeredPromptReplies}
+                                        spawnOutcomes={spawnOutcomes}
+                                        agentChatResolutions={agentChatResolutions}
+                                        coordinatorDecisions={coordinatorDecisions}
+                                        itemCards={itemCards}
+                                        isReadOnly={isReadOnly}
+                                        resolvedAction={resolvedAction}
+                                        continuation={row.continuation}
+                                        lastInSection={row.lastInSection}
+                                        rowHandlers={menu.rowHandlers}
+                                    />
+                                    {eventHelpers.get(row.event.seq)?.map((child) => (
+                                        <DevHelperRow key={`h-${child.id}`} client={client} child={child} />
+                                    ))}
                                 </React.Fragment>
                             );
                         }
