@@ -63,12 +63,22 @@ describe("tracker link titles", () => {
         expect(chip(view)?.classList.contains("mj_TrackerLinkTarget--mismatch")).toBe(false);
     });
 
-    it("shows only the kind when the link already carries the right title", async () => {
+    it("shows no chip when the link already carries the right title", async () => {
         const info = jest.fn().mockResolvedValue(found("mission", "Ship the release notes"));
         const view = await render(`[#12 Ship the release…](${OWN}/12)`, info);
 
-        expect(chip(view)?.textContent).toBe("mission");
-        expect(chip(view)?.classList.contains("mj_TrackerLinkTarget--mismatch")).toBe(false);
+        expect(info).toHaveBeenCalledWith("alice", 12);
+        expect(view.querySelector("a.mj_TrackerLink")?.textContent).toBe("#12 Ship the release…");
+        expect(chip(view)).toBeNull();
+    });
+
+    it("flags a link titled after another record with an address on the same site", async () => {
+        const info = jest
+            .fn()
+            .mockResolvedValue(found("item", "Merge https://example.com/org/repo/pull/10 (live tracking fix)"));
+        const view = await render(`[#12 Merge https://example.com/org/repo/pull/11 (search fix)](${OWN}/12)`, info);
+
+        expect(chip(view)?.classList.contains("mj_TrackerLinkTarget--mismatch")).toBe(true);
     });
 
     it("flags a link whose written title is not its target's", async () => {
@@ -159,5 +169,18 @@ describe("titleMatches", () => {
         expect(titleMatches("the new merge question", "Office move to the new building")).toBe(false);
         expect(titleMatches("here", "Merge: release notes export")).toBe(false);
         expect(titleMatches("", "Merge")).toBe(false);
+    });
+
+    it("compares an address in a title as one whole word", () => {
+        const actual = "Merge https://example.com/org/repo/pull/10 (live tracking fix)";
+        expect(titleMatches("Merge https://example.com/org/repo/pull/11 (search fix)", actual)).toBe(false);
+        expect(titleMatches("Merge https://example.com/org/repo/pull/1", actual)).toBe(false);
+        expect(titleMatches("https://example.com/org/repo/pull/10", "Merge https://example.com/org/repo/pull/11")).toBe(
+            false,
+        );
+        expect(titleMatches(actual, actual)).toBe(true);
+        expect(titleMatches("Merge https://example.com/org/repo/pull/10", actual)).toBe(true);
+        expect(titleMatches("Merge https://example.com/org/repo/pu…", actual)).toBe(true);
+        expect(titleMatches("Merge (live tracking fix)", actual)).toBe(true);
     });
 });

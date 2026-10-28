@@ -7,9 +7,10 @@ Please see LICENSE files in the repository root for full details.
 
 // The title beside a tracker link. Agents sometimes link a real number that is not the one they
 // meant, and a bare `#412` gives the reader no way to tell. So every tracker link in rendered
-// markdown shows what its number really is: its kind, and its title unless the link text already
-// says it. When the link text names a different title (or a number that does not exist), the
-// chip is marked as a mismatch, so the wrong link stands out at a glance.
+// markdown that does not already name its target shows what its number really is: its kind and
+// title. A link whose text carries the right title gets no chip. When the link text names a
+// different title (or a number that does not exist), the chip is marked as a mismatch, so the
+// wrong link stands out at a glance.
 
 import React, { useContext, useEffect, useState } from "react";
 
@@ -61,18 +62,41 @@ const GENERIC = new Set([
     "it",
 ]);
 
-function tokens(text: string): string[] {
-    return text
+// An address in a title is one word, compared whole: its pieces (https, the host, the path's
+// words) would otherwise match any other title that carries an address on the same site.
+const URL_IN_TITLE_RE = /[a-z][a-z0-9+.-]*:\/\/[^\s<>()"']+/gu;
+
+function plainWords(text: string): string[] {
+    return text.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+}
+
+/** The words of a title; `cut` is set when it ends with an ellipsis. */
+function tokens(text: string): string[] & { cut?: boolean } {
+    const full = text
         .normalize("NFKD")
         .replace(/\p{M}+/gu, "")
-        .toLowerCase()
-        .replace(/(\.\.\.|…)\s*$/u, "")
-        .split(/[^\p{L}\p{N}]+/u)
-        .filter(Boolean);
+        .toLowerCase();
+    const plain = full.replace(/(\.\.\.|…)\s*$/u, "");
+    const out: string[] & { cut?: boolean } = [];
+    // Marked cut short with an ellipsis: only then may an address at the end be a prefix of the
+    // real one.
+    out.cut = plain !== full;
+    let last = 0;
+    for (const m of plain.matchAll(URL_IN_TITLE_RE)) {
+        out.push(...plainWords(plain.slice(last, m.index)));
+        out.push(m[0].replace(/[.,;:!?/]+$/u, ""));
+        last = m.index + m[0].length;
+    }
+    out.push(...plainWords(plain.slice(last)));
+    return out;
 }
+
+const isAddress = (t: string): boolean => t.includes("://");
 
 function sameWord(a: string, b: string): boolean {
     if (a === b) return true;
+    // Addresses match whole: ".../pull/1" is not ".../pull/10".
+    if (isAddress(a) || isAddress(b)) return false;
     return Math.min(a.length, b.length) >= 3 && (a.startsWith(b) || b.startsWith(a));
 }
 
@@ -85,7 +109,8 @@ export function titleMatches(written: string, actual: string): boolean {
     const w = tokens(written);
     const a = tokens(actual);
     if (!w.length || !a.length) return false;
-    if (w.length <= a.length && w.every((t, i) => t === a[i] || (i === w.length - 1 && a[i].startsWith(t)))) {
+    const cutShort = (t: string, x: string): boolean => x.startsWith(t) && (!isAddress(t) || !!w.cut);
+    if (w.length <= a.length && w.every((t, i) => t === a[i] || (i === w.length - 1 && cutShort(t, a[i])))) {
         return true;
     }
     const content = w.filter((t) => !STOPWORDS.has(t));
@@ -120,7 +145,7 @@ interface TrackerLinkTargetProps {
     linkText: string;
 }
 
-/** The chip inside a tracker link: what the number points at. Nothing while unknown. */
+/** The chip inside a tracker link: what the number points at. Nothing while unknown, or when the link text already names it. */
 export function TrackerLinkTarget({ user, num, linkText }: TrackerLinkTargetProps): React.ReactElement | null {
     const info = useContext(TrackerLinkInfoContext);
     const [outcome, setOutcome] = useState<NumberLookupOutcome | null>(null);
@@ -167,13 +192,8 @@ export function TrackerLinkTarget({ user, num, linkText }: TrackerLinkTargetProp
             <span className="mj_TrackerLinkTarget">{kind}</span>
         );
     }
-    if (!wrongNumber && written.title && titleMatches(written.title, title)) {
-        return (
-            <span className="mj_TrackerLinkTarget" title={title}>
-                {kind}
-            </span>
-        );
-    }
+    // The link already says what it points at: a chip would only repeat it.
+    if (!wrongNumber && written.title && titleMatches(written.title, title)) return null;
     // Link text that names something ("#12 Some title", or a few words) and does not match is
     // flagged; a label like "here" or "read more" is not a claim about the target.
     const claims =
