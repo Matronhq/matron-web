@@ -50,6 +50,7 @@ import {
     type NotifyMode,
 } from "./notifications";
 import { displayTitle } from "./SessionTag";
+import { useDeveloperView } from "./developer-view";
 import { getSnapshot, setTheme, subscribe, type ThemePref } from "./theme";
 import type { BoxDefaults, BoxDefaultsState, DefaultsState, Session, UserDefaultKey } from "./types";
 import { AUTO_ARCHIVE_CHOICES, autoArchiveLabel } from "./server-archive";
@@ -124,6 +125,37 @@ function choicesFor(choices: ReadonlyArray<Choice>, stored: string | null): Read
     const selected = stored ?? BOX_DEFAULT;
     if (choices.some((choice) => choice.value === selected)) return choices;
     return [...choices, { value: selected, label: selected }];
+}
+
+function DeveloperView(): React.ReactElement {
+    const [developerView, setDeveloperView] = useDeveloperView();
+    return (
+        <section className="mj_SettingsSheet_group" aria-labelledby="mj-settings-conversation">
+            <h3 id="mj-settings-conversation" className="mj_SettingsSheet_groupTitle">
+                Conversation
+            </h3>
+            <div className="mj_SettingsSheet_rows">
+                <div className="mj_SettingsSheet_row mj_SettingsSheet_switchRow">
+                    <span className="mj_SettingsSheet_switchText">
+                        <span id="mj-settings-developer-view">Developer view</span>
+                        <span id="mj-settings-developer-view-help" className="mj_SettingsSheet_help">
+                            Show every step of a turn in the thread, instead of one collapsed card per turn.
+                        </span>
+                    </span>
+                    <button
+                        type="button"
+                        role="switch"
+                        className="mj_SettingsSheet_switch"
+                        data-setting="developer-view"
+                        aria-checked={developerView}
+                        aria-labelledby="mj-settings-developer-view"
+                        aria-describedby="mj-settings-developer-view-help"
+                        onClick={() => setDeveloperView(!developerView)}
+                    />
+                </div>
+            </div>
+        </section>
+    );
 }
 
 function NewChatDefaults({ client }: { client: MatronJournalClient }): React.ReactElement {
@@ -850,6 +882,7 @@ export function SettingsSheet({
                 <DevicesSettings client={client} session={session} revision={devicesRevision} />
                 <UsersSettings client={client} />
                 <DesktopNotifications client={client} />
+                <DeveloperView />
                 <NewChatDefaults client={client} />
                 <BoxesDefaults client={client} />
                 <CoordinatorSettings
