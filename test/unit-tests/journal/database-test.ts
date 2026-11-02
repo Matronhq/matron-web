@@ -61,6 +61,44 @@ describe("JournalDatabase", () => {
         database.close();
     });
 
+    it("records the last message's tool call for the plain-English sidebar preview", async () => {
+        const database = await JournalDatabase.open("https://last-step.example", 12, "alice");
+        await database.replaceWithSnapshot({
+            seq: 0,
+            conversations: [
+                {
+                    id: "c1",
+                    title: "Agent",
+                    session_state: "running",
+                    last_seq: 0,
+                    unread_count: 0,
+                    snippet: "",
+                    created_at: 1,
+                },
+            ],
+        });
+        await database.applyJournal(
+            event(1, "agent:dev", "tool_output", { command: "pnpm tsc --noEmit", snippet: "error TS2322" }),
+        );
+        expect((await database.conversations())[0]).toMatchObject({
+            snippet: "error TS2322",
+            last_step: { tool: "Bash", input: { command: "pnpm tsc --noEmit" }, done: true },
+        });
+        await database.applyJournal(event(2, "agent:dev", "text", { body: "📖 /repo/a.ts" }));
+        expect((await database.conversations())[0].last_step).toEqual({ tool: "Read", input: { path: "/repo/a.ts" } });
+        // A diff is published when the edit starts: it is not a finished call.
+        await database.applyJournal(
+            event(3, "agent:dev", "diff", { tool: "Edit", display_path: "src/a.ts", diff: "" }),
+        );
+        expect((await database.conversations())[0].last_step).toEqual({ tool: "Edit", input: { path: "src/a.ts" } });
+        // A Codex generic item line is published when the item completes: a finished call.
+        await database.applyJournal(event(4, "agent:dev", "text", { body: "`Web search`" }));
+        expect((await database.conversations())[0].last_step).toEqual({ tool: "WebSearch", input: {}, done: true });
+        await database.applyJournal(event(5, "agent:dev", "text", { body: "All done." }));
+        expect((await database.conversations())[0].last_step).toBeUndefined();
+        database.close();
+    });
+
     it("keeps a room's membership from the snapshot and replaces it from a membership convo_meta", async () => {
         const database = await JournalDatabase.open("https://journal.example", 11, "alice");
         await database.replaceWithSnapshot({

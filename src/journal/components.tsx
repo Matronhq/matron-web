@@ -113,8 +113,8 @@ import {
     ArchiveFileIcon,
     AudioFileIcon,
     FileEditIcon,
-    FailedIcon,
     FileIcon,
+    FailedIcon,
     ImageFileIcon,
     InactiveIcon,
     InterruptedIcon,
@@ -206,6 +206,22 @@ import {
     makeRecentFoldersStore,
     recentFolderArgument,
 } from "./slash-palette";
+import { useDeveloperView } from "./developer-view";
+import {
+    assembleTurns,
+    isOperatorEvent,
+    noticeBody,
+    shownReplies,
+    type Turn,
+    threadRows,
+    type ThreadRow,
+} from "./turn-assembly";
+import { noticeText, TurnCard, type TurnCardMode, TurnErrorRow } from "./turn-card";
+import { applyPaneBand } from "./pane-width";
+import { sameCall, type Step, stepSentence, stepsOf } from "./turn-grouping";
+import { helperForStep, helpersByTurn, SubagentCard } from "./subagent-card";
+import { HeadlineList } from "./headline-list";
+import { indicatorStep, rowPreviewLine } from "./activity-text";
 import {
     compactTokens,
     formatSampleAge,
@@ -1416,6 +1432,8 @@ interface ConversationRowActions {
 interface ConversationRowProps {
     conversation: Conversation;
     isSubagent: boolean;
+    /** Developer view off: the last message read as plain English; absent, the server snippet shows. */
+    preview?: string;
     /** A journal pin row: the pin's glyph + label lead, the conversation's title goes secondary. */
     pin?: ConvoPin;
     selected: boolean;
@@ -1452,6 +1470,7 @@ const ConversationRow = React.memo(function ConversationRow({
     collapsedUnread,
     agents,
     actions,
+    preview,
 }: ConversationRowProps): React.ReactElement {
     const name = pin ? pin.label : conversationTitle(conversation);
     const outcomeStatus = isSubagent ? accessibleOutcome(classifyOutcome(conversation)) : undefined;
@@ -1527,9 +1546,11 @@ const ConversationRow = React.memo(function ConversationRow({
                                 <span className="mj_ConversationListDot"> · </span>
                             </>
                         ) : (
-                            conversation.snippet && (
+                            (preview ?? conversation.snippet) && (
                                 <>
-                                    <span className="mj_ConversationListSnippet">{conversation.snippet}</span>
+                                    <span className="mj_ConversationListSnippet">
+                                        {preview ?? conversation.snippet}
+                                    </span>
                                     <span className="mj_ConversationListDot"> · </span>
                                 </>
                             )
@@ -1605,6 +1626,7 @@ function ConversationListView({
     state: ClientState;
     width: number;
 }): React.ReactElement {
+    const [developerView] = useDeveloperView();
     const [query, setQuery] = useState("");
     const [tab, setTab] = useState<"active" | "favorites" | "archived">("active");
     const [accountOpen, setAccountOpen] = useState(false);
@@ -2042,12 +2064,13 @@ function ConversationListView({
                           !journalPinnedIds.has(child.id) &&
                           childSidebarPlacement(child, sidebarIndex) === "nested",
                   )
-                  .map((child) => renderConversation(child, true));
+                  .map((child, index, list) => renderConversation(child, true, undefined, index === list.length - 1));
     const renderConversation = (
         conversation: ClientState["conversations"][number],
         isSubagent = false,
         // A journal pin row: the pin's glyph + label lead, the conversation's title goes secondary.
         pin?: ConvoPin,
+        isLastSubagent = false,
     ): React.ReactElement => {
         const selected = state.selectedConversationId === conversation.id;
         const overrideUnread = state.unreadOverrideIds.has(conversation.id) && conversation.unread_count === 0;
@@ -2107,6 +2130,11 @@ function ConversationListView({
                 collapsedUnread={collapsedSubagentUnread}
                 agents={state.agents}
                 actions={rowActions}
+                preview={
+                    developerView
+                        ? undefined
+                        : rowPreviewLine(conversation.id, { ...conversation, worker: workerKind(conversation) })
+                }
             />
         );
     };
@@ -2832,6 +2860,8 @@ export function useAdaptiveHeader(bodyEl: HTMLElement | null, meterCount = 0): H
         const observer = new ResizeObserver((entries) => {
             const entry = entries[0];
             latestWidth = entry.borderBoxSize?.[0]?.inlineSize ?? entry.contentRect.width;
+            // The same observer drives the chat-pane breakpoints (data-pane).
+            applyPaneBand(bodyEl, latestWidth);
             if (frame != null) return;
             frame = requestAnimationFrame(() => {
                 frame = null;
@@ -4160,6 +4190,11 @@ function PromptCard({
     const normalizedAnsweredChoice = answeredChoice?.trim().toLocaleLowerCase();
     const durablyDenied = permission && resolved && normalizedAnsweredChoice === "deny";
     const durablyAllowed = permission && resolved && !durablyDenied;
+    // The picked option, by its label when the reply names one of ours. With Developer view off
+    // the reply row is hidden, so this line is where the operator's pick stays visible.
+    const pickedLabel = answeredChoice
+        ? (options.find((option) => option.value === answeredChoice)?.label ?? answeredChoice)
+        : undefined;
 
     useEffect(() => {
         if (!permission || resolved || expiresAt === undefined || advisoryExpired) return;
@@ -4327,7 +4362,13 @@ function PromptCard({
                                   : undefined
                         }
                     >
-                        {durablyDenied ? "Denied" : durablyAllowed ? "Allowed" : "Answered"}
+                        {durablyDenied
+                            ? "Denied"
+                            : durablyAllowed
+                              ? "Allowed"
+                              : pickedLabel
+                                ? `Answered: ${pickedLabel}`
+                                : "Answered"}
                     </span>
                 </div>
             )}
@@ -4661,7 +4702,16 @@ function SystemNoticeRow({
     );
 }
 
-function ToolOutput({ client, event }: { client: MatronJournalClient; event: JournalEvent }): React.ReactElement {
+function ToolOutput({
+    client,
+    event,
+    defaultOpen = false,
+}: {
+    client: MatronJournalClient;
+    event: JournalEvent;
+    /** Deep detail inside the turn card opens the card expanded. */
+    defaultOpen?: boolean;
+}): React.ReactElement {
     const payload = event.payload;
     const command = asString(payload.command).trim() || asString(payload.tool_name).trim() || "Tool output";
     const exitCode = typeof payload.exit_code === "number" ? payload.exit_code : undefined;
@@ -4693,7 +4743,7 @@ function ToolOutput({ client, event }: { client: MatronJournalClient; event: Jou
     };
 
     return (
-        <details className={`mj_ToolCard ${failed ? "mj_ToolCard_failed" : ""}`}>
+        <details className={`mj_ToolCard ${failed ? "mj_ToolCard_failed" : ""}`} open={defaultOpen || undefined}>
             <summary title={command} aria-label={`${command}, ${failed ? `failed, ${outcome}` : outcome}`}>
                 <ChevronDownIcon className="mj_ToolCard_chevron" aria-hidden="true" />
                 {/* Mac: a green check or a red octagon says how it went; no exit badge, no time here. */}
@@ -5743,6 +5793,370 @@ function EventRow({
 // maps, the menu handlers), so a streamed token re-renders only the streaming bubble instead of
 // every row in a long transcript.
 const MemoEventRow = React.memo(EventRow);
+/**
+ * The step an activity detail names (the bridge's ephemeral "tool" activity): a Bash command
+ * from Claude, or one of Codex's tool indicators. Drives the live line when no tool stream is
+ * open for the running step. Reads a line the way the durable one is read (indicatorStep), with
+ * fallbacks for the live-only forms: a live `🌐` line is always a tool call, so a free-text one is
+ * a web search and keeps its query.
+ */
+export function activityStep(detail: string, id = "activity"): Step | null {
+    const text = detail.trim();
+    if (!text) return null;
+    // Live activity is Claude's Bash (the bare command, read by the last fallback) or a Codex
+    // indicator, whose command is never backticked: a bare `🔧 word` here is Codex's command, not
+    // a tool name.
+    const known = /^🔧 [^`]/u.test(text) ? null : indicatorStep(text, id, true);
+    if (known) return { ...known, status: "running" };
+    const make = (tool: string, input: Step["input"]): Step => ({ kind: "step", id, tool, input, status: "running" });
+    let match: RegExpExecArray | null;
+    if ((match = /^🔧\s*`?([\s\S]*?)`?$/u.exec(text))) return make("Bash", { command: match[1] });
+    if ((match = /^📖\s*(.+)$/u.exec(text))) return make("Read", { path: match[1] });
+    if ((match = /^✏️?\s*(?:(?:Editing|Writing|Creating)\s+)?(.+)$/u.exec(text)))
+        return make("apply_patch", { path: match[1].split(", ")[0] });
+    if ((match = /^🔍\s*(.+)$/u.exec(text))) return make("Grep", { pattern: match[1] });
+    if ((match = /^🌐\s*(.+)$/u.exec(text)))
+        return /^https?:/.test(match[1])
+            ? make("WebFetch", { url: match[1] })
+            : make("WebSearch", { pattern: match[1] });
+    if ((match = /^🔀\s*Subtask:\s*(.+)$/u.exec(text))) return make("Task", { description: match[1] });
+    if (/^\p{Extended_Pictographic}/u.test(text)) return make("tool", {});
+    return make("Bash", { command: text });
+}
+
+/** First sentence of the agent's narration, trimmed to 90 characters. */
+export function narrationLiveLine(text: string): string {
+    const flat = text.replace(/\s+/g, " ").trim();
+    const sentence = /^(.+?[.!?…])(\s|$)/.exec(flat)?.[1] ?? flat;
+    return sentence.length > 90 ? `${sentence.slice(0, 89).trimEnd()}…` : sentence;
+}
+
+/** Is this prompt / permission request still waiting on the operator? */
+function isUnansweredAsk(
+    event: JournalEvent,
+    answeredPromptReplies: ReadonlyMap<string, { choice?: string }>,
+    spawnOutcomes: ReadonlyMap<string, EventPayload>,
+): boolean {
+    if (event.type !== "prompt" && event.type !== "permission_request") return false;
+    if (asString(event.payload.kind) === "queued_release") return false;
+    if (answeredPromptReplies.has(`${event.convo_id}:${event.seq}`)) return false;
+    if (asString(event.payload.kind) === "agent_spawn") {
+        const requestId = asString(event.payload.request_id);
+        return Boolean(requestId) && !spawnOutcomes.has(requestId);
+    }
+    return true;
+}
+
+/** A turn block that keeps the per-event row menu (Copy / View source) and search anchor. */
+function TurnBlock({
+    event,
+    rowHandlers,
+    live = true,
+    children,
+}: {
+    event: JournalEvent;
+    rowHandlers: RowContextMenu<JournalEvent>["rowHandlers"];
+    /** Announce new content politely; off where the child is already an alert. */
+    live?: boolean;
+    children: React.ReactNode;
+}): React.ReactElement {
+    const ref = useRef<HTMLDivElement>(null);
+    const handlers = rowHandlers(event, () => ref.current);
+    return (
+        <div
+            ref={ref}
+            className="mj_TurnBlock"
+            data-event-id={event.seq}
+            aria-live={live ? "polite" : undefined}
+            aria-atomic={live ? "true" : undefined}
+            {...handlers}
+        >
+            {children}
+        </div>
+    );
+}
+
+export interface TurnLive {
+    mode: TurnCardMode;
+    running?: Step | null;
+    liveText?: string;
+    runningSince?: number;
+}
+
+const NO_HELPERS: readonly Conversation[] = [];
+
+/** A helper thread's newest turns (with steps) whose headlines open expanded. */
+export const EXPANDED_HELPER_TURNS = 3;
+
+/** Developer view: a helper's card in the flat timeline, after the event it started at. */
+function DevHelperRow({ client, child }: { client: MatronJournalClient; child: Conversation }): React.ReactElement {
+    return (
+        <li className="mj_EventTile mj_EventTile_lastInSection mj_HelperTile" data-layout="bubble" data-self="false">
+            <div className="mj_EventTile_line">
+                <div className="mj_TextBody mj_EventTile_content">
+                    <SubagentCard
+                        child={child}
+                        kind={workerKind(child)}
+                        source={client}
+                        onOpen={(id) => void client.selectConversation(id, { suppressNotFound: true })}
+                        renderDetail={() => null}
+                        renderMarkdown={(text, key) => (
+                            <MarkdownBody
+                                text={text}
+                                label={key}
+                                onTrackerLink={(kind, num) => client.openTrackerLink(kind, num)}
+                            />
+                        )}
+                        developerView
+                    />
+                </div>
+            </div>
+        </li>
+    );
+}
+
+/**
+ * Deep detail of a step the bridge reported as a text line (a subagent's Read / Grep / Bash
+ * indicator, a Codex generic item): its sentence, then — as for every deep detail in the turn
+ * card, the one place monospace appears — the command, path or pattern it ran on.
+ */
+function StepSentenceDetail({ step }: { step: Step }): React.ReactElement {
+    const target =
+        step.input.command ||
+        step.input.path ||
+        step.input.pattern ||
+        step.input.url ||
+        // A narration line that read as machine text (headlines.ts): its text, one click deep.
+        (step.id.startsWith("raw-") ? step.input.description : undefined);
+    return (
+        <div className="mj_TurnCard_detailText mj_StepDetail">
+            <p>{stepSentence(step)}</p>
+            {target && (
+                <div className="mj_StepDetail_target">
+                    <code>{target}</code>
+                </div>
+            )}
+        </div>
+    );
+}
+
+/**
+ * One agent tile per operator turn (Developer view OFF): the turn card when the turn
+ * has at least one step, then its break-throughs in the order they happened, then a
+ * turn-ending error, then the answer prose.
+ */
+function AgentTurnRow({
+    client,
+    turn,
+    live,
+    answeredPromptReplies,
+    spawnOutcomes,
+    isReadOnly,
+    resolvedAction,
+    rowHandlers,
+    helpers = NO_HELPERS,
+    helperThread = null,
+    expandHeadlines = false,
+}: {
+    client: MatronJournalClient;
+    turn: Turn;
+    live: TurnLive;
+    /**
+     * Set inside a helper's own thread (a Claude subagent or a Codex run): the steps read as a
+     * list of headlines instead of one collapsed turn card. The value is the helper's worker.
+     */
+    helperThread?: { worker: "claude" | "codex" | null } | null;
+    /** In a helper thread: open the headlines with the work in view (the newest turns). */
+    expandHeadlines?: boolean;
+    /** Child conversations (subagents, Codex runs) this turn started — one card each. */
+    helpers?: readonly Conversation[];
+    answeredPromptReplies: ReadonlyMap<string, { choice?: string }>;
+    spawnOutcomes: ReadonlyMap<string, EventPayload>;
+    isReadOnly: boolean;
+    resolvedAction: (itemId: string) => "send" | "cancel" | undefined;
+    rowHandlers: RowContextMenu<JournalEvent>["rowHandlers"];
+}): React.ReactElement {
+    // The tile speaks for the agent: its header never takes the operator's own reply.
+    const first =
+        turn.events.find((event) => event.sender.startsWith("agent:")) ??
+        turn.events.find((event) => !isOperatorEvent(event));
+    const openHelper = useCallback(
+        (id: string) => void client.selectConversation(id, { suppressNotFound: true }),
+        [client],
+    );
+    const hasCard = stepsOf(turn.items).length > 0 || Boolean(live.running);
+    // A reply the prompt card already shows (a picked option) is not repeated; a free-text
+    // reply the card cannot show stays visible, in order among the break-throughs.
+    const breaks = [...turn.breaks, ...shownReplies(turn)].sort((left, right) => left.seq - right.seq);
+    const renderStepDetail = useCallback(
+        (step: Step): React.ReactNode => {
+            const source = step.source as JournalEvent | undefined;
+            // A narration line the headlines took for a command (headlines.ts): its own text.
+            if (!source) return step.id.startsWith("raw-") ? <StepSentenceDetail step={step} /> : null;
+            if (source.type === "tool_output") return <ToolOutput client={client} event={source} defaultOpen />;
+            if (source.type === "diff") return <DiffCard data={parseDiffPayload(source.payload)} />;
+            return <StepSentenceDetail step={step} />;
+        },
+        [client],
+    );
+    const renderMarkdown = useCallback(
+        (text: string, key: string) => (
+            <MarkdownBody text={text} label={key} onTrackerLink={(kind, num) => client.openTrackerLink(kind, num)} />
+        ),
+        [client],
+    );
+    const renderDetail = useCallback(
+        (step: Step): React.ReactNode => {
+            // A helper step opens onto its helper: the same body as the helper's own card.
+            if (step.tool === "Task" || step.tool === "Agent") {
+                const helper = helperForStep(step, helpers);
+                if (helper) {
+                    return (
+                        <SubagentCard
+                            bodyOnly
+                            child={helper}
+                            kind={workerKind(helper)}
+                            source={client}
+                            onOpen={openHelper}
+                            renderDetail={renderStepDetail}
+                            renderMarkdown={renderMarkdown}
+                            developerView={false}
+                        />
+                    );
+                }
+            }
+            return renderStepDetail(step);
+        },
+        [client, helpers, openHelper, renderStepDetail, renderMarkdown],
+    );
+    const block = (event: JournalEvent): React.ReactElement => (
+        <TurnBlock key={event.seq} event={event} rowHandlers={rowHandlers}>
+            <EventContent
+                client={client}
+                event={event}
+                answeredPromptReplies={answeredPromptReplies}
+                spawnOutcomes={spawnOutcomes}
+                isReadOnly={isReadOnly}
+                resolvedAction={resolvedAction}
+            />
+        </TurnBlock>
+    );
+    // A helper's own thread: a Claude helper publishes each call when it starts, so while it runs
+    // a trailing step (no answer after it) is the one running now. Codex publishes on completion.
+    const headlineRunning = useMemo((): Step | null => {
+        if (!helperThread || live.mode !== "running") return null;
+        if (live.running) return live.running;
+        const last = turn.items.at(-1);
+        if (helperThread.worker === "codex" || turn.answer.length || last?.kind !== "step") return null;
+        // A completed call (its tool_output is in) is not running: never clone it as the live step.
+        if ((last.source as { type?: string } | undefined)?.type === "tool_output") return null;
+        return { ...last, status: "running" };
+    }, [helperThread, live.mode, live.running, turn.items, turn.answer.length]);
+    // The running step is listed once: drop the trailing journaled step it stands for (a Claude
+    // helper journals each call as it starts, and the live activity names the same call). A
+    // completed call (a tool_output) is never dropped: a retry of it is a new call.
+    const headlineItems = useMemo(() => {
+        const last = turn.items.at(-1);
+        if (!headlineRunning || last?.kind !== "step") return turn.items;
+        if ((last.source as { type?: string } | undefined)?.type === "tool_output") return turn.items;
+        if (!live.running || sameCall(last, live.running)) return turn.items.slice(0, -1);
+        return turn.items;
+    }, [headlineRunning, live.running, turn.items]);
+    return (
+        <li
+            className={`mj_EventTile mj_EventTile_lastInSection mj_AgentTurn${helperThread ? " mj_AgentTurn_helper" : ""}`}
+            tabIndex={-1}
+            data-layout="bubble"
+            data-self="false"
+            data-turn={turn.key}
+        >
+            {first && (
+                <span className="mj_SenderName">
+                    <MsgAvatar />
+                    <span className="mj_SenderName_displayName">{displaySender(first.sender)}</span>
+                    <a href={`#event-${first.seq}`} onClick={(clickEvent) => clickEvent.preventDefault()}>
+                        <time className="mj_MessageTimestamp" dateTime={new Date(first.ts).toISOString()}>
+                            {formatTime(first.ts)}
+                        </time>
+                    </a>
+                </span>
+            )}
+            <div className="mj_EventTile_line">
+                <div className="mj_TextBody mj_EventTile_content">
+                    <div className="markdown-body mj_AgentTurn_blocks">
+                        {helperThread && (hasCard || live.mode === "running") ? (
+                            <HeadlineList
+                                items={headlineItems}
+                                running={headlineRunning}
+                                active={live.mode === "running"}
+                                liveText={live.liveText}
+                                runningSince={live.runningSince}
+                                renderDetail={renderDetail}
+                                expanded={expandHeadlines}
+                                persistKey={first?.convo_id}
+                                turnKey={turn.key}
+                            />
+                        ) : (
+                            hasCard && (
+                                <TurnCard
+                                    turnKey={turn.key}
+                                    items={turn.items}
+                                    mode={live.mode}
+                                    running={live.running}
+                                    liveText={live.liveText}
+                                    runningSince={live.runningSince}
+                                    durationMs={turn.endTs - turn.startTs}
+                                    renderDetail={renderDetail}
+                                    renderNarration={(text) => (
+                                        <MarkdownBody
+                                            text={text}
+                                            label={`narration-${turn.key}`}
+                                            onTrackerLink={(kind, num) => client.openTrackerLink(kind, num)}
+                                        />
+                                    )}
+                                />
+                            )
+                        )}
+                        {helpers.map((helper) => (
+                            <SubagentCard
+                                key={helper.id}
+                                child={helper}
+                                kind={workerKind(helper)}
+                                source={client}
+                                onOpen={openHelper}
+                                renderDetail={renderStepDetail}
+                                renderMarkdown={renderMarkdown}
+                                developerView={false}
+                            />
+                        ))}
+                        {breaks.map(block)}
+                        {turn.errors.map((event) => (
+                            <TurnBlock key={event.seq} event={event} rowHandlers={rowHandlers} live={false}>
+                                <TurnErrorRow
+                                    text={asString(event.payload.body)
+                                        .trim()
+                                        .replace(/^⚠️?\s*/u, "")
+                                        .replace(/^\[(.*)\]$/, "$1")}
+                                />
+                            </TurnBlock>
+                        ))}
+                        {turn.answer.map(block)}
+                    </div>
+                </div>
+            </div>
+        </li>
+    );
+}
+
+/** A bridge system notice or journal marker (`.mj_SystemNotice`): one tertiary meta line, no avatar. */
+function TurnNoticeRow({ event }: { event: JournalEvent }): React.ReactElement {
+    const body = noticeBody(event);
+    return (
+        <li className="mj_TurnNotice" data-event-id={event.seq} aria-live="polite" title={body}>
+            {noticeText(body)}
+        </li>
+    );
+}
 
 function MsgAvatar(): React.ReactElement {
     const mask = `url("${matronLogo}")`;
@@ -6032,6 +6446,8 @@ function useMinDisplayDuration(active: boolean): boolean {
 type TimelineRow =
     | { key: string; kind: "divider"; timestamp: number }
     | { key: string; kind: "event"; event: JournalEvent; continuation: boolean; lastInSection: boolean }
+    | { key: string; kind: "turn"; turn: Turn }
+    | { key: string; kind: "notice"; event: JournalEvent }
     | { key: string; kind: "pending"; message: ClientState["pendingMessages"][number] };
 
 /** Height assumed for a row that hasn't been on screen yet. */
@@ -6059,6 +6475,22 @@ function placesFor(client: MatronJournalClient): Map<string, ListPlace> {
     return places;
 }
 
+/** The operator message nearest the top of the scroll pane, and its offset from the top. */
+function operatorAnchor(node: HTMLElement | null): { seq: string; offset: number } | undefined {
+    if (!node) return undefined;
+    const paneTop = node.getBoundingClientRect().top;
+    let best: { seq: string; offset: number } | undefined;
+    for (const row of node.querySelectorAll<HTMLElement>('li[data-self="true"][data-event-id]')) {
+        const offset = row.getBoundingClientRect().top - paneTop;
+        const seq = row.dataset.eventId;
+        if (!seq) continue;
+        // The first row at or below the top edge wins; otherwise the last one above it.
+        if (offset >= 0) return { seq, offset };
+        best = { seq, offset };
+    }
+    return best;
+}
+
 function Timeline({
     client,
     state,
@@ -6077,6 +6509,16 @@ function Timeline({
         () => !(state.selectedConversationId && placesFor(client).has(state.selectedConversationId)),
     );
     const [sourceEvent, setSourceEvent] = useState<JournalEvent>();
+    const [developerView] = useDeveloperView();
+    // Developer view toggled: re-render instantly, keeping the operator message nearest the top
+    // where it was. Captured during render, while the DOM still shows the
+    // previous rendering; restored in the layout effect below.
+    const developerViewRef = useRef(developerView);
+    const toggleAnchorRef = useRef<{ seq: string; offset: number } | undefined>(undefined);
+    if (developerViewRef.current !== developerView) {
+        developerViewRef.current = developerView;
+        toggleAnchorRef.current = operatorAnchor(scrollRef.current);
+    }
     const menu = useRowContextMenu<JournalEvent>();
     const sourceOpenerRef = useRef<HTMLElement | null>(null);
     // Media viewer: the corpus is every image/file event in this conversation;
@@ -6151,35 +6593,6 @@ function Timeline({
     );
     // One entry per element in the list: a day divider before the first row of each calendar day,
     // then the row. Windowing mounts a slice of these.
-    const rows = useMemo(() => {
-        const conversation = state.selectedConversationId ?? "";
-        const out: TimelineRow[] = [];
-        timeline.forEach((item, index) => {
-            const previous = timeline[index - 1];
-            const newDay = !previous || !sameCalendarDay(item.timestamp, previous.timestamp);
-            if (newDay) {
-                // Keyed by the day, not by its first row, so the key survives older rows of the same
-                // day arriving with "Load earlier messages".
-                const day = new Date(item.timestamp);
-                const dayKey = `${day.getFullYear()}-${day.getMonth() + 1}-${day.getDate()}`;
-                out.push({ key: `${conversation}:d-${dayKey}`, kind: "divider", timestamp: item.timestamp });
-            }
-            if (item.kind === "event") {
-                const next = timeline[index + 1];
-                out.push({
-                    key: `${conversation}:e-${item.event.seq}`,
-                    kind: "event",
-                    event: item.event,
-                    continuation: previous?.kind === "event" && sameSection(previous.event, item.event) && !newDay,
-                    lastInSection: next?.kind !== "event" || !sameSection(item.event, next.event),
-                });
-            } else {
-                out.push({ key: `${conversation}:m-${item.message.localId}`, kind: "pending", message: item.message });
-            }
-        });
-        return out;
-    }, [timeline, state.selectedConversationId]);
-    const rowKeys = useMemo(() => rows.map((row) => row.key), [rows]);
     const answeredPromptReplies = useMemo(() => {
         const replies = new Map<string, { choice?: string }>();
         for (const event of state.events) {
@@ -6207,6 +6620,232 @@ function Timeline({
         }
         return outcomes;
     }, [state.events]);
+    // The activity indicator ('Thinking' / 'Running …') and the fire-and-forget tool-call cards
+    // both ride ephemeral frames whose turn-end 'idle'/'end' frame is never replayed
+    // (lib/journal-publisher.js publishActivity), so a dropped final frame would otherwise strand
+    // a stale "Thinking" or a dangling 'running' tool card until the next turn. Gate both
+    // on the durable, replayed run-state: only render while the session is actually running; the
+    // model reconcile (refreshConversations) prunes any tool card that lingers in the map.
+    const sessionRunning = client.selectedConversation()?.session_state === "running";
+    // Inside a helper's own thread the turn's steps read as headlines (AgentTurnRow).
+    const selectedForHeadlines = client.selectedConversation();
+    const helperWorker =
+        selectedForHeadlines && isSubChat(selectedForHeadlines) ? workerKind(selectedForHeadlines) : undefined;
+    const helperThread = useMemo(() => (helperWorker === undefined ? null : { worker: helperWorker }), [helperWorker]);
+    const sessionState = client.selectedConversation()?.session_state;
+
+    // ---- Developer view off: one agent tile per operator turn, with its turn card.
+    const turns = useMemo(() => (developerView ? [] : assembleTurns(visibleEvents)), [developerView, visibleEvents]);
+    // Helpers (subagents, Codex runs) this conversation started: one card each, anchored to the
+    // turn — or, with Developer view on, the event — they were started in.
+    const helperChildren = useMemo(
+        () => childrenOf(state.conversations, state.selectedConversationId),
+        [state.conversations, state.selectedConversationId],
+    );
+    const turnHelpers = useMemo(
+        () =>
+            developerView
+                ? new Map<string, Conversation[]>()
+                : helpersByTurn(turns, helperChildren, state.hasOlderHistory),
+        [developerView, turns, helperChildren, state.hasOlderHistory],
+    );
+    const eventHelpers = useMemo(() => {
+        const map = new Map<number, Conversation[]>();
+        if (!developerView || visibleEvents.length === 0) return map;
+        for (const child of helperChildren) {
+            let anchor: JournalEvent | undefined;
+            for (const event of visibleEvents) if (event.ts <= child.created_at) anchor = event;
+            if (!anchor) {
+                if (state.hasOlderHistory) continue;
+                anchor = visibleEvents[0];
+            }
+            map.set(anchor.seq, [...(map.get(anchor.seq) ?? []), child]);
+        }
+        return map;
+    }, [developerView, visibleEvents, helperChildren, state.hasOlderHistory]);
+    const lastTurn = turns[turns.length - 1];
+    // Inside a helper's thread the newest turns open with their work in view; older ones keep
+    // the compact list, which bounds the DOM on a long thread (EXPANDED_HELPER_TURNS).
+    const expandedHelperTurns = useMemo(
+        () =>
+            new Set(
+                helperThread
+                    ? turns
+                          .filter((turn) => stepsOf(turn.items).length > 0)
+                          .slice(-EXPANDED_HELPER_TURNS)
+                          .map((turn) => turn.key)
+                    : [],
+            ),
+        [helperThread, turns],
+    );
+    // First-seen time of each live step, so the elapsed counter and slow state survive re-renders.
+    const liveSeenRef = useRef(new Map<string, number>());
+    const liveStreams = useMemo(
+        () => (sessionRunning ? Object.values(state.toolStreams) : []),
+        [sessionRunning, state.toolStreams],
+    );
+    const activityDetail = sessionRunning && state.activity?.state === "tool" ? state.activity.detail || "" : "";
+    // The running step, stable across stream chunks (keyed on the stream, not its content).
+    const lastStream = liveStreams.at(-1);
+    const streamKey = lastStream
+        ? `${lastStream.messageRef}\u0000${lastStream.command ?? ""}\u0000${lastStream.tool ?? ""}`
+        : "";
+    const streamStep = useMemo((): Step | null => {
+        if (!streamKey) return null;
+        const [messageRef, command, tool] = streamKey.split("\u0000");
+        return {
+            kind: "step",
+            id: `live-${messageRef}`,
+            tool: tool && tool !== "Bash" && !command ? tool : "Bash",
+            input: { command: command || tool },
+            status: "running",
+        };
+    }, [streamKey]);
+    const activityRunning = useMemo(
+        () => (activityDetail ? activityStep(activityDetail, "live-activity") : null),
+        [activityDetail],
+    );
+    const lastTurnLive = useMemo((): TurnLive => {
+        if (!lastTurn) return { mode: "done" };
+        const lastStep = stepsOf(lastTurn.items).at(-1);
+        const waiting =
+            (sessionState === "running" || sessionState === "waiting") &&
+            lastTurn.breaks.some((event) => isUnansweredAsk(event, answeredPromptReplies, spawnOutcomes));
+        if (waiting) return { mode: "waiting" };
+        if (!sessionRunning) return { mode: lastStep?.status === "stopped" ? "stopped" : "done" };
+        const seen = liveSeenRef.current;
+        // Only the step running NOW keeps a clock: a repeat of the same command later starts fresh.
+        const since = (key: string): number => {
+            for (const known of [...seen.keys()]) if (known !== key) seen.delete(known);
+            const known = seen.get(key);
+            if (known !== undefined) return known;
+            const now = Date.now();
+            seen.set(key, now);
+            return now;
+        };
+        if (streamStep) {
+            return { mode: "running", running: streamStep, runningSince: since(`stream:${streamStep.id}`) };
+        }
+        if (activityRunning) {
+            return { mode: "running", running: activityRunning, runningSince: since(`activity:${activityDetail}`) };
+        }
+        seen.clear();
+        const thinking =
+            state.activity?.state === "thinking" && state.activity.detail
+                ? narrationLiveLine(state.activity.detail)
+                : undefined;
+        return { mode: "running", liveText: thinking ?? "Thinking…" };
+    }, [
+        lastTurn,
+        sessionState,
+        sessionRunning,
+        state.activity,
+        streamStep,
+        activityRunning,
+        activityDetail,
+        answeredPromptReplies,
+        spawnOutcomes,
+    ]);
+    const threadRowList = useMemo(
+        () => threadRows(turns, { liveLastTurn: lastTurnLive.mode === "running" && Boolean(lastTurnLive.running) }),
+        [turns, lastTurnLive],
+    );
+    // Forget first-seen stamps once nothing is running, so a later step starts its own clock.
+    useEffect(() => {
+        if (!sessionRunning) liveSeenRef.current.clear();
+    }, [sessionRunning]);
+    // With Developer view OFF the card's live line replaces the typing indicator — except while
+    // the turn has no card yet (the agent is thinking before its first step).
+    const lastTurnHasCard = Boolean(lastTurn) && (stepsOf(lastTurn.items).length > 0 || Boolean(lastTurnLive.running));
+    const showActivityIndicator = developerView || !lastTurnHasCard;
+
+    // With Developer view off the turn assembly (threadRows) replaces the per-event rows.
+    const rows = useMemo(() => {
+        const conversation = state.selectedConversationId ?? "";
+        const out: TimelineRow[] = [];
+        const dayDivider = (timestamp: number): TimelineRow => {
+            // Keyed by the day, not by its first row, so the key survives older rows of the same
+            // day arriving with "Load earlier messages".
+            const day = new Date(timestamp);
+            const dayKey = `${day.getFullYear()}-${day.getMonth() + 1}-${day.getDate()}`;
+            return { key: `${conversation}:d-${dayKey}`, kind: "divider", timestamp };
+        };
+        if (!developerView) {
+            const pending = timeline.filter((item) => item.kind === "pending");
+            const startTs = (row: ThreadRow): number =>
+                row.kind === "turn" ? (row.turn.events[0]?.ts ?? row.turn.startTs) : row.event.ts;
+            const endTs = (row: ThreadRow): number =>
+                row.kind === "turn" ? (row.turn.events.at(-1)?.ts ?? row.turn.endTs) : row.event.ts;
+            type Slot = { start: number; end: number; row: ThreadRow | null; message?: (typeof pending)[number] };
+            const slots: Slot[] = [];
+            let next = 0;
+            const pendingBefore = (limit: number): void => {
+                while (next < pending.length && pending[next].timestamp < limit) {
+                    const item = pending[next];
+                    slots.push({ start: item.timestamp, end: item.timestamp, row: null, message: item });
+                    next += 1;
+                }
+            };
+            for (const row of threadRowList) {
+                pendingBefore(startTs(row));
+                slots.push({ start: startTs(row), end: endTs(row), row });
+            }
+            pendingBefore(Number.POSITIVE_INFINITY);
+            const sameOperator = (slot: Slot | undefined, event: JournalEvent): boolean =>
+                slot?.row?.kind === "operator" && slot.row.event.sender === event.sender;
+            slots.forEach((slot, index) => {
+                const previous = slots[index - 1];
+                const newDay = !previous || !sameCalendarDay(slot.start, previous.end);
+                if (newDay) out.push(dayDivider(slot.start));
+                if (slot.message) {
+                    out.push({
+                        key: `${conversation}:m-${slot.message.message.localId}`,
+                        kind: "pending",
+                        message: slot.message.message,
+                    });
+                } else if (slot.row?.kind === "turn") {
+                    out.push({ key: `${conversation}:t-${slot.row.turn.key}`, kind: "turn", turn: slot.row.turn });
+                } else if (slot.row?.kind === "notice") {
+                    out.push({ key: `${conversation}:e-${slot.row.event.seq}`, kind: "notice", event: slot.row.event });
+                } else if (slot.row) {
+                    out.push({
+                        key: `${conversation}:e-${slot.row.event.seq}`,
+                        kind: "event",
+                        event: slot.row.event,
+                        continuation: sameOperator(previous, slot.row.event) && !newDay,
+                        lastInSection: !sameOperator(slots[index + 1], slot.row.event),
+                    });
+                }
+            });
+            return out;
+        }
+        timeline.forEach((item, index) => {
+            const previous = timeline[index - 1];
+            const newDay = !previous || !sameCalendarDay(item.timestamp, previous.timestamp);
+            if (newDay) {
+                // Keyed by the day, not by its first row, so the key survives older rows of the same
+                // day arriving with "Load earlier messages".
+                const day = new Date(item.timestamp);
+                const dayKey = `${day.getFullYear()}-${day.getMonth() + 1}-${day.getDate()}`;
+                out.push({ key: `${conversation}:d-${dayKey}`, kind: "divider", timestamp: item.timestamp });
+            }
+            if (item.kind === "event") {
+                const next = timeline[index + 1];
+                out.push({
+                    key: `${conversation}:e-${item.event.seq}`,
+                    kind: "event",
+                    event: item.event,
+                    continuation: previous?.kind === "event" && sameSection(previous.event, item.event) && !newDay,
+                    lastInSection: next?.kind !== "event" || !sameSection(item.event, next.event),
+                });
+            } else {
+                out.push({ key: `${conversation}:m-${item.message.localId}`, kind: "pending", message: item.message });
+            }
+        });
+        return out;
+    }, [timeline, state.selectedConversationId, developerView, threadRowList]);
+    const rowKeys = useMemo(() => rows.map((row) => row.key), [rows]);
+
     // Agent-chat cards settled by the timeline itself (the consent item's closing marker): a
     // decision made on another device, or the ask lapsing.
     const agentChatResolutions = useMemo(() => readAgentChatResolutions(state.events), [state.events]);
@@ -6362,6 +7001,7 @@ function Timeline({
         state.toolStreams,
         state.loadingHistory,
         isFollowingTail,
+        developerView,
     ]);
 
     // Declared after the scroll effects above, so it measures once they have placed the scroller.
@@ -6426,6 +7066,15 @@ function Timeline({
         setArrival((current) => (current === text ? `${text}\u00a0` : text));
     }, [visibleEvents, state.selectedConversationId]);
     useLayoutEffect(() => setArrival(""), [state.selectedConversationId]);
+    useLayoutEffect(() => {
+        const anchor = toggleAnchorRef.current;
+        toggleAnchorRef.current = undefined;
+        const node = scrollRef.current;
+        if (!anchor || !node || isFollowingTail) return;
+        const row = node.querySelector<HTMLElement>(`[data-event-id="${anchor.seq}"]`);
+        if (!row) return;
+        node.scrollTop += row.getBoundingClientRect().top - node.getBoundingClientRect().top - anchor.offset;
+    }, [developerView]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const loadEarlierMessages = (): void => {
         const node = scrollRef.current;
@@ -6528,14 +7177,6 @@ function Timeline({
     // ⇧⌘U / Ctrl+Shift+U, the floating pill's shortcut, is bound with the app's other shortcuts
     // (shortcuts.ts useAppShortcuts), live whenever a conversation is open.
 
-    // The activity indicator ('Thinking' / 'Running …') and the fire-and-forget tool-call cards
-    // both ride ephemeral frames whose turn-end 'idle'/'end' frame is never replayed
-    // (lib/journal-publisher.js publishActivity), so a dropped final frame would otherwise strand
-    // a stale "Thinking" or a dangling 'running' tool card until the next turn. Gate both
-    // on the durable, replayed run-state: only render while the session is actually running; the
-    // model reconcile (refreshConversations) prunes any tool card that lingers in the map.
-    const sessionRunning = client.selectedConversation()?.session_state === "running";
-
     const timelineMain = (
         <main className="mj_ChatView_timeline" data-testid="timeline">
             <div className="mj_ScreenReaderOnly" aria-live="polite" aria-atomic="true">
@@ -6571,23 +7212,70 @@ function Timeline({
                                 </li>
                             );
                         }
-                        if (row.kind === "event") {
+                        if (row.kind === "turn") {
                             return (
-                                <MemoEventRow
+                                <AgentTurnRow
                                     key={row.key}
                                     client={client}
-                                    event={row.event}
+                                    turn={row.turn}
+                                    live={
+                                        row.turn === lastTurn
+                                            ? lastTurnLive
+                                            : {
+                                                  mode:
+                                                      stepsOf(row.turn.items).at(-1)?.status === "stopped"
+                                                          ? "stopped"
+                                                          : "done",
+                                              }
+                                    }
                                     answeredPromptReplies={answeredPromptReplies}
                                     spawnOutcomes={spawnOutcomes}
-                                    agentChatResolutions={agentChatResolutions}
-                                    coordinatorDecisions={coordinatorDecisions}
-                                    itemCards={itemCards}
                                     isReadOnly={isReadOnly}
                                     resolvedAction={resolvedAction}
-                                    continuation={row.continuation}
-                                    lastInSection={row.lastInSection}
                                     rowHandlers={menu.rowHandlers}
+                                    helpers={turnHelpers.get(row.turn.key)}
+                                    helperThread={helperThread}
+                                    expandHeadlines={expandedHelperTurns.has(row.turn.key)}
                                 />
+                            );
+                        }
+                        if (row.kind === "notice") {
+                            // A tagged notice keeps its compact, expandable row.
+                            const tag = systemNotice(row.event);
+                            return tag ? (
+                                <li key={row.key} className="mj_TurnNotice" data-event-id={row.event.seq}>
+                                    <SystemNoticeRow
+                                        client={client}
+                                        event={row.event}
+                                        notice={tag}
+                                        body={asString(row.event.payload.body)}
+                                    />
+                                </li>
+                            ) : (
+                                <TurnNoticeRow key={row.key} event={row.event} />
+                            );
+                        }
+                        if (row.kind === "event") {
+                            return (
+                                <React.Fragment key={row.key}>
+                                    <MemoEventRow
+                                        client={client}
+                                        event={row.event}
+                                        answeredPromptReplies={answeredPromptReplies}
+                                        spawnOutcomes={spawnOutcomes}
+                                        agentChatResolutions={agentChatResolutions}
+                                        coordinatorDecisions={coordinatorDecisions}
+                                        itemCards={itemCards}
+                                        isReadOnly={isReadOnly}
+                                        resolvedAction={resolvedAction}
+                                        continuation={row.continuation}
+                                        lastInSection={row.lastInSection}
+                                        rowHandlers={menu.rowHandlers}
+                                    />
+                                    {eventHelpers.get(row.event.seq)?.map((child) => (
+                                        <DevHelperRow key={`h-${child.id}`} client={client} child={child} />
+                                    ))}
+                                </React.Fragment>
                             );
                         }
                         const message = row.message;
@@ -6644,10 +7332,11 @@ function Timeline({
                         </li>
                     ))}
                     {sessionRunning &&
+                        developerView &&
                         Object.values(state.toolStreams).map((stream) => (
                             <ToolStream key={stream.messageRef} stream={stream} />
                         ))}
-                    {state.activity && state.activity.state !== "idle" && sessionRunning && (
+                    {showActivityIndicator && state.activity && state.activity.state !== "idle" && sessionRunning && (
                         <li className="mj_TypingIndicator mj_Activity">
                             <span />
                             <span />

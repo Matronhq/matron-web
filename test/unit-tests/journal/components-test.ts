@@ -5,6 +5,7 @@ SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
 Please see LICENSE files in the repository root for full details.
 */
 
+import { resetDeveloperViewForTests, DEVELOPER_VIEW_KEY } from "../../../src/journal/developer-view";
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { TextEncoder as NodeTextEncoder } from "node:util";
@@ -139,7 +140,13 @@ async function openMenu(container: HTMLElement): Promise<void> {
     });
 }
 
-beforeEach(() => localStorage.clear());
+beforeEach(() => {
+    localStorage.clear();
+    // These suites pin the per-event thread (Developer view on = the rendering before turn cards).
+    // The default (off: one turn card per turn) is covered in __tests__/turn-thread.test.tsx.
+    localStorage.setItem(DEVELOPER_VIEW_KEY, "true");
+    resetDeveloperViewForTests();
+});
 
 describe("session-control banners", () => {
     let rendered: { container: HTMLDivElement; root: Root } | undefined;
@@ -630,7 +637,8 @@ describe("permission request cards", () => {
         rendered = await renderClient(signedInClient({ events: [request, reply] }));
 
         const resolved = rendered.container.querySelector(".mj_PromptCard .mj_PromptResolved");
-        expect(resolved?.textContent).toBe("Answered");
+        // The pick is shown as given; a question answered "deny" is not a denied permission.
+        expect(resolved?.textContent).toBe("Answered: deny");
         expect(resolved?.classList.contains("mj_PromptResolved_allowed")).toBe(false);
         expect(resolved?.classList.contains("mj_PromptResolved_denied")).toBe(false);
     });
@@ -849,7 +857,7 @@ describe("multi-select question cards", () => {
         const card = rendered.container.querySelector(".mj_PromptCard")!;
 
         expect(card.querySelector(".mj_PromptOption_toggle")).toBeNull();
-        expect(card.querySelector(".mj_PromptResolved")?.textContent).toBe("Answered");
+        expect(card.querySelector(".mj_PromptResolved")?.textContent).toBe("Answered: lint, unit");
     });
 
     it("leaves a single-choice question sending on the first tap", async () => {

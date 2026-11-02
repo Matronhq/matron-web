@@ -213,6 +213,11 @@ export interface Conversation {
     /** A room's participant conversation ids, owner side first; [] when unknown or nobody is
      *  joined. Present on exactly the rows that carry `participants`. */
     participant_convos?: string[];
+    /** Client-only (never sent by the server): the tool call the last message event reported,
+        when it was one — the sidebar reads it as plain English with Developer view off. Absent
+        after a snapshot replace; the preview then falls back to the server snippet. `done` marks a
+        call reported when it finished (a tool_output), which never reads as running. */
+    last_step?: { tool: string; input: Record<string, string | undefined>; done?: boolean } | null;
 }
 
 /** One of the user's agent boxes as the snapshot and `device_meta` frames describe it. */

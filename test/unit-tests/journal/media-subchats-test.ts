@@ -11,6 +11,14 @@ import { createRoot, type Root } from "react-dom/client";
 import { MatronJournalClient } from "../../../src/journal/client";
 import { MatronApp } from "../../../src/journal/components";
 import type { ClientState, Conversation, JournalEvent, Session } from "../../../src/journal/types";
+import { DEVELOPER_VIEW_KEY, resetDeveloperViewForTests } from "../../../src/journal/developer-view";
+
+// These suites pin the per-event thread (Developer view on); the default view is covered in
+// __tests__/turn-thread.test.tsx.
+beforeEach(() => {
+    window.localStorage.setItem(DEVELOPER_VIEW_KEY, "true");
+    resetDeveloperViewForTests();
+});
 
 jest.mock("../../../res/matron-logo-simple.svg", () => "matron-logo.svg");
 

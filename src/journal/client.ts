@@ -58,7 +58,7 @@ import {
     readArchiveSince,
     writeArchiveSince,
 } from "./server-archive";
-import { mergeSessionStatus } from "./status";
+import { helperContextStatus, mergeSessionStatus } from "./status";
 import { appendFeedPage, kindsWithMore } from "./tracker/projectActivity";
 import { CHAT_TASKS_DONE_FETCH, chatTaskSections, planTaskMove } from "./tracker/chat-tasks";
 import { doneSortKey, inDone } from "./tracker/format";
@@ -108,6 +108,7 @@ import {
     type GlobalSearchResult,
     type ServerFrame,
     type Session,
+    type SessionStatus,
     type SnapshotResponse,
     type SpawnConsentRows,
     type StartOption,
@@ -168,6 +169,9 @@ const FOCUS_MAX_WAITS = 300;
 // Find in chat steps through a conversation's whole match list, so it asks for more than the
 // sidebar's search; the journal caps a single-conversation search at this.
 const CHAT_SEARCH_LIMIT = 500;
+// A subagent card's one-off tail fetch: the server's page cap, and how long a card waits for it.
+const CONVERSATION_TAIL_SIZE = 200;
+const CONVERSATION_TAIL_TIMEOUT_MS = 15_000;
 // Message-content search hits per query (server caps at 50; 20 keeps the Messages section tight).
 const MESSAGE_SEARCH_LIMIT = 20;
 // Max query length the server accepts (over this it returns 400); guard client-side so an
@@ -621,6 +625,8 @@ export class MatronJournalClient {
     // `${sessionGen}:${convoId}`: in flight (later reads wait on it) or done (a card that is not in
     // that page is not asked for again). A failed fetch is forgotten so the next read retries.
     private readonly consentHistoryFetches = new Map<string, Promise<void>>();
+    // refreshConversationTail(): one request per conversation per session (settled or in flight).
+    private readonly conversationTailFetches = new Map<string, Promise<boolean>>();
     private readonly activities = new Map<string, JournalEphemeralFrame["activity"]>();
     private readonly statuses = new Map<string, NonNullable<JournalEphemeralFrame["status"]>>();
     private readonly textStreams = new Map<string, Record<string, string>>();
@@ -1340,6 +1346,52 @@ export class MatronJournalClient {
         else void this.focusMessage(chat.convo_id, chat.top.seq);
     }
 
+    /**
+     * Pull a conversation's newest page from the server into the local store, once per session,
+     * for a child whose history predates this tab. Concurrent callers share one request; it is
+     * bounded by CONVERSATION_TAIL_TIMEOUT_MS so a stalled request never holds a card. Resolves
+     * true when new history was stored (callers then re-read conversationEvents), false when
+     * nothing changed or the request failed (a later call retries a failure).
+     */
+    public refreshConversationTail(conversationId: string): Promise<boolean> {
+        const inflight = this.conversationTailFetches.get(conversationId);
+        if (inflight) return inflight;
+        const database = this.database;
+        const api = this.api;
+        if (!database || !api) return Promise.resolve(false);
+        // The catch below compares against this to forget only its own request.
+        const slot: { request?: Promise<boolean> } = {};
+        const request = (async (): Promise<boolean> => {
+            let timer: ReturnType<typeof setTimeout> | undefined;
+            try {
+                const response = await Promise.race([
+                    api.messages(conversationId, undefined, CONVERSATION_TAIL_SIZE),
+                    new Promise<never>((_resolve, reject) => {
+                        timer = setTimeout(
+                            () => reject(new Error("conversation tail timed out")),
+                            CONVERSATION_TAIL_TIMEOUT_MS,
+                        );
+                    }),
+                ]);
+                if (this.database !== database) return false;
+                await database.putHistory(response.events);
+                return response.events.length > 0;
+            } catch {
+                // Let a later mount retry; the stored events still render meanwhile. Only forget
+                // THIS request: a reset may have cleared the map and a newer one taken the slot.
+                if (this.conversationTailFetches.get(conversationId) === slot.request) {
+                    this.conversationTailFetches.delete(conversationId);
+                }
+                return false;
+            } finally {
+                if (timer !== undefined) clearTimeout(timer);
+            }
+        })();
+        slot.request = request;
+        this.conversationTailFetches.set(conversationId, request);
+        return request;
+    }
+
     public async selectConversation(
         conversationId: string,
         opts?: { clearUnread?: boolean; fromRpcCreate?: boolean; suppressNotFound?: boolean },
@@ -1385,7 +1437,7 @@ export class MatronJournalClient {
             loadingHistory: false,
             hasOlderHistory: this.history.get(conversationId)?.hasMore ?? true,
             activity: this.activities.get(conversationId),
-            sessionStatus: this.statuses.get(conversationId),
+            sessionStatus: this.statusFor(conversationId),
             textStreams: { ...(this.textStreams.get(conversationId) ?? {}) },
             toolStreams: { ...(this.toolStreams.get(conversationId) ?? {}) },
         });
@@ -6038,6 +6090,9 @@ export class MatronJournalClient {
             }
         }
         if (frame.convo_id === this.state.selectedConversationId) this.refreshEphemeralState(frame.convo_id);
+        // A helper's gauge borrows its parent's window (statusFor): repaint it when that changes.
+        else if (frame.status && this.selectedConversation()?.parent_convo_id === frame.convo_id)
+            this.refreshEphemeralState(this.state.selectedConversationId!);
     }
 
     private applyToolStream(frame: JournalEphemeralFrame): void {
@@ -6078,10 +6133,23 @@ export class MatronJournalClient {
         this.toolStreams.set(frame.convo_id, streams);
     }
 
+    /**
+     * A conversation's header status. A helper's own conversation (a Claude subagent) has its
+     * context gauge sized against the parent's window where the bridge under-reported it.
+     */
+    private statusFor(conversationId: string): SessionStatus | undefined {
+        const status = this.statuses.get(conversationId);
+        if (!status?.context) return status;
+        const conversation = this.state.conversations.find((candidate) => candidate.id === conversationId);
+        const parentId = conversation?.parent_convo_id;
+        if (parentId == null || parentId === conversationId) return status;
+        return helperContextStatus(status, this.statuses.get(parentId));
+    }
+
     private refreshEphemeralState(conversationId: string): void {
         this.patch({
             activity: this.activities.get(conversationId),
-            sessionStatus: this.statuses.get(conversationId),
+            sessionStatus: this.statusFor(conversationId),
             textStreams: { ...(this.textStreams.get(conversationId) ?? {}) },
             toolStreams: { ...(this.toolStreams.get(conversationId) ?? {}) },
         });
@@ -6325,6 +6393,7 @@ export class MatronJournalClient {
         this.historyError = undefined;
         this.history.clear();
         this.consentHistoryFetches.clear();
+        this.conversationTailFetches.clear();
         this.activities.clear();
         this.statuses.clear();
         this.textStreams.clear();
