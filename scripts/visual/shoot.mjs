@@ -8,8 +8,7 @@ Please see LICENSE files in the repository root for full details.
 /*
  * Visual-fidelity driver. Serves the fixtures build (.fixtures-dist, real components +
  * fake client), drives each component into every state × theme via Playwright, screenshots
- * the real element, and composites a per-component contact sheet with sharp. Where a design
- * mock exists it is placed alongside for a side-by-side. Outputs under /tmp/vf/.
+ * the real element, and composites a per-component contact sheet with sharp. Outputs under /tmp/vf/.
  *
  * Run:  node scripts/visual/shoot.mjs   (after `pnpm build:fixtures`)
  */
@@ -217,15 +216,12 @@ async function labeled(file, text, theme) {
 
 async function montageComponent(comp, results) {
     const cells = results.filter((r) => r.comp === comp);
-    // one row per state, columns = themes; plus the mock as an extra left column where present
+    // one row per state, columns = themes
     const states = [...new Set(cells.map((c) => c.state))];
-    const mockPath = path.join(ROOT, "docs/design/redesign-v4/upload-modal-mock.png");
-    const hasMock = comp === "upload" && fs.existsSync(mockPath);
 
     const rows = [];
     for (const state of states) {
         const rowImgs = [];
-        if (hasMock && state === "queue") rowImgs.push(await labeled(mockPath, "MOCK · upload-modal-mock.png", "light"));
         for (const theme of THEMES) {
             const cell = cells.find((c) => c.state === state && c.theme === theme);
             if (cell) rowImgs.push(await labeled(cell.file, `app · ${comp} · ${state} · ${theme}`, theme));
