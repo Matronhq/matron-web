@@ -38,9 +38,6 @@ export function isGoToNumberShortcut(
     return mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
 }
 
-/** The shortcut's name for a button tooltip (it opens Search). */
-export const goToNumberShortcutLabel = (): string => (isMacPlatform() ? "⌘J" : "Ctrl+J");
-
 /** Binds the shortcut for as long as the host is mounted; `enabled` false leaves the key alone. */
 export function useGoToNumberShortcut(client: MatronJournalClient, enabled: boolean): void {
     useEffect(() => {

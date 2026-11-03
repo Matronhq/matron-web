@@ -44,32 +44,6 @@ export function SettingsIcon(props: IconProps): React.ReactElement {
     );
 }
 
-export function SystemThemeIcon(props: IconProps): React.ReactElement {
-    return (
-        <Icon {...props}>
-            <rect x="3" y="4" width="18" height="13" rx="2" />
-            <path d="M8 21h8M12 17v4" />
-        </Icon>
-    );
-}
-
-export function LightThemeIcon(props: IconProps): React.ReactElement {
-    return (
-        <Icon {...props}>
-            <circle cx="12" cy="12" r="4" />
-            <path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.66 6.34l1.41-1.41" />
-        </Icon>
-    );
-}
-
-export function DarkThemeIcon(props: IconProps): React.ReactElement {
-    return (
-        <Icon {...props}>
-            <path d="M20.5 14.2A8.5 8.5 0 0 1 9.8 3.5 8.5 8.5 0 1 0 20.5 14.2Z" />
-        </Icon>
-    );
-}
-
 export function ComposeIcon(props: IconProps): React.ReactElement {
     return (
         <Icon {...props}>
@@ -94,18 +68,6 @@ export function SearchIcon(props: IconProps): React.ReactElement {
         <Icon {...props}>
             <circle cx="11" cy="11" r="7" />
             <path d="m20 20-4-4" />
-        </Icon>
-    );
-}
-
-/** A number sign: the "Go to number" action. */
-export function NumberSignIcon(props: IconProps): React.ReactElement {
-    return (
-        <Icon {...props}>
-            <path d="M5 9h14" />
-            <path d="M4 15h14" />
-            <path d="M10 4 8 20" />
-            <path d="m16 4-2 16" />
         </Icon>
     );
 }
@@ -262,24 +224,6 @@ export function ChevronLeftIcon(props: IconProps): React.ReactElement {
     );
 }
 
-export function ReactionIcon(props: IconProps): React.ReactElement {
-    return (
-        <Icon {...props}>
-            <circle cx="12" cy="12" r="9" />
-            <path d="M8.5 14.5a4.5 4.5 0 0 0 7 0" />
-            <path d="M9 9h.01M15 9h.01" />
-        </Icon>
-    );
-}
-
-export function AttachmentIcon(props: IconProps): React.ReactElement {
-    return (
-        <Icon {...props}>
-            <path d="m20.5 11.5-8.7 8.7a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7L9 17.4a2 2 0 0 1-2.8-2.8l8.5-8.5" />
-        </Icon>
-    );
-}
-
 export function MicOnIcon(props: IconProps): React.ReactElement {
     return (
         <Icon {...props}>
@@ -352,16 +296,6 @@ export function CloseIcon(props: IconProps): React.ReactElement {
     return (
         <Icon {...props}>
             <path d="M18 6 6 18M6 6l12 12" />
-        </Icon>
-    );
-}
-
-// Upload-modal header glyph: an up-arrow rising out of a tray (design *-upload-* statics).
-export function UploadTrayIcon(props: IconProps): React.ReactElement {
-    return (
-        <Icon {...props}>
-            <path d="M12 16V4M12 4 7 9M12 4l5 5" />
-            <path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" />
         </Icon>
     );
 }

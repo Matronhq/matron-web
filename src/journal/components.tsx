@@ -21,6 +21,8 @@ import { createPortal } from "react-dom";
 
 import matronLogo from "../../res/matron-logo-simple.svg";
 import { leaveResetPage, takeResetLink, useForgotPasswordEnabled } from "./reset-link";
+// Loaded for its side effect: applies the saved theme and follows the system setting from first paint on.
+import "./theme";
 import {
     AgentSpawnCard,
     isAnswerableAgentSpawn,
@@ -131,9 +133,6 @@ import {
     PinIcon,
     SearchIcon,
     SettingsIcon,
-    SystemThemeIcon,
-    LightThemeIcon,
-    DarkThemeIcon,
     StarFilledIcon,
     StarIcon,
     StopIcon,
@@ -192,7 +191,6 @@ import {
     useMediaViewer,
     useRenderableObjectUrl,
 } from "./media-viewer";
-import { getSnapshot, nextThemePref, setTheme, subscribe } from "./theme";
 import {
     applyArgument,
     applyCommand,
@@ -380,27 +378,8 @@ function useLeftPanelResize(): {
     return { width, onPointerDown };
 }
 
-export function ThemeToggle(): React.ReactElement {
-    const preference = useSyncExternalStore(subscribe, getSnapshot);
-    const label = preference === null ? "System" : preference === "light" ? "Light" : "Dark";
-    const icon =
-        preference === null ? <SystemThemeIcon /> : preference === "light" ? <LightThemeIcon /> : <DarkThemeIcon />;
-
-    return (
-        <button
-            className="mj_IconButton"
-            type="button"
-            aria-label={`Theme: ${label}`}
-            title={`Theme: ${label}`}
-            onClick={() => setTheme(nextThemePref(preference))}
-        >
-            {icon}
-        </button>
-    );
-}
-
 // EXPORTED: the render callsite uses it, and unit tests import it directly to inject `now`.
-// `formatTime` stays private; only this helper needs the test seam.
+// The clock time comes from date-format; only this helper needs the test seam.
 export function formatRelativeDay(timestamp: number, now: number = Date.now()): string {
     if (!Number.isFinite(timestamp)) return ""; // Non-finite → no throw, empty string.
     const then = new Date(timestamp);
