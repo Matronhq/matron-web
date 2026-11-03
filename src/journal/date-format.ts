@@ -39,3 +39,8 @@ export function dateTimeFormat(locale: string | undefined, options: Intl.DateTim
     }
     return format;
 }
+
+/** A timestamp's clock time in the user's locale, e.g. "3:00 PM". */
+export function formatClockTime(timestamp: number): string {
+    return dateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(timestamp));
+}

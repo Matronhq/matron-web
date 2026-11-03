@@ -54,6 +54,7 @@ import {
     contributorWords,
     spawnConsentRequestId,
     statusRowText,
+    plural,
 } from "./format";
 import { CommentBubbleGlyph, MissionGlyph, TrackerGlyph } from "./glyphs";
 import { useHandoverCaption } from "./handover";
@@ -558,8 +559,6 @@ function voiceFailureMessage(outcome: TrackerCommentOutcome): string {
     const reason = outcome.ok ? undefined : outcome.reason;
     return reason ? `Couldn't send the voice note — ${reason}` : "Couldn't send the voice note — try again.";
 }
-
-const plural = (count: number, noun: string): string => `${count} ${noun}${count === 1 ? "" : "s"}`;
 
 /** "Reply not sent." or, after earlier comments of the reply went, which of its files did not. */
 function replyFailureHeadline(failure: ReplyFailure): string {

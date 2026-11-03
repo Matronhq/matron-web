@@ -21,7 +21,10 @@ Please see LICENSE files in the repository root for full details.
 import React, { useEffect, useState } from "react";
 
 import { JournalApiError } from "./api";
+import { formatClockTime } from "./date-format";
+import { PromptGlyph } from "./icons";
 import { MarkdownBody } from "./markdown";
+import { plural } from "./tracker/format";
 import { asNumber, asString, type EventPayload, type Grant, type GrantAnswer, type JournalEvent } from "./types";
 
 export type PeopleCardKind = "contact_request" | "mission_share" | "mission_handover" | "session_share" | "person_room";
@@ -254,26 +257,13 @@ export function parsePeopleCard(payload: EventPayload): PeopleCard | null {
 
 export function PromptPeopleGlyph(): React.ReactElement {
     return (
-        <svg
-            viewBox="0 0 24 24"
-            width="15"
-            height="15"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.7"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-        >
+        <PromptGlyph>
             <circle cx="9" cy="8" r="3" />
             <path d="M3.5 19a5.5 5.5 0 0 1 11 0" />
             <path d="M16 5.5a3 3 0 0 1 0 5" />
             <path d="M17.5 14a5.5 5.5 0 0 1 3 5" />
-        </svg>
+        </PromptGlyph>
     );
-}
-
-function formatTime(timestamp: number): string {
-    return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(timestamp));
 }
 
 export const PEOPLE_CARD_HINT = "Answer in your tracker (For you)";
@@ -328,10 +318,6 @@ export function handoverOutcomeText(phase: HandoverPhase, direction: "in" | "out
         default:
             return "No longer open";
     }
-}
-
-function plural(n: number, one: string, many = `${one}s`): string {
-    return `${n} ${n === 1 ? one : many}`;
 }
 
 /** "1 mission · 4 milestones · 6 items · 12 comments · 3 files", leaving out what is zero. */
@@ -628,7 +614,7 @@ export function PeopleCardView({
             <div className="mj_PromptHeader">
                 <span className="mj_PromptLabel">{card.label}</span>
                 <time className="mj_PromptTime" dateTime={new Date(event.ts).toISOString()}>
-                    {formatTime(event.ts)}
+                    {formatClockTime(event.ts)}
                 </time>
             </div>
             <div className="mj_PromptBody">
