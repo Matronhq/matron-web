@@ -890,8 +890,6 @@ export interface DefaultsState {
 // null = the bridge's own fallback (its MATRON_DEFAULT_* environment). The model and effort belong
 // to the box's default agent: a Claude alias on a Claude box, a Codex model id on a Codex box.
 
-export type BoxAgent = "claude" | "codex";
-
 /** GET /devices `defaults` on an agent box. */
 export interface BoxDefaults {
     agent: string | null;
