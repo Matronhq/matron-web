@@ -77,7 +77,7 @@ import {
     systemNotice,
     type SystemNotice,
 } from "./system-notice";
-import { dateTimeFormat } from "./date-format";
+import { dateTimeFormat, formatClockTime } from "./date-format";
 import {
     ChatTasksPane,
     CoordinatorChooserSheet,
@@ -143,6 +143,7 @@ import {
     RefreshIcon,
     ArrowUpCircleIcon,
     ProjectsIcon,
+    PromptGlyph,
 } from "./icons";
 import { NAV_RAIL_WIDTH, NavRail, type NavKey } from "./NavRail";
 import { isAgentRoomTitle, needsYouByConversation, projectsNeedsYou } from "./needs-you";
@@ -377,12 +378,8 @@ function useLeftPanelResize(): {
     return { width, onPointerDown };
 }
 
-function formatTime(timestamp: number): string {
-    return dateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(timestamp));
-}
-
 // EXPORTED: the render callsite uses it, and unit tests import it directly to inject `now`.
-// `formatTime` stays private; only this helper needs the test seam.
+// The clock time comes from date-format; only this helper needs the test seam.
 export function formatRelativeDay(timestamp: number, now: number = Date.now()): string {
     if (!Number.isFinite(timestamp)) return ""; // Non-finite → no throw, empty string.
     const then = new Date(timestamp);
@@ -391,7 +388,7 @@ export function formatRelativeDay(timestamp: number, now: number = Date.now()): 
     const startOf = (d: Date): number => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
     const dayMs = 86_400_000;
     const daysAgo = Math.round((startOf(today) - startOf(then)) / dayMs);
-    if (daysAgo === 0) return formatTime(timestamp); // Today (including same-day minor-future skew) → clock.
+    if (daysAgo === 0) return formatClockTime(timestamp); // Today (including same-day minor-future skew) → clock.
     if (daysAgo >= 1 && daysAgo <= 6) {
         return dateTimeFormat(undefined, { weekday: "short" }).format(then);
     }
@@ -987,19 +984,7 @@ export function NewSessionSheet({
                         {title}
                     </h2>
                     <button type="button" className="mj_NewSessionSheet_close" aria-label="Close" onClick={dismiss}>
-                        <svg
-                            viewBox="0 0 24 24"
-                            width="16"
-                            height="16"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="2"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            aria-hidden="true"
-                        >
-                            <path d="M18 6 6 18M6 6l12 12" />
-                        </svg>
+                        <CloseIcon width="16" height="16" strokeWidth="2" />
                     </button>
                 </div>
 
@@ -4015,7 +4000,7 @@ export function QueuedReleaseCard({
             <div className="mj_PromptHeader">
                 <span className="mj_PromptLabel">Queued message</span>
                 <time className="mj_PromptTime" dateTime={new Date(event.ts).toISOString()}>
-                    {formatTime(event.ts)}
+                    {formatClockTime(event.ts)}
                 </time>
             </div>
             <div className="mj_PromptBody">
@@ -4189,7 +4174,7 @@ function PromptCard({
             <div className="mj_PromptHeader">
                 <span className="mj_PromptLabel">{permission ? "Permission request" : "Question"}</span>
                 <time className="mj_PromptTime" dateTime={new Date(event.ts).toISOString()}>
-                    {formatTime(event.ts)}
+                    {formatClockTime(event.ts)}
                 </time>
             </div>
             <div className="mj_PromptBody">
@@ -4326,52 +4311,26 @@ const PROMPT_AFFIRMATIVE = /^(send|yes|continue|confirm|ok|okay|approve|proceed|
 
 function PromptMailGlyph(): React.ReactElement {
     return (
-        <svg
-            viewBox="0 0 24 24"
-            width="15"
-            height="15"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.7"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-        >
+        <PromptGlyph>
             <path d="M4 6h16v12H4z" />
             <path d="m4 7 8 6 8-6" />
-        </svg>
+        </PromptGlyph>
     );
 }
 
 function PromptCheckGlyph(): React.ReactElement {
     return (
-        <svg
-            viewBox="0 0 24 24"
-            width="15"
-            height="15"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.4"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-        >
+        <PromptGlyph strokeWidth="2.4">
             <path d="m5 12 4 4 10-10" />
-        </svg>
+        </PromptGlyph>
     );
 }
 
 function PromptDeniedGlyph(): React.ReactElement {
     return (
-        <svg
-            viewBox="0 0 24 24"
-            width="15"
-            height="15"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.4"
-            strokeLinecap="round"
-        >
+        <PromptGlyph strokeWidth="2.4">
             <path d="m6 6 12 12M18 6 6 18" />
-        </svg>
+        </PromptGlyph>
     );
 }
 
@@ -4502,7 +4461,7 @@ function AgentChatRequestCard({
             <div className="mj_PromptHeader">
                 <span className="mj_PromptLabel">Agent chat request</span>
                 <time className="mj_PromptTime" dateTime={new Date(event.ts).toISOString()}>
-                    {formatTime(event.ts)}
+                    {formatClockTime(event.ts)}
                 </time>
             </div>
             <div className="mj_PromptBody">
@@ -4626,7 +4585,7 @@ function SystemNoticeRow({
                 </span>
                 <span className="mj_SystemNotice_summary">{notice.summary}</span>
                 <time className="mj_SystemNotice_time" dateTime={new Date(event.ts).toISOString()}>
-                    {formatTime(event.ts)}
+                    {formatClockTime(event.ts)}
                 </time>
             </summary>
             <div className="mj_SystemNotice_body mj_Markdown">
@@ -4688,7 +4647,7 @@ function ToolOutput({ client, event }: { client: MatronJournalClient; event: Jou
                 </code>
             </summary>
             <div className="mj_ToolCard_meta">
-                {outcome} · <time dateTime={new Date(event.ts).toISOString()}>{formatTime(event.ts)}</time>
+                {outcome} · <time dateTime={new Date(event.ts).toISOString()}>{formatClockTime(event.ts)}</time>
             </div>
             <div className="mj_ToolCommand">
                 <code>{command}</code>
@@ -5680,7 +5639,7 @@ function EventRow({
                     {event.type !== "tool_output" && event.type !== "prompt" && event.type !== "permission_request" && (
                         <a href={`#event-${event.seq}`} onClick={(clickEvent) => clickEvent.preventDefault()}>
                             <time className="mj_MessageTimestamp" dateTime={new Date(event.ts).toISOString()}>
-                                {formatTime(event.ts)}
+                                {formatClockTime(event.ts)}
                             </time>
                         </a>
                     )}
@@ -5694,7 +5653,7 @@ function EventRow({
                 {own && event.type !== "tool_output" && (
                     <a href={`#event-${event.seq}`} onClick={(clickEvent) => clickEvent.preventDefault()}>
                         <time className="mj_MessageTimestamp" dateTime={new Date(event.ts).toISOString()}>
-                            {formatTime(event.ts)}
+                            {formatClockTime(event.ts)}
                         </time>
                     </a>
                 )}

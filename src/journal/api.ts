@@ -6,6 +6,7 @@ Please see LICENSE files in the repository root for full details.
 */
 
 import {
+    isObject,
     type AccountEmail,
     type BoxDefaults,
     type BoxDefaultsPatch,
@@ -244,29 +245,25 @@ function idempotencyHeader(key?: string): { headers?: Record<string, string> } {
 // Without it the journal rewrites each ref to its caption text, so it rides on the same requests.
 const ITEM_KINDS_HEADER = { "X-Matron-Item-Kinds": "notice", "X-Matron-Item-Inline": "attachments" };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function isCount(value: unknown): value is number {
     return typeof value === "number" && Number.isInteger(value) && value >= 0;
 }
 
 function parseBoxActivity(raw: unknown): BoxStatus["activity"] | undefined {
-    if (!isRecord(raw) || !isCount(raw.live_sessions)) return undefined;
+    if (!isObject(raw) || !isCount(raw.live_sessions)) return undefined;
     const lastHour = Array.isArray(raw.last_hour) ? raw.last_hour : [];
     const entries = lastHour.flatMap((entry: unknown) => {
-        if (!isRecord(entry) || typeof entry.path !== "string" || !entry.path || !isCount(entry.sessions)) return [];
+        if (!isObject(entry) || typeof entry.path !== "string" || !entry.path || !isCount(entry.sessions)) return [];
         return [{ path: entry.path, sessions: entry.sessions }];
     });
     return { live_sessions: raw.live_sessions, last_hour: entries };
 }
 
 function parseBoxLimits(raw: unknown): BoxStatus["limits"] | undefined {
-    if (!isRecord(raw) || !Array.isArray(raw.lines)) return undefined;
+    if (!isObject(raw) || !Array.isArray(raw.lines)) return undefined;
     if (typeof raw.as_of !== "number" || !Number.isFinite(raw.as_of)) return undefined;
     const lines = raw.lines.flatMap((line: unknown): BoxStatusLimitLine[] => {
-        if (!isRecord(line)) return [];
+        if (!isObject(line)) return [];
         if (typeof line.id !== "string" || !line.id || typeof line.label !== "string" || !line.label) return [];
         if (typeof line.percent !== "number" || !Number.isFinite(line.percent)) return [];
         const parsed: BoxStatusLimitLine = { id: line.id, label: line.label, percent: line.percent };
@@ -279,13 +276,13 @@ function parseBoxLimits(raw: unknown): BoxStatus["limits"] | undefined {
 }
 
 function parseBoxDisk(raw: unknown): BoxStatus["disk"] | undefined {
-    if (!isRecord(raw) || !isCount(raw.free_bytes) || !isCount(raw.total_bytes)) return undefined;
+    if (!isObject(raw) || !isCount(raw.free_bytes) || !isCount(raw.total_bytes)) return undefined;
     if (raw.total_bytes === 0 || raw.free_bytes > raw.total_bytes) return undefined;
     return { free_bytes: raw.free_bytes, total_bytes: raw.total_bytes };
 }
 
 function parseBoxAccount(raw: unknown): BoxStatus["account"] | undefined {
-    if (!isRecord(raw) || typeof raw.email !== "string" || !raw.email) return undefined;
+    if (!isObject(raw) || typeof raw.email !== "string" || !raw.email) return undefined;
     return { email: raw.email };
 }
 
@@ -293,7 +290,7 @@ function parseBoxAccount(raw: unknown): BoxStatus["account"] | undefined {
 // `kind`/`device_id` fields are simply ignored here). `reported_at` is required; every block is
 // optional and dropped on its own when malformed, so one bad block never hides the others.
 export function parseBoxStatus(raw: unknown): BoxStatus | undefined {
-    if (!isRecord(raw)) return undefined;
+    if (!isObject(raw)) return undefined;
     if (typeof raw.reported_at !== "number" || !Number.isFinite(raw.reported_at)) return undefined;
     const activity = parseBoxActivity(raw.activity);
     const limits = parseBoxLimits(raw.limits);
@@ -317,7 +314,7 @@ function parseDefaultValue(raw: unknown): string | null | undefined {
 // frame (whose `kind` is ignored here). A missing, null or empty value is "Box default" (null);
 // any other non-string rejects the whole body, so a malformed frame never half-applies.
 export function parseUserDefaults(raw: unknown): UserDefaults | undefined {
-    if (!isRecord(raw)) return undefined;
+    if (!isObject(raw)) return undefined;
     const model = parseDefaultValue(raw.default_model);
     const effort = parseDefaultValue(raw.default_effort);
     if (model === undefined || effort === undefined) return undefined;
@@ -327,7 +324,7 @@ export function parseUserDefaults(raw: unknown): UserDefaults | undefined {
 // A box's `defaults` block on GET /devices. A missing key is unset (null); any non-string value
 // drops the whole block, so the box shows no editor rather than a half-read one.
 export function parseBoxDefaults(raw: unknown): BoxDefaults | undefined {
-    if (!isRecord(raw)) return undefined;
+    if (!isObject(raw)) return undefined;
     const agent = parseDefaultValue(raw.agent);
     const model = parseDefaultValue(raw.model);
     const effort = parseDefaultValue(raw.effort);
@@ -337,7 +334,7 @@ export function parseBoxDefaults(raw: unknown): BoxDefaults | undefined {
 
 // The PUT /devices/:id/defaults answer, or a live `box_defaults` frame (whose `kind` is ignored).
 export function parseBoxDefaultsState(raw: unknown): (Required<BoxDefaultsPatch> & { device_id: number }) | undefined {
-    if (!isRecord(raw) || typeof raw.device_id !== "number" || !Number.isFinite(raw.device_id)) return undefined;
+    if (!isObject(raw) || typeof raw.device_id !== "number" || !Number.isFinite(raw.device_id)) return undefined;
     const agent = parseDefaultValue(raw.default_agent);
     const model = parseDefaultValue(raw.default_model);
     const effort = parseDefaultValue(raw.default_effort);

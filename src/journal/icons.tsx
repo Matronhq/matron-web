@@ -9,7 +9,7 @@ import React from "react";
 
 type IconProps = React.SVGProps<SVGSVGElement>;
 
-function Icon({ children, ...props }: IconProps): React.ReactElement {
+export function Icon({ children, ...props }: IconProps): React.ReactElement {
     return (
         <svg
             viewBox="0 0 24 24"
@@ -26,6 +26,11 @@ function Icon({ children, ...props }: IconProps): React.ReactElement {
             {children}
         </svg>
     );
+}
+
+/** The 15px glyph that leads a prompt card's line or marks a choice. Not aria-hidden, as before. */
+export function PromptGlyph({ strokeWidth = "1.7", ...props }: IconProps): React.ReactElement {
+    return <Icon width="15" height="15" strokeWidth={strokeWidth} aria-hidden={undefined} {...props} />;
 }
 
 export function SettingsIcon(props: IconProps): React.ReactElement {
