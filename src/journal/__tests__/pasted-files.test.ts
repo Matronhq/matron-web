@@ -18,6 +18,17 @@ describe("namedPastedFiles", () => {
         expect(namedPastedFiles({ files: [file] }, NOW)[0]).toBe(file);
     });
 
+    it.each(["image.jpg", "image.pdf", "image.png.zip"])("keeps a copied file called %s", (name) => {
+        const file = new File(["x"], name);
+        expect(namedPastedFiles({ files: [file] }, NOW)[0]).toBe(file);
+    });
+
+    it("gives a renamed image the extension of its type", () => {
+        expect(names(namedPastedFiles({ files: [image("image.png", "image/jpeg")] }, NOW))).toEqual([
+            "pasted-image-2026-11-05-140309.jpeg",
+        ]);
+    });
+
     it("names a screenshot for what it is and when it was pasted", () => {
         expect(names(namedPastedFiles({ files: [image()] }, NOW))).toEqual(["pasted-image-2026-11-05-140309.png"]);
     });
@@ -38,6 +49,7 @@ describe("namedPastedFiles", () => {
         ["an address with no file in it", `<img src="https://example.com/">`],
         ["only dots", `<img src="https://example.com/...png">`],
         ["markup with no image", `<p>hello</p>`],
+        ["markup with several images", `<img src="https://example.com/a.png"><img src="https://example.com/b.png">`],
     ])("ignores %s", (_label, html) => {
         const files = namedPastedFiles({ files: [image()], getData: withHtml(html) }, NOW);
         expect(names(files)).toEqual(["pasted-image-2026-11-05-140309.png"]);
