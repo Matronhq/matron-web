@@ -20,6 +20,7 @@ import React, {
 import { createPortal } from "react-dom";
 
 import matronLogo from "../../res/matron-logo-simple.svg";
+import { namedPastedFiles } from "./pasted-files";
 import { leaveResetPage, takeResetLink, useForgotPasswordEnabled } from "./reset-link";
 // Loaded for its side effect: applies the saved theme and follows the system setting from first paint on.
 import "./theme";
@@ -7273,7 +7274,7 @@ function Composer({
                                         }
                                     }}
                                     onPaste={(event) => {
-                                        const files = [...event.clipboardData.files];
+                                        const files = namedPastedFiles(event.clipboardData);
                                         if (files.length > 0) {
                                             event.preventDefault();
                                             client.stageFiles(files);

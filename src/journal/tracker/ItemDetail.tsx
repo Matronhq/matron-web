@@ -27,6 +27,7 @@ import { ChevronLeftIcon, CloseIcon, KebabIcon, PlusCircleIcon, SendIcon } from 
 import { parseOwnTrackerUrl } from "../link-path";
 import { parseTrackerHref } from "../markdown";
 import { MediaViewer, MediaViewerContext, type MediaViewerContextValue } from "../media-viewer";
+import { namedPastedFiles } from "../pasted-files";
 import {
     asString,
     type SpawnConsentRows,
@@ -1292,7 +1293,7 @@ export function ItemDetail({
                             disabled={busy}
                             onChange={(event) => editReply(event.target.value)}
                             onPaste={(event) => {
-                                const files = [...(event.clipboardData?.files ?? [])];
+                                const files = event.clipboardData ? namedPastedFiles(event.clipboardData) : [];
                                 if (files.length > 0) {
                                     event.preventDefault();
                                     addFiles(files);
