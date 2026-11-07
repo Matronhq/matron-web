@@ -809,8 +809,9 @@ export interface ClientState {
     /** A contact invite link to open in the accept sheet (pasted, or a `matron://contact` link
      *  tapped in a message). Never stored. */
     contactInviteLink?: string;
-    /** An invite link the journal minted for this device's tap on an agent's invite ask, shown
-     *  once in a sheet and dropped when it closes. Never stored or sent anywhere. */
+    /** An invite link the journal minted for this device (a tap on an agent's invite ask, or an
+     *  invite whose sheet closed before it arrived), shown once in a sheet and dropped when it
+     *  closes. Never stored or sent anywhere. */
     mintedInviteLink?: string;
     /** Error from the last inbox load only. Unlike trackerError, which any tracker load clears, this
      *  is cleared only by the next inbox load, so a never-loaded inbox can tell "failed" from

@@ -115,7 +115,10 @@ function InviteSheet({
         try {
             const { link } = await client.createContactInvite();
             onDone();
+            // Settings closed meanwhile (signing out, say): the link is shown over the app instead,
+            // as the journal never returns it again.
             if (mounted.current) setPhase({ kind: "shown", link });
+            else client.showMintedInvite(link);
         } catch (failure) {
             if (mounted.current) setPhase({ kind: "error", message: refusalText(failure) });
         }

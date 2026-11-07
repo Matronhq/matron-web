@@ -2853,6 +2853,11 @@ export class MatronJournalClient {
         if (this.state.contactInviteLink !== undefined) this.patch({ contactInviteLink: undefined });
     }
 
+    /** Shows a just-minted invite link over the app, once. */
+    public showMintedInvite(link: string): void {
+        this.patch({ mintedInviteLink: link });
+    }
+
     /** Drops the once-shown link of an approved invite ask. */
     public dismissMintedInvite(): void {
         if (this.state.mintedInviteLink !== undefined) this.patch({ mintedInviteLink: undefined });

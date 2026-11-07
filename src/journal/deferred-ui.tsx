@@ -278,18 +278,38 @@ export const AcceptInviteSheet = deferred<AcceptInviteSheetProps>(
     ),
 );
 
+/**
+ * The journal hands a minted link over once, so until the sheet's chunk arrives (or if it never
+ * does) the frame shows the link as text, and closing it only drops a link already on screen.
+ */
 export const MintedInviteSheet = deferred<MintedInviteSheetProps>(
     () => import("./PeopleSettings").then((module) => module.MintedInviteSheet),
-    (props, failed) => (
-        <SheetFrame
-            scrimClassName="mj_UploadConfirm_scrim mj_DeviceSheet_scrim"
-            sheetClassName="mj_UploadConfirm mj_NewSessionSheet mj_DeviceSheet"
-            label="Invite link"
-            failed={failed}
-            onClose={props.onClose}
-        />
-    ),
+    (props) => <MintedInviteFrame {...props} />,
 );
+
+function MintedInviteFrame({ link, onClose }: MintedInviteSheetProps): React.ReactElement {
+    useModalKeys(onClose);
+    return createPortal(
+        <div className="mj_UploadConfirm_scrim mj_DeviceSheet_scrim">
+            <div
+                className="mj_UploadConfirm mj_NewSessionSheet mj_DeviceSheet"
+                role="dialog"
+                aria-modal="true"
+                aria-label="Invite link"
+            >
+                <p className="mj_InviteLink_url" data-invite-link>
+                    {link}
+                </p>
+                <div className="mj_UploadConfirm_actions">
+                    <button type="button" className="mj_UploadConfirm_send" onClick={onClose}>
+                        Done
+                    </button>
+                </div>
+            </div>
+        </div>,
+        document.body,
+    );
+}
 
 /** An invite ask's buttons on its card: nothing until its chunk arrives. */
 export const InviteAskSection = deferred<InviteAskSectionProps>(
