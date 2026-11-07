@@ -59,6 +59,12 @@ describe("parseContactLink", () => {
     });
 
     it("reads the https form, with every field in the fragment", () => {
+        expect(
+            parseContactLink(`https://b.example/contact#${FIELDS.replace("j=b.example", "j=b.example:443")}`),
+        ).toEqual({
+            journal: "b.example:443",
+            user: "bob",
+        });
         expect(parseContactLink(WEB_LINK)).toEqual({ journal: "b.example", user: "bob" });
         expect(parseContactLink(` ${WEB_LINK}\n`)).toEqual({ journal: "b.example", user: "bob" });
         expect(parseContactLink(WEB_LINK.replace("https://b.example", "https://B.Example"))).not.toBeNull();
@@ -83,6 +89,11 @@ describe("parseContactLink", () => {
         ["with a bad token", WEB_LINK.replace(TOKEN, "short")],
         ["with a bad fingerprint", WEB_LINK.replace(FP, "NOT-A-FINGERPRINT")],
         ["with a space inside", WEB_LINK.replace("&u=", " &u=")],
+        [
+            "naming a port no URL can carry",
+            `https://b.example/contact#${FIELDS.replace("j=b.example", "j=b.example:99999")}`,
+        ],
+        ["naming another port", `https://b.example/contact#${FIELDS.replace("j=b.example", "j=b.example:8443")}`],
     ])("refuses an https link %s", (_, link) => {
         expect(parseContactLink(link)).toBeNull();
     });

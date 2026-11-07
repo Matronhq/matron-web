@@ -46,7 +46,16 @@ export function parseContactLink(text: string): ContactLink | null {
     }
     if (url.hash.length < 2) return null;
     const fields = parseFields(url.hash.slice(1));
-    return fields && fields.journal.toLowerCase() === url.host ? fields : null;
+    if (!fields) return null;
+    // `j` as a URL writes it, as the journal reads it: an explicit default port (`:443`) is
+    // dropped, and a port the URL parser refuses is no link.
+    let named: string;
+    try {
+        named = new URL(`https://${fields.journal}`).host;
+    } catch {
+        return null;
+    }
+    return named === url.host ? fields : null;
 }
 
 function parseFields(query: string): ContactLink | null {
