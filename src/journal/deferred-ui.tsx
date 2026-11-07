@@ -297,9 +297,11 @@ function MintedInviteFrame({ link, onClose }: MintedInviteSheetProps): React.Rea
                 aria-modal="true"
                 aria-label="Invite link"
             >
-                <p className="mj_InviteLink_url" data-invite-link>
-                    {link}
-                </p>
+                <div className="mj_InviteLink">
+                    <p className="mj_InviteLink_url" data-invite-link>
+                        {link}
+                    </p>
+                </div>
                 <div className="mj_UploadConfirm_actions">
                     <button type="button" className="mj_UploadConfirm_send" onClick={onClose}>
                         Done
