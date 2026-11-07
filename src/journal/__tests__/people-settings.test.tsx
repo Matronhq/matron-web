@@ -301,6 +301,32 @@ describe("The invite ask card", () => {
         expect(container.textContent).toContain("Shown only on this device, this once.");
     });
 
+    it("keeps the buttons when the journal cannot mint yet", async () => {
+        const card = parsePeopleCard(event.payload)!;
+        const answer = jest.fn(async () => {
+            throw new JournalApiError("refused", 409, "conflict", undefined, {
+                error: "conflict",
+                blocked_by: "too_many_invites",
+            });
+        });
+        await act(async () =>
+            root.render(
+                <PeopleCardView
+                    event={event}
+                    card={card}
+                    findItem={async () => null}
+                    onOpenItem={() => undefined}
+                    answerInviteAsk={answer}
+                />,
+            ),
+        );
+        await act(async () =>
+            container.querySelector<HTMLButtonElement>('[data-action="approve-invite-ask"]')!.click(),
+        );
+        expect(container.textContent).toContain("You already have 20 open invites.");
+        expect(container.querySelector('[data-action="approve-invite-ask"]')).not.toBeNull();
+    });
+
     it("offers no buttons once the ask's item is closed", async () => {
         const card = parsePeopleCard(event.payload)!;
         const answer = jest.fn();

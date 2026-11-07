@@ -49,7 +49,6 @@ import {
     unanswerableAgentRequestNotice,
 } from "./agent-chat";
 import { parsePeopleCard, PeopleCardView, PromptPeopleGlyph } from "./people-card";
-import { AcceptInviteSheet, MintedInviteSheet } from "./PeopleSettings";
 import { isMediaExpiredError, JournalApiError } from "./api";
 import {
     type AgentProbe,
@@ -81,8 +80,10 @@ import {
 } from "./system-notice";
 import { dateTimeFormat, formatClockTime } from "./date-format";
 import {
+    AcceptInviteSheet,
     ChatTasksPane,
     CoordinatorChooserSheet,
+    MintedInviteSheet,
     RoutinesSheet,
     SettingsSheet,
     TrackerPane,

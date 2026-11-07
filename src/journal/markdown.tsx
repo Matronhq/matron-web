@@ -36,7 +36,7 @@ import { unified } from "unified";
 
 import { copyText } from "./clipboard";
 import { parseOwnTrackerUrl } from "./link-path";
-import { parseContactLink } from "./contacts";
+import { parseContactLink } from "./contact-link";
 import { TrackerLinkTarget } from "./tracker-link-title";
 import type { MatronLinkKind, TrackerLinkHandler } from "./types";
 

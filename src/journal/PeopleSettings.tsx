@@ -114,9 +114,8 @@ function InviteSheet({
         setPhase({ kind: "minting" });
         try {
             const { link } = await client.createContactInvite();
-            if (!mounted.current) return;
-            setPhase({ kind: "shown", link });
             onDone();
+            if (mounted.current) setPhase({ kind: "shown", link });
         } catch (failure) {
             if (mounted.current) setPhase({ kind: "error", message: refusalText(failure) });
         }
@@ -129,12 +128,17 @@ function InviteSheet({
         void mint();
     }, [mint]);
 
+    // The link comes back once: the sheet stays open until it has, so it is never minted unseen.
+    const minting = phase.kind === "minting";
+    const close = (): void => {
+        if (!minting) onClose();
+    };
     return (
         <DeviceSheet
             id="mj-invite-title"
             title="Invite someone on another Matron"
             className="mj_InviteSheet"
-            onClose={onClose}
+            onClose={close}
         >
             <div className="mj_LinkDeviceSheet_body" aria-live="polite">
                 {phase.kind === "minting" && <p role="status">Making an invite…</p>}
@@ -146,7 +150,13 @@ function InviteSheet({
                 )}
             </div>
             <div className="mj_UploadConfirm_actions">
-                <button type="button" className="mj_UploadConfirm_send" data-autofocus onClick={onClose}>
+                <button
+                    type="button"
+                    className="mj_UploadConfirm_send"
+                    data-autofocus
+                    disabled={minting}
+                    onClick={close}
+                >
                     Done
                 </button>
             </div>

@@ -29,8 +29,8 @@ import { formatClockTime } from "./date-format";
 import { PromptGlyph } from "./icons";
 import { MarkdownBody } from "./markdown";
 import { plural } from "./tracker/format";
-import { ASK_LINK_NOTE, refusalText, type InviteAskAnswer, type InviteAskDecision } from "./contacts";
-import { InviteLinkView } from "./PeopleSettings";
+import type { InviteAskAnswer, InviteAskDecision } from "./contacts";
+import { InviteAskSection } from "./deferred-ui";
 import {
     asNumber,
     asString,
@@ -581,117 +581,6 @@ function HandoverSection({
                 </div>
             ) : null}
             {out && (answerable || phase === "sent") ? <p className="mj_HandoverHint">{HANDOVER_REPLY_HINT}</p> : null}
-        </>
-    );
-}
-
-type InviteAskPhase =
-    | { kind: "checking" }
-    | { kind: "open"; error?: string }
-    | { kind: "sending"; decision: InviteAskDecision }
-    | { kind: "approved"; link: string }
-    | { kind: "declined" }
-    | { kind: "closed"; message: string };
-
-/** The invite ask's own answer: Decline / Approve, then the minted link, shown this once. */
-function InviteAskSection({
-    askId,
-    answerInviteAsk,
-    onSettled,
-    loadMirror,
-}: {
-    askId: string;
-    answerInviteAsk: (askId: string, decision: InviteAskDecision) => Promise<InviteAskAnswer>;
-    /** The ask's mirror item, to tell an ask answered elsewhere (or expired) from an open one. */
-    loadMirror?: () => Promise<TrackerItem | null>;
-    /** The ask is answered (here or elsewhere): its mirror item has nothing left to do. */
-    onSettled: () => void;
-}): React.ReactElement {
-    const [phase, setPhase] = useState<InviteAskPhase>(() => (loadMirror ? { kind: "checking" } : { kind: "open" }));
-    useEffect(() => {
-        if (!loadMirror) return;
-        let live = true;
-        const open = { kind: "open" } as const;
-        loadMirror().then(
-            (item) => {
-                if (!live) return;
-                if (!item || item.state === "open") setPhase((now) => (now.kind === "checking" ? open : now));
-                else
-                    setPhase({
-                        kind: "closed",
-                        message:
-                            item.resolution === "cancelled"
-                                ? "Expired — nobody answered within 24 hours"
-                                : "Already answered.",
-                    });
-            },
-            () => {
-                if (live) setPhase((now) => (now.kind === "checking" ? open : now));
-            },
-        );
-        return () => {
-            live = false;
-        };
-        // loadMirror is a fresh closure each render; the lookup depends only on the ask.
-    }, [askId]);
-    const settled = phase.kind === "approved" || phase.kind === "declined" || phase.kind === "closed";
-    useEffect(() => {
-        if (settled) onSettled();
-        // onSettled is a fresh closure each render; only the answer matters.
-    }, [settled]);
-    const send = async (decision: InviteAskDecision): Promise<void> => {
-        if (phase.kind !== "open") return;
-        setPhase({ kind: "sending", decision });
-        try {
-            const answer = await answerInviteAsk(askId, decision);
-            if (decision === "approve" && answer.link) setPhase({ kind: "approved", link: answer.link });
-            else if (decision === "approve") setPhase({ kind: "closed", message: "Approved" });
-            else setPhase({ kind: "declined" });
-        } catch (error) {
-            // An answer on the item, another device or an expiry already settled it; anything
-            // else leaves the buttons up to try again.
-            const settled = error instanceof JournalApiError && (error.status === 409 || error.status === 404);
-            setPhase(
-                settled ? { kind: "closed", message: refusalText(error) } : { kind: "open", error: refusalText(error) },
-            );
-        }
-    };
-    if (phase.kind === "approved") return <InviteLinkView link={phase.link} note={ASK_LINK_NOTE} />;
-    if (phase.kind === "declined" || phase.kind === "closed") {
-        return (
-            <div
-                className={`mj_PromptResolved ${phase.kind === "declined" ? "mj_PromptResolved_declined" : "mj_PromptResolved_expired"}`}
-                role="status"
-            >
-                <span className="mj_PromptGlyph" aria-hidden="true" />
-                <span className="mj_Answered">{phase.kind === "declined" ? "Declined" : phase.message}</span>
-            </div>
-        );
-    }
-    if (phase.kind === "checking") return <></>;
-    const sending = phase.kind === "sending";
-    return (
-        <>
-            {phase.kind === "open" && phase.error ? (
-                <div className="mj_PromptResolved mj_PromptResolved_expired" role="alert">
-                    <span className="mj_PromptGlyph" aria-hidden="true" />
-                    <span className="mj_Answered">{phase.error}</span>
-                </div>
-            ) : null}
-            <div className="mj_PromptOptions mj_HandoverOptions">
-                <button type="button" disabled={sending} onClick={() => void send("decline")}>
-                    Decline
-                </button>
-                <button
-                    type="button"
-                    className="mj_PromptOption_affirmative"
-                    data-action="approve-invite-ask"
-                    disabled={sending}
-                    onClick={() => void send("approve")}
-                >
-                    Approve
-                </button>
-            </div>
         </>
     );
 }
