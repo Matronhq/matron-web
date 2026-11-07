@@ -49,6 +49,7 @@ import {
     unanswerableAgentRequestNotice,
 } from "./agent-chat";
 import { parsePeopleCard, PeopleCardView, PromptPeopleGlyph } from "./people-card";
+import { AcceptInviteSheet, MintedInviteSheet } from "./PeopleSettings";
 import { isMediaExpiredError, JournalApiError } from "./api";
 import {
     type AgentProbe,
@@ -2442,6 +2443,17 @@ function ConversationListView({
                 />
             )}
             {coordinatorSheet?.kind === "routines" && <RoutinesSheet client={client} onClose={closeCoordinatorSheet} />}
+            {state.contactInviteLink !== undefined && (
+                <AcceptInviteSheet
+                    key={state.contactInviteLink}
+                    client={client}
+                    link={state.contactInviteLink}
+                    onClose={() => client.closeContactInvite()}
+                />
+            )}
+            {state.mintedInviteLink !== undefined && (
+                <MintedInviteSheet link={state.mintedInviteLink} onClose={() => client.dismissMintedInvite()} />
+            )}
             {pinDialog && (
                 <PinDialog client={client} state={state} target={pinDialog} onClose={() => setPinDialog(undefined)} />
             )}
@@ -5495,6 +5507,10 @@ export function EventContent({
                         // A read-only transcript (a sub-chat or a subagent pane) shows how a
                         // hand-over stands but never answers it.
                         answerGrant={isReadOnly ? undefined : (grantId, answer) => client.answerGrant(grantId, answer)}
+                        answerInviteAsk={
+                            isReadOnly ? undefined : (askId, decision) => client.answerInviteAsk(askId, decision)
+                        }
+                        loadConsentItem={(convoId, url) => client.findConsentItemRow(convoId, url)}
                     />
                 );
             }

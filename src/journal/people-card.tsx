@@ -16,6 +16,10 @@ Please see LICENSE files in the repository root for full details.
  * A hand-over (`mission_handover`) is the one kind answered on the card itself as well: the owner
  * picks which files cross, which a tap on the mirror's button cannot say, so the card carries the
  * brief, what will be copied, the file list and its own buttons (`POST /grants/:id/answer`).
+ *
+ * An agent's ask for a contact invite link (`contact_invite`) is answered on the card too: Approve
+ * mints the invite and the journal returns its link to this device alone, which the card then
+ * shows once (QR, Copy, Share). It is kept nowhere: a reload shows the card without it.
  */
 
 import React, { useEffect, useState } from "react";
@@ -25,12 +29,24 @@ import { formatClockTime } from "./date-format";
 import { PromptGlyph } from "./icons";
 import { MarkdownBody } from "./markdown";
 import { plural } from "./tracker/format";
-import { asNumber, asString, type EventPayload, type Grant, type GrantAnswer, type JournalEvent } from "./types";
+import { ASK_LINK_NOTE, refusalText, type InviteAskAnswer, type InviteAskDecision } from "./contacts";
+import { InviteLinkView } from "./PeopleSettings";
+import {
+    asNumber,
+    asString,
+    type EventPayload,
+    type Grant,
+    type GrantAnswer,
+    type JournalEvent,
+    type TrackerItem,
+} from "./types";
 
-export type PeopleCardKind = "contact_request" | "mission_share" | "mission_handover" | "session_share" | "person_room";
+export type PeopleCardKind =
+    "contact_request" | "contact_invite" | "mission_share" | "mission_handover" | "session_share" | "person_room";
 
 const PEOPLE_CARD_KINDS: ReadonlySet<string> = new Set<PeopleCardKind>([
     "contact_request",
+    "contact_invite",
     "mission_share",
     "mission_handover",
     "session_share",
@@ -40,6 +56,7 @@ const PEOPLE_CARD_KINDS: ReadonlySet<string> = new Set<PeopleCardKind>([
 /** The consent link segment and the payload field carrying its id, per card kind. */
 const CONSENT_LINKS: Record<PeopleCardKind, { segment: string; idField: string }> = {
     contact_request: { segment: "contact", idField: "contact_id" },
+    contact_invite: { segment: "invite", idField: "ask_id" },
     mission_share: { segment: "share", idField: "grant_id" },
     mission_handover: { segment: "handover", idField: "grant_id" },
     session_share: { segment: "session", idField: "session_share_id" },
@@ -69,6 +86,8 @@ export interface PeopleCard {
     access: string;
     /** The hand-over's own part of the card; null on every other kind. */
     handover: HandoverDetails | null;
+    /** An invite ask's id, which the card answers itself; "" on every other kind. */
+    askId: string;
 }
 
 /** One file a hand-over would copy, as the owner's card lists it. */
@@ -201,6 +220,10 @@ export function parsePeopleCard(payload: EventPayload): PeopleCard | null {
                 ? `Your agent asks to add ${person || "someone"} as a contact`
                 : `${who} wants to add you as a contact`;
             break;
+        case "contact_invite":
+            label = "Invite link request";
+            headline = "Your agent asks for an invite link for someone on another Matron";
+            break;
         case "mission_share":
             label = "Mission share";
             headline = out
@@ -252,6 +275,7 @@ export function parsePeopleCard(payload: EventPayload): PeopleCard | null {
         consentUrl: consentUrlOf(k, payload),
         access,
         handover,
+        askId: k === "contact_invite" ? asString(payload.ask_id) : "",
     };
 }
 
@@ -561,6 +585,117 @@ function HandoverSection({
     );
 }
 
+type InviteAskPhase =
+    | { kind: "checking" }
+    | { kind: "open"; error?: string }
+    | { kind: "sending"; decision: InviteAskDecision }
+    | { kind: "approved"; link: string }
+    | { kind: "declined" }
+    | { kind: "closed"; message: string };
+
+/** The invite ask's own answer: Decline / Approve, then the minted link, shown this once. */
+function InviteAskSection({
+    askId,
+    answerInviteAsk,
+    onSettled,
+    loadMirror,
+}: {
+    askId: string;
+    answerInviteAsk: (askId: string, decision: InviteAskDecision) => Promise<InviteAskAnswer>;
+    /** The ask's mirror item, to tell an ask answered elsewhere (or expired) from an open one. */
+    loadMirror?: () => Promise<TrackerItem | null>;
+    /** The ask is answered (here or elsewhere): its mirror item has nothing left to do. */
+    onSettled: () => void;
+}): React.ReactElement {
+    const [phase, setPhase] = useState<InviteAskPhase>(() => (loadMirror ? { kind: "checking" } : { kind: "open" }));
+    useEffect(() => {
+        if (!loadMirror) return;
+        let live = true;
+        const open = { kind: "open" } as const;
+        loadMirror().then(
+            (item) => {
+                if (!live) return;
+                if (!item || item.state === "open") setPhase((now) => (now.kind === "checking" ? open : now));
+                else
+                    setPhase({
+                        kind: "closed",
+                        message:
+                            item.resolution === "cancelled"
+                                ? "Expired — nobody answered within 24 hours"
+                                : "Already answered.",
+                    });
+            },
+            () => {
+                if (live) setPhase((now) => (now.kind === "checking" ? open : now));
+            },
+        );
+        return () => {
+            live = false;
+        };
+        // loadMirror is a fresh closure each render; the lookup depends only on the ask.
+    }, [askId]);
+    const settled = phase.kind === "approved" || phase.kind === "declined" || phase.kind === "closed";
+    useEffect(() => {
+        if (settled) onSettled();
+        // onSettled is a fresh closure each render; only the answer matters.
+    }, [settled]);
+    const send = async (decision: InviteAskDecision): Promise<void> => {
+        if (phase.kind !== "open") return;
+        setPhase({ kind: "sending", decision });
+        try {
+            const answer = await answerInviteAsk(askId, decision);
+            if (decision === "approve" && answer.link) setPhase({ kind: "approved", link: answer.link });
+            else if (decision === "approve") setPhase({ kind: "closed", message: "Approved" });
+            else setPhase({ kind: "declined" });
+        } catch (error) {
+            // An answer on the item, another device or an expiry already settled it; anything
+            // else leaves the buttons up to try again.
+            const settled = error instanceof JournalApiError && (error.status === 409 || error.status === 404);
+            setPhase(
+                settled ? { kind: "closed", message: refusalText(error) } : { kind: "open", error: refusalText(error) },
+            );
+        }
+    };
+    if (phase.kind === "approved") return <InviteLinkView link={phase.link} note={ASK_LINK_NOTE} />;
+    if (phase.kind === "declined" || phase.kind === "closed") {
+        return (
+            <div
+                className={`mj_PromptResolved ${phase.kind === "declined" ? "mj_PromptResolved_declined" : "mj_PromptResolved_expired"}`}
+                role="status"
+            >
+                <span className="mj_PromptGlyph" aria-hidden="true" />
+                <span className="mj_Answered">{phase.kind === "declined" ? "Declined" : phase.message}</span>
+            </div>
+        );
+    }
+    if (phase.kind === "checking") return <></>;
+    const sending = phase.kind === "sending";
+    return (
+        <>
+            {phase.kind === "open" && phase.error ? (
+                <div className="mj_PromptResolved mj_PromptResolved_expired" role="alert">
+                    <span className="mj_PromptGlyph" aria-hidden="true" />
+                    <span className="mj_Answered">{phase.error}</span>
+                </div>
+            ) : null}
+            <div className="mj_PromptOptions mj_HandoverOptions">
+                <button type="button" disabled={sending} onClick={() => void send("decline")}>
+                    Decline
+                </button>
+                <button
+                    type="button"
+                    className="mj_PromptOption_affirmative"
+                    data-action="approve-invite-ask"
+                    disabled={sending}
+                    onClick={() => void send("approve")}
+                >
+                    Approve
+                </button>
+            </div>
+        </>
+    );
+}
+
 /**
  * The inert card. `findItem` resolves the mirror item's number (null when it can't be found);
  * `onOpenItem` opens it. Without a mirror the card says where to answer instead. A hand-over card
@@ -573,6 +708,8 @@ export function PeopleCardView({
     onOpenItem,
     loadGrant,
     answerGrant,
+    answerInviteAsk,
+    loadConsentItem,
 }: {
     event: JournalEvent;
     card: PeopleCard;
@@ -580,8 +717,11 @@ export function PeopleCardView({
     onOpenItem: (num: number) => void;
     loadGrant?: (grantId: string) => Promise<Grant>;
     answerGrant?: (grantId: string, answer: GrantAnswer) => Promise<Grant>;
+    answerInviteAsk?: (askId: string, decision: InviteAskDecision) => Promise<InviteAskAnswer>;
+    loadConsentItem?: (convoId: string, consentUrl: string) => Promise<TrackerItem | null>;
 }): React.ReactElement {
     const { consentUrl } = card;
+    const [inviteSettled, setInviteSettled] = useState(false);
     const [mirror, setMirror] = useState<MirrorLookup>(() => (consentUrl ? { kind: "looking" } : { kind: "missing" }));
     useEffect(() => {
         if (!consentUrl) {
@@ -636,7 +776,17 @@ export function PeopleCardView({
             {card.handover ? (
                 <HandoverSection card={card} details={card.handover} loadGrant={loadGrant} answerGrant={answerGrant} />
             ) : null}
-            {card.handover && mirror.kind !== "found" ? null : (
+            {card.kind === "contact_invite" && card.askId && answerInviteAsk ? (
+                <InviteAskSection
+                    askId={card.askId}
+                    answerInviteAsk={answerInviteAsk}
+                    onSettled={() => setInviteSettled(true)}
+                    loadMirror={
+                        loadConsentItem && consentUrl ? () => loadConsentItem(event.convo_id, consentUrl) : undefined
+                    }
+                />
+            ) : null}
+            {(card.handover && mirror.kind !== "found") || inviteSettled ? null : (
                 <div className="mj_PromptOptions mj_PeopleCard_footer">
                     {mirror.kind === "found" ? (
                         <button type="button" className="mj_PeopleCard_open" onClick={() => onOpenItem(mirror.num)}>
