@@ -213,7 +213,7 @@ function PasteInviteSheet({
                     data-autofocus
                     autoComplete="off"
                     spellCheck={false}
-                    placeholder="matron://contact?…"
+                    placeholder="Paste the link they sent you"
                     value={text}
                     onChange={(event) => {
                         setText(event.target.value);
@@ -260,7 +260,8 @@ export function AcceptInviteSheet({
     onAccepted?: () => void;
     onClose: () => void;
 }): React.ReactElement {
-    const valid = parseContactLink(link) !== null;
+    const host = parseContactLink(link)?.journal;
+    const valid = host !== undefined;
     const [phase, setPhase] = useState<AcceptPhase>(() =>
         valid ? { kind: "opening" } : { kind: "refused", message: INVALID_LINK },
     );
@@ -275,13 +276,13 @@ export function AcceptInviteSheet({
                 if (live) setPhase({ kind: "open", opened });
             },
             (failure: unknown) => {
-                if (live) setPhase({ kind: "refused", message: refusalText(failure) });
+                if (live) setPhase({ kind: "refused", message: refusalText(failure, host) });
             },
         );
         return () => {
             live = false;
         };
-    }, [client, link, valid]);
+    }, [client, link, valid, host]);
 
     const accept = async (opened: InviteOpened): Promise<void> => {
         setPhase({ kind: "accepting", opened });
@@ -291,7 +292,7 @@ export function AcceptInviteSheet({
             setPhase({ kind: "sent", opened });
             onAccepted?.();
         } catch (failure) {
-            if (mounted.current) setPhase({ kind: "refused", message: refusalText(failure), opened });
+            if (mounted.current) setPhase({ kind: "refused", message: refusalText(failure, host), opened });
         }
     };
 

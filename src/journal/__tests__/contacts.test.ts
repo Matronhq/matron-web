@@ -70,7 +70,7 @@ describe("contact rows", () => {
     it("shows an unreachable line only when the journal sends one", () => {
         expect(unreachableCaption(contact())).toBe("");
         expect(unreachableCaption(contact({ unreachable_since: Date.UTC(2026, 10, 3, 12) }))).toMatch(
-            /^Their journal unreachable since /,
+            /^Their journal hasn't answered since .+\.$/,
         );
     });
 
@@ -87,12 +87,18 @@ describe("contact rows", () => {
 describe("refusalText", () => {
     it.each([
         ["fingerprint_mismatch", 409, /does not match their journal/],
-        ["journal_not_allowed", 409, /does not allow contacts on that journal/],
+        ["journal_not_allowed", 409, /doesn't allow contacts on that journal/],
         ["own_journal", 409, /from your own journal/],
         ["federation_off", 409, /turned off on your journal/],
         ["too_many_invites", 409, /20 open invites/],
     ])("puts %s in plain words", (code, status, words) => {
         expect(refusalText(refused(status, { error: "conflict", blocked_by: code }))).toMatch(words);
+    });
+
+    it("names the inviter's journal when it is not allowed", () => {
+        expect(refusalText(refused(409, { error: "conflict", blocked_by: "journal_not_allowed" }), "b.example")).toBe(
+            "Your journal doesn't allow contacts on b.example.",
+        );
     });
 
     it("reads the 502 error codes", () => {

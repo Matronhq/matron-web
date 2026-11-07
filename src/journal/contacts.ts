@@ -85,10 +85,12 @@ export function contactCaption(contact: Contact): string {
     return "";
 }
 
-/** "Their journal unreachable since 3 Nov", when the journal says so; "" otherwise. */
+/** "Their journal hasn't answered since 3 Nov.", when the journal says so; "" otherwise. */
 export function unreachableCaption(contact: Contact): string {
     const since = contact.unreachable_since;
-    return typeof since === "number" && since > 0 ? `Their journal unreachable since ${formatShortDate(since)}` : "";
+    return typeof since === "number" && since > 0
+        ? `Their journal hasn't answered since ${formatShortDate(since)}.`
+        : "";
 }
 
 /** Live rows first (active, then pending), then by name. */
@@ -120,7 +122,6 @@ export const ACCEPT_SENT = "Sent. You become contacts when their journal confirm
 const REFUSALS: Record<string, string> = {
     fingerprint_mismatch:
         "This link's fingerprint does not match their journal. Do not accept it; ask them for a new link.",
-    journal_not_allowed: "Your journal does not allow contacts on that journal.",
     journal_blocked: "Your journal has blocked that journal.",
     own_journal: "This link is from your own journal. Add people here by name instead.",
     unreachable: "Their journal could not be reached. Try again later.",
@@ -145,10 +146,13 @@ export function refusalCode(error: unknown): string {
     return asString(error.body?.error) || asString(error.code);
 }
 
-/** A refused invite call in plain words. */
-export function refusalText(error: unknown): string {
+/** A refused invite call in plain words. `host` is the inviter's journal, when the link is known. */
+export function refusalText(error: unknown, host?: string): string {
     if (error instanceof JournalApiError) {
         if (error.status === 0) return "Not sent — check your connection and try again.";
+        if (refusalCode(error) === "journal_not_allowed") {
+            return `Your journal doesn't allow contacts on ${host || "that journal"}.`;
+        }
         const known = REFUSALS[refusalCode(error)];
         if (known) return known;
         if (error.status === 400) return INVALID_LINK;
