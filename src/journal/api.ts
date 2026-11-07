@@ -53,6 +53,7 @@ import {
     type UserDefaults,
     type JournalUser,
 } from "./types";
+import type { Contact, ContactInvite, InviteAskAnswer, InviteAskDecision, InviteOpened } from "./contacts";
 
 interface ElectronJournalResponse {
     status: number;
@@ -753,6 +754,55 @@ export class JournalApi {
         return response.grant;
     }
 
+    // ── Contacts, and contacts on other journals by invite link (client devices only) ──
+
+    /** GET /contacts — the live contact rows. */
+    public async contacts(signal?: AbortSignal): Promise<Contact[]> {
+        const response = await this.json<{ contacts?: Contact[] }>("/contacts", { signal });
+        return Array.isArray(response.contacts) ? response.contacts : [];
+    }
+
+    /** POST /contacts/invites — mints an invite; the link comes back this once. */
+    public createContactInvite(): Promise<{ invite: ContactInvite; link: string }> {
+        return this.json<{ invite: ContactInvite; link: string }>("/contacts/invites", { method: "POST", body: {} });
+    }
+
+    /** GET /contacts/invites — the last 30 days' invites, newest first. */
+    public async contactInvites(signal?: AbortSignal): Promise<ContactInvite[]> {
+        const response = await this.json<{ invites?: ContactInvite[] }>("/contacts/invites", { signal });
+        return Array.isArray(response.invites) ? response.invites : [];
+    }
+
+    /** DELETE /contacts/invites/:id — withdraws an open invite. */
+    public async withdrawContactInvite(id: string): Promise<ContactInvite> {
+        const response = await this.json<{ invite: ContactInvite }>(`/contacts/invites/${encodeURIComponent(id)}`, {
+            method: "DELETE",
+        });
+        return response.invite;
+    }
+
+    /** POST /contacts/invites/open — who sent a link; changes nothing and sends nothing. */
+    public openContactInvite(link: string): Promise<InviteOpened> {
+        return this.json<InviteOpened>("/contacts/invites/open", { method: "POST", body: { link } });
+    }
+
+    /** POST /contacts/invites/accept — the user's consent to a link they opened. */
+    public async acceptContactInvite(link: string): Promise<Contact> {
+        const response = await this.json<{ contact: Contact }>("/contacts/invites/accept", {
+            method: "POST",
+            body: { link },
+        });
+        return response.contact;
+    }
+
+    /** POST /contacts/invites/asks/:id/answer — an agent's invite ask; approve returns the link once. */
+    public answerInviteAsk(askId: string, decision: InviteAskDecision): Promise<InviteAskAnswer> {
+        return this.json<InviteAskAnswer>(`/contacts/invites/asks/${encodeURIComponent(askId)}/answer`, {
+            method: "POST",
+            body: { decision },
+        });
+    }
+
     // ── Tracker: missions / milestones / items (all at journal root, Bearer-auth, user-global) ──
 
     /** GET /missions?state= — the mission list rows (counts + last-milestone digest baked in). */
@@ -869,12 +919,15 @@ export class JournalApi {
         id: string | number,
         body: TrackerCommentWrite,
         idemKey?: string,
-    ): Promise<{ item: TrackerItem; comment: TrackerComment }> {
-        return this.json<{ item: TrackerItem; comment: TrackerComment }>(`/items/${encodeTrackerId(id)}/comments`, {
-            method: "POST",
-            body,
-            ...idempotencyHeader(idemKey),
-        });
+    ): Promise<{ item: TrackerItem; comment: TrackerComment; link?: string }> {
+        return this.json<{ item: TrackerItem; comment: TrackerComment; link?: string }>(
+            `/items/${encodeTrackerId(id)}/comments`,
+            {
+                method: "POST",
+                body,
+                ...idempotencyHeader(idemKey),
+            },
+        );
     }
 
     /** POST /items/:id/close — resolve the item (optional closing note). */

@@ -44,3 +44,8 @@ export function dateTimeFormat(locale: string | undefined, options: Intl.DateTim
 export function formatClockTime(timestamp: number): string {
     return dateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(timestamp));
 }
+
+/** A timestamp's day and month in the user's locale, e.g. "7 Nov". */
+export function formatShortDate(timestamp: number): string {
+    return dateTimeFormat(undefined, { day: "numeric", month: "short" }).format(new Date(timestamp));
+}
