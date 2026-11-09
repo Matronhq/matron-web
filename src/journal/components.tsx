@@ -153,6 +153,7 @@ import { isAgentRoomTitle, needsYouByConversation, projectsNeedsYou } from "./ne
 import { notificationsFor, unreadTotal as countUnread } from "./notifications";
 import { ConvoNotifyBell, OverflowRoomsAndNotify, RoomsControl } from "./ChatHeaderRooms";
 import { useDismissablePopover } from "./use-dismissable-popover";
+import { useFocusTrap } from "./use-focus-trap";
 import { displayTitle, TaggedTitle } from "./SessionTag";
 import { groupByDay } from "./sidebar-groups";
 import { observeSeenRows } from "./seen-tracker";
@@ -979,8 +980,16 @@ export function NewSessionSheet({
     const modelPickerVisible = offer !== undefined && offer.modelOptions.length > 0 && agentPick === CLAUDE_AGENT;
     const effortPickerVisible = offer !== undefined && offer.effortOptions.length > 0 && agentPick === CLAUDE_AGENT;
 
+    const trapRef = useRef<HTMLDivElement>(null);
+    useFocusTrap(trapRef);
     return (
-        <div className="mj_UploadConfirm_scrim" role="dialog" aria-modal="true" aria-labelledby="mj-new-session-title">
+        <div
+            ref={trapRef}
+            className="mj_UploadConfirm_scrim"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="mj-new-session-title"
+        >
             <div className="mj_UploadConfirm mj_NewSessionSheet">
                 <div className="mj_NewSessionSheet_head">
                     <h2 className="mj_UploadConfirm_title" id="mj-new-session-title">

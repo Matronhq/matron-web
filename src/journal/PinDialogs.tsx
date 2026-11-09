@@ -21,6 +21,7 @@ import { CloseIcon } from "./icons";
 import { clampPinLabel, PIN_LABEL_MAX, pinChooserView, pinLabelFromTitle } from "./pins";
 import { displayTitle } from "./SessionTag";
 import { type ClientState, type Conversation, conversationTitle } from "./types";
+import { useFocusTrap } from "./use-focus-trap";
 
 export type PinDialogTarget = { kind: "edit"; convoId: string } | { kind: "move"; convoId: string };
 
@@ -190,8 +191,16 @@ function PinEditSheet({
         else onClose();
     };
 
+    const trapRef = useRef<HTMLDivElement>(null);
+    useFocusTrap(trapRef);
     return (
-        <div className="mj_UploadConfirm_scrim" role="dialog" aria-modal="true" aria-labelledby="mj-pin-sheet-title">
+        <div
+            ref={trapRef}
+            className="mj_UploadConfirm_scrim"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="mj-pin-sheet-title"
+        >
             <form
                 className="mj_UploadConfirm mj_NewSessionSheet mj_PinSheet"
                 onSubmit={(event) => {
@@ -278,8 +287,16 @@ function MovePinSheet({
         else onClose();
     };
 
+    const trapRef = useRef<HTMLDivElement>(null);
+    useFocusTrap(trapRef);
     return (
-        <div className="mj_UploadConfirm_scrim" role="dialog" aria-modal="true" aria-labelledby="mj-pin-move-title">
+        <div
+            ref={trapRef}
+            className="mj_UploadConfirm_scrim"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="mj-pin-move-title"
+        >
             <div className="mj_UploadConfirm mj_NewSessionSheet mj_PinSheet">
                 <SheetHead id="mj-pin-move-title" title="Move pin" onClose={onClose} />
                 {pin && <p>Point “{pin.label}” at another conversation.</p>}
