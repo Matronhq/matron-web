@@ -250,6 +250,21 @@ function renderReset(resetTime: number, now: number): string {
     return `${weekday} ${hour}`;
 }
 
+/**
+ * `extras` across status updates: the MCP extras the session's process was spawned with. A frame
+ * that carries a valid list wins. A frame without one is either partial (keep the last known
+ * value) or a complete frame from a bridge that cannot report extras: that one clears it, so a
+ * stale "browser tools on" cannot outlive the process. Complete session frames always carry
+ * `model_options`; partial ones do not. A malformed list reads as missing. When in doubt this errs
+ * toward unknown (indicator hidden), never toward a false "on".
+ */
+function mergeExtras(current: SessionStatus | undefined, update: SessionStatus): string[] | undefined {
+    const extras: unknown = update.extras;
+    if (Array.isArray(extras) && extras.every((extra) => typeof extra === "string")) return extras;
+    if (Array.isArray(update.model_options)) return undefined;
+    return current?.extras;
+}
+
 // The /model and /effort offers are remote input. Absent (or anything that is not a list) says
 // nothing, and an empty list is the agent offering nothing. A non-empty list with no readable
 // entry is a garbled frame, not a statement, so it leaves the held list alone (as the desktop
@@ -268,6 +283,7 @@ function mergeOptions(
 export function mergeSessionStatus(current: SessionStatus | undefined, update: SessionStatus): SessionStatus {
     return {
         model: update.model ?? current?.model,
+        extras: mergeExtras(current, update),
         workdir: update.workdir ?? current?.workdir,
         context: update.context ?? current?.context,
         limits: update.limits ?? current?.limits,

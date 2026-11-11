@@ -141,6 +141,7 @@ import {
     StopIcon,
     UnarchiveIcon,
     CheckCircleIcon,
+    Icon,
     XOctagonIcon,
     PlusCircleIcon,
     RefreshIcon,
@@ -3683,7 +3684,17 @@ function ChatHeader({
     const limits = status?.limits?.filter((limit) => limit.label.trim());
     const meters = buildUsageMeters(status, limits);
     const shortModel = status?.model ? shortModelName(status.model) : undefined;
-    const hasSubtitle = Boolean(status?.model || status?.workdir || status?.email || runState);
+    const browserTools = status?.extras?.includes("browser") ? (
+        <span className="mj_HeaderMetaCompact" aria-label="Browser tools on" title="Browser tools on">
+            <Icon>
+                <circle cx="12" cy="12" r="9" />
+                <ellipse cx="12" cy="12" rx="4" ry="9" />
+                <path d="M3 12h18" />
+            </Icon>
+            Browser tools
+        </span>
+    ) : null;
+    const hasSubtitle = Boolean(status?.model || status?.workdir || status?.email || runState || browserTools);
     // The mission chip's data: fetched whenever another conversation comes on screen (mission
     // markers keep it fresh after that), and only ever shown for the conversation it was fetched for.
     const convoId = conversation?.id;
@@ -3706,16 +3717,18 @@ function ChatHeader({
                     {/* The account the session runs under, after its workdir, as on the Mac. */}
                     {status?.email && <span className="mj_HeaderEmail">{status.email}</span>}
                     {runState && <span className={`mj_HeaderState mj_HeaderState_${runState}`}>{runState}</span>}
+                    {browserTools}
                 </>
             }
             subtitleCompact={
-                (shortModel || runState) && (
+                (shortModel || runState || browserTools) && (
                     <span className="mj_HeaderMetaCompact">
                         {runState && (
                             <span className={`mj_HeaderStatusDot mj_HeaderStatusDot_${runState}`} aria-hidden="true" />
                         )}
                         {runState && <span className="mj_SrOnly">{runState}</span>}
                         {shortModel && <span className="mj_HeaderModelShort">{shortModel}</span>}
+                        {browserTools}
                     </span>
                 )
             }
