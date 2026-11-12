@@ -3684,17 +3684,18 @@ function ChatHeader({
     const limits = status?.limits?.filter((limit) => limit.label.trim());
     const meters = buildUsageMeters(status, limits);
     const shortModel = status?.model ? shortModelName(status.model) : undefined;
-    const browserTools = status?.extras?.includes("browser") ? (
-        <span className="mj_HeaderMetaCompact" aria-label="Browser tools on" title="Browser tools on">
-            <Icon>
-                <circle cx="12" cy="12" r="9" />
-                <ellipse cx="12" cy="12" rx="4" ry="9" />
-                <path d="M3 12h18" />
-            </Icon>
-            Browser tools
-        </span>
-    ) : null;
-    const hasSubtitle = Boolean(status?.model || status?.workdir || status?.email || runState || browserTools);
+    const browserTools = status?.extras?.includes("browser");
+    const browserToolsIndicator = (label?: string): React.ReactNode =>
+        browserTools && (
+            <span className="mj_HeaderMetaCompact" aria-label="Browser tools on" title="Browser tools on">
+                <Icon>
+                    <circle cx="12" cy="12" r="9" />
+                    <ellipse cx="12" cy="12" rx="4" ry="9" />
+                    <path d="M3 12h18" />
+                </Icon>
+                {label}
+            </span>
+        );
     // The mission chip's data: fetched whenever another conversation comes on screen (mission
     // markers keep it fresh after that), and only ever shown for the conversation it was fetched for.
     const convoId = conversation?.id;
@@ -3717,7 +3718,7 @@ function ChatHeader({
                     {/* The account the session runs under, after its workdir, as on the Mac. */}
                     {status?.email && <span className="mj_HeaderEmail">{status.email}</span>}
                     {runState && <span className={`mj_HeaderState mj_HeaderState_${runState}`}>{runState}</span>}
-                    {browserTools}
+                    {browserToolsIndicator("Browser tools")}
                 </>
             }
             subtitleCompact={
@@ -3728,11 +3729,11 @@ function ChatHeader({
                         )}
                         {runState && <span className="mj_SrOnly">{runState}</span>}
                         {shortModel && <span className="mj_HeaderModelShort">{shortModel}</span>}
-                        {browserTools}
+                        {browserToolsIndicator()}
                     </span>
                 )
             }
-            hasSubtitle={hasSubtitle}
+            hasSubtitle={Boolean(status?.model || status?.workdir || status?.email || runState || browserTools)}
             titleAccessory={
                 conversation && missionLinks.length > 0 ? (
                     <MissionChip client={client} conversation={conversation} links={missionLinks} />
