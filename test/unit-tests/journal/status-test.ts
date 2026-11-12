@@ -25,7 +25,7 @@ import {
     usageShortLabel,
     worstLimit,
 } from "../../../src/journal/status";
-import type { SessionStatusOption } from "../../../src/journal/types";
+import type { SessionStatus, SessionStatusOption } from "../../../src/journal/types";
 
 describe("journal session status presentation", () => {
     it("matches the Apple client's compact token and limit labels", () => {
@@ -214,6 +214,29 @@ describe("journal session status presentation", () => {
             limits: [{ label: "Session", percent: 39, resets: "soon" }],
             email: "agent@example.com",
         });
+    });
+
+    it("carries extras through partial updates and lets an empty list turn them off", () => {
+        const on = mergeSessionStatus(undefined, { model: "claude-fable-5", extras: ["browser"] });
+        expect(mergeSessionStatus(on, { model: "another-model" }).extras).toEqual(["browser"]);
+        expect(mergeSessionStatus(on, { extras: [] }).extras).toEqual([]);
+        expect(mergeSessionStatus(undefined, { model: "claude-fable-5" }).extras).toBeUndefined();
+    });
+
+    it("clears extras when a complete frame from an older bridge omits them", () => {
+        const on = mergeSessionStatus(undefined, { extras: ["browser"] });
+        expect(mergeSessionStatus(on, { model_options: [{ value: "opus" }] }).extras).toBeUndefined();
+        expect(mergeSessionStatus(on, { model_options: [] }).extras).toBeUndefined();
+        expect(mergeSessionStatus(on, { model_options: [], extras: [] }).extras).toEqual([]);
+        expect(mergeSessionStatus(undefined, { model_options: [], extras: ["browser"] }).extras).toEqual(["browser"]);
+    });
+
+    it("treats a malformed extras list as missing", () => {
+        const on = mergeSessionStatus(undefined, { extras: ["browser"] });
+        const garbled = { extras: "browser" } as unknown as SessionStatus;
+        expect(mergeSessionStatus(on, garbled).extras).toEqual(["browser"]);
+        const complete = { model_options: [], extras: [1] } as unknown as SessionStatus;
+        expect(mergeSessionStatus(on, complete).extras).toBeUndefined();
     });
 
     it("carries and retains top-level vitals across partial updates", () => {

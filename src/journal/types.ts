@@ -524,6 +524,8 @@ export type ServerFrame =
     | JournalArchiveFrame;
 
 export interface SessionStatus {
+    // MCP extras the process was spawned with. Absent on older bridges means unknown; [] means none.
+    extras?: string[];
     model?: string;
     // v5 header subtitle: `model · workdir · run-state`. The bridge does not yet
     // include the session cwd in the status frame — the segment renders only when
