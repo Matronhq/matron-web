@@ -15,8 +15,8 @@ const ours = { username: "alice", host: "journal.example" };
 describe("roomSenderLabel", () => {
     it("names the other person's side with its journal host", () => {
         expect(
-            roomSenderLabel({ sender: "person:dan@peer.example", type: "text", payload: { via: "agent" } }, ours),
-        ).toEqual({ side: "theirs", name: "dan@peer.example", detail: "their agent" });
+            roomSenderLabel({ sender: "person:bob@peer.example", type: "text", payload: { via: "agent" } }, ours),
+        ).toEqual({ side: "theirs", name: "bob@peer.example", detail: "their agent" });
     });
 
     it("names our agent with our user and host, and the box it runs on", () => {
@@ -66,14 +66,14 @@ describe("room sections", () => {
     const event = (sender: string): JournalEvent => ({ sender, type: "text", payload: {} }) as unknown as JournalEvent;
 
     it("recognises the other person's side by its sender", () => {
-        expect(isPersonSender("person:dan@peer.example")).toBe(true);
+        expect(isPersonSender("person:bob@peer.example")).toBe(true);
         expect(isPersonSender("agent:box-a")).toBe(false);
         expect(isPersonSender("user:alice")).toBe(false);
     });
 
     it("keeps the other person's messages out of our agent's section", () => {
-        expect(sameTimelineSection(event("agent:box-a"), event("person:dan@peer.example"))).toBe(false);
-        expect(sameTimelineSection(event("person:dan@peer.example"), event("person:dan@peer.example"))).toBe(true);
+        expect(sameTimelineSection(event("agent:box-a"), event("person:bob@peer.example"))).toBe(false);
+        expect(sameTimelineSection(event("person:bob@peer.example"), event("person:bob@peer.example"))).toBe(true);
     });
 
     it("labels a bare user message as ours", () => {

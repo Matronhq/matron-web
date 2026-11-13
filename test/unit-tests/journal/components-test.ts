@@ -1329,7 +1329,7 @@ describe("message model DOM contracts", () => {
     it("labels the other person's side in a room, apart from our agent's section", async () => {
         const theirs = {
             ...textEvent(2, "from the other side"),
-            sender: "person:dan@peer.example",
+            sender: "person:bob@peer.example",
             payload: { body: "from the other side", via: "agent" },
         };
         rendered = await renderClient(signedInClient({ events: [textEvent(1, "ours"), theirs] }));
@@ -1338,11 +1338,31 @@ describe("message model DOM contracts", () => {
         const other = rendered.container.querySelector('[data-event-id="2"]');
         expect(other?.classList.contains("mj_EventTile_continuation")).toBe(false);
         expect(other?.querySelector(".mj_SenderName_theirs .mj_SenderName_displayName")?.textContent).toBe(
-            "dan@peer.example",
+            "bob@peer.example",
         );
         expect(other?.querySelector(".mj_SenderName_side")?.textContent).toBe("Their side");
         // An ordinary session keeps its plain header, with no side tag.
         expect(ours?.querySelector(".mj_SenderName_side")).toBeNull();
+    });
+
+    it("keeps the box name as the header in a room between the user's own agents", async () => {
+        const first = { ...textEvent(1, "from a"), sender: "agent:box-a" };
+        const second = { ...textEvent(2, "from b"), sender: "agent:box-b" };
+        const client = signedInClient({ events: [first, second] });
+        internals(client).state = {
+            ...client.getSnapshot(),
+            conversations: [{ ...CONVERSATION, title: "box-a \u2194 box-b" }],
+        };
+        rendered = await renderClient(client);
+
+        for (const [seq, box] of [
+            [1, "box-a"],
+            [2, "box-b"],
+        ] as const) {
+            const row = rendered.container.querySelector(`[data-event-id="${seq}"]`);
+            expect(row?.querySelector(".mj_SenderName_displayName")?.textContent).toBe(box);
+            expect(row?.querySelector(".mj_SenderName_side")).toBeNull();
+        }
     });
 
     it("puts the section timestamp on the first block and none on agent continuations", async () => {

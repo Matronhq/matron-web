@@ -5637,6 +5637,7 @@ function EventRow({
     resolvedAction,
     continuation = false,
     lastInSection = true,
+    inRoom = false,
     rowHandlers,
 }: {
     client: MatronJournalClient;
@@ -5650,6 +5651,8 @@ function EventRow({
     resolvedAction: (itemId: string) => "send" | "cancel" | undefined;
     continuation?: boolean;
     lastInSection?: boolean;
+    /** The conversation has another person in it: headers say which side wrote each message. */
+    inRoom?: boolean;
     rowHandlers: RowContextMenu<JournalEvent>["rowHandlers"];
 }): React.ReactElement {
     // A bridge notice row is its own one-line row: no sender header, no grouping, never an own bubble.
@@ -5678,6 +5681,7 @@ function EventRow({
                 <SenderHeader
                     client={client}
                     event={event}
+                    inRoom={inRoom}
                     showTime={
                         event.type !== "tool_output" && event.type !== "prompt" && event.type !== "permission_request"
                     }
@@ -5725,28 +5729,25 @@ function EventRow({
 const MemoEventRow = React.memo(EventRow);
 
 /**
- * The header above a message section: who wrote it and when. In an agent-chat room it says which
- * side wrote it (ours, the other person's, or the bridge itself) with names that carry the journal
+ * The header above a message section: who wrote it and when. In a room with another person in it
+ * it says which side wrote it (ours, the other person's, or the bridge itself) with names that carry the journal
  * host, and the time carries the date on any day but today.
  */
 function SenderHeader({
     client,
     event,
+    inRoom,
     showTime = true,
 }: {
     client: MatronJournalClient;
     event: JournalEvent;
+    /** Decided once for the whole timeline, so a header does no lookup of its own. */
+    inRoom: boolean;
     showTime?: boolean;
 }): React.ReactElement {
     // Subscribed, so a memoised row picks up a room title or session that arrives after it drew.
     const session = useSyncExternalStore(client.subscribe, () => client.getSnapshot().session);
-    const roomTitle = useSyncExternalStore(client.subscribe, () =>
-        isAgentRoomTitle(
-            client.getSnapshot().conversations.find((candidate) => candidate.id === event.convo_id)?.title ?? "",
-        ),
-    );
-    const inRoom = isPersonSender(event.sender) || roomTitle;
-    const label = inRoom
+    const label = inRoom || isPersonSender(event.sender)
         ? roomSenderLabel(event, { username: session?.username, host: journalHost(session?.serverUrl) })
         : null;
     const sideText = label?.side === "ours" ? "Our side" : label?.side === "theirs" ? "Their side" : undefined;
@@ -6164,6 +6165,9 @@ function Timeline({
             ),
         [state.events, queuedReleasePromptSeqs, legacyQueuePromptSeqs, permissionRequestSeqs, itemCards],
     );
+    // Side labels (ours / theirs) only make sense once another person has written into the room;
+    // two of the user's own agents keep their box names. Computed once per event list, not per row.
+    const roomWithPerson = useMemo(() => state.events.some((event) => isPersonSender(event.sender)), [state.events]);
     const timeline = useMemo(
         () =>
             [
@@ -6613,6 +6617,7 @@ function Timeline({
                                     resolvedAction={resolvedAction}
                                     continuation={row.continuation}
                                     lastInSection={row.lastInSection}
+                                    inRoom={roomWithPerson}
                                     rowHandlers={menu.rowHandlers}
                                 />
                             );

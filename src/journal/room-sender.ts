@@ -20,7 +20,7 @@ export type RoomSide = "ours" | "theirs" | "system";
 
 export interface RoomSenderLabel {
     side: RoomSide;
-    /** Primary label, e.g. `dan@peer.example` or `alice@journal.example`. */
+    /** Primary label, e.g. `bob@peer.example` or `alice@journal.example`. */
     name: string;
     /** Secondary detail, e.g. the box our agent runs on, or "agent" for the other side. */
     detail?: string;
