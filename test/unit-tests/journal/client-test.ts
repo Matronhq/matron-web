@@ -5066,6 +5066,18 @@ describe("MatronJournalClient session guards", () => {
             type: "text",
             payload: { body: "stale" },
         });
+        // A coalesced run queued on session A (two frames, so it takes the batch path). Session B's
+        // database has no applyJournalBatch, so an unguarded call would reject.
+        const staleRun = [99, 100].map((seq) => ({
+            kind: "journal",
+            seq,
+            convo_id: "c1",
+            ts: 1,
+            sender: "user:2",
+            type: "text",
+            payload: { body: "stale" },
+        }));
+        await oldCallbacks.onJournalBatch(staleRun);
         oldCallbacks.onState("offline", "stale error");
         oldCallbacks.onRevoked();
         await Promise.resolve();

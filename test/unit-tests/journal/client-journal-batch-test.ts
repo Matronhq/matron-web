@@ -50,6 +50,7 @@ interface Internals {
     database?: Record<string, jest.Mock>;
     connection?: { send: jest.Mock };
     history: Map<string, { initialized: boolean; hasMore: boolean }>;
+    textStreams: Map<string, Record<string, string>>;
     handleJournalBatch(events: JournalEvent[]): Promise<void>;
 }
 
@@ -152,6 +153,38 @@ describe("MatronJournalClient.handleJournalBatch", () => {
         const acks = internal.connection!.send.mock.calls.filter(([operation]) => operation.op === "ack");
         expect(acks).toEqual([[{ op: "ack", cursor: 11 }]]);
         expect(database.events).not.toHaveBeenCalled(); // nothing landed in the open conversation
+    });
+
+    it("reconciles from the shared store when a run is all duplicates a peer tab already applied", async () => {
+        const { internal, database } = setup();
+        database.applyJournalBatch.mockResolvedValue([false, false, false]);
+        const status: JournalEvent = { ...text("c2", 11), type: "session_status", payload: { state: "done" } };
+        const meta: JournalEvent = { ...text("c2", 12), type: "convo_meta", payload: { title: "Renamed" } };
+        internal.textStreams = new Map([["c1", { ref1: "partial" }]]);
+        const dupMessage: JournalEvent = { ...text("c1", 13), payload: { body: "dup", message_ref: "ref1" } };
+
+        await internal.handleJournalBatch([status, meta, dupMessage]);
+        await jest.runAllTimersAsync();
+
+        // The sidebar is re-read once for the run (duplicate session_status / convo_meta), the open
+        // timeline once (duplicate message in the selected conversation), the stream is finished,
+        // and nothing is acked because no row was applied here.
+        expect(database.conversations).toHaveBeenCalledTimes(1);
+        expect(database.events).toHaveBeenCalledTimes(1);
+        expect(database.events).toHaveBeenCalledWith("c1");
+        expect(internal.textStreams.get("c1")?.ref1).toBeUndefined();
+        expect(internal.connection!.send.mock.calls.filter(([operation]) => operation.op === "ack")).toEqual([]);
+    });
+
+    it("does not rescan the sidebar for a run of duplicate plain messages in another conversation", async () => {
+        const { internal, database } = setup();
+        database.applyJournalBatch.mockResolvedValue([false, false]);
+
+        await internal.handleJournalBatch([text("c2", 11), text("c2", 12)]);
+        await jest.runAllTimersAsync();
+
+        expect(database.conversations).not.toHaveBeenCalled();
+        expect(database.events).not.toHaveBeenCalled();
     });
 
     it("sends a single frame through the per-frame path", async () => {

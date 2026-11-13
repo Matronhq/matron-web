@@ -51,11 +51,9 @@ export class JournalConnection {
     // The journal run still accepting frames (queued, not yet started). Closed by any non-journal
     // frame, by the run starting, or by reaching MAX_JOURNAL_BATCH, so order is always preserved.
     private openJournalBatch?: { socket: WebSocket; frames: JournalEvent[] };
-    // The cursor each socket said hello with, for the hello_ok gap check.
-    // Sockets dropped for a re-snapshot. Frames they already delivered are stale (the snapshot
-    // supersedes them, and a failed snapshot reconnects from the last clean cursor), so they are
-    // dropped instead of applied: replay frames queued behind a hello_ok that tripped the valve,
-    // and the server's own snapshot_required queued behind the same hello_ok.
+    // Sockets whose frames must no longer be applied: dropped for a re-snapshot (the snapshot
+    // supersedes what they already delivered) or after a processing error (so a run queued behind
+    // the failed one cannot move the cursor past the rows that failed).
     private abandonedSockets = new WeakSet<WebSocket>();
     private pendingRpc = new Map<
         string,

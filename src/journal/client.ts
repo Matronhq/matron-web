@@ -6159,11 +6159,18 @@ export class MatronJournalClient {
                 this.transientAttachmentErrors.delete(removed);
             }
             if (!applied[index]) {
-                if (removed && event.convo_id === selectedId) refreshSelected = true;
-                if (event.type === "convo_meta" && this.uploadConvos.size > 0) {
-                    refreshConversations = true;
-                    abortUploads = true;
+                // Same as handleJournal's !applied branch: a peer tab that won the cursor race has
+                // already stored this row, so finish its stream here and reconcile from the shared
+                // store. The refreshes are deferred to once per run.
+                this.retireStreamRef(event);
+                if (
+                    event.convo_id === selectedId &&
+                    (removed || MESSAGE_EVENT_TYPES.has(event.type) || event.type === "session_status")
+                ) {
+                    refreshSelected = true;
                 }
+                if (event.type === "session_status" || event.type === "convo_meta") refreshConversations = true;
+                if (event.type === "convo_meta" && this.uploadConvos.size > 0) abortUploads = true;
                 continue;
             }
             appliedEvents.push(event);
@@ -6173,14 +6180,7 @@ export class MatronJournalClient {
                 : previousRows.get(event.convo_id);
             liveSeen.add(event.convo_id);
             this.emitLive((listener) => listener.journalEvent?.(event, previousRow));
-            const messageRef = typeof event.payload.message_ref === "string" ? event.payload.message_ref : undefined;
-            if (messageRef) {
-                this.retiredStreamRefs.add(`${event.convo_id}:${messageRef}`);
-                const text = this.textStreams.get(event.convo_id);
-                const tools = this.toolStreams.get(event.convo_id);
-                if (text) delete text[messageRef];
-                if (tools) delete tools[messageRef];
-            }
+            this.retireStreamRef(event);
             abortUploads = true;
             if (event.convo_id === selectedId) {
                 refreshSelected = true;
