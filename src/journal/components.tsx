@@ -2399,6 +2399,13 @@ function ConversationListView({
                     autoArchiveDays={state.userSettingsUnsupported ? undefined : state.userSettings?.auto_archive_days}
                     autoArchiveError={state.autoArchiveError}
                     onAutoArchiveChange={(days) => void client.setAutoArchiveDays(days)}
+                    autoApproveCoordinatorSpawns={
+                        state.userSettingsUnsupported ? undefined : state.userSettings?.auto_approve_coordinator_spawns
+                    }
+                    autoApproveSpawnsError={state.autoApproveSpawnsError}
+                    onAutoApproveCoordinatorSpawnsChange={(enabled) =>
+                        void client.setAutoApproveCoordinatorSpawnsSetting(enabled)
+                    }
                     onLoadSettings={() => void client.loadSettings()}
                     onNoticesChange={(value) => void client.setNoticesSetting(value)}
                     onChooseCoordinator={() => {

@@ -1217,13 +1217,20 @@ export class JournalApi {
     // ── User settings (journal /settings; 404 on a journal without them) ──
 
     /** GET /settings — the user's journal settings. */
-    public settings(): Promise<{ notices?: unknown }> {
-        return this.json<{ notices?: unknown }>("/settings");
+    public settings(): Promise<{ notices?: unknown; auto_approve_coordinator_spawns?: unknown }> {
+        return this.json<{ notices?: unknown; auto_approve_coordinator_spawns?: unknown }>("/settings");
     }
 
     /** PATCH /settings — change any subset; the whole settings object comes back. */
-    public patchSettings(body: { notices?: boolean; auto_archive_days?: number }): Promise<{ notices?: unknown }> {
-        return this.json<{ notices?: unknown }>("/settings", { method: "PATCH", body });
+    public patchSettings(body: {
+        notices?: boolean;
+        auto_archive_days?: number;
+        auto_approve_coordinator_spawns?: boolean;
+    }): Promise<{ notices?: unknown; auto_approve_coordinator_spawns?: unknown }> {
+        return this.json<{ notices?: unknown; auto_approve_coordinator_spawns?: unknown }>("/settings", {
+            method: "PATCH",
+            body,
+        });
     }
 
     /** POST /archive — archive or unarchive up to 500 of the user's conversations. */

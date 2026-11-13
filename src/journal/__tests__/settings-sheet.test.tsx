@@ -390,6 +390,51 @@ describe("Settings sheet (Mac grouped form)", () => {
             expect(select().value).toBe("0");
         });
 
+        describe("Coordinator spawn auto-approval", () => {
+            const spawnToggle = (): HTMLButtonElement | null =>
+                sheet()?.querySelector('button[data-setting="auto_approve_coordinator_spawns"]') ?? null;
+
+            it("shows the switch off, and saves both directions with the exact setting key", async () => {
+                const patchSettings = jest.fn().mockImplementation(async (patch) => ({ notices: true, ...patch }));
+                await openSettings(
+                    withApi({
+                        settings: jest
+                            .fn()
+                            .mockResolvedValue({ notices: true, auto_approve_coordinator_spawns: false }),
+                        patchSettings,
+                    }),
+                );
+                expect(spawnToggle()?.getAttribute("aria-checked")).toBe("false");
+                expect(sheet()!.textContent).toContain("Auto-approve spawns the Coordinator requests");
+                await act(async () => spawnToggle()!.click());
+                expect(patchSettings).toHaveBeenLastCalledWith({ auto_approve_coordinator_spawns: true });
+                expect(spawnToggle()?.getAttribute("aria-checked")).toBe("true");
+                await act(async () => spawnToggle()!.click());
+                expect(patchSettings).toHaveBeenLastCalledWith({ auto_approve_coordinator_spawns: false });
+                expect(spawnToggle()?.getAttribute("aria-checked")).toBe("false");
+            });
+
+            it("rolls back a failed save and says so", async () => {
+                await openSettings(
+                    withApi({
+                        settings: jest
+                            .fn()
+                            .mockResolvedValue({ notices: true, auto_approve_coordinator_spawns: false }),
+                        patchSettings: jest.fn().mockRejectedValue(new Error("offline")),
+                    }),
+                );
+                await act(async () => spawnToggle()!.click());
+                expect(spawnToggle()?.getAttribute("aria-checked")).toBe("false");
+                expect(sheet()!.textContent).toContain("Couldn't save: offline");
+            });
+
+            it("is hidden when the journal does not report the setting", async () => {
+                await openSettings(withApi({ settings: jest.fn().mockResolvedValue({ notices: true }) }));
+                expect(spawnToggle()).toBeNull();
+                expect(sheet()!.textContent).not.toContain("Auto-approve spawns");
+            });
+        });
+
         it("hides the auto-archive choice on a journal without it", async () => {
             await openSettings(withApi({ settings: jest.fn().mockResolvedValue({ notices: true }) }));
             expect(sheet()?.querySelector('select[data-setting="auto_archive_days"]')).toBeNull();
