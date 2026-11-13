@@ -14,7 +14,13 @@ import {
     type Session,
 } from "../../../src/journal/types";
 
-const SESSION: Session = { serverUrl: "https://journal.example", token: "t", deviceId: 1, userId: 2, username: "alice" };
+const SESSION: Session = {
+    serverUrl: "https://journal.example",
+    token: "t",
+    deviceId: 1,
+    userId: 2,
+    username: "alice",
+};
 
 const CONVERSATIONS: Conversation[] = ["c1", "c2"].map((id, index) => ({
     id,
