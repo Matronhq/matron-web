@@ -698,6 +698,9 @@ export function SettingsSheet({
     autoArchiveDays,
     autoArchiveError,
     onAutoArchiveChange,
+    autoApproveCoordinatorSpawns,
+    autoApproveSpawnsError,
+    onAutoApproveCoordinatorSpawnsChange,
     onLoadSettings,
     onNoticesChange,
     onChooseCoordinator,
@@ -717,6 +720,12 @@ export function SettingsSheet({
     /** The last failed save of the auto-archive setting. */
     autoArchiveError?: string;
     onAutoArchiveChange?: (days: number) => void;
+    /** Whether Coordinator-requested spawns on the user's own boxes start without a consent card;
+     *  undefined hides the switch (not known yet, or a journal without the setting). */
+    autoApproveCoordinatorSpawns?: boolean;
+    /** The last failed save of the spawn auto-approval setting. */
+    autoApproveSpawnsError?: string;
+    onAutoApproveCoordinatorSpawnsChange?: (enabled: boolean) => void;
     /** Fetch the settings (on open). */
     onLoadSettings?: () => void;
     onNoticesChange?: (notices: boolean) => void;
@@ -927,6 +936,41 @@ export function SettingsSheet({
                         {autoArchiveError ? (
                             <p className="mj_SettingsSheet_error" role="alert">
                                 Couldn't save: {autoArchiveError}
+                            </p>
+                        ) : null}
+                    </section>
+                ) : null}
+                {autoApproveCoordinatorSpawns !== undefined && onAutoApproveCoordinatorSpawnsChange ? (
+                    <section className="mj_SettingsSheet_group" aria-labelledby="mj-settings-spawns">
+                        <h3 id="mj-settings-spawns" className="mj_SettingsSheet_groupTitle">
+                            Sessions
+                        </h3>
+                        <div className="mj_SettingsSheet_rows">
+                            <div className="mj_SettingsSheet_row mj_SettingsSheet_switchRow">
+                                <span className="mj_SettingsSheet_switchText">
+                                    <span id="mj-settings-auto-approve-spawns">
+                                        Auto-approve spawns the Coordinator requests
+                                    </span>
+                                    <span id="mj-settings-auto-approve-spawns-help" className="mj_SettingsSheet_help">
+                                        When on, a session the Coordinator starts on one of your own online boxes starts
+                                        at once, without a consent card. Other requests still ask you.
+                                    </span>
+                                </span>
+                                <button
+                                    type="button"
+                                    role="switch"
+                                    className="mj_SettingsSheet_switch"
+                                    data-setting="auto_approve_coordinator_spawns"
+                                    aria-checked={autoApproveCoordinatorSpawns}
+                                    aria-labelledby="mj-settings-auto-approve-spawns"
+                                    aria-describedby="mj-settings-auto-approve-spawns-help"
+                                    onClick={() => onAutoApproveCoordinatorSpawnsChange(!autoApproveCoordinatorSpawns)}
+                                />
+                            </div>
+                        </div>
+                        {autoApproveSpawnsError ? (
+                            <p className="mj_SettingsSheet_error" role="alert">
+                                Couldn't save: {autoApproveSpawnsError}
                             </p>
                         ) : null}
                     </section>
