@@ -5179,4 +5179,28 @@ describe("MatronJournalClient session guards", () => {
 
         expect(database.conversations).not.toHaveBeenCalled();
     });
+
+    it("refreshes the open timeline and retires the stream for a duplicate message in the selected conversation", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const database = fakeDatabase({ applyJournal: jest.fn().mockResolvedValue(false) });
+        state.database = database;
+        state.state = { ...signedInState(client), selectedConversationId: "c1" };
+        state.textStreams.set("c1", { ref1: "par" });
+        const refresh = jest.spyOn(state, "refreshSelectedConversation").mockResolvedValue(undefined as never);
+
+        await state.handleJournal({
+            kind: "journal",
+            seq: 36,
+            convo_id: "c1",
+            ts: Date.now(),
+            sender: "agent:dev",
+            type: "text",
+            payload: { body: "dup", message_ref: "ref1" },
+        });
+
+        expect(refresh).toHaveBeenCalledWith("c1");
+        expect(state.textStreams.get("c1")?.ref1).toBeUndefined();
+        expect(database.conversations).not.toHaveBeenCalled();
+    });
 });

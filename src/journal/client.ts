@@ -6025,6 +6025,16 @@ export class MatronJournalClient {
         }
     }
 
+    private retireStreamRef(event: JournalEvent): void {
+        const messageRef = typeof event.payload.message_ref === "string" ? event.payload.message_ref : undefined;
+        if (!messageRef) return;
+        this.retiredStreamRefs.add(`${event.convo_id}:${messageRef}`);
+        const text = this.textStreams.get(event.convo_id);
+        const tools = this.toolStreams.get(event.convo_id);
+        if (text) delete text[messageRef];
+        if (tools) delete tools[messageRef];
+    }
+
     private async handleJournal(event: JournalEvent): Promise<void> {
         if (!this.database) return;
         // Tracker markers (item/mission/milestone) drive a live refetch of the open tracker pane's
@@ -6040,8 +6050,18 @@ export class MatronJournalClient {
             this.transientAttachmentErrors.delete(removed);
         }
         if (!applied) {
-            if (removed && event.convo_id === this.state.selectedConversationId) {
+            // A peer tab that won the cursor race has already stored this row, so its message_ref
+            // stream is finished here too; retire it so a streaming bubble cannot linger.
+            this.retireStreamRef(event);
+            let selectedRefreshed = false;
+            if (
+                event.convo_id === this.state.selectedConversationId &&
+                (removed || MESSAGE_EVENT_TYPES.has(event.type))
+            ) {
+                // The open timeline may be missing this row in this tab; reading it back from the
+                // shared store touches one conversation only.
                 await this.refreshSelectedConversation(event.convo_id);
+                selectedRefreshed = true;
             }
             // Tabs sharing a server and user share one IndexedDB, so applied=false can mean a peer
             // tab already wrote this row and advanced the shared cursor. The durable store then
@@ -6051,7 +6071,7 @@ export class MatronJournalClient {
             // frames stay off this path, since the refresh scans every conversation.
             if (event.type === "session_status") {
                 await this.refreshConversations();
-                if (event.convo_id === this.state.selectedConversationId) {
+                if (!selectedRefreshed && event.convo_id === this.state.selectedConversationId) {
                     await this.refreshSelectedConversation(event.convo_id);
                 }
             }
@@ -6066,14 +6086,7 @@ export class MatronJournalClient {
         const previous = this.state.conversations.find((conversation) => conversation.id === event.convo_id);
         this.emitLive((listener) => listener.journalEvent?.(event, previous));
 
-        const messageRef = typeof event.payload.message_ref === "string" ? event.payload.message_ref : undefined;
-        if (messageRef) {
-            this.retiredStreamRefs.add(`${event.convo_id}:${messageRef}`);
-            const text = this.textStreams.get(event.convo_id);
-            const tools = this.toolStreams.get(event.convo_id);
-            if (text) delete text[messageRef];
-            if (tools) delete tools[messageRef];
-        }
+        this.retireStreamRef(event);
 
         await this.refreshConversations();
         this.abortUploadsForChildConvos();
