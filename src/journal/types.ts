@@ -860,6 +860,8 @@ export interface ClientState {
     userSettingsError?: string;
     /** The last failed save of the auto-archive setting (shown in Settings → Archive). */
     autoArchiveError?: string;
+    /** The last failed save of the Coordinator spawn auto-approval setting. */
+    autoApproveSpawnsError?: string;
     /** Settings → Coordinator: whether the Coordinator may answer chat and spawn asks (`consent`
      *  on GET /coordinator). `enabled` undefined = not known yet, or a journal without the switch. */
     coordinatorConsent?: { enabled?: boolean; error?: string };
@@ -939,6 +941,9 @@ export interface UserSettings {
     notices: boolean;
     /** Auto-archive idle conversations after this many days (0 = off); absent on an older journal. */
     auto_archive_days?: number;
+    /** Start sessions the Coordinator requests on the user's own online boxes without a consent card
+     *  (off by default); absent on a journal without the setting. */
+    auto_approve_coordinator_spawns?: boolean;
 }
 
 /**

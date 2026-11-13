@@ -711,10 +711,18 @@ export class MatronJournalClient {
     private settingsConfirmed: UserSettings | undefined;
     // Per setting: bumped by every pick and every journal value for that key, so a failed save only
     // puts back a key nothing newer has touched (a frame without the key leaves it alone).
-    private settingsKeyGen: Record<keyof UserSettings, number> = { notices: 0, auto_archive_days: 0 };
+    private settingsKeyGen: Record<keyof UserSettings, number> = {
+        notices: 0,
+        auto_archive_days: 0,
+        auto_approve_coordinator_spawns: 0,
+    };
     // Per setting: bumped by every journal value from a frame, hello or GET, so a PATCH answer that
     // was sent before one does not overwrite it as the confirmed value.
-    private settingsHeardGen: Record<keyof UserSettings, number> = { notices: 0, auto_archive_days: 0 };
+    private settingsHeardGen: Record<keyof UserSettings, number> = {
+        notices: 0,
+        auto_archive_days: 0,
+        auto_approve_coordinator_spawns: 0,
+    };
     // Journal archive writes per conversation: the state the user last chose, and whether a POST
     // is in flight. One POST at a time per conversation, always for the latest choice.
     private archiveWanted = new Map<string, boolean>();
@@ -3164,14 +3172,24 @@ export class MatronJournalClient {
         return this.patchUserSettings({ auto_archive_days: days });
     }
 
-    private async patchUserSettings(change: { notices?: boolean; auto_archive_days?: number }): Promise<boolean> {
+    /** PATCH /settings {auto_approve_coordinator_spawns}. Same optimistic shape as the notices switch. */
+    public async setAutoApproveCoordinatorSpawnsSetting(enabled: boolean): Promise<boolean> {
+        return this.patchUserSettings({ auto_approve_coordinator_spawns: enabled });
+    }
+
+    private async patchUserSettings(change: Partial<UserSettings>): Promise<boolean> {
         const api = this.api;
         const previous = this.state.userSettings;
         if (!api || !previous) return false;
         ++this.settingsGen;
         const keys = Object.keys(change) as (keyof UserSettings)[];
         const picked = keys.map((key) => ++this.settingsKeyGen[key]);
-        const errorKey = "auto_archive_days" in change ? "autoArchiveError" : "userSettingsError";
+        const errorKey =
+            "auto_archive_days" in change
+                ? "autoArchiveError"
+                : "auto_approve_coordinator_spawns" in change
+                  ? "autoApproveSpawnsError"
+                  : "userSettingsError";
         this.patch({ userSettings: { ...previous, ...change }, [errorKey]: undefined });
         let heard = { ...this.settingsHeardGen };
         const write = this.settingsWrites.then(() => {
@@ -6637,14 +6655,21 @@ function inDoneOrder(rows: TrackerItem[]): TrackerItem[] {
 /** The label of a notice's one-tap answer; the journal closes the notice when it is tapped. */
 const SEEN_ACTION = "Seen";
 
-/** `{notices, auto_archive_days?}` from GET/PATCH /settings or a settings frame, or null when it
- *  does not carry a boolean `notices` (a malformed or future shape must not flip the switch). */
+/** `{notices, auto_archive_days?, auto_approve_coordinator_spawns?}` from GET/PATCH /settings or a
+ *  settings frame, or null when it does not carry a boolean `notices` (a malformed or future shape
+ *  must not flip the switch). The spawn setting is read only when it is a boolean, so a journal
+ *  without it leaves the switch hidden. */
 function parseUserSettings(raw: unknown): UserSettings | null {
     if (typeof raw !== "object" || raw === null) return null;
-    const { notices, auto_archive_days: days } = raw as { notices?: unknown; auto_archive_days?: unknown };
+    const {
+        notices,
+        auto_archive_days: days,
+        auto_approve_coordinator_spawns: spawns,
+    } = raw as { notices?: unknown; auto_archive_days?: unknown; auto_approve_coordinator_spawns?: unknown };
     if (typeof notices !== "boolean") return null;
     return {
         notices,
+        ...(typeof spawns === "boolean" ? { auto_approve_coordinator_spawns: spawns } : {}),
         ...(typeof days === "number" && Number.isInteger(days) && days >= 0 ? { auto_archive_days: days } : {}),
     };
 }

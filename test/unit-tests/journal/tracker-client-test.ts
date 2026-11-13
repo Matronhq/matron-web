@@ -1847,6 +1847,55 @@ describe("MatronJournalClient notices and user settings", () => {
         expect(client.getSnapshot().userSettingsError).toBe("offline");
     });
 
+    it("setAutoApproveCoordinatorSpawnsSetting saves only its key and keeps the other settings", async () => {
+        const { client, state } = makeClient({ userSettings: { notices: true, auto_archive_days: 30 } });
+        const patchSettings = jest
+            .fn()
+            .mockResolvedValue({ notices: true, auto_archive_days: 30, auto_approve_coordinator_spawns: true });
+        (state as SettingsInternals).api = { patchSettings };
+
+        await expect(client.setAutoApproveCoordinatorSpawnsSetting(true)).resolves.toBe(true);
+
+        expect(patchSettings).toHaveBeenCalledWith({ auto_approve_coordinator_spawns: true });
+        expect(client.getSnapshot().userSettings).toEqual({
+            notices: true,
+            auto_archive_days: 30,
+            auto_approve_coordinator_spawns: true,
+        });
+    });
+
+    it("a failed spawn auto-approval save puts the switch back and reports the error on its own key", async () => {
+        const { client, state } = makeClient({
+            userSettings: { notices: true, auto_approve_coordinator_spawns: false },
+        });
+        (state as SettingsInternals).api = { patchSettings: jest.fn().mockRejectedValue(new Error("offline")) };
+
+        await expect(client.setAutoApproveCoordinatorSpawnsSetting(true)).resolves.toBe(false);
+
+        expect(client.getSnapshot().userSettings).toEqual({ notices: true, auto_approve_coordinator_spawns: false });
+        expect(client.getSnapshot().autoApproveSpawnsError).toBe("offline");
+        expect(client.getSnapshot().userSettingsError).toBeUndefined();
+    });
+
+    it("reads the spawn setting only when it is a boolean, so an older journal leaves it absent", async () => {
+        const { client, state } = makeClient({ userSettings: { notices: true } });
+        const internal = state as SettingsInternals;
+
+        await internal.handleFrame({
+            kind: "control",
+            op: "settings",
+            settings: { notices: true, auto_approve_coordinator_spawns: "true" },
+        });
+        expect(client.getSnapshot().userSettings).toEqual({ notices: true });
+
+        await internal.handleFrame({
+            kind: "control",
+            op: "settings",
+            settings: { notices: true, auto_approve_coordinator_spawns: true },
+        });
+        expect(client.getSnapshot().userSettings).toEqual({ notices: true, auto_approve_coordinator_spawns: true });
+    });
+
     it("applies the settings control frame live and ignores a malformed one", async () => {
         const { client, state } = makeClient({ userSettings: { notices: true } });
         const internal = state as SettingsInternals;
