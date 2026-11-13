@@ -511,7 +511,7 @@ describe("MatronJournalClient tracker loaders", () => {
     // partial list as authoritative — publish what we have but surface the truncation as an error,
     // or a silent cap re-creates the false "nothing needs you" the pagination walk exists to prevent.
     it("loadInbox flags a partial inbox when the page cap is reached with more pages remaining", async () => {
-        const { client, state } = makeClient();
+        const { client, state } = makeClient({ trackerView: { open: true, view: "inbox" } });
         // Every page keeps returning a next_cursor → the walk can only stop at the MAX_PAGES guard.
         const items = jest
             .fn()
@@ -551,6 +551,46 @@ describe("MatronJournalClient tracker loaders", () => {
         resolveStale({ items: [item({ id: "stale" })], next_cursor: null }); // older load resolves — ignored
         await first;
         expect((client.getSnapshot().inboxItems ?? []).map((row) => row.id)).toEqual(["fresh"]);
+    });
+
+    it("keeps the missions error while a retry is still in flight", async () => {
+        const { client, state } = makeClient();
+        let resolveRetry!: (value: { missions: Mission[] }) => void;
+        state.api = {
+            missions: jest
+                .fn()
+                .mockRejectedValueOnce(new Error("offline"))
+                .mockReturnValueOnce(new Promise((resolve) => (resolveRetry = resolve))),
+        };
+
+        await client.loadMissions();
+        const retry = client.loadMissions();
+        await flush();
+        expect(client.getSnapshot().missionsError).toBe("offline");
+
+        resolveRetry({ missions: [] });
+        await retry;
+        expect(client.getSnapshot().missionsError).toBeUndefined();
+    });
+
+    it("keeps the memories error while a retry is still in flight", async () => {
+        const { client, state } = makeClient();
+        let resolveRetry!: (value: { memories: [] }) => void;
+        state.api = {
+            memories: jest
+                .fn()
+                .mockRejectedValueOnce(new Error("offline"))
+                .mockReturnValueOnce(new Promise((resolve) => (resolveRetry = resolve))),
+        };
+
+        await client.loadMemories();
+        const retry = client.loadMemories();
+        await flush();
+        expect(client.getSnapshot().memoriesError).toBe("offline");
+
+        resolveRetry({ memories: [] });
+        await retry;
+        expect(client.getSnapshot().memoriesError).toBeUndefined();
     });
 
     it("loadInbox records its own error, which only the next inbox load clears", async () => {
@@ -742,13 +782,33 @@ describe("MatronJournalClient tracker loaders", () => {
     });
 
     it("surfaces a tracker error and stops loading when a fetch rejects", async () => {
-        const { client, state } = makeClient();
+        const { client, state } = makeClient({ trackerView: { open: true, view: "missions" } });
         state.api = { missions: jest.fn().mockRejectedValue(new Error("offline")) };
 
         await client.loadMissions();
 
         expect(client.getSnapshot().trackerError).toBe("offline");
         expect(client.getSnapshot().trackerLoading).toBe(false);
+    });
+
+    // A list load that settles after the user moved to Memories keeps its own error for its tab,
+    // but never raises the shared banner over the tab now showing.
+    it("a list load failing after a switch to Memories records its own error but not the banner", async () => {
+        const { client, state } = makeClient({ trackerView: { open: true, view: "inbox" } });
+        let rejectWalk!: (error: Error) => void;
+        state.api = {
+            items: jest.fn(() => new Promise((_resolve, reject) => (rejectWalk = reject))),
+            memories: jest.fn().mockResolvedValue({ memories: [] }),
+        };
+
+        const walk = client.loadInbox();
+        client.openTrackerView({ view: "memories", itemId: null, missionId: null, memoryName: null });
+        await client.loadMemories();
+        rejectWalk(new Error("offline"));
+        await walk;
+
+        expect(client.getSnapshot().inboxError).toBe("offline");
+        expect(client.getSnapshot().trackerError).toBeUndefined();
     });
 });
 

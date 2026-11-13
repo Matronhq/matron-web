@@ -32,6 +32,7 @@ interface FakeClient {
     openTrackerView: jest.Mock;
     openTrackerItem: jest.Mock;
     openTrackerMission: jest.Mock;
+    loadMemories: jest.Mock;
     loadProjects: jest.Mock;
     loadProject: jest.Mock;
     openTrackerProject: jest.Mock;
@@ -50,6 +51,7 @@ function fakeClient(): FakeClient {
         openTrackerView: jest.fn(),
         openTrackerItem: jest.fn(),
         openTrackerMission: jest.fn(),
+        loadMemories: jest.fn().mockResolvedValue(undefined),
         loadProjects: jest.fn().mockResolvedValue(undefined),
         loadProject: jest.fn().mockResolvedValue(undefined),
         openTrackerProject: jest.fn(),
@@ -129,6 +131,39 @@ describe("TrackerPane selection/detail matching (F1)", () => {
     });
 });
 
+describe("TrackerPane Memories tab isolation", () => {
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    it("does not prime missions or the paginated inbox while Memories is the active tab", async () => {
+        // Memories reads neither list; priming would walk /items (up to 20 pages) for nothing.
+        const client = fakeClient();
+        await mount(
+            <TrackerPane
+                client={client as unknown as MatronJournalClient}
+                state={paneState({ trackerView: { open: true, view: "memories" } })}
+            />,
+        );
+
+        expect(client.loadMissions).not.toHaveBeenCalled();
+        expect(client.loadInbox).not.toHaveBeenCalled();
+    });
+
+    it("still primes both list views on the tabs that use them", async () => {
+        const client = fakeClient();
+        await mount(
+            <TrackerPane
+                client={client as unknown as MatronJournalClient}
+                state={paneState({ trackerView: { open: true, view: "inbox" } })}
+            />,
+        );
+
+        expect(client.loadMissions).toHaveBeenCalled();
+        expect(client.loadInbox).toHaveBeenCalled();
+    });
+});
+
 describe("TrackerPane inbox", () => {
     beforeAll(() => {
         (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -166,6 +201,42 @@ describe("TrackerPane inbox", () => {
             status!.querySelector<HTMLButtonElement>("button")!.click();
         });
         expect(client.loadInbox).toHaveBeenCalledTimes(1);
+    });
+
+    // A failed REFRESH keeps the loaded list; its own error outlives the shared banner (which any
+    // other tracker load clears), so the pane must not present the retained list as current.
+    it("marks a loaded inbox whose refresh failed as possibly out of date, with a retry", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <TrackerPane
+                client={client as unknown as MatronJournalClient}
+                state={paneState({ trackerView: { open: true, view: "inbox" }, inboxItems: [], inboxError: "offline" })}
+            />,
+        );
+
+        const notice = container.querySelector(".mj_TrackerStaleNotice");
+        expect(notice?.textContent).toContain("Couldn't refresh the inbox, so it may be out of date.");
+        client.loadInbox.mockClear();
+        await act(async () => {
+            notice!.querySelector<HTMLButtonElement>("button")!.click();
+        });
+        expect(client.loadInbox).toHaveBeenCalledTimes(1);
+    });
+
+    it("shows no stale notice for a loaded inbox without an inbox error", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <TrackerPane
+                client={client as unknown as MatronJournalClient}
+                state={paneState({
+                    trackerView: { open: true, view: "inbox" },
+                    inboxItems: [],
+                    trackerError: "item gone",
+                })}
+            />,
+        );
+
+        expect(container.querySelector(".mj_TrackerStaleNotice")).toBeNull();
     });
 
     // The shared banner error can come from (and be cleared by) an item load; it must not stand in
