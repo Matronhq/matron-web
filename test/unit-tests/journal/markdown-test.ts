@@ -10,7 +10,13 @@ import { createRoot, type Root } from "react-dom/client";
 import { toString } from "hast-util-to-string";
 
 import { copyText } from "../../../src/journal/clipboard";
-import { HIGHLIGHT_MAX, MARKDOWN_MAX, MARKDOWN_MAX_LINES, MarkdownBody } from "../../../src/journal/markdown";
+import {
+    HIGHLIGHT_MAX,
+    MARKDOWN_MAX,
+    MARKDOWN_MAX_LINES,
+    MarkdownBody,
+    loadHighlighter,
+} from "../../../src/journal/markdown";
 import type { TrackerLinkHandler } from "../../../src/journal/types";
 
 jest.mock("../../../src/journal/clipboard", () => ({ copyText: jest.fn() }));
@@ -29,6 +35,10 @@ interface RenderedMarkdown {
 }
 
 const rendered: RenderedMarkdown[] = [];
+
+// The highlighter is loaded on first use; load it up front so these tests see highlighted output
+// on the first render, as before. markdown-lazy-highlight-test.ts covers the loading itself.
+beforeAll(() => loadHighlighter());
 
 async function renderMarkdown(text: string, streaming = false): Promise<HTMLDivElement> {
     const container = document.createElement("div");
