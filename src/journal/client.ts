@@ -5244,7 +5244,6 @@ export class MatronJournalClient {
         this.defaultsSaving.clear();
         this.api = new JournalApi(session.serverUrl, session.token);
         this.database = await JournalDatabase.open(session.serverUrl, session.userId, session.username);
-        await this.database.expireToolLogs();
 
         let cursor = await this.database.cursor();
         const freshInstall = cursor === undefined;
@@ -5427,16 +5426,41 @@ export class MatronJournalClient {
         this.emit();
         if (selectedConversation) await this.selectConversation(selectedConversation.id, { clearUnread: false });
 
+        // Bind every callback to the session that created this connection. A stopped connection
+        // keeps draining its processing queue, so a frame or snapshot_required queued before
+        // logout can run after the next session started, and the handlers read the client's
+        // current database and api: an unbound snapshot_required would replace the new session's
+        // journal, and an unbound revoke would sign the new account out.
+        const connectionGen = this.sessionGen;
+        const current = (): boolean => this.sessionGen === connectionGen;
         this.connection = new JournalConnection(session.serverUrl, session.token, {
             cursor: async () => (await this.database?.cursor()) ?? cursor ?? 0,
             archiveSince: () => readArchiveSince(session) ?? 0,
-            onFrame: async (frame) => this.handleFrame(frame),
-            onReady: async (hello) => this.handleReady(hello),
-            onSnapshotRequired: async () => this.replaceSnapshot(),
-            onRevoked: () => void this.logout("This device was revoked. Sign in again to continue."),
-            onState: (connection, error) => this.patch({ connection, connectionError: error }),
+            onFrame: async (frame) => {
+                if (current()) await this.handleFrame(frame);
+            },
+            onReady: async (hello) => {
+                if (current()) await this.handleReady(hello);
+            },
+            onSnapshotRequired: async () => {
+                if (current()) await this.replaceSnapshot();
+            },
+            onRevoked: () => {
+                if (current()) void this.logout("This device was revoked. Sign in again to continue.");
+            },
+            onState: (connection, error) => {
+                if (current()) this.patch({ connection, connectionError: error });
+            },
         });
         this.connection.start();
+        // Purge expired live tool logs once the session is up, not before the first paint: it walks
+        // every cached row, and the store holds every row this device has received, so awaiting it
+        // kept a long-lived device on a blank screen for seconds. Reads already apply the TTL, so
+        // nothing expired is shown meanwhile; this only drops stale payloads from disk.
+        const expiringDatabase = this.database;
+        void expiringDatabase.expireToolLogs().catch((error) => {
+            if (this.database === expiringDatabase) console.warn("matron: tool-log expiry deferred", error);
+        });
         void this.openPathLink();
         void this.backfillRoomMembership();
     }
@@ -6001,6 +6025,16 @@ export class MatronJournalClient {
         }
     }
 
+    private retireStreamRef(event: JournalEvent): void {
+        const messageRef = typeof event.payload.message_ref === "string" ? event.payload.message_ref : undefined;
+        if (!messageRef) return;
+        this.retiredStreamRefs.add(`${event.convo_id}:${messageRef}`);
+        const text = this.textStreams.get(event.convo_id);
+        const tools = this.toolStreams.get(event.convo_id);
+        if (text) delete text[messageRef];
+        if (tools) delete tools[messageRef];
+    }
+
     private async handleJournal(event: JournalEvent): Promise<void> {
         if (!this.database) return;
         // Tracker markers (item/mission/milestone) drive a live refetch of the open tracker pane's
@@ -6016,12 +6050,34 @@ export class MatronJournalClient {
             this.transientAttachmentErrors.delete(removed);
         }
         if (!applied) {
-            if (removed && event.convo_id === this.state.selectedConversationId) {
+            // A peer tab that won the cursor race has already stored this row, so its message_ref
+            // stream is finished here too; retire it so a streaming bubble cannot linger.
+            this.retireStreamRef(event);
+            let selectedRefreshed = false;
+            if (
+                event.convo_id === this.state.selectedConversationId &&
+                (removed || MESSAGE_EVENT_TYPES.has(event.type))
+            ) {
+                // The open timeline may be missing this row in this tab; reading it back from the
+                // shared store touches one conversation only.
                 await this.refreshSelectedConversation(event.convo_id);
+                selectedRefreshed = true;
             }
-            if (event.type === "convo_meta" && this.uploadConvos.size > 0) {
+            // Tabs sharing a server and user share one IndexedDB, so applied=false can mean a peer
+            // tab already wrote this row and advanced the shared cursor. The durable store then
+            // holds the new state and this tab's copy is stale, so refresh from it instead of
+            // returning. session_status is the only frame that changes session_state; convo_meta
+            // changes the title, parent link, box and room membership. Ordinary duplicate message
+            // frames stay off this path, since the refresh scans every conversation.
+            if (event.type === "session_status") {
                 await this.refreshConversations();
-                this.abortUploadsForChildConvos();
+                if (!selectedRefreshed && event.convo_id === this.state.selectedConversationId) {
+                    await this.refreshSelectedConversation(event.convo_id);
+                }
+            }
+            if (event.type === "convo_meta") {
+                await this.refreshConversations();
+                if (this.uploadConvos.size > 0) this.abortUploadsForChildConvos();
             }
             return;
         }
@@ -6030,14 +6086,7 @@ export class MatronJournalClient {
         const previous = this.state.conversations.find((conversation) => conversation.id === event.convo_id);
         this.emitLive((listener) => listener.journalEvent?.(event, previous));
 
-        const messageRef = typeof event.payload.message_ref === "string" ? event.payload.message_ref : undefined;
-        if (messageRef) {
-            this.retiredStreamRefs.add(`${event.convo_id}:${messageRef}`);
-            const text = this.textStreams.get(event.convo_id);
-            const tools = this.toolStreams.get(event.convo_id);
-            if (text) delete text[messageRef];
-            if (tools) delete tools[messageRef];
-        }
+        this.retireStreamRef(event);
 
         await this.refreshConversations();
         this.abortUploadsForChildConvos();
