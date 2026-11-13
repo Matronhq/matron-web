@@ -1903,6 +1903,20 @@ describe("commentFailureMessage", () => {
         expect(commentFailureMessage(error)).toBe("The journal takes at most 20 attachments on one comment.");
     });
 
+    it("names the length limit for a body that is too long, from the journal's max", () => {
+        const error = refused(400, { error: "body_too_long", max: 1000 });
+        expect(commentFailureMessage(error)).toBe(
+            "Too long to send: a reply takes at most 1,000 characters. Split it into several replies, or attach the text as a file.",
+        );
+    });
+
+    it("falls back to this client's length limit when a too-long body comes without a max", () => {
+        const error = refused(400, { error: "body_too_long" });
+        expect(commentFailureMessage(error)).toBe(
+            "Too long to send: a reply takes at most 32,768 characters. Split it into several replies, or attach the text as a file.",
+        );
+    });
+
     it("passes any other reason on", () => {
         const error = refused(400, { error: "bad_request", reason: "body_too_long" });
         expect(commentFailureMessage(error)).toBe("The server refused it: body too long.");
