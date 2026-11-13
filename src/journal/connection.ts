@@ -5,6 +5,7 @@ SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
 Please see LICENSE files in the repository root for full details.
 */
 
+import { decodeServerFrame } from "./frame-decode";
 import { type ConnectionState, type JournalControlFrame, type RpcReply, type ServerFrame, websocketUrl } from "./types";
 
 interface JournalConnectionCallbacks {
@@ -167,21 +168,7 @@ export class JournalConnection {
 
         socket.onmessage = (message) => {
             if (typeof message.data !== "string") return;
-            let frame: ServerFrame;
-            try {
-                frame = JSON.parse(message.data) as ServerFrame;
-            } catch {
-                return;
-            }
-
-            if (this.isFastPathFrame(frame)) {
-                void this.handleFrame(frame, socket).catch((error) => this.handleProcessingError(error, socket));
-                return;
-            }
-
-            this.processing = this.processing
-                .then(() => this.handleFrame(frame, socket))
-                .catch((error) => this.handleProcessingError(error, socket));
+            this.ingestMessage(message.data, socket);
         };
 
         socket.onerror = () => {
@@ -347,6 +334,35 @@ export class JournalConnection {
     private handleProcessingError(error: unknown, socket: WebSocket): void {
         this.callbacks.onState("offline", error instanceof Error ? error.message : "Sync failed");
         socket.close();
+    }
+
+    // Parse, decode and dispatch one raw text frame. A frame that fails decoding is dropped and a
+    // malformed ephemeral sub-shape is stripped, both with a diagnostic.
+    private ingestMessage(raw: string, socket: WebSocket): void {
+        let parsed: unknown;
+        try {
+            parsed = JSON.parse(raw);
+        } catch {
+            return;
+        }
+
+        const decoded = decodeServerFrame(parsed);
+        if (!decoded.ok) {
+            console.warn("matron:frame", { reason: decoded.reason });
+            return;
+        }
+        if (decoded.unknownKind) console.warn("matron:frame", { reason: `unknown_kind:${decoded.unknownKind}` });
+        if (decoded.narrowed) console.warn("matron:frame", { reason: `narrowed:${decoded.narrowed.join(",")}` });
+        const frame = decoded.frame;
+
+        if (this.isFastPathFrame(frame)) {
+            void this.handleFrame(frame, socket).catch((error) => this.handleProcessingError(error, socket));
+            return;
+        }
+
+        this.processing = this.processing
+            .then(() => this.handleFrame(frame, socket))
+            .catch((error) => this.handleProcessingError(error, socket));
     }
 
     private logRpcDiag(event: string, requestId?: string): void {
