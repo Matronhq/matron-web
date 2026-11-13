@@ -1326,6 +1326,25 @@ describe("message model DOM contracts", () => {
         expect(row?.querySelectorAll(".mj_EventTile_line time")).toHaveLength(0);
     });
 
+    it("labels the other person's side in a room, apart from our agent's section", async () => {
+        const theirs = {
+            ...textEvent(2, "from the other side"),
+            sender: "person:dan@peer.example",
+            payload: { body: "from the other side", via: "agent" },
+        };
+        rendered = await renderClient(signedInClient({ events: [textEvent(1, "ours"), theirs] }));
+
+        const ours = rendered.container.querySelector('[data-event-id="1"]');
+        const other = rendered.container.querySelector('[data-event-id="2"]');
+        expect(other?.classList.contains("mj_EventTile_continuation")).toBe(false);
+        expect(other?.querySelector(".mj_SenderName_theirs .mj_SenderName_displayName")?.textContent).toBe(
+            "dan@peer.example",
+        );
+        expect(other?.querySelector(".mj_SenderName_side")?.textContent).toBe("Their side");
+        // An ordinary session keeps its plain header, with no side tag.
+        expect(ours?.querySelector(".mj_SenderName_side")).toBeNull();
+    });
+
     it("puts the section timestamp on the first block and none on agent continuations", async () => {
         rendered = await renderClient(
             signedInClient({ events: [textEvent(1, "first"), textEvent(2, "continuation")] }),
