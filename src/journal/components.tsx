@@ -5745,11 +5745,12 @@ function SenderHeader({
     inRoom: boolean;
     showTime?: boolean;
 }): React.ReactElement {
-    // Subscribed, so a memoised row picks up a room title or session that arrives after it drew.
+    // Subscribed, so a memoised row picks up a session that arrives after it drew.
     const session = useSyncExternalStore(client.subscribe, () => client.getSnapshot().session);
-    const label = inRoom || isPersonSender(event.sender)
-        ? roomSenderLabel(event, { username: session?.username, host: journalHost(session?.serverUrl) })
-        : null;
+    const label =
+        inRoom || isPersonSender(event.sender)
+            ? roomSenderLabel(event, { username: session?.username, host: journalHost(session?.serverUrl) })
+            : null;
     const sideText = label?.side === "ours" ? "Our side" : label?.side === "theirs" ? "Their side" : undefined;
     return (
         <span className={`mj_SenderName${label ? ` mj_SenderName_room mj_SenderName_${label.side}` : ""}`}>
