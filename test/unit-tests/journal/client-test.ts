@@ -8,7 +8,6 @@ Please see LICENSE files in the repository root for full details.
 import {
     archiveStore,
     favoriteStore,
-    MALFORMED_SEQ_HALTED_ERROR,
     MatronJournalClient,
     pinnedStore,
     RPC_CREATE_STALLED_NOTICE,
@@ -5022,97 +5021,5 @@ describe("MatronJournalClient read state", () => {
 
         await handle({ kind: "control", op: "error", code: "forbidden", ref: "read_marker" });
         expect(client.getSnapshot().connectionError).toBe("Journal operation failed: forbidden");
-    });
-});
-
-describe("MatronJournalClient malformed journal rows", () => {
-    interface Resyncable {
-        send: ReturnType<typeof jest.fn>;
-        stop: ReturnType<typeof jest.fn>;
-        forceResync: ReturnType<typeof jest.fn>;
-    }
-
-    function setup() {
-        const client = new MatronJournalClient();
-        const state = internals(client);
-        const database = fakeDatabase();
-        const connection: Resyncable = {
-            send: jest.fn().mockReturnValue(true),
-            stop: jest.fn(),
-            forceResync: jest.fn().mockResolvedValue(undefined),
-        };
-        state.state = signedInState(client);
-        state.database = database;
-        state.connection = connection as unknown as ClientInternals["connection"];
-        jest.spyOn(console, "warn").mockImplementation(() => undefined);
-        return { client, state, database, connection };
-    }
-
-    function row(seq: unknown, convoId: unknown = "c1"): JournalEvent {
-        return {
-            kind: "journal",
-            seq,
-            convo_id: convoId,
-            ts: 1,
-            sender: "agent:box",
-            type: "text",
-            payload: { body: "hi" },
-        } as unknown as JournalEvent;
-    }
-
-    afterEach(() => {
-        jest.restoreAllMocks();
-        jest.useRealTimers();
-    });
-
-    it.each([
-        ["a non-numeric seq", row("7")],
-        ["a NaN seq", row(Number.NaN)],
-        ["a fractional seq", row(1.5)],
-        ["a negative seq", row(-1)],
-        ["a non-string convo_id", row(7, null)],
-        ["an empty convo_id", row(7, "")],
-    ])("resyncs instead of applying or acking %s", async (_name, event) => {
-        const { state, database, connection } = setup();
-
-        await state.handleJournal(event);
-
-        expect(database.applyJournal).not.toHaveBeenCalled();
-        expect(state.pendingAck).toBe(0);
-        expect(connection.forceResync).toHaveBeenCalledTimes(1);
-    });
-
-    it("applies a well-formed row without a resync", async () => {
-        const { state, database, connection } = setup();
-
-        await state.handleJournal(row(11));
-
-        expect(database.applyJournal).toHaveBeenCalledTimes(1);
-        expect(connection.forceResync).not.toHaveBeenCalled();
-    });
-
-    it("halts after repeated malformed rows and ignores every later frame", async () => {
-        const { state, database, connection } = setup();
-
-        for (let i = 0; i < 4; i += 1) await state.handleJournal(row("bad"));
-
-        expect(connection.forceResync).toHaveBeenCalledTimes(3);
-        expect(connection.stop).toHaveBeenCalledTimes(1);
-        expect(state.state.connectionError).toBe(MALFORMED_SEQ_HALTED_ERROR);
-
-        await state.handleJournal(row(12));
-        expect(database.applyJournal).not.toHaveBeenCalled();
-    });
-
-    it("lets malformed rows age out of the loop-guard window", async () => {
-        jest.useFakeTimers();
-        const { state, connection } = setup();
-
-        for (let i = 0; i < 3; i += 1) await state.handleJournal(row("bad"));
-        jest.advanceTimersByTime(31_000);
-        await state.handleJournal(row("bad"));
-
-        expect(connection.forceResync).toHaveBeenCalledTimes(4);
-        expect(connection.stop).not.toHaveBeenCalled();
     });
 });

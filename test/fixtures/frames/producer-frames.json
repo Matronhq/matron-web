@@ -135,6 +135,36 @@
             }
         },
         {
+            "name": "ephemeral.status.vitals_cpu_null",
+            "frame": {
+                "kind": "ephemeral",
+                "convo_id": "c1",
+                "status": {
+                    "model": "x",
+                    "vitals": {
+                        "cpu_pct": null,
+                        "ram_pct": 47,
+                        "sampled_at_ms": 1790050497694
+                    }
+                }
+            }
+        },
+        {
+            "name": "ephemeral.status.vitals_ram_null",
+            "frame": {
+                "kind": "ephemeral",
+                "convo_id": "c1",
+                "status": {
+                    "model": "x",
+                    "vitals": {
+                        "cpu_pct": 12,
+                        "ram_pct": null,
+                        "sampled_at_ms": 1790050497694
+                    }
+                }
+            }
+        },
+        {
             "name": "ephemeral.status.rich",
             "frame": {
                 "kind": "ephemeral",
@@ -225,6 +255,32 @@
                 "convo_id": "c1",
                 "message_ref": "m1",
                 "text": "partial output"
+            }
+        },
+        {
+            "name": "notify",
+            "frame": {
+                "kind": "notify",
+                "settings": {
+                    "mode": "smart",
+                    "events": {
+                        "permission": true
+                    }
+                }
+            }
+        },
+        {
+            "name": "people",
+            "frame": {
+                "kind": "people",
+                "people": []
+            }
+        },
+        {
+            "name": "shared",
+            "frame": {
+                "kind": "shared",
+                "shared": []
             }
         }
     ],
@@ -386,6 +442,37 @@
                 }
             },
             "expect": ["convo_id"]
+        },
+        {
+            "name": "status.vitals.both_null",
+            "frame": {
+                "kind": "ephemeral",
+                "convo_id": "c1",
+                "status": {
+                    "model": "x",
+                    "vitals": {
+                        "cpu_pct": null,
+                        "ram_pct": null,
+                        "sampled_at_ms": 1
+                    }
+                }
+            },
+            "expect": ["status.vitals"]
+        },
+        {
+            "name": "status.vitals.no_sample_time",
+            "frame": {
+                "kind": "ephemeral",
+                "convo_id": "c1",
+                "status": {
+                    "model": "x",
+                    "vitals": {
+                        "cpu_pct": 12,
+                        "ram_pct": 47
+                    }
+                }
+            },
+            "expect": ["status.vitals"]
         }
     ],
     "invalid": [
@@ -410,19 +497,12 @@
             "reason": "not_object"
         },
         {
-            "name": "unknown_kind",
-            "value": {
-                "kind": "wat"
-            },
-            "reason": "unknown_kind"
-        },
-        {
             "name": "missing_kind",
             "value": {
                 "seq": 1,
                 "convo_id": "c1"
             },
-            "reason": "unknown_kind"
+            "reason": "no_kind"
         },
         {
             "name": "control.missing_op",

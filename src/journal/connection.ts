@@ -31,9 +31,6 @@ export class JournalConnection {
     private welcomed = false;
     private replacingSnapshot = false;
     private processing = Promise.resolve();
-    // Sockets dropped by forceResync. Frames they already delivered belong to the sync state the
-    // re-snapshot replaces, so they are dropped instead of applied (a clean cursor replays them).
-    private abandonedSockets = new WeakSet<WebSocket>();
     private pendingRpc = new Map<
         string,
         {
@@ -89,32 +86,6 @@ export class JournalConnection {
         } catch {
             return false;
         }
-    }
-
-    /**
-     * Client-triggered full resync, for an unusable live frame (a journal row whose `seq` cannot be
-     * a cursor value). Mirrors the `snapshot_required` handler: drop the socket, re-snapshot via
-     * onSnapshotRequired (which resets the durable cursor), then reconnect at once. A resync
-     * already in flight, or a stopped connection, is a no-op, so several bad frames in a row
-     * collapse into one re-snapshot. A failed snapshot still reconnects, from the last clean
-     * cursor, so a transient error cannot leave the connection without a socket or retry timer.
-     */
-    public async forceResync(): Promise<void> {
-        if (this.stopped || this.replacingSnapshot) return;
-        this.replacingSnapshot = true;
-        if (this.socket) this.abandonedSockets.add(this.socket);
-        this.socket?.close(1000, "client resync");
-        // Clear the reference now instead of waiting for the close event: open() returns early
-        // while a socket is set.
-        this.socket = undefined;
-        try {
-            await this.callbacks.onSnapshotRequired();
-        } catch {
-            console.warn("matron:resync", { event: "snapshot_failed" });
-        } finally {
-            this.replacingSnapshot = false;
-        }
-        if (!this.stopped) this.scheduleReconnect(0);
     }
 
     public async agentRequest(
@@ -205,10 +176,7 @@ export class JournalConnection {
         };
 
         socket.onclose = (event) => {
-            // A socket replaced by forceResync can close after its replacement is welcomed. That
-            // late event carries nothing about the current socket, so it must not clear `welcomed`.
-            if (this.socket !== socket) return;
-            this.socket = undefined;
+            if (this.socket === socket) this.socket = undefined;
             this.welcomed = false;
             if (this.stopped || this.replacingSnapshot) return;
             const reason = event.code === 1000 ? undefined : event.reason || "Connection interrupted";
@@ -218,8 +186,6 @@ export class JournalConnection {
     }
 
     private async handleFrame(frame: ServerFrame, socket: WebSocket): Promise<void> {
-        // Rpc replies are matched by request id and stay valid on an abandoned socket.
-        if (this.abandonedSockets.has(socket) && !this.isFastPathFrame(frame)) return;
         if (frame.kind === "rpc") {
             const response: unknown = frame.response;
             if (typeof response !== "object" || response === null) {
@@ -385,6 +351,7 @@ export class JournalConnection {
             console.warn("matron:frame", { reason: decoded.reason });
             return;
         }
+        if (decoded.unknownKind) console.warn("matron:frame", { reason: `unknown_kind:${decoded.unknownKind}` });
         if (decoded.narrowed) console.warn("matron:frame", { reason: `narrowed:${decoded.narrowed.join(",")}` });
         const frame = decoded.frame;
 

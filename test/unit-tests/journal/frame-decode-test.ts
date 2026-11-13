@@ -53,7 +53,7 @@ describe("decodeServerFrame: narrowing", () => {
         const result = decodeServerFrame({
             kind: "ephemeral",
             convo_id: "c1",
-            status: { model: "m", vitals: { cpu_pct: 250, ram_pct: 48, sampled_at_ms: 1 } },
+            status: { model: "m", vitals: { cpu_pct: 250, ram_pct: null, sampled_at_ms: 1 } },
             activity: { state: "thinking" },
         });
         expect(result.ok).toBe(true);
@@ -65,13 +65,31 @@ describe("decodeServerFrame: narrowing", () => {
         expect(result.narrowed).toEqual(["status.vitals"]);
     });
 
+    it("keeps the valid reading of a vitals object and nulls the bad one", () => {
+        const result = decodeServerFrame({
+            kind: "ephemeral",
+            convo_id: "c1",
+            status: { vitals: { cpu_pct: 250, ram_pct: 48, sampled_at_ms: 1 } },
+        });
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        const frame = result.frame as { status?: { vitals?: unknown } };
+        expect(frame.status?.vitals).toEqual({ cpu_pct: null, ram_pct: 48, sampled_at_ms: 1 });
+        expect(result.narrowed).toEqual(["status.vitals"]);
+    });
+
+    it("passes a frame of a kind it does not know, and says so", () => {
+        const frame = { kind: "wat", anything: 1 };
+        expect(decodeServerFrame(frame)).toEqual({ ok: true, frame, unknownKind: "wat" });
+    });
+
     it("does not mutate the input frame", () => {
         const input = { kind: "ephemeral", convo_id: "c1", activity: { state: "spinning" } };
         decodeServerFrame(input);
         expect(input.activity).toEqual({ state: "spinning" });
     });
 
-    it("passes a journal row through even with an unusable seq, so the client can resync", () => {
+    it("passes a journal row through unvalidated, so the cursor logic sees every sequenced row", () => {
         const row = { kind: "journal", seq: "x", convo_id: "c1", ts: 1, sender: "a", type: "text", payload: {} };
         const result = decodeServerFrame(row);
         expect(result).toEqual({ ok: true, frame: row });
@@ -110,13 +128,43 @@ describe("JournalConnection.ingestMessage", () => {
         expect(callbacks.onFrame).toHaveBeenCalledTimes(1);
     });
 
-    it("drops a frame with an unrecognised kind and logs a diagnostic", async () => {
+    it("forwards a notify frame, which notification settings sync relies on", async () => {
+        const { callbacks, internal, socket } = harness();
+        const notify = { kind: "notify", settings: { mode: "smart", events: { permission: true } } };
+        internal.ingestMessage(JSON.stringify(notify), socket);
+        await internal.processing;
+        expect(callbacks.onFrame).toHaveBeenCalledWith(notify);
+    });
+
+    it("forwards a frame of an unrecognised kind to the listeners and logs a diagnostic", async () => {
         const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
         const { callbacks, internal, socket } = harness();
-        internal.ingestMessage(JSON.stringify({ kind: "wat", seq: 1 }), socket);
+        const frame = { kind: "wat", seq: 1 };
+        internal.ingestMessage(JSON.stringify(frame), socket);
+        await internal.processing;
+        expect(callbacks.onFrame).toHaveBeenCalledWith(frame);
+        expect(warn).toHaveBeenCalledWith("matron:frame", { reason: "unknown_kind:wat" });
+    });
+
+    it("drops a frame with no kind and logs a diagnostic", async () => {
+        const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+        const { callbacks, internal, socket } = harness();
+        internal.ingestMessage(JSON.stringify({ seq: 1 }), socket);
         await internal.processing;
         expect(callbacks.onFrame).not.toHaveBeenCalled();
-        expect(warn).toHaveBeenCalledWith("matron:frame", { reason: "unknown_kind" });
+        expect(warn).toHaveBeenCalledWith("matron:frame", { reason: "no_kind" });
+    });
+
+    it("forwards a vitals object that has one null reading intact", async () => {
+        const { callbacks, internal, socket } = harness();
+        const frame = {
+            kind: "ephemeral",
+            convo_id: "c1",
+            status: { vitals: { cpu_pct: null, ram_pct: 40, sampled_at_ms: 5 } },
+        };
+        internal.ingestMessage(JSON.stringify(frame), socket);
+        await internal.processing;
+        expect(callbacks.onFrame).toHaveBeenCalledWith(frame);
     });
 
     it("drops an unparseable frame without throwing", () => {

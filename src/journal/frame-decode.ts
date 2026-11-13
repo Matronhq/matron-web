@@ -19,7 +19,9 @@ import {
 // `JSON.parse(data) as ServerFrame`, so every consumer trusted field names and types on faith.
 // This module narrows each frame shape before it reaches the caches:
 //
-//   - A frame with no recognised discriminant is rejected and dropped by connection.ts.
+//   - A frame with no string `kind` is rejected and dropped by connection.ts. A kind this module
+//     does not know is passed through (with a diagnostic) and reaches the `frame` listeners, which
+//     each ignore kinds they do not handle; the journal adds kinds ahead of the web app.
 //   - A conversation-scoped ephemeral frame whose optional sub-shape is malformed (an unknown
 //     activity state, a limits entry that would throw in the merge) has just that sub-shape
 //     stripped. Every store branch is guarded, so an absent sub-shape means "no update" and the
@@ -27,10 +29,10 @@ import {
 //   - Every rejection or narrowing is reported through a console diagnostic.
 //
 // Journal events pass through unvalidated: they are sequenced, so dropping one at the boundary
-// would let the next row advance the durable cursor past it. A malformed sequenced row is
-// handled by the client (halt and re-snapshot), not here.
+// would let the next row advance the durable cursor past it.
 
-export type FrameDecodeResult = { ok: true; frame: ServerFrame; narrowed?: string[] } | { ok: false; reason: string };
+export type FrameDecodeResult =
+    { ok: true; frame: ServerFrame; narrowed?: string[]; unknownKind?: string } | { ok: false; reason: string };
 
 // Percentages come from the host as whole numbers; anything outside 0..100 is a wire bug.
 const PCT_MIN = 0;
@@ -48,11 +50,25 @@ function isString(value: unknown): value is string {
     return typeof value === "string";
 }
 
-// status.vitals: { cpu_pct, ram_pct, sampled_at_ms }, all numbers.
-function isValidStatusVitals(value: unknown): boolean {
-    return (
-        isObject(value) && isFiniteNumber(value.sampled_at_ms) && isPercent(value.cpu_pct) && isPercent(value.ram_pct)
-    );
+// status.vitals: { cpu_pct, ram_pct, sampled_at_ms }. The bridge sends `null` for a reading it does
+// not have yet (no first CPU sample, or no total memory reported), and the renderer skips each
+// non-finite reading on its own, so a partial object is valid. Returns the vitals to keep (a
+// reading that is neither null nor a percentage becomes null), or undefined when `sampled_at_ms`
+// is not a number or no reading is left.
+function narrowStatusVitals(value: unknown): { vitals: Record<string, unknown>; changed: boolean } | undefined {
+    if (!isObject(value) || !isFiniteNumber(value.sampled_at_ms)) return undefined;
+    const vitals: Record<string, unknown> = { ...value };
+    let changed = false;
+    let valid = 0;
+    for (const key of ["cpu_pct", "ram_pct"] as const) {
+        if (isPercent(vitals[key])) {
+            valid += 1;
+        } else if (vitals[key] !== null) {
+            if (vitals[key] !== undefined) changed = true;
+            vitals[key] = null;
+        }
+    }
+    return valid > 0 ? { vitals, changed } : undefined;
 }
 
 // status.context: { tokens, window, pct }; the context bar reads all three as finite numbers.
@@ -113,9 +129,15 @@ function decodeEphemeral(raw: Record<string, unknown>): FrameDecodeResult {
             narrowed.push("status");
         } else {
             const status: Record<string, unknown> = { ...out.status };
-            if (status.vitals !== undefined && !isValidStatusVitals(status.vitals)) {
-                delete status.vitals;
-                narrowed.push("status.vitals");
+            if (status.vitals !== undefined) {
+                const narrowedVitals = narrowStatusVitals(status.vitals);
+                if (!narrowedVitals) {
+                    delete status.vitals;
+                    narrowed.push("status.vitals");
+                } else if (narrowedVitals.changed) {
+                    status.vitals = narrowedVitals.vitals;
+                    narrowed.push("status.vitals");
+                }
             }
             if (status.context !== undefined && !isValidStatusContext(status.context)) {
                 delete status.context;
@@ -153,9 +175,9 @@ function decodeEphemeral(raw: Record<string, unknown>): FrameDecodeResult {
 
 /**
  * Decode a parsed WebSocket message into a ServerFrame. Returns `{ ok: false, reason }` for a
- * frame that must be dropped (non-object, unknown discriminant, control frame without `op`,
+ * frame that must be dropped (non-object, no string `kind`, control frame without `op`,
  * unreadable box_status), or `{ ok: true, frame, narrowed? }` where `narrowed` lists any ephemeral
- * sub-shapes stripped as invalid. Journal events pass through unvalidated (see above); rpc frames
+ * sub-shapes stripped as invalid, or `unknownKind` for a kind passed through unrecognised. Journal events pass through unvalidated (see above); rpc frames
  * too, since the connection already validates them and rejecting one here would strand its
  * pending request until timeout.
  */
@@ -182,8 +204,14 @@ export function decodeServerFrame(raw: unknown): FrameDecodeResult {
         case "box_defaults":
         case "pins":
         case "archive":
+        case "notify":
+        case "people":
+        case "shared":
             return { ok: true, frame: raw as unknown as ServerFrame };
         default:
-            return { ok: false, reason: "unknown_kind" };
+            // A kind added by a newer journal. Every consumer ignores kinds it does not handle, so
+            // dropping it here could only lose one that a listener does (as `notify` once would have).
+            if (!isString(raw.kind)) return { ok: false, reason: "no_kind" };
+            return { ok: true, frame: raw as unknown as ServerFrame, unknownKind: raw.kind };
     }
 }
