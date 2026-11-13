@@ -524,8 +524,27 @@ describe("MatronJournalClient tracker loaders", () => {
 
         expect(items).toHaveBeenCalledTimes(20); // MAX_PAGES
         expect(client.getSnapshot().inboxItems?.length).toBe(20);
-        expect(client.getSnapshot().trackerError).toMatch(/partial inbox/i);
+        expect(client.getSnapshot().inboxTruncated).toBe(true);
         expect(client.getSnapshot().trackerLoading).toBe(false);
+    });
+
+    // The truncation lives in inbox state, not the shared banner, so a capped walk that settles
+    // while Memories is showing still flags the partial list later; a complete load clears it.
+    it("loadInbox keeps the partial flag when it settles on Memories, and clears it on a complete load", async () => {
+        const { client, state } = makeClient({ trackerView: { open: true, view: "memories" } });
+        const capped = jest
+            .fn()
+            .mockImplementation(() =>
+                Promise.resolve({ items: [item({ id: `it_${capped.mock.calls.length}` })], next_cursor: "more" }),
+            );
+        state.api = { items: capped };
+        await client.loadInbox();
+        expect(client.getSnapshot().inboxTruncated).toBe(true);
+        expect(client.getSnapshot().trackerError).toBeUndefined();
+
+        state.api = { items: jest.fn().mockResolvedValue({ items: [item({ id: "it_1" })] }) };
+        await client.loadInbox();
+        expect(client.getSnapshot().inboxTruncated).toBe(false);
     });
 
     // F2: like loadItem/loadMission, a slower earlier inbox load must not overwrite a newer one — a

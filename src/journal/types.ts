@@ -830,6 +830,9 @@ export interface ClientState {
      *  is cleared only by the next inbox load, so a never-loaded inbox can tell "failed" from
      *  "still loading" while other loads come and go. */
     inboxError?: string;
+    /** True when the last complete inbox load hit the page cap with more pages remaining, so the
+     *  list is partial. Cleared by the next inbox load that finishes. */
+    inboxTruncated?: boolean;
     /** Error from the last item-detail load, keyed by the item it was for (`id` is the item number
      *  as a string, any leading "#" dropped). Unlike trackerError it survives other tracker loads
      *  and an in-flight retry, and is cleared only when an item load succeeds, so the pane can keep

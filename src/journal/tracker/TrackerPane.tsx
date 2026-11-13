@@ -409,6 +409,18 @@ export function TrackerPane({
                             </button>
                         </div>
                     ) : null}
+                    {state.missionsError ? (
+                        <div className="mj_TrackerStaleNotice" role="status">
+                            Couldn't refresh unfiled missions, so they may be out of date.{" "}
+                            <button
+                                type="button"
+                                className="mj_TrackerTextButton"
+                                onClick={() => void client.loadMissions()}
+                            >
+                                Try again
+                            </button>
+                        </div>
+                    ) : null}
                     <ProjectsDashboard
                         header={briefingCard(false)}
                         projects={state.projects ?? []}
@@ -450,6 +462,11 @@ export function TrackerPane({
         return (
             <>
                 {staleNotice}
+                {state.inboxTruncated ? (
+                    <div className="mj_TrackerStaleNotice" role="status">
+                        Showing a partial inbox — too many open items to load them all. Some rows may be missing.
+                    </div>
+                ) : null}
                 <ItemsInbox
                     items={state.inboxItems ?? []}
                     done={state.inboxDone}

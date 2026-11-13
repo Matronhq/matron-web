@@ -223,6 +223,37 @@ describe("TrackerPane inbox", () => {
         expect(client.loadInbox).toHaveBeenCalledTimes(1);
     });
 
+    it("shows the partial-inbox notice whenever Inbox is open and the list was truncated", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <TrackerPane
+                client={client as unknown as MatronJournalClient}
+                state={paneState({ trackerView: { open: true, view: "inbox" }, inboxItems: [], inboxTruncated: true })}
+            />,
+        );
+        expect(container.querySelector(".mj_TrackerStaleNotice")?.textContent).toContain("Showing a partial inbox");
+    });
+
+    it("shows a stale notice with a retry on the Projects dashboard when the missions refresh failed", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <TrackerPane
+                client={client as unknown as MatronJournalClient}
+                state={paneState({
+                    trackerView: { open: true, view: "missions" },
+                    projects: [trackerProject()],
+                    missions: [],
+                    missionsError: "offline",
+                })}
+            />,
+        );
+        const notice = container.querySelector(".mj_TrackerStaleNotice");
+        expect(notice?.textContent).toContain("unfiled missions");
+        client.loadMissions.mockClear();
+        await act(async () => notice!.querySelector<HTMLButtonElement>("button")!.click());
+        expect(client.loadMissions).toHaveBeenCalledTimes(1);
+    });
+
     it("shows no stale notice for a loaded inbox without an inbox error", async () => {
         const client = fakeClient();
         const { container } = await mount(

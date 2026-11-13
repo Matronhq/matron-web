@@ -4291,13 +4291,9 @@ export class MatronJournalClient {
                 ...this.doneWithoutOpen(merged),
                 trackerLoading: false,
                 inboxError: undefined,
-                ...(this.trackerListTabShown()
-                    ? {
-                          trackerError: truncated
-                              ? "Showing a partial inbox — too many open items to load them all. Some rows may be missing."
-                              : undefined,
-                      }
-                    : {}),
+                // Kept as state (not only the shared banner) so a capped walk that settles while
+                // Memories is showing still flags the partial list when Inbox is opened later.
+                inboxTruncated: truncated,
             });
         } catch (error) {
             if (this.api !== api || this.trackerInboxGen !== gen) return;
