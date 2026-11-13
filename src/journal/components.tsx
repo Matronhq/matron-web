@@ -6873,7 +6873,7 @@ function Composer({
     const [nonDurable, setNonDurable] = useState(false);
     const store = useMemo(() => makeRecentFoldersStore(state.session), [state.session]);
     const [dismissedSeq, setDismissedSeq] = useState(0);
-    const textarea = useRef<HTMLTextAreaElement>(null);
+    const textarea = useRef<HTMLTextAreaElement | null>(null);
     const fileInput = useRef<HTMLInputElement>(null);
     const convoId = state.selectedConversationId;
     const convoIdRef = useRef(convoId);
@@ -7097,7 +7097,7 @@ function Composer({
     };
     const resizeAfterRecall = useRef(false);
     // Size the box to its content for every body change: typing, a restored draft, a recalled line.
-    useAutoGrow(textarea, body);
+    const textareaRef = useAutoGrow(textarea, body);
     useLayoutEffect(() => {
         if (!resizeAfterRecall.current || !textarea.current) return;
         resizeAfterRecall.current = false;
@@ -7229,7 +7229,7 @@ function Composer({
                             <div className="mj_ComposerInput">
                                 <textarea
                                     className="mj_ComposerInput_input"
-                                    ref={textarea}
+                                    ref={textareaRef}
                                     rows={1}
                                     value={body}
                                     onBlur={flushDraft}

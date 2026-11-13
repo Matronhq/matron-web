@@ -73,9 +73,16 @@ describe("useAutoGrow", () => {
 
     let heightPerLine = 24;
     function Probe({ value }: { value: string }): React.ReactElement {
-        const ref = useRef<HTMLTextAreaElement>(null);
-        useAutoGrow(ref, value);
-        return <textarea ref={ref} rows={1} value={value} readOnly />;
+        const ref = useRef<HTMLTextAreaElement | null>(null);
+        const attach = useAutoGrow(ref, value);
+        return <textarea ref={attach} rows={1} value={value} readOnly />;
+    }
+
+    // Mirrors the composer: the textarea unmounts while a voice note records and a new one mounts after.
+    function Swappable({ value, show }: { value: string; show: boolean }): React.ReactElement {
+        const ref = useRef<HTMLTextAreaElement | null>(null);
+        const attach = useAutoGrow(ref, value);
+        return show ? <textarea ref={attach} rows={1} value={value} readOnly /> : <div>recording</div>;
     }
 
     async function render(value: string): Promise<HTMLTextAreaElement> {
@@ -99,6 +106,42 @@ describe("useAutoGrow", () => {
         expect(node.style.height).toBe("24px");
         await render("");
         expect(node.style.height).toBe("auto");
+    });
+
+    it("re-sizes and re-observes a textarea that was unmounted and remounted with the same value", async () => {
+        heightPerLine = 24;
+        const observed: Element[] = [];
+        const disconnected: number[] = [];
+        globalThis.ResizeObserver = class {
+            public constructor(callback: ResizeObserverCallback) {
+                observerCallback = callback;
+            }
+            public observe(el: Element): void {
+                observed.push(el);
+            }
+            public disconnect(): void {
+                disconnected.push(observed.length);
+            }
+            public unobserve(): void {}
+        } as unknown as typeof ResizeObserver;
+        jest.spyOn(HTMLTextAreaElement.prototype, "scrollHeight", "get").mockImplementation(function (
+            this: HTMLTextAreaElement,
+        ) {
+            return this.value ? this.value.split("\n").length * heightPerLine : 0;
+        });
+        container = document.createElement("div");
+        document.body.append(container);
+        root = createRoot(container);
+        await act(async () => root!.render(<Swappable value={"a\nb\nc"} show />));
+        const first = container.querySelector("textarea")!;
+        expect(first.style.height).toBe("72px");
+        await act(async () => root!.render(<Swappable value={"a\nb\nc"} show={false} />));
+        await act(async () => root!.render(<Swappable value={"a\nb\nc"} show />));
+        const second = container.querySelector("textarea")!;
+        expect(second).not.toBe(first);
+        expect(second.style.height).toBe("72px");
+        expect(observed[observed.length - 1]).toBe(second);
+        expect(disconnected.length).toBeGreaterThan(0);
     });
 
     it("re-measures when the box's width changes, not on its own height changes", async () => {
