@@ -5439,6 +5439,9 @@ export class MatronJournalClient {
             onFrame: async (frame) => {
                 if (current()) await this.handleFrame(frame);
             },
+            onJournalBatch: async (frames) => {
+                if (current()) await this.handleJournalBatch(frames);
+            },
             onReady: async (hello) => {
                 if (current()) await this.handleReady(hello);
             },
@@ -6097,6 +6100,113 @@ export class MatronJournalClient {
                 this.scheduleRead(event.convo_id, event.seq);
             }
         }
+    }
+
+    /**
+     * A coalesced run of sequenced journal frames (see JournalConnection.onJournalBatch). One frame
+     * takes the ordinary per-frame path. A longer run, such as a reconnect replay or a burst that
+     * arrived while the previous run was being applied, is applied in one store transaction, and
+     * the sidebar and open timeline are refreshed once for the whole run instead of once per frame.
+     * The per-frame side effects (live listeners, tracker markers, outbox reconciliation, stream
+     * retirement, acks, read scheduling) still run for every frame, in order. Listeners see the
+     * conversation list as it was before the run as the `previous` of a conversation's first row, and
+     * the post-apply row for its later rows, so a listener sees what the per-frame path would show.
+     */
+    private async handleJournalBatch(events: JournalEvent[]): Promise<void> {
+        if (events.length === 1) {
+            await this.handleFrame(events[0]);
+            return;
+        }
+        const database = this.database;
+        if (!database) return;
+        for (const event of events) {
+            this.emitLive((listener) => listener.frame?.(event));
+            this.handleTrackerMarker(event);
+            this.handleCoordinatorMarker(event);
+        }
+        const applied = await database.applyJournalBatch(events);
+        if (this.database !== database) return;
+        const previousRows = new Map(this.state.conversations.map((conversation) => [conversation.id, conversation]));
+        const selectedId = this.state.selectedConversationId;
+        let refreshConversations = false;
+        let abortUploads = false;
+        let refreshSelected = false;
+        // Later rows of a conversation get the post-apply row as `previous` (it already carries a
+        // subagent's parent, a room's membership and its title), so refresh the list before them.
+        const liveSeen = new Set<string>();
+        if (applied.includes(true)) {
+            await this.refreshConversations();
+            if (this.database !== database) return;
+        }
+        let maxAppliedSeq: number | undefined;
+        const reads: Array<[string, number]> = [];
+        const appliedEvents: JournalEvent[] = [];
+        // Every applied row is already durable (the run committed with its final cursor), so a
+        // failure on one row must not strand the side effects of the rows after it: they would never
+        // be replayed. Keep going, then surface the first failure once the run is fully handled.
+        let firstError: unknown;
+        for (let index = 0; index < events.length; index++) {
+            const event = events[index];
+            this.clearRpcCreateWatchdog(event.convo_id);
+            let removed: string | null = null;
+            try {
+                removed = await database.reconcileOwnMessage(event);
+            } catch (error) {
+                firstError ??= error;
+            }
+            if (removed) {
+                this.pendingFiles.delete(removed);
+                this.transientAttachmentErrors.delete(removed);
+            }
+            if (!applied[index]) {
+                if (removed && event.convo_id === selectedId) refreshSelected = true;
+                if (event.type === "convo_meta" && this.uploadConvos.size > 0) {
+                    refreshConversations = true;
+                    abortUploads = true;
+                }
+                continue;
+            }
+            appliedEvents.push(event);
+            maxAppliedSeq = Math.max(maxAppliedSeq ?? event.seq, event.seq);
+            const previousRow = liveSeen.has(event.convo_id)
+                ? this.state.conversations.find((conversation) => conversation.id === event.convo_id)
+                : previousRows.get(event.convo_id);
+            liveSeen.add(event.convo_id);
+            this.emitLive((listener) => listener.journalEvent?.(event, previousRow));
+            const messageRef = typeof event.payload.message_ref === "string" ? event.payload.message_ref : undefined;
+            if (messageRef) {
+                this.retiredStreamRefs.add(`${event.convo_id}:${messageRef}`);
+                const text = this.textStreams.get(event.convo_id);
+                const tools = this.toolStreams.get(event.convo_id);
+                if (text) delete text[messageRef];
+                if (tools) delete tools[messageRef];
+            }
+            abortUploads = true;
+            if (event.convo_id === selectedId) {
+                refreshSelected = true;
+                if (MESSAGE_EVENT_TYPES.has(event.type) && !event.sender.startsWith("user:")) {
+                    reads.push([event.convo_id, event.seq]);
+                }
+            }
+        }
+        if (maxAppliedSeq !== undefined) {
+            this.clearHistoryError();
+            this.scheduleAck(maxAppliedSeq);
+        }
+        if (refreshConversations) await this.refreshConversations();
+        if (abortUploads) this.abortUploadsForChildConvos();
+        const seenFirst = new Set<string>();
+        for (const event of appliedEvents) {
+            const firstFrame = !previousRows.has(event.convo_id) && !seenFirst.has(event.convo_id);
+            seenFirst.add(event.convo_id);
+            if (firstFrame || this.newVerdictPending.has(event.convo_id))
+                this.considerNewConversation(event, firstFrame);
+        }
+        if (refreshSelected && selectedId !== undefined && this.state.selectedConversationId === selectedId) {
+            await this.refreshSelectedConversation(selectedId);
+        }
+        for (const [conversationId, seq] of reads) this.scheduleRead(conversationId, seq);
+        if (firstError !== undefined) throw firstError;
     }
 
     // A conversation this tab sees for the first time, live. One this device asked for is the
