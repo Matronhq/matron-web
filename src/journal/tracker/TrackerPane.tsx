@@ -14,7 +14,7 @@ Please see LICENSE files in the repository root for full details.
  * all fetching + mutation lives on the client.
  */
 
-import React, { useEffect } from "react";
+import React, { useEffect, useRef } from "react";
 
 import type { MatronJournalClient } from "../client";
 import { CloseIcon } from "../icons";
@@ -46,9 +46,12 @@ export function TrackerPane({
 
     // Opening the pane primes both list views so the sidebar badges + either tab are ready. The
     // Memories tab reads neither list, so it does not fetch them (the inbox walk can be many pages).
+    // Prime once per pane open: leaving Memories later does not refetch what is already loaded.
     const memoriesView = view === "memories";
+    const primedFor = useRef<unknown>(undefined);
     useEffect(() => {
-        if (memoriesView) return;
+        if (memoriesView || primedFor.current === client) return;
+        primedFor.current = client;
         void client.loadMissions();
         void client.loadInbox();
     }, [client, memoriesView]);
