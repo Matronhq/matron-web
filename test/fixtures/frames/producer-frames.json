@@ -1,0 +1,444 @@
+{
+    "_note": "Conformance fixtures for src/journal/frame-decode.ts. Each `valid` frame is a shape the journal or bridge sends and must decode with no narrowing; do not edit one to make the decoder pass. If a producer changes a shape, update the fixture from the producer and then the decoder. `narrowing` and `invalid` are decoder contract cases, not producer output.",
+    "valid": [
+        {
+            "name": "journal.text",
+            "frame": {
+                "kind": "journal",
+                "seq": 42,
+                "convo_id": "c1",
+                "ts": 1790050000000,
+                "sender": "agent:box",
+                "type": "text",
+                "payload": {
+                    "body": "hi"
+                }
+            }
+        },
+        {
+            "name": "journal.session_status",
+            "frame": {
+                "kind": "journal",
+                "seq": 43,
+                "convo_id": "c1",
+                "ts": 1790050000100,
+                "sender": "system",
+                "type": "session_status",
+                "payload": {
+                    "state": "running"
+                }
+            }
+        },
+        {
+            "name": "control.hello_ok",
+            "frame": {
+                "kind": "control",
+                "op": "hello_ok",
+                "seq": 100,
+                "device_id": 5,
+                "name": "web"
+            }
+        },
+        {
+            "name": "control.snapshot_required",
+            "frame": {
+                "kind": "control",
+                "op": "snapshot_required"
+            }
+        },
+        {
+            "name": "control.error.revoked",
+            "frame": {
+                "kind": "control",
+                "op": "error",
+                "code": "revoked"
+            }
+        },
+        {
+            "name": "control.error.request_scoped",
+            "frame": {
+                "kind": "control",
+                "op": "error",
+                "code": "not_ready",
+                "ref": "agent_request",
+                "request_id": "r1"
+            }
+        },
+        {
+            "name": "rpc.ok",
+            "frame": {
+                "kind": "rpc",
+                "response": {
+                    "request_id": "r1",
+                    "agent_device_id": 7,
+                    "ok": true,
+                    "result": {
+                        "convo_id": "c1"
+                    }
+                }
+            }
+        },
+        {
+            "name": "rpc.error",
+            "frame": {
+                "kind": "rpc",
+                "response": {
+                    "request_id": "r1",
+                    "agent_device_id": 7,
+                    "ok": false,
+                    "error": {
+                        "code": "not_found",
+                        "detail": "no such session"
+                    }
+                }
+            }
+        },
+        {
+            "name": "box_status",
+            "frame": {
+                "kind": "box_status",
+                "device_id": 5,
+                "reported_at": 1790050000000,
+                "account": {
+                    "email": "a@example.com"
+                }
+            }
+        },
+        {
+            "name": "pins",
+            "frame": {
+                "kind": "pins",
+                "pins": []
+            }
+        },
+        {
+            "name": "archive",
+            "frame": {
+                "kind": "archive",
+                "changes": [],
+                "at": 1790050000000
+            }
+        },
+        {
+            "name": "ephemeral.status.vitals",
+            "frame": {
+                "kind": "ephemeral",
+                "convo_id": "c1",
+                "status": {
+                    "model": "claude-opus-4-8",
+                    "vitals": {
+                        "cpu_pct": 12,
+                        "ram_pct": 47,
+                        "sampled_at_ms": 1790050497694
+                    }
+                }
+            }
+        },
+        {
+            "name": "ephemeral.status.rich",
+            "frame": {
+                "kind": "ephemeral",
+                "convo_id": "c1",
+                "status": {
+                    "model": "claude-opus-4-8",
+                    "workdir": "/repo",
+                    "context": {
+                        "tokens": 144000,
+                        "window": 200000,
+                        "pct": 72
+                    },
+                    "limits": [
+                        {
+                            "id": "session",
+                            "label": "Session",
+                            "percent": 40
+                        },
+                        {
+                            "id": "week_all",
+                            "label": "Weekly",
+                            "percent": 18
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "name": "ephemeral.status.extras",
+            "frame": {
+                "kind": "ephemeral",
+                "convo_id": "c1",
+                "status": {
+                    "model": "claude-fable-5",
+                    "extras": ["browser"]
+                }
+            }
+        },
+        {
+            "name": "ephemeral.status.extras_empty",
+            "frame": {
+                "kind": "ephemeral",
+                "convo_id": "c1",
+                "status": {
+                    "model": "claude-fable-5",
+                    "extras": []
+                }
+            }
+        },
+        {
+            "name": "ephemeral.activity.thinking",
+            "frame": {
+                "kind": "ephemeral",
+                "convo_id": "c1",
+                "activity": {
+                    "state": "thinking"
+                }
+            }
+        },
+        {
+            "name": "ephemeral.activity.tool",
+            "frame": {
+                "kind": "ephemeral",
+                "convo_id": "c1",
+                "activity": {
+                    "state": "tool",
+                    "detail": "Bash"
+                }
+            }
+        },
+        {
+            "name": "ephemeral.tool_stream.append",
+            "frame": {
+                "kind": "ephemeral",
+                "convo_id": "c1",
+                "message_ref": "m1",
+                "tool_stream": {
+                    "event": "append",
+                    "chunk": "line\n",
+                    "offset": 0
+                }
+            }
+        },
+        {
+            "name": "ephemeral.text_stream",
+            "frame": {
+                "kind": "ephemeral",
+                "convo_id": "c1",
+                "message_ref": "m1",
+                "text": "partial output"
+            }
+        }
+    ],
+    "narrowing": [
+        {
+            "name": "status.vitals.cpu_pct_string",
+            "frame": {
+                "kind": "ephemeral",
+                "convo_id": "c1",
+                "status": {
+                    "model": "x",
+                    "vitals": {
+                        "cpu_pct": "12",
+                        "ram_pct": 47,
+                        "sampled_at_ms": 1
+                    }
+                }
+            },
+            "expect": ["status.vitals"]
+        },
+        {
+            "name": "status.vitals.out_of_range",
+            "frame": {
+                "kind": "ephemeral",
+                "convo_id": "c1",
+                "status": {
+                    "model": "x",
+                    "vitals": {
+                        "cpu_pct": 150,
+                        "ram_pct": 47,
+                        "sampled_at_ms": 1
+                    }
+                }
+            },
+            "expect": ["status.vitals"]
+        },
+        {
+            "name": "status.context_broken",
+            "frame": {
+                "kind": "ephemeral",
+                "convo_id": "c1",
+                "status": {
+                    "model": "x",
+                    "context": {
+                        "tokens": "lots",
+                        "window": 200000,
+                        "pct": 72
+                    }
+                }
+            },
+            "expect": ["status.context"]
+        },
+        {
+            "name": "status.limits_not_array",
+            "frame": {
+                "kind": "ephemeral",
+                "convo_id": "c1",
+                "status": {
+                    "model": "x",
+                    "limits": {
+                        "session": 40
+                    }
+                }
+            },
+            "expect": ["status.limits"]
+        },
+        {
+            "name": "status.limits_null_element",
+            "frame": {
+                "kind": "ephemeral",
+                "convo_id": "c1",
+                "status": {
+                    "model": "x",
+                    "limits": [null]
+                }
+            },
+            "expect": ["status.limits"]
+        },
+        {
+            "name": "status.limits_missing_percent",
+            "frame": {
+                "kind": "ephemeral",
+                "convo_id": "c1",
+                "status": {
+                    "model": "x",
+                    "limits": [
+                        {
+                            "id": "session",
+                            "label": "Session"
+                        }
+                    ]
+                }
+            },
+            "expect": ["status.limits"]
+        },
+        {
+            "name": "status.extras_not_array",
+            "frame": {
+                "kind": "ephemeral",
+                "convo_id": "c1",
+                "status": {
+                    "model": "x",
+                    "extras": "browser"
+                }
+            },
+            "expect": ["status.extras"]
+        },
+        {
+            "name": "status.extras_non_string_element",
+            "frame": {
+                "kind": "ephemeral",
+                "convo_id": "c1",
+                "status": {
+                    "model": "x",
+                    "extras": ["browser", 7]
+                }
+            },
+            "expect": ["status.extras"]
+        },
+        {
+            "name": "status.not_object",
+            "frame": {
+                "kind": "ephemeral",
+                "convo_id": "c1",
+                "status": "broken"
+            },
+            "expect": ["status"]
+        },
+        {
+            "name": "activity.unknown_state",
+            "frame": {
+                "kind": "ephemeral",
+                "convo_id": "c1",
+                "activity": {
+                    "state": "dreaming"
+                }
+            },
+            "expect": ["activity"]
+        },
+        {
+            "name": "tool_stream.unknown_event",
+            "frame": {
+                "kind": "ephemeral",
+                "convo_id": "c1",
+                "message_ref": "m1",
+                "tool_stream": {
+                    "event": "boom"
+                }
+            },
+            "expect": ["tool_stream"]
+        },
+        {
+            "name": "convo_id.non_string",
+            "frame": {
+                "kind": "ephemeral",
+                "convo_id": 123,
+                "activity": {
+                    "state": "idle"
+                }
+            },
+            "expect": ["convo_id"]
+        }
+    ],
+    "invalid": [
+        {
+            "name": "number",
+            "value": 42,
+            "reason": "not_object"
+        },
+        {
+            "name": "null",
+            "value": null,
+            "reason": "not_object"
+        },
+        {
+            "name": "string",
+            "value": "x",
+            "reason": "not_object"
+        },
+        {
+            "name": "array",
+            "value": [],
+            "reason": "not_object"
+        },
+        {
+            "name": "unknown_kind",
+            "value": {
+                "kind": "wat"
+            },
+            "reason": "unknown_kind"
+        },
+        {
+            "name": "missing_kind",
+            "value": {
+                "seq": 1,
+                "convo_id": "c1"
+            },
+            "reason": "unknown_kind"
+        },
+        {
+            "name": "control.missing_op",
+            "value": {
+                "kind": "control",
+                "code": "x"
+            },
+            "reason": "control:op"
+        },
+        {
+            "name": "box_status.unreadable",
+            "value": {
+                "kind": "box_status",
+                "device_id": 5
+            },
+            "reason": "bad_box_status"
+        }
+    ]
+}
