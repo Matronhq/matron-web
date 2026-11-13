@@ -21,6 +21,17 @@ export const MESSAGE_EVENT_TYPES = new Set([
     // deliberately OUT of this set to avoid unread-badge churn (revisit in a later pass).
 ]);
 
+/**
+ * A silent event is content the user can read in the chat but is never told about: `silent: true`
+ * on the payload of any message type (protocol "Silent events"). It is shown like any other row,
+ * but never counts as unread and never raises a notification. A bridge sets it on a card that only
+ * records something, such as the one for a reminder an agent set itself. Only a literal `true`
+ * counts, as on the server.
+ */
+export function isSilentEvent(event: { payload?: Record<string, unknown> | null }): boolean {
+    return event.payload?.silent === true;
+}
+
 export interface MatronConfig {
     brand?: string;
     journal_server_url?: string;

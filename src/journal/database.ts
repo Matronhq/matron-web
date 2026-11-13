@@ -11,6 +11,7 @@ import {
     enforceToolLogTtl,
     eventSnippet,
     type JournalEvent,
+    isSilentEvent,
     MESSAGE_EVENT_TYPES,
     type PendingMessage,
     type SnapshotResponse,
@@ -450,7 +451,8 @@ export class JournalDatabase {
             // message" line can never dangle out of sync with the row's slot.
             conversation.last_ts = Math.max(conversation.last_ts ?? 0, event.ts);
             conversation.snippet = eventSnippet(event.type, event.payload);
-            if (!event.sender.startsWith("user:")) conversation.unread_count += 1;
+            // A silent event is shown and never counted; the recount below leaves it out too.
+            if (!event.sender.startsWith("user:") && !isSilentEvent(event)) conversation.unread_count += 1;
         } else if (event.type === "read_marker") {
             const upToSeq = typeof event.payload.up_to_seq === "number" ? event.payload.up_to_seq : 0;
             conversation.read_up_to_seq = Math.max(conversation.read_up_to_seq, upToSeq);
@@ -461,7 +463,8 @@ export class JournalDatabase {
                 (candidate) =>
                     candidate.seq > upToSeq &&
                     MESSAGE_EVENT_TYPES.has(candidate.type) &&
-                    !candidate.sender.startsWith("user:"),
+                    !candidate.sender.startsWith("user:") &&
+                    !isSilentEvent(candidate),
             ).length;
         }
 

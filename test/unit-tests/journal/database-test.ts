@@ -61,6 +61,41 @@ describe("JournalDatabase", () => {
         database.close();
     });
 
+    it("stores a silent event without counting it as unread, live or after a read marker", async () => {
+        const database = await JournalDatabase.open("https://journal.example", 12, "alice");
+        await database.replaceWithSnapshot({
+            seq: 0,
+            conversations: [
+                {
+                    id: "c1",
+                    title: "Agent",
+                    session_state: "running",
+                    last_seq: 0,
+                    unread_count: 0,
+                    snippet: "",
+                    created_at: 1,
+                },
+            ],
+        });
+        const card = { question: "Reminder set", options: ["Send now", "Cancel"], blocking: false, silent: true };
+
+        await database.applyJournal(event(1, "agent:dev"));
+        await database.applyJournal(event(2, "agent:dev", "prompt", card));
+        await database.applyJournal(event(3, "agent:dev"));
+        // Only a literal true is silent.
+        await database.applyJournal(event(4, "agent:dev", "text", { body: "m4", silent: 1 }));
+        expect(await database.events("c1")).toHaveLength(4);
+        expect((await database.conversations())[0]).toMatchObject({ unread_count: 3 });
+
+        // Still content: it is the row's latest line.
+        await database.applyJournal(event(5, "agent:dev", "prompt", card));
+        expect((await database.conversations())[0]).toMatchObject({ unread_count: 3, snippet: "? Reminder set" });
+
+        await database.applyJournal(event(6, "user:alice", "read_marker", { convo_id: "c1", up_to_seq: 1 }));
+        expect((await database.conversations())[0]).toMatchObject({ unread_count: 2 });
+        database.close();
+    });
+
     it("keeps a room's membership from the snapshot and replaces it from a membership convo_meta", async () => {
         const database = await JournalDatabase.open("https://journal.example", 11, "alice");
         await database.replaceWithSnapshot({
