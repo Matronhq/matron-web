@@ -1345,6 +1345,17 @@ describe("message model DOM contracts", () => {
         expect(ours?.querySelector(".mj_SenderName_side")).toBeNull();
     });
 
+    it("keeps the time on the journal's own card in a room with another person", async () => {
+        const theirs = { ...textEvent(1, "hello"), sender: "person:bob@peer.example", payload: { body: "hello" } };
+        const card = { ...textEvent(2, "room card"), sender: "journal" };
+        rendered = await renderClient(signedInClient({ events: [theirs, card] }));
+
+        const row = rendered.container.querySelector('[data-event-id="2"]');
+        expect(row?.querySelector(".mj_SenderName_system")).toBeNull();
+        expect(row?.querySelector(".mj_SenderName_side")).toBeNull();
+        expect(row?.querySelectorAll(".mj_SenderName time")).toHaveLength(1);
+    });
+
     it("keeps the box name as the header in a room between the user's own agents", async () => {
         const first = { ...textEvent(1, "from a"), sender: "agent:box-a" };
         const second = { ...textEvent(2, "from b"), sender: "agent:box-b" };
@@ -1378,6 +1389,15 @@ describe("message model DOM contracts", () => {
         // Continuation blocks carry no per-block timestamp, so they fill to the shared
         // right edge with no reserved 56px gutter (kills the first-block spill).
         expect(row?.querySelectorAll("time")).toHaveLength(0);
+    });
+
+    it("reserves room for the date in an own bubble from an earlier day", async () => {
+        const old = { ...textEvent(1, "short"), sender: "user:alice", ts: Date.now() - 3 * 86_400_000 };
+        const fresh = { ...textEvent(2, "short"), sender: "user:alice", ts: Date.now() };
+        rendered = await renderClient(signedInClient({ events: [old, fresh] }));
+
+        expect(rendered.container.querySelector('[data-event-id="1"] .mj_EventTile_line_dated')).not.toBeNull();
+        expect(rendered.container.querySelector('[data-event-id="2"] .mj_EventTile_line_dated')).toBeNull();
     });
 
     it("renders a self timestamp exactly once and no avatar", async () => {

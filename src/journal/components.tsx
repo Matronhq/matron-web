@@ -151,7 +151,14 @@ import {
 } from "./icons";
 import { NAV_RAIL_WIDTH, NavRail, type NavKey } from "./NavRail";
 import { isAgentRoomTitle, needsYouByConversation, projectsNeedsYou } from "./needs-you";
-import { formatFullTime, formatMessageTime, isPersonSender, journalHost, roomSenderLabel } from "./room-sender";
+import {
+    formatFullTime,
+    formatMessageTime,
+    isPersonSender,
+    journalHost,
+    messageTimeHasDate,
+    roomSenderLabel,
+} from "./room-sender";
 import { notificationsFor, unreadTotal as countUnread } from "./notifications";
 import { ConvoNotifyBell, OverflowRoomsAndNotify, RoomsControl } from "./ChatHeaderRooms";
 import { useDismissablePopover } from "./use-dismissable-popover";
@@ -5687,7 +5694,9 @@ function EventRow({
                     }
                 />
             )}
-            <div className="mj_EventTile_line">
+            <div
+                className={`mj_EventTile_line${own && messageTimeHasDate(event.ts) ? " mj_EventTile_line_dated" : ""}`}
+            >
                 {/* Own bubbles carry an inline timestamp (design: "…text <09:58>"). Agent
                     continuation blocks do NOT — the section shows one timestamp on the profile
                     row (§10.2 one-per-section), so continuation blocks fill to the shared right
@@ -5747,10 +5756,12 @@ function SenderHeader({
 }): React.ReactElement {
     // Subscribed, so a memoised row picks up a session that arrives after it drew.
     const session = useSyncExternalStore(client.subscribe, () => client.getSnapshot().session);
-    const label =
+    const roomLabel =
         inRoom || isPersonSender(event.sender)
             ? roomSenderLabel(event, { username: session?.username, host: journalHost(session?.serverUrl) })
             : null;
+    // A sender with no kind (the journal's own cards) keeps the plain header, with its time.
+    const label = roomLabel?.side === "other" ? null : roomLabel;
     const sideText = label?.side === "ours" ? "Our side" : label?.side === "theirs" ? "Their side" : undefined;
     return (
         <span className={`mj_SenderName${label ? ` mj_SenderName_room mj_SenderName_${label.side}` : ""}`}>

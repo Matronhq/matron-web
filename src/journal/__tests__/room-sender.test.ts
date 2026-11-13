@@ -27,6 +27,10 @@ describe("roomSenderLabel", () => {
         });
     });
 
+    it("leaves the journal's own cards out of the side labelling", () => {
+        expect(roomSenderLabel({ sender: "journal", type: "item", payload: {} }, ours).side).toBe("other");
+    });
+
     it("marks a bridge notice as system, whoever journaled it", () => {
         const payload = { body: "x", notice: { kind: "agent_chat", icon: "💬", summary: "You are now in a room" } };
         expect(roomSenderLabel({ sender: "agent:box-a", type: "text", payload }, ours).side).toBe("system");

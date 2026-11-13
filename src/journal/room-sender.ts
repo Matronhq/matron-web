@@ -16,7 +16,7 @@ import { type JournalEvent } from "./types";
  * or `person:<name>@<host>` for the other person's side of a room) and the bridge's `notice` tag.
  * Our own side gets `<user>@<our journal host>` so it reads the same way as theirs.
  */
-export type RoomSide = "ours" | "theirs" | "system";
+export type RoomSide = "ours" | "theirs" | "system" | "other";
 
 export interface RoomSenderLabel {
     side: RoomSide;
@@ -62,13 +62,19 @@ export function roomSenderLabel(
     if (kind === "user") return { side: "ours", name: ourName || rest };
     if (kind === "agent")
         return { side: "ours", name: ourName || rest, detail: ourName ? `our agent · ${rest}` : "our agent" };
-    return { side: "system", name: rest || "System" };
+    // The journal's own cards (sender `journal`) are not notices: they keep the plain header.
+    return { side: "other", name: rest || "System" };
 }
 
 function sameLocalDay(a: number, b: number): boolean {
     const x = new Date(a);
     const y = new Date(b);
     return x.getFullYear() === y.getFullYear() && x.getMonth() === y.getMonth() && x.getDate() === y.getDate();
+}
+
+/** Whether a message's time shows a date in front of the clock time (any day but today). */
+export function messageTimeHasDate(timestamp: number, now: number = Date.now()): boolean {
+    return Number.isFinite(timestamp) && !sameLocalDay(timestamp, now);
 }
 
 /** A message's time: the clock time today, with the date in front on any other day. */
