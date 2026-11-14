@@ -14,7 +14,7 @@ Please see LICENSE files in the repository root for full details.
  * all fetching + mutation lives on the client.
  */
 
-import React, { useEffect } from "react";
+import React, { useEffect, useRef } from "react";
 
 import type { MatronJournalClient } from "../client";
 import { CloseIcon } from "../icons";
@@ -44,11 +44,17 @@ export function TrackerPane({
     const selectedProjectId = state.trackerView?.selectedProjectId;
     const briefingOpen = state.trackerView?.briefingOpen === true;
 
-    // Opening the pane primes both list views so the sidebar badges + either tab are ready.
+    // Opening the pane primes both list views so the sidebar badges + either tab are ready. The
+    // Memories tab reads neither list, so it does not fetch them (the inbox walk can be many pages).
+    // Prime once per pane open: leaving Memories later does not refetch what is already loaded.
+    const memoriesView = view === "memories";
+    const primedFor = useRef<unknown>(undefined);
     useEffect(() => {
+        if (memoriesView || primedFor.current === client) return;
+        primedFor.current = client;
         void client.loadMissions();
         void client.loadInbox();
-    }, [client]);
+    }, [client, memoriesView]);
 
     useEffect(() => {
         if (selectedItemId != null) void client.loadItem(selectedItemId);
@@ -377,6 +383,17 @@ export function TrackerPane({
                 </>
             );
         }
+        // A failed refresh keeps the loaded list (loaders never clear data on failure). Its own error
+        // outlives the shared banner, which any other tracker load clears, so say the list may be
+        // out of date and offer a retry; otherwise an empty list would read as current.
+        const staleNotice = list.error ? (
+            <div className="mj_TrackerStaleNotice" role="status">
+                Couldn't refresh {list.noun}, so {view === "inbox" ? "it" : "they"} may be out of date.{" "}
+                <button type="button" className="mj_TrackerTextButton" onClick={() => void list.reload()}>
+                    Try again
+                </button>
+            </div>
+        ) : null;
         if (view === "missions") {
             return projectsMode ? (
                 <>
@@ -387,6 +404,18 @@ export function TrackerPane({
                                 type="button"
                                 className="mj_TrackerTextButton"
                                 onClick={() => void client.loadProjects()}
+                            >
+                                Try again
+                            </button>
+                        </div>
+                    ) : null}
+                    {state.missionsError ? (
+                        <div className="mj_TrackerStaleNotice" role="status">
+                            Couldn't refresh unfiled missions, so they may be out of date.{" "}
+                            <button
+                                type="button"
+                                className="mj_TrackerTextButton"
+                                onClick={() => void client.loadMissions()}
                             >
                                 Try again
                             </button>
@@ -408,6 +437,7 @@ export function TrackerPane({
             ) : (
                 <>
                     {briefingCard(true)}
+                    {staleNotice}
                     <MissionsList
                         missions={state.missions ?? []}
                         onOpenMission={(num) => client.openTrackerMission(num)}
@@ -420,18 +450,7 @@ export function TrackerPane({
             // failure) but says it may be out of date and offers a retry, as the item detail does.
             return (
                 <>
-                    {state.memoriesError ? (
-                        <div className="mj_TrackerStaleNotice" role="status">
-                            Couldn't refresh memories, so they may be out of date.{" "}
-                            <button
-                                type="button"
-                                className="mj_TrackerTextButton"
-                                onClick={() => void client.loadMemories()}
-                            >
-                                Try again
-                            </button>
-                        </div>
-                    ) : null}
+                    {staleNotice}
                     <MemoriesList
                         memories={state.memories ?? []}
                         onOpenMemory={(name) => client.openTrackerMemory(name)}
@@ -441,13 +460,21 @@ export function TrackerPane({
             );
         }
         return (
-            <ItemsInbox
-                items={state.inboxItems ?? []}
-                done={state.inboxDone}
-                client={client}
-                onOpenItem={(num) => client.openTrackerItem(num)}
-                onSearchEverything={(query) => client.openSearch(query)}
-            />
+            <>
+                {staleNotice}
+                {state.inboxTruncated ? (
+                    <div className="mj_TrackerStaleNotice" role="status">
+                        Showing a partial inbox — too many open items to load them all. Some rows may be missing.
+                    </div>
+                ) : null}
+                <ItemsInbox
+                    items={state.inboxItems ?? []}
+                    done={state.inboxDone}
+                    client={client}
+                    onOpenItem={(num) => client.openTrackerItem(num)}
+                    onSearchEverything={(query) => client.openSearch(query)}
+                />
+            </>
         );
     })();
 

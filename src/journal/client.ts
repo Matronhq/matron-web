@@ -4107,6 +4107,15 @@ export class MatronJournalClient {
     // guards on the api instance so a response that races a logout / re-login can never write into a
     // newer session's store. ──────────────────────
 
+    // Whether the pane is showing a tracker list tab (Inbox or Missions). A list load that settles
+    // after the user moved to Memories must not write the shared banner there: that tab surfaces
+    // its own failures, and the list keeps its own error (inboxError / missionsError) for when its
+    // tab is shown again.
+    private trackerListTabShown(): boolean {
+        const view = this.state.trackerView;
+        return !!view?.open && (view.view === "inbox" || view.view === "missions");
+    }
+
     public async loadMissions(): Promise<void> {
         const api = this.api;
         if (!api) return;
@@ -4114,15 +4123,21 @@ export class MatronJournalClient {
         // open and mission markers independently restart it, so a slower earlier request must never
         // overwrite a newer one's result (else closed missions / obsolete counts reappear) (F2).
         const gen = ++this.trackerMissionsGen;
-        this.patch({ trackerLoading: true, trackerError: undefined, missionsError: undefined });
+        // missionsError stays until a load succeeds: a retry that stalls must not take the
+        // "may be out of date" notice off a list it has not replaced yet.
+        this.patch({ trackerLoading: true, trackerError: undefined });
         try {
             const { missions } = await api.missions();
             if (this.api !== api || this.trackerMissionsGen !== gen) return;
-            this.patch({ missions, trackerLoading: false });
+            this.patch({ missions, trackerLoading: false, missionsError: undefined });
         } catch (error) {
             if (this.api !== api || this.trackerMissionsGen !== gen) return;
             const message = errorMessage(error);
-            this.patch({ trackerError: message, missionsError: message, trackerLoading: false });
+            this.patch({
+                ...(this.trackerListTabShown() ? { trackerError: message } : {}),
+                missionsError: message,
+                trackerLoading: false,
+            });
         }
     }
 
@@ -4232,7 +4247,8 @@ export class MatronJournalClient {
         // load already dropped (e.g. items closed meanwhile) (F2).
         const gen = ++this.trackerInboxGen;
         this.inboxWalking = true;
-        this.patch({ trackerLoading: true, trackerError: undefined, inboxError: undefined });
+        // inboxError stays until a load succeeds, as missionsError does.
+        this.patch({ trackerLoading: true, trackerError: undefined });
         try {
             // App-wide open items; the inbox sorts "needs you" (open && awaiting==user) first
             // client-side, so a single open-state fetch feeds every section. The list is
@@ -4274,15 +4290,20 @@ export class MatronJournalClient {
                 inboxItems: merged,
                 ...this.doneWithoutOpen(merged),
                 trackerLoading: false,
-                trackerError: truncated
-                    ? "Showing a partial inbox — too many open items to load them all. Some rows may be missing."
-                    : undefined,
+                inboxError: undefined,
+                // Kept as state (not only the shared banner) so a capped walk that settles while
+                // Memories is showing still flags the partial list when Inbox is opened later.
+                inboxTruncated: truncated,
             });
         } catch (error) {
             if (this.api !== api || this.trackerInboxGen !== gen) return;
             this.inboxWalking = false;
             const message = errorMessage(error);
-            this.patch({ trackerError: message, inboxError: message, trackerLoading: false });
+            this.patch({
+                ...(this.trackerListTabShown() ? { trackerError: message } : {}),
+                inboxError: message,
+                trackerLoading: false,
+            });
         }
     }
 
@@ -4292,12 +4313,15 @@ export class MatronJournalClient {
         // Same generation guard as loadInbox: a memory marker restarts this while an earlier load
         // is in flight, and the older answer must never overwrite the newer one.
         const gen = ++this.trackerMemoriesGen;
-        this.patch({ trackerLoading: true, trackerError: undefined, memoriesError: undefined });
+        // memoriesError stays until a load succeeds, so a stalled retry keeps the "may be out of
+        // date" notice over the rows it has not replaced yet.
+        this.patch({ trackerLoading: true, trackerError: undefined });
         try {
             const { memories } = await api.memories();
             if (this.api !== api || this.trackerMemoriesGen !== gen) return;
             this.patch({
                 memories: [...memories].sort((a, b) => a.name.localeCompare(b.name)),
+                memoriesError: undefined,
                 trackerLoading: false,
             });
         } catch (error) {
