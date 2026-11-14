@@ -33,13 +33,15 @@ interface JournalConnectionCallbacks {
     onSnapshotRequired(): Promise<void>;
     onRevoked(): void;
     onState(state: ConnectionState, error?: string): void;
+    /** Whether an active push subscription permits closing the hidden tab's socket. Defaults to false. */
+    canSuspend?(): boolean;
     /** The socket was closed because the tab stayed hidden: views fed by the live socket (tool
      *  output) no longer update, and the next reconnect's snapshot replaces what they show. */
     onSuspend?(): void;
 }
 
-// A hidden tab keeps its socket this long, then closes it (battery); visible again reconnects
-// from the stored cursor.
+// A hidden tab checks at this interval whether push permits closing its socket.
+// Becoming visible again reconnects from the stored cursor.
 export const HIDDEN_CLOSE_MS = 60_000;
 const RETRY_DELAYS_MS = [0, 1_000, 2_000, 4_000, 8_000, 15_000, 30_000];
 // Upper bound on one coalesced journal run: keeps a single IndexedDB transaction and the render
@@ -189,7 +191,9 @@ export class JournalConnection {
         this.clearHiddenTimer();
         this.hiddenTimer = window.setTimeout(() => {
             this.hiddenTimer = undefined;
-            this.suspendForHidden();
+            if (this.stopped || this.suspended || document.visibilityState !== "hidden") return;
+            if (this.callbacks.canSuspend?.()) this.suspendForHidden();
+            else this.armHiddenTimer();
         }, HIDDEN_CLOSE_MS);
     }
 
@@ -213,7 +217,6 @@ export class JournalConnection {
         for (const [requestId, pending] of this.pendingRpc) {
             this.resolveRpc(requestId, pending, { ok: false, origin: "relay", code: "not_connected" });
         }
-        this.callbacks.onState("offline");
         socket?.close(1000, "tab hidden");
         this.callbacks.onSuspend?.();
     }

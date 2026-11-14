@@ -625,6 +625,7 @@ export class MatronJournalClient {
     private globalSearchAbort?: AbortController;
     private database?: JournalDatabase;
     private connection?: JournalConnection;
+    private suspendGuard?: () => boolean;
     // Read state: which timeline rows and tracker items were actually on screen, reported as
     // `seen` / `item_seen` over the socket. Separate from read_marker and the unread badge.
     public readonly seen = new SeenTracker({ send: (op) => this.connection?.send(op) ?? false });
@@ -820,6 +821,14 @@ export class MatronJournalClient {
 
     public get sessionGeneration(): number {
         return this.sessionGen;
+    }
+
+    /**
+     * Web push supplies a guard that returns true once a subscription is registered for the session.
+     * Without a guard, the socket is never closed while hidden.
+     */
+    public setSuspendGuard(guard: (() => boolean) | undefined): void {
+        this.suspendGuard = guard;
     }
 
     private allStorageHealthy(): boolean {
@@ -5458,6 +5467,7 @@ export class MatronJournalClient {
         const connectionGen = this.sessionGen;
         const current = (): boolean => this.sessionGen === connectionGen;
         this.connection = new JournalConnection(session.serverUrl, session.token, {
+            canSuspend: () => this.suspendGuard?.() ?? false,
             cursor: async () => (await this.database?.cursor()) ?? cursor ?? 0,
             archiveSince: () => readArchiveSince(session) ?? 0,
             onFrame: async (frame) => {

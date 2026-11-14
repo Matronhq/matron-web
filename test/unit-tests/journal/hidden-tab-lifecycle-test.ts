@@ -5,8 +5,8 @@ SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
 Please see LICENSE files in the repository root for full details.
 */
 
-// Connection lifecycle for a hidden tab: the socket is closed 60 s
-// after the tab hides, a tab that comes back first keeps it, and a tab that comes back
+// Connection lifecycle for a hidden tab with an active push subscription: the socket is closed
+// 60 s after the tab hides, a tab that comes back first keeps it, and a tab that comes back
 // after reconnects from the stored cursor and replaces what its live tool output showed.
 // All timing runs on fake timers; nothing waits in real time.
 //
@@ -112,6 +112,7 @@ afterEach(() => {
 
 function callbacks(cursor = 0) {
     return {
+        canSuspend: jest.fn(() => true),
         cursor: jest.fn().mockImplementation(async () => cursor),
         onFrame: jest.fn().mockResolvedValue(undefined),
         onReady: jest.fn().mockResolvedValue(undefined),
@@ -133,7 +134,9 @@ const HELLO_OK = {
 };
 
 /** A connection started and welcomed on its first socket. */
-async function online(cb = callbacks()) {
+async function online(
+    cb: Omit<ReturnType<typeof callbacks>, "canSuspend"> & { canSuspend?: () => boolean } = callbacks(),
+) {
     const connection = new JournalConnection("https://journal.example", "token", cb);
     started.push(connection);
     connection.start();
@@ -146,6 +149,42 @@ async function online(cb = callbacks()) {
 }
 
 describe("hidden tab closes its socket", () => {
+    it.each(["false", "absent"])("keeps the hidden socket open when canSuspend is %s", async (guard) => {
+        const { canSuspend: _canSuspend, ...cb } = callbacks();
+        const { socket } = await online({ ...cb, ...(guard === "false" ? { canSuspend: () => false } : {}) });
+        cb.onState.mockClear();
+        setVisibility("hidden");
+        jest.advanceTimersByTime(HIDDEN_CLOSE_MS);
+        expect(socket.readyState).toBe(FakeSocket.OPEN);
+        expect(socket.closedWith).toBeUndefined();
+        expect(cb.onSuspend).not.toHaveBeenCalled();
+        expect(cb.onState).not.toHaveBeenCalled();
+        setVisibility("visible");
+        jest.advanceTimersByTime(HIDDEN_CLOSE_MS);
+        expect(socket.readyState).toBe(FakeSocket.OPEN);
+        expect(cb.onSuspend).not.toHaveBeenCalled();
+        expect(cb.onState).not.toHaveBeenCalled();
+    });
+
+    it("closes at 120 s when the suspension guard becomes true after the first tick", async () => {
+        const cb = callbacks();
+        cb.canSuspend.mockReturnValue(false);
+        const { socket } = await online(cb);
+        cb.onState.mockClear();
+        setVisibility("hidden");
+        jest.advanceTimersByTime(HIDDEN_CLOSE_MS);
+        expect(socket.readyState).toBe(FakeSocket.OPEN);
+        expect(cb.onSuspend).not.toHaveBeenCalled();
+        cb.canSuspend.mockReturnValue(true);
+        jest.advanceTimersByTime(HIDDEN_CLOSE_MS - 1);
+        expect(socket.readyState).toBe(FakeSocket.OPEN);
+        jest.advanceTimersByTime(1);
+        expect(socket.closedWith).toEqual({ code: 1000, reason: "tab hidden" });
+        expect(cb.canSuspend).toHaveBeenCalledTimes(2);
+        expect(cb.onSuspend).toHaveBeenCalledTimes(1);
+        expect(cb.onState).not.toHaveBeenCalled();
+    });
+
     it("keeps the socket after 59 s hidden", async () => {
         const { connection, socket } = await online();
         setVisibility("hidden");
@@ -197,16 +236,22 @@ describe("hidden tab closes its socket", () => {
     it("reconnects on visible from the stored cursor", async () => {
         const cb = callbacks(7);
         const { connection, socket } = await online(cb);
+        cb.onState.mockClear();
         setVisibility("hidden");
         jest.advanceTimersByTime(HIDDEN_CLOSE_MS);
         expect(socket.readyState).toBe(FakeSocket.CLOSED);
+        expect(cb.onState).not.toHaveBeenCalled();
         cb.cursor.mockImplementation(async () => 9);
         setVisibility("visible");
         expect(FakeSocket.instances).toHaveLength(2);
+        expect(cb.onState.mock.calls).toEqual([["connecting"]]);
         const next = FakeSocket.instances[1];
         next.open();
         await settle();
         expect(next.hello).toMatchObject({ op: "hello", token: "token", cursor: 9 });
+        next.receive(HELLO_OK);
+        await settle();
+        expect(cb.onState.mock.calls).toEqual([["connecting"], ["online"]]);
         connection.stop();
     });
 
