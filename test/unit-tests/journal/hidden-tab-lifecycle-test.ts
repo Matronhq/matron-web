@@ -284,7 +284,9 @@ describe("tool output across a hidden tab", () => {
     function liveClient() {
         const client = new MatronJournalClient();
         const internals = client as unknown as ClientInternals;
-        internals.handleEphemeral(toolFrame({ event: "append", offset: 0, chunk: "a\nb\n", meta: { tool: "Bash", command: "make" } }));
+        internals.handleEphemeral(
+            toolFrame({ event: "append", offset: 0, chunk: "a\nb\n", meta: { tool: "Bash", command: "make" } }),
+        );
         internals.handleEphemeral(toolFrame({ event: "append", offset: 4, chunk: "c\n" }));
         return { client, internals };
     }
@@ -301,7 +303,13 @@ describe("tool output across a hidden tab", () => {
         internals.suspendLiveStreams?.();
         // The journal's snapshot holds more than the tab showed; none of the old text is kept twice.
         internals.handleEphemeral(
-            toolFrame({ event: "sync", offset: 0, content: "a\nb\nc\nd\ne\n", head_truncated: false, meta: { tool: "Bash", command: "make" } }),
+            toolFrame({
+                event: "sync",
+                offset: 0,
+                content: "a\nb\nc\nd\ne\n",
+                head_truncated: false,
+                meta: { tool: "Bash", command: "make" },
+            }),
         );
         const stream = internals.toolStreams.get("c1")?.tu1;
         expect(stream?.content).toBe("a\nb\nc\nd\ne\n");
@@ -313,7 +321,13 @@ describe("tool output across a hidden tab", () => {
         const { internals } = liveClient();
         internals.suspendLiveStreams?.();
         internals.handleEphemeral(
-            toolFrame({ event: "sync", offset: 2048, content: "tail\n", head_truncated: true, meta: { tool: "Bash", command: "make" } }),
+            toolFrame({
+                event: "sync",
+                offset: 2048,
+                content: "tail\n",
+                head_truncated: true,
+                meta: { tool: "Bash", command: "make" },
+            }),
         );
         expect(internals.toolStreams.get("c1")?.tu1).toMatchObject({ content: "tail\n", headTruncated: true });
     });
@@ -338,7 +352,13 @@ describe("tool output across a hidden tab", () => {
         (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
         const container = document.createElement("div");
         const root = createRoot(container);
-        const stream: ToolStreamState = { messageRef: "tu1", command: "make", content: "a\n", offset: 2, headTruncated: false };
+        const stream: ToolStreamState = {
+            messageRef: "tu1",
+            command: "make",
+            content: "a\n",
+            offset: 2,
+            headTruncated: false,
+        };
         await act(async () => {
             root.render(React.createElement(ToolStream, { stream }));
         });
