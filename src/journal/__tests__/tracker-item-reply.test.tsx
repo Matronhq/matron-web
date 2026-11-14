@@ -312,6 +312,24 @@ describe("ItemDetail reply box", () => {
             elsewhere.remove();
         });
 
+        it("does not pull the focus into the box after an Enter that sent nothing", async () => {
+            const client = fakeClient();
+            let settle!: (ok: boolean) => void;
+            client.closeTrackerItem.mockReturnValueOnce(new Promise<boolean>((resolve) => (settle = resolve)));
+            const container = await renderItem(client);
+            input(container).focus();
+            await press(container, {});
+            expect(client.postTrackerComment).not.toHaveBeenCalled();
+            input(container).blur();
+
+            await click(container.querySelector<HTMLButtonElement>(".mj_TrackerMenu_button"));
+            await click(container.querySelector<HTMLButtonElement>(".mj_TrackerMenu_item"));
+            await act(async () => settle(true));
+
+            expect(client.closeTrackerItem).toHaveBeenCalled();
+            expect(document.activeElement).not.toBe(input(container));
+        });
+
         it("adds a new line on Shift+Enter instead of sending", async () => {
             const client = fakeClient();
             const container = await renderItem(client);
