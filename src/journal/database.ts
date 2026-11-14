@@ -116,6 +116,71 @@ function emptyConversation(id: string, timestamp: number): Conversation {
     };
 }
 
+/**
+ * Folds one newly applied journal row into its conversation row (mutated in place). Shared by the
+ * single-row and batched apply paths so both derive the sidebar state identically. `eventStore` is
+ * the same transaction's events store, which already holds this row, so a read marker counts
+ * unread against everything applied so far, including earlier rows of the same batch.
+ */
+async function applyEventToConversation(
+    conversation: Conversation,
+    event: JournalEvent,
+    eventStore: IDBObjectStore,
+): Promise<void> {
+    conversation.last_seq = Math.max(conversation.last_seq, event.seq);
+    // last_ts (the conversation-list sort key and the "last activity" time)
+    // advances ONLY on a MESSAGE event — see the message branch below. A
+    // meta/status/read_marker frame must not resurface a conversation to the
+    // top of the list or bump its timestamp past a stale preview line, since
+    // those frames never refresh the snippet. Mirrors the server's last_ts
+    // (journal.js: ts of the newest MESSAGE_TYPES event). last_seq above is
+    // still monotonic for the merge/read-cursor invariants; only ordering
+    // drops it as the primary key.
+
+    if (event.type === "convo_meta") {
+        if (typeof event.payload.title === "string") conversation.title = event.payload.title;
+        if (typeof event.payload.auto_title === "string" || event.payload.auto_title === null) {
+            conversation.auto_title = event.payload.auto_title;
+        }
+        let incomingParent = coerceParentId(event.payload.parent_convo_id);
+        if (incomingParent === conversation.id) incomingParent = null;
+        if (conversation.parent_convo_id == null && incomingParent) {
+            conversation.parent_convo_id = incomingParent;
+        }
+        // The owning box rides the meta (the journal always stamps the connection's device), so a
+        // conversation born live knows its box before the next snapshot.
+        const box = event.payload.agent_device_id;
+        if (typeof box === "number" && Number.isFinite(box)) conversation.agent_device_id = box;
+        // Room membership: a present value replaces the stored one; an absent key keeps it.
+        Object.assign(conversation, membershipFrom(event.payload));
+    } else if (event.type === "session_status" && typeof event.payload.state === "string") {
+        conversation.session_state = event.payload.state;
+        if (hasValidSessionOutcome(event.payload.session_outcome)) {
+            conversation.session_outcome = event.payload.session_outcome;
+        }
+    } else if (MESSAGE_EVENT_TYPES.has(event.type)) {
+        // Snippet and last_ts advance together, so the displayed "last
+        // message" line can never dangle out of sync with the row's slot.
+        conversation.last_ts = Math.max(conversation.last_ts ?? 0, event.ts);
+        conversation.snippet = eventSnippet(event.type, event.payload);
+        // A silent event is shown and never counted; the recount below leaves it out too.
+        if (!event.sender.startsWith("user:") && !isSilentEvent(event)) conversation.unread_count += 1;
+    } else if (event.type === "read_marker") {
+        const upToSeq = typeof event.payload.up_to_seq === "number" ? event.payload.up_to_seq : 0;
+        conversation.read_up_to_seq = Math.max(conversation.read_up_to_seq, upToSeq);
+        const storedEvents = (await requestResult(
+            eventStore.index("byConversation").getAll(event.convo_id),
+        )) as JournalEvent[];
+        conversation.unread_count = storedEvents.filter(
+            (candidate) =>
+                candidate.seq > upToSeq &&
+                MESSAGE_EVENT_TYPES.has(candidate.type) &&
+                !candidate.sender.startsWith("user:") &&
+                !isSilentEvent(candidate),
+        ).length;
+    }
+}
+
 function matchesOwnPendingMessage(event: JournalEvent, pending: PendingMessage, ownSender: string): boolean {
     const isText = event.type === "text" && typeof event.payload.body === "string";
     const isAttachment = event.type === "file" || event.type === "image";
@@ -398,82 +463,58 @@ export class JournalDatabase {
 
     /** Applies one strictly ordered replay/live row and advances the durable cursor atomically. */
     public async applyJournal(incomingEvent: JournalEvent): Promise<boolean> {
-        const event = enforceToolLogTtl(incomingEvent);
+        const [applied] = await this.applyJournalBatch([incomingEvent]);
+        return applied ?? false;
+    }
+
+    /**
+     * Applies a run of strictly ordered rows in one transaction and returns, per row, whether it
+     * was newly applied (false = at or below the durable cursor, a duplicate). Same result as
+     * calling applyJournal once per row in order, since a later row sees every earlier row's
+     * writes, but a replay of thousands of rows costs a few commits instead of thousands. The
+     * cursor only moves forward, to the highest applied seq, and the run commits or fails as a
+     * whole, so a failed transaction leaves the cursor where it was and the rows are replayed.
+     */
+    public async applyJournalBatch(incomingEvents: JournalEvent[]): Promise<boolean[]> {
+        if (incomingEvents.length === 0) return [];
         const transaction = this.database.transaction(["meta", "conversations", "events"], "readwrite");
         const meta = transaction.objectStore("meta");
-        const currentCursor = (await requestResult(meta.get(CURSOR_KEY))) as number | undefined;
-        if (currentCursor !== undefined && event.seq <= currentCursor) {
+        const conversations = transaction.objectStore("conversations");
+        const events = transaction.objectStore("events");
+        let cursor = (await requestResult(meta.get(CURSOR_KEY))) as number | undefined;
+        const touched = new Map<string, Conversation>();
+        const results: boolean[] = [];
+        for (const incomingEvent of incomingEvents) {
+            const event = enforceToolLogTtl(incomingEvent);
+            if (cursor !== undefined && event.seq <= cursor) {
+                results.push(false);
+                continue;
+            }
+            let conversation = touched.get(event.convo_id);
+            if (!conversation) {
+                const existing = (await requestResult(conversations.get(event.convo_id))) as Conversation | undefined;
+                conversation = existing ?? emptyConversation(event.convo_id, event.ts);
+                touched.set(event.convo_id, conversation);
+            }
+            events.put(event);
+            await applyEventToConversation(conversation, event, events);
+            cursor = event.seq;
+            results.push(true);
+        }
+        if (!results.includes(true)) {
+            // Every row was a duplicate: no writes were needed, so abort instead of committing.
             transaction.abort();
             try {
                 await transactionDone(transaction);
             } catch {
-                // The abort is deliberate: no writes were needed for a duplicate frame.
+                // The abort is deliberate.
             }
-            return false;
+            return results;
         }
-
-        const conversations = transaction.objectStore("conversations");
-        const existing = (await requestResult(conversations.get(event.convo_id))) as Conversation | undefined;
-        const conversation = existing ?? emptyConversation(event.convo_id, event.ts);
-
-        transaction.objectStore("events").put(event);
-        conversation.last_seq = Math.max(conversation.last_seq, event.seq);
-        // last_ts (the conversation-list sort key and the "last activity" time)
-        // advances ONLY on a MESSAGE event — see the message branch below. A
-        // meta/status/read_marker frame must not resurface a conversation to the
-        // top of the list or bump its timestamp past a stale preview line, since
-        // those frames never refresh the snippet. Mirrors the server's last_ts
-        // (journal.js: ts of the newest MESSAGE_TYPES event). last_seq above is
-        // still monotonic for the merge/read-cursor invariants; only ordering
-        // drops it as the primary key.
-
-        if (event.type === "convo_meta") {
-            if (typeof event.payload.title === "string") conversation.title = event.payload.title;
-            if (typeof event.payload.auto_title === "string" || event.payload.auto_title === null) {
-                conversation.auto_title = event.payload.auto_title;
-            }
-            let incomingParent = coerceParentId(event.payload.parent_convo_id);
-            if (incomingParent === conversation.id) incomingParent = null;
-            if (conversation.parent_convo_id == null && incomingParent) {
-                conversation.parent_convo_id = incomingParent;
-            }
-            // The owning box rides the meta (the journal always stamps the connection's device), so a
-            // conversation born live knows its box before the next snapshot.
-            const box = event.payload.agent_device_id;
-            if (typeof box === "number" && Number.isFinite(box)) conversation.agent_device_id = box;
-            // Room membership: a present value replaces the stored one; an absent key keeps it.
-            Object.assign(conversation, membershipFrom(event.payload));
-        } else if (event.type === "session_status" && typeof event.payload.state === "string") {
-            conversation.session_state = event.payload.state;
-            if (hasValidSessionOutcome(event.payload.session_outcome)) {
-                conversation.session_outcome = event.payload.session_outcome;
-            }
-        } else if (MESSAGE_EVENT_TYPES.has(event.type)) {
-            // Snippet and last_ts advance together, so the displayed "last
-            // message" line can never dangle out of sync with the row's slot.
-            conversation.last_ts = Math.max(conversation.last_ts ?? 0, event.ts);
-            conversation.snippet = eventSnippet(event.type, event.payload);
-            // A silent event is shown and never counted; the recount below leaves it out too.
-            if (!event.sender.startsWith("user:") && !isSilentEvent(event)) conversation.unread_count += 1;
-        } else if (event.type === "read_marker") {
-            const upToSeq = typeof event.payload.up_to_seq === "number" ? event.payload.up_to_seq : 0;
-            conversation.read_up_to_seq = Math.max(conversation.read_up_to_seq, upToSeq);
-            const storedEvents = (await requestResult(
-                transaction.objectStore("events").index("byConversation").getAll(event.convo_id),
-            )) as JournalEvent[];
-            conversation.unread_count = storedEvents.filter(
-                (candidate) =>
-                    candidate.seq > upToSeq &&
-                    MESSAGE_EVENT_TYPES.has(candidate.type) &&
-                    !candidate.sender.startsWith("user:") &&
-                    !isSilentEvent(candidate),
-            ).length;
-        }
-
-        conversations.put(conversation);
-        meta.put(event.seq, CURSOR_KEY);
+        for (const conversation of touched.values()) conversations.put(conversation);
+        meta.put(cursor, CURSOR_KEY);
         await transactionDone(transaction);
-        return true;
+        return results;
     }
 
     public async markLocallyRead(conversationId: string, upToSeq: number): Promise<void> {

@@ -6,13 +6,27 @@ Please see LICENSE files in the repository root for full details.
 */
 
 import { decodeServerFrame } from "./frame-decode";
-import { type ConnectionState, type JournalControlFrame, type RpcReply, type ServerFrame, websocketUrl } from "./types";
+import {
+    type ConnectionState,
+    type JournalControlFrame,
+    type JournalEvent,
+    type RpcReply,
+    type ServerFrame,
+    websocketUrl,
+} from "./types";
 
 interface JournalConnectionCallbacks {
     cursor(): Promise<number>;
     /** The archive cursor for hello's `archive_since` (0 = the whole set); undefined omits it. */
     archiveSince?(): number | undefined;
     onFrame(frame: ServerFrame): Promise<void>;
+    /**
+     * Optional batched sink for sequenced journal frames. When present, consecutive journal frames
+     * that arrive while earlier work is still being processed are coalesced (in arrival order,
+     * never across a non-journal frame) and handed over as one run, so a replay backlog costs one
+     * store transaction and one render per run instead of per frame. Absent: onFrame per frame.
+     */
+    onJournalBatch?(frames: JournalEvent[]): Promise<void>;
     /** Called once the journal welcomes the socket, with the hello_ok frame (it may carry `pins`
      *  and, on a newer journal, the user's settings). */
     onReady(hello: JournalControlFrame): Promise<void>;
@@ -22,6 +36,9 @@ interface JournalConnectionCallbacks {
 }
 
 const RETRY_DELAYS_MS = [0, 1_000, 2_000, 4_000, 8_000, 15_000, 30_000];
+// Upper bound on one coalesced journal run: keeps a single IndexedDB transaction and the render
+// after it bounded, and lets the UI paint between runs during a long replay.
+export const MAX_JOURNAL_BATCH = 500;
 
 export class JournalConnection {
     private socket?: WebSocket;
@@ -31,6 +48,13 @@ export class JournalConnection {
     private welcomed = false;
     private replacingSnapshot = false;
     private processing = Promise.resolve();
+    // The journal run still accepting frames (queued, not yet started). Closed by any non-journal
+    // frame, by the run starting, or by reaching MAX_JOURNAL_BATCH, so order is always preserved.
+    private openJournalBatch?: { socket: WebSocket; frames: JournalEvent[] };
+    // Sockets whose frames must no longer be applied: dropped for a re-snapshot (the snapshot
+    // supersedes what they already delivered) or after a processing error (so a run queued behind
+    // the failed one cannot move the cursor past the rows that failed).
+    private abandonedSockets = new WeakSet<WebSocket>();
     private pendingRpc = new Map<
         string,
         {
@@ -186,6 +210,8 @@ export class JournalConnection {
     }
 
     private async handleFrame(frame: ServerFrame, socket: WebSocket): Promise<void> {
+        // Rpc replies are matched by request id and stay valid on an abandoned socket.
+        if (this.abandonedSockets.has(socket) && !this.isFastPathFrame(frame)) return;
         if (frame.kind === "rpc") {
             const response: unknown = frame.response;
             if (typeof response !== "object" || response === null) {
@@ -288,14 +314,7 @@ export class JournalConnection {
                 return;
             }
             if (frame.op === "snapshot_required") {
-                this.replacingSnapshot = true;
-                socket.close(1000, "replacing snapshot");
-                try {
-                    await this.callbacks.onSnapshotRequired();
-                } finally {
-                    this.replacingSnapshot = false;
-                }
-                this.scheduleReconnect(0);
+                await this.resyncFromSnapshot(socket);
                 return;
             }
             if (frame.op === "error" && frame.code === "revoked") {
@@ -306,6 +325,24 @@ export class JournalConnection {
             }
         }
         await this.callbacks.onFrame(frame);
+    }
+
+    // Drop `socket`, re-snapshot, then reconnect with the fresh cursor.
+    private async resyncFromSnapshot(socket: WebSocket): Promise<void> {
+        this.abandonedSockets.add(socket);
+        this.replacingSnapshot = true;
+        socket.close(1000, "replacing snapshot");
+        try {
+            await this.callbacks.onSnapshotRequired();
+        } finally {
+            this.replacingSnapshot = false;
+        }
+        this.scheduleReconnect(0);
+    }
+
+    private async handleJournalBatch(frames: JournalEvent[], socket: WebSocket): Promise<void> {
+        if (this.abandonedSockets.has(socket)) return;
+        await this.callbacks.onJournalBatch!(frames);
     }
 
     private resolveRpc(
@@ -332,6 +369,9 @@ export class JournalConnection {
     }
 
     private handleProcessingError(error: unknown, socket: WebSocket): void {
+        // Runs already queued on this socket must not apply and move the cursor past the rows that
+        // just failed: those rows would never be replayed.
+        this.abandonedSockets.add(socket);
         this.callbacks.onState("offline", error instanceof Error ? error.message : "Sync failed");
         socket.close();
     }
@@ -355,11 +395,28 @@ export class JournalConnection {
         if (decoded.narrowed) console.warn("matron:frame", { reason: `narrowed:${decoded.narrowed.join(",")}` });
         const frame = decoded.frame;
 
+        if (frame.kind === "journal" && this.callbacks.onJournalBatch) {
+            const open = this.openJournalBatch;
+            if (open && open.socket === socket && open.frames.length < MAX_JOURNAL_BATCH) {
+                open.frames.push(frame);
+                return;
+            }
+            const batch = { socket, frames: [frame] };
+            this.openJournalBatch = batch;
+            this.processing = this.processing
+                .then(() => {
+                    if (this.openJournalBatch === batch) this.openJournalBatch = undefined;
+                    return this.handleJournalBatch(batch.frames, socket);
+                })
+                .catch((error) => this.handleProcessingError(error, socket));
+            return;
+        }
         if (this.isFastPathFrame(frame)) {
             void this.handleFrame(frame, socket).catch((error) => this.handleProcessingError(error, socket));
             return;
         }
 
+        this.openJournalBatch = undefined;
         this.processing = this.processing
             .then(() => this.handleFrame(frame, socket))
             .catch((error) => this.handleProcessingError(error, socket));
