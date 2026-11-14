@@ -7,6 +7,7 @@ Please see LICENSE files in the repository root for full details.
 
 import { type LiveListener, MatronJournalClient } from "../../../src/journal/client";
 import { DesktopNotifier, notificationTag, type NotificationConstructorLike } from "../../../src/journal/notifications";
+import { viewingConvoId } from "../../../src/journal/viewing";
 import type { ClientState, Session } from "../../../src/journal/types";
 
 const session: Session = {
@@ -48,6 +49,7 @@ function setup(permission: NotificationPermission = "granted", signedIn = true) 
     Object.defineProperty(navigator, "serviceWorker", { configurable: true, value: worker });
     const focus = jest.spyOn(window, "focus").mockImplementation(() => {});
     const webPush = {
+        active: jest.fn((_session: Session) => false),
         sync: jest.fn().mockResolvedValue(undefined),
         unregister: jest.fn().mockResolvedValue(undefined),
     };
@@ -165,4 +167,47 @@ it("shares the actual in-page notification tag with the worker contract", async 
     );
     expect(f.shown).toHaveLength(1);
     expect(f.shown[0].tag).toBe(notificationTag("c1"));
+});
+
+it("leaves a selected conversation's alert to push when the visible tab is unfocused", async () => {
+    jest.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+    jest.spyOn(document, "hasFocus").mockReturnValue(false);
+    const f = setup();
+    f.webPush.active.mockReturnValue(true);
+    f.state({ selectedConversationId: "c1" });
+    await f.notifier.enable();
+    await settle();
+    expect(viewingConvoId(f.client.getSnapshot().selectedConversationId, document)).toBeNull();
+    const internals = f.client as unknown as { emitLive(call: (listener: LiveListener) => void): void };
+    internals.emitLive((listener) =>
+        listener.journalEvent?.(
+            {
+                kind: "journal",
+                seq: 8,
+                convo_id: "c1",
+                ts: 1000,
+                sender: "agent:1",
+                type: "prompt",
+                payload: { text: "Needs you" },
+            },
+            undefined,
+        ),
+    );
+    expect(f.webPush.active).toHaveBeenCalledWith(session);
+    expect(f.shown).toHaveLength(0);
+});
+
+it("guards suspension only for an active subscription for the current session, and clears on detach", async () => {
+    const f = setup();
+    const internals = f.client as unknown as { suspendGuard?: () => boolean };
+    expect(internals.suspendGuard?.()).toBe(false);
+    f.webPush.active.mockImplementation((s) => s.token === session.token);
+    expect(internals.suspendGuard?.()).toBe(true);
+    f.state({ session: { ...session, token: "other-token" } });
+    expect(internals.suspendGuard?.()).toBe(false);
+    f.state({ session: undefined });
+    expect(internals.suspendGuard?.()).toBe(false);
+    f.stop();
+    expect(internals.suspendGuard).toBeUndefined();
+    await settle();
 });

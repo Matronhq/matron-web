@@ -5,6 +5,7 @@ SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
 Please see LICENSE files in the repository root for full details.
 */
 
+import { parseConvoHash } from "../../../src/journal/push-shared";
 import fixture from "../../fixtures/webpush-payload.json";
 import { notificationTag } from "../../../src/journal/notifications";
 import {
@@ -13,7 +14,6 @@ import {
     decidePushDisplay,
     buildNotification,
     routeNotificationClick,
-    parseConvoHash,
     installPushHandlers,
     type PushContent,
     type ServiceWorkerScopeLike,

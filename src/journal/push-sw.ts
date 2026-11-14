@@ -5,6 +5,9 @@ SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
 Please see LICENSE files in the repository root for full details.
 */
 
+import { notificationTag } from "./push-shared";
+export { notificationTag, parseConvoHash } from "./push-shared";
+
 export type PushKind = "attention" | "done" | "activity";
 export interface PushContent {
     v: 1;
@@ -47,10 +50,6 @@ function boundedString(value: unknown, cap: number): value is string {
 
 function validConvoId(value: unknown): value is string {
     return boundedString(value, 128) && value.length > 0;
-}
-
-export function notificationTag(convoId: string): string {
-    return `matron:${convoId}`;
 }
 
 export function parsePushPayload(raw: unknown): PushContent | null {
@@ -170,16 +169,6 @@ export function routeNotificationClick(input: {
                 ? { action: "focus", index: target.index, message: { type: "matron-open-convo", convoId } }
                 : { action: "focus", index: target.index };
         return { action: "open", url: convoId ? input.scope + "#convo=" + encodeURIComponent(convoId) : input.scope };
-    } catch {
-        return null;
-    }
-}
-
-export function parseConvoHash(hash: string): string | null {
-    if (!hash.startsWith("#convo=") || hash.length > 7 + 128 * 12) return null;
-    try {
-        const id = decodeURIComponent(hash.slice(7));
-        return validConvoId(id) ? id : null;
     } catch {
         return null;
     }

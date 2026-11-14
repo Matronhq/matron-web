@@ -1160,7 +1160,7 @@ describe("MatronJournalClient state handling", () => {
         resolveCursor(10);
         await ready;
 
-        expect(oldSend).not.toHaveBeenCalled();
+        expect(oldSend.mock.calls).toEqual([[{ op: "viewing", convo_id: null }]]);
         expect(newSend).not.toHaveBeenCalled();
     });
 });
@@ -5226,5 +5226,65 @@ describe("MatronJournalClient session guards", () => {
         expect(refresh).toHaveBeenCalledWith("c1");
         expect(state.textStreams.get("c1")?.ref1).toBeUndefined();
         expect(database.conversations).not.toHaveBeenCalled();
+    });
+});
+
+describe("focused conversation reporting", () => {
+    afterEach(() => jest.restoreAllMocks());
+
+    it("updates on focus changes, retries failed sends, replays after reconnect and disposes on logout", async () => {
+        localStorage.clear();
+        const focused = jest.spyOn(document, "hasFocus").mockReturnValue(true);
+        const visibility = jest.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+        jest.spyOn(JournalDatabase, "open").mockResolvedValue(fakeDatabase() as unknown as JournalDatabase);
+        jest.spyOn(JournalConnection.prototype, "start").mockImplementation(() => undefined);
+        jest.spyOn(JournalApi.prototype, "messages").mockResolvedValue({ events: [] });
+        const send = jest.fn().mockReturnValue(true);
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        try {
+            await state.startSession(SESSION);
+            state.connection!.send = send;
+            await client.selectConversation("c1");
+            expect(send).toHaveBeenLastCalledWith({ op: "viewing", convo_id: "c1" });
+            send.mockClear();
+            window.dispatchEvent(new Event("focus"));
+            expect(send).not.toHaveBeenCalled();
+            focused.mockReturnValue(false);
+            send.mockReturnValueOnce(false);
+            window.dispatchEvent(new Event("blur"));
+            document.dispatchEvent(new Event("visibilitychange"));
+            expect(send.mock.calls).toEqual([[{ op: "viewing", convo_id: null }], [{ op: "viewing", convo_id: null }]]);
+            send.mockClear();
+            await state.handleReady();
+            expect(send).toHaveBeenCalledWith({ op: "viewing", convo_id: null });
+            send.mockClear();
+            focused.mockReturnValue(true);
+            window.dispatchEvent(new Event("focus"));
+            expect(send).toHaveBeenCalledWith({ op: "viewing", convo_id: "c1" });
+            visibility.mockReturnValue("hidden");
+            document.dispatchEvent(new Event("visibilitychange"));
+            expect(send).toHaveBeenLastCalledWith({ op: "viewing", convo_id: null });
+            visibility.mockReturnValue("visible");
+            document.dispatchEvent(new Event("visibilitychange"));
+            expect(send).toHaveBeenLastCalledWith({ op: "viewing", convo_id: "c1" });
+            client.clearSelection();
+            expect(send).toHaveBeenLastCalledWith({ op: "viewing", convo_id: null });
+            await state.startSession(SESSION);
+            const nextSend = jest.fn().mockReturnValue(true);
+            state.connection!.send = nextSend;
+            await client.selectConversation("c1");
+            expect(nextSend).toHaveBeenCalledWith({ op: "viewing", convo_id: "c1" });
+            nextSend.mockClear();
+            focused.mockReturnValue(false);
+            window.dispatchEvent(new Event("blur"));
+            expect(nextSend.mock.calls).toEqual([[{ op: "viewing", convo_id: null }]]);
+        } finally {
+            await client.logout();
+        }
+        send.mockClear();
+        window.dispatchEvent(new Event("blur"));
+        document.dispatchEvent(new Event("visibilitychange"));
+        expect(send).not.toHaveBeenCalled();
     });
 });

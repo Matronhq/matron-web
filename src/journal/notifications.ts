@@ -32,8 +32,9 @@ Please see LICENSE files in the repository root for full details.
  */
 
 import { JournalApi, JournalApiError } from "./api";
-import { notificationTag, parseConvoHash } from "./push-sw";
+import { notificationTag, parseConvoHash } from "./push-shared";
 import { WebPushRegistrar } from "./web-push";
+import { isTabFocused, watchTabFocus } from "./viewing";
 
 import type { LiveListener, MatronJournalClient } from "./client";
 import { effectiveUnread } from "./conversation-flags";
@@ -48,7 +49,7 @@ import {
     type Session,
 } from "./types";
 
-export { notificationTag } from "./push-sw";
+export { notificationTag } from "./push-shared";
 
 // ── Settings model (journal src/notify.js) ──────────────────────────────────────────────────
 
@@ -743,6 +744,10 @@ export class DesktopNotifier {
     // ── Lifecycle ──
 
     private attach(): void {
+        this.client.setSuspendGuard(() => {
+            const s = this.client.getSnapshot().session;
+            return !!s && !!this.env.webPush?.active?.(s);
+        });
         const doc = this.env.document;
         this.baseTitle = (doc?.title ?? "Matron").replace(TITLE_COUNT, "");
         const live: LiveListener = {
@@ -779,15 +784,10 @@ export class DesktopNotifier {
                 this.announce();
             };
             const onHide = (): void => this.post({ type: "view", tab: this.tabId, focused: false, convoId: null });
-            win.addEventListener("focus", onFocusChange);
-            win.addEventListener("blur", onFocusChange);
+            this.teardown.push(watchTabFocus(win, doc, onFocusChange));
             win.addEventListener("pagehide", onHide);
-            doc?.addEventListener("visibilitychange", onFocusChange);
             this.teardown.push(() => {
-                win.removeEventListener("focus", onFocusChange);
-                win.removeEventListener("blur", onFocusChange);
                 win.removeEventListener("pagehide", onHide);
-                doc?.removeEventListener("visibilitychange", onFocusChange);
             });
         }
 
@@ -806,6 +806,7 @@ export class DesktopNotifier {
     }
 
     private detach(): void {
+        this.client.setSuspendGuard(undefined);
         if (this.pushSession) void this.env.webPush?.unregister(this.pushSession);
         this.pushSession = undefined;
         this.sessionKey = undefined;
@@ -1037,7 +1038,7 @@ export class DesktopNotifier {
 
     private ownView(): PeerView {
         const doc = this.env.document;
-        const focused = Boolean(doc && doc.visibilityState === "visible" && doc.hasFocus());
+        const focused = !!doc && isTabFocused(doc);
         const state = this.client.getSnapshot();
         const convoId = state.trackerView?.open ? null : (state.selectedConversationId ?? null);
         return { focused, convoId };
