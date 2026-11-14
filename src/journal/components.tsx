@@ -60,6 +60,7 @@ import {
 } from "./client";
 import { copyText } from "./clipboard";
 import { type DraftStore, makeDraftStore } from "./composer-drafts";
+import { isImeComposing, isSendKey, useAutoGrow } from "./composer-input";
 import { SentMessageHistory } from "./sent-history";
 import { effectiveUnread } from "./conversation-flags";
 import { chipHeadline, chipLabel, isEarlierLink, linkLine, missionSections } from "./conversation-missions";
@@ -6872,7 +6873,7 @@ function Composer({
     const [nonDurable, setNonDurable] = useState(false);
     const store = useMemo(() => makeRecentFoldersStore(state.session), [state.session]);
     const [dismissedSeq, setDismissedSeq] = useState(0);
-    const textarea = useRef<HTMLTextAreaElement>(null);
+    const textarea = useRef<HTMLTextAreaElement | null>(null);
     const fileInput = useRef<HTMLInputElement>(null);
     const convoId = state.selectedConversationId;
     const convoIdRef = useRef(convoId);
@@ -7018,7 +7019,6 @@ function Composer({
         // Sync the badge FROM the store for the newly-selected convo — never a blind reset, so a
         // still-non-durable convo keeps its warning across switch-away/back (and a clear-failure flag surfaces).
         setNonDurable(convoId ? drafts.durability(convoId) === "non-durable" : false);
-        if (textarea.current) textarea.current.style.height = "auto";
         prevConvoIdRef.current = convoId;
     }, [convoId, draftReloadTick]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -7068,7 +7068,6 @@ function Composer({
             // The send glyph unmounts once the body is empty; keep focus in the composer.
             textarea.current?.focus();
             setDismissed(null);
-            if (textarea.current) textarea.current.style.height = "auto";
         }
     };
     const clearSentDraftRef = useRef(clearSentDraft);
@@ -7097,12 +7096,12 @@ function Composer({
         resizeAfterRecall.current = true;
     };
     const resizeAfterRecall = useRef(false);
+    // Size the box to its content for every body change: typing, a restored draft, a recalled line.
+    const textareaRef = useAutoGrow(textarea, body);
     useLayoutEffect(() => {
         if (!resizeAfterRecall.current || !textarea.current) return;
         resizeAfterRecall.current = false;
         const node = textarea.current;
-        node.style.height = "auto";
-        node.style.height = `${Math.min(node.scrollHeight, 144)}px`;
         node.setSelectionRange(node.value.length, node.value.length);
     }, [body]);
     const tray = convoId ? (state.composerAttachments[convoId] ?? []) : [];
@@ -7230,7 +7229,7 @@ function Composer({
                             <div className="mj_ComposerInput">
                                 <textarea
                                     className="mj_ComposerInput_input"
-                                    ref={textarea}
+                                    ref={textareaRef}
                                     rows={1}
                                     value={body}
                                     onBlur={flushDraft}
@@ -7239,12 +7238,9 @@ function Composer({
                                         setBodyDraft(nextBody);
                                         setHighlighted(null);
                                         if (dismissed !== null && nextBody !== dismissed) setDismissed(null);
-                                        event.target.style.height = "auto";
-                                        // Mac composer: one 32px line, growing to eight (144px).
-                                        event.target.style.height = `${Math.min(event.target.scrollHeight, 144)}px`;
                                     }}
                                     onKeyDown={(event) => {
-                                        if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+                                        if (isImeComposing(event)) return;
                                         // An active walk owns Up/Down outright: a recalled one-word
                                         // command opens the palette, and letting it take the arrows
                                         // would trap the walk there. Otherwise the palette's arrows
@@ -7308,7 +7304,7 @@ function Composer({
                                                 return;
                                             }
                                         }
-                                        if (event.key === "Enter" && !event.shiftKey) {
+                                        if (isSendKey(event)) {
                                             event.preventDefault();
                                             void send();
                                         }
