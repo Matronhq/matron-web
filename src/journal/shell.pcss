@@ -924,6 +924,58 @@ button {
     white-space: nowrap;
 }
 
+/* Agent-chat rooms: which side wrote a section. Ours stays neutral; the other person's side
+   gets the accent colour and a rule down the section's edge; the bridge's own lines read as
+   tertiary "System". */
+.mj_SenderName_detail {
+    flex-shrink: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--mj-color-text-secondary);
+    font-weight: 400;
+}
+
+.mj_SenderName_side {
+    flex-shrink: 0;
+    padding: 0 var(--mj-space-1x);
+    border: 1px solid var(--mj-color-border-subtle);
+    border-radius: 999px;
+    color: var(--mj-color-text-secondary);
+    font-weight: 500;
+    font-size: 0.85em;
+    line-height: 1.5;
+}
+
+.mj_SenderName_theirs .mj_SenderName_displayName {
+    color: var(--mj-color-text-action-accent);
+}
+
+.mj_SenderName_theirs .mj_MsgAvatar {
+    background-color: var(--mj-color-icon-accent-primary);
+}
+
+.mj_SenderName_theirs .mj_SenderName_side {
+    border-color: var(--mj-color-border-accent);
+    color: var(--mj-color-text-action-accent);
+}
+
+.mj_EventTile:has(> .mj_SenderName_theirs) {
+    border-inline-start: 3px solid var(--mj-color-border-accent);
+    padding-inline-start: var(--mj-space-2x);
+}
+
+.mj_SenderName_system {
+    color: var(--mj-color-text-tertiary);
+    font-weight: 500;
+}
+
+.mj_SenderName_room > a {
+    color: var(--mj-color-text-secondary);
+    font-weight: 400;
+}
+
 .mj_MsgAvatar {
     width: var(--mj-icon-md);
     height: var(--mj-icon-md);
@@ -956,6 +1008,11 @@ button {
     background: var(--mj-color-bg-canvas-default);
     box-shadow: var(--mj-shadow-bubble);
     line-height: 1.5;
+}
+
+/* An own bubble from an earlier day carries the date in its timestamp, which needs more room. */
+.mj_EventTile_line.mj_EventTile_line_dated {
+    padding-right: 100px;
 }
 
 .mj_EventTile[data-self="false"] .mj_EventTile_line {
