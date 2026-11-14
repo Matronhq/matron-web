@@ -393,6 +393,11 @@ export function createClientRunner({ base, now = () => Date.now() }: ClientRunne
                 if (!conn) throw new StepFailure(`no open connection named '${String(step.conn)}'`);
                 const frame = resolve(step.frame, bindings) as Record<string, unknown>;
                 if (frame && frame.op === "hello") conn.hello = frame;
+                // `viewing` is what the app sends when a conversation is open on screen: the
+                // notifier asks the client which one that is, so the model follows the frame.
+                if (frame && frame.op === "viewing") {
+                    internals.patch({ selectedConversationId: typeof frame.convo_id === "string" ? frame.convo_id : undefined });
+                }
                 conn.ws.send(JSON.stringify(frame));
                 break;
             }

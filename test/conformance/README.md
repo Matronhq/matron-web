@@ -56,6 +56,10 @@ the document's visibility and focus) and `muted` (mutes or unmutes every known
 conversation through the notifier's own settings write, which needs a journal with the
 notification settings route).
 
+A `viewing` frame the fixture sends also sets the client's open conversation (what the
+app does when a conversation is on screen), which the notifier reads: in the foreground a
+notification for the open conversation is not shown.
+
 ## Known limits of the harness
 
 The coordinator waits 10 seconds for a runner to report ready. With a cold jest
