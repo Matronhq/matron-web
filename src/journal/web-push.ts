@@ -17,7 +17,9 @@ export interface WebPushSubscriptionLike {
 export interface WebPushEnvironment {
     serviceWorker?: {
         /** The page's existing registration, if any: it may hold a subscription an earlier page made. */
-        getRegistration?(): Promise<{ pushManager: { getSubscription(): Promise<WebPushSubscriptionLike | null> } } | undefined>;
+        getRegistration?(): Promise<
+            { pushManager: { getSubscription(): Promise<WebPushSubscriptionLike | null> } } | undefined
+        >;
         register(
             url: string,
             options: { scope: string },
