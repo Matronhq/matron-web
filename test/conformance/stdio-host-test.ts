@@ -46,7 +46,11 @@ it("runs as a conformance runner until the coordinator closes it", async () => {
                         const result = await runner.run(message.step as FixtureStep, message.bindings ?? {});
                         send({ id: message.id, ok: true, bindings: result.bindings, observed: result.observed });
                     } catch (error) {
-                        send({ id: message.id, ok: false, error: error instanceof Error ? error.message : String(error) });
+                        send({
+                            id: message.id,
+                            ok: false,
+                            error: error instanceof Error ? error.message : String(error),
+                        });
                     }
                 } else if (message.op === "close") {
                     await runner?.close();

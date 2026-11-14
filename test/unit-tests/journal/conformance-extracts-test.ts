@@ -38,7 +38,10 @@ function packageDir(): string | undefined {
         execFileSync("tar", ["-xzf", tarball, "-C", dir, "--strip-components=1"]);
     }
     if (!dir) return undefined;
-    const digest = crypto.createHash("sha256").update(fs.readFileSync(path.join(dir, "manifest.json"))).digest("hex");
+    const digest = crypto
+        .createHash("sha256")
+        .update(fs.readFileSync(path.join(dir, "manifest.json")))
+        .digest("hex");
     if (digest !== pin.manifestSha256) {
         throw new Error(`conformance package ${digest} does not match the pin ${pin.manifestSha256} (${pin.version})`);
     }
@@ -92,10 +95,17 @@ describeWithPackage(`conformance extracts (package ${pin.version})`, () => {
                     if (!decoded.ok) throw new Error(`${sample.source}: dropped (${decoded.reason})`);
                     // A narrowed sub-shape or an unknown kind means the app reads the frame differently
                     // from the journal's wire shape.
-                    expect({ source: sample.source, narrowed: decoded.narrowed, unknownKind: decoded.unknownKind }).toEqual({
+                    expect({
+                        source: sample.source,
+                        narrowed: decoded.narrowed,
+                        unknownKind: decoded.unknownKind,
+                    }).toEqual({
                         source: sample.source,
                         narrowed: undefined,
-                        unknownKind: decoded.unknownKind && UNHANDLED_KINDS.has(decoded.unknownKind) ? decoded.unknownKind : undefined,
+                        unknownKind:
+                            decoded.unknownKind && UNHANDLED_KINDS.has(decoded.unknownKind)
+                                ? decoded.unknownKind
+                                : undefined,
                     });
                     expect(decoded.frame).toEqual(sample.frame);
                 }
@@ -147,7 +157,11 @@ describeWithPackage(`conformance extracts (package ${pin.version})`, () => {
             const toolStreams = extracts.find((extract) => extract.type === "ws.ephemeral.tool_stream");
             expect(toolStreams).toBeDefined();
             for (const sample of toolStreams!.samples) {
-                const frame = sample.frame as { convo_id: string; message_ref: string; tool_stream: Record<string, unknown> };
+                const frame = sample.frame as {
+                    convo_id: string;
+                    message_ref: string;
+                    tool_stream: Record<string, unknown>;
+                };
                 const client = new MatronJournalClient();
                 const internals = client as unknown as {
                     database?: JournalDatabase;
@@ -157,8 +171,13 @@ describeWithPackage(`conformance extracts (package ${pin.version})`, () => {
                 internals.database = await freshDatabase({ seq: 0, conversations: [] });
                 await internals.handleFrame(frame as unknown as ServerFrame);
                 const card = internals.toolStreams.get(frame.convo_id)?.[frame.message_ref];
-                const expected = (frame.tool_stream.event === "sync" ? frame.tool_stream.content : frame.tool_stream.chunk) as string;
-                expect({ source: sample.source, content: card?.content }).toEqual({ source: sample.source, content: expected });
+                const expected = (
+                    frame.tool_stream.event === "sync" ? frame.tool_stream.content : frame.tool_stream.chunk
+                ) as string;
+                expect({ source: sample.source, content: card?.content }).toEqual({
+                    source: sample.source,
+                    content: expected,
+                });
                 internals.database.close();
             }
         });

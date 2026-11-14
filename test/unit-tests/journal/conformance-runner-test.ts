@@ -27,7 +27,13 @@ function journalFrame(seq: number, type: string, payload: Record<string, unknown
 describe("conformance matcher", () => {
     it("binds, refs, types and ignores, and rejects an extra key", () => {
         const bindings: Record<string, unknown> = {};
-        expect(match({ a: { $bind: "x" }, b: { $type: "integer" }, c: { $ignore: true } }, { a: "v", b: 1, c: null }, bindings).ok).toBe(true);
+        expect(
+            match(
+                { a: { $bind: "x" }, b: { $type: "integer" }, c: { $ignore: true } },
+                { a: "v", b: 1, c: null },
+                bindings,
+            ).ok,
+        ).toBe(true);
         expect(bindings.x).toBe("v");
         expect(match({ a: { $ref: "x" } }, { a: "v" }, bindings).ok).toBe(true);
         expect(match({ a: 1 }, { a: 1, extra: 2 }, bindings).ok).toBe(false);
@@ -67,7 +73,9 @@ describe("conformance client runner hook", () => {
     it("fails expect_model on an assertion when the model differs", async () => {
         const runner = createClientRunner({ base: "http://127.0.0.1:1" });
         await runner.deliver(journalFrame(1, "text", { body: "hello" }));
-        await expect(runner.run({ kind: "expect_model", role: "client", expect: { cursor: 2 } }, {})).rejects.toThrow(/model/);
+        await expect(runner.run({ kind: "expect_model", role: "client", expect: { cursor: 2 } }, {})).rejects.toThrow(
+            /model/,
+        );
         await runner.close();
     });
 
@@ -75,14 +83,33 @@ describe("conformance client runner hook", () => {
         const runner = createClientRunner({ base: "http://127.0.0.1:1" });
         await runner.deliver(journalFrame(1, "prompt", { body: "Proceed?", options: ["yes", "no"] }));
         await expect(
-            runner.run({ kind: "expect_notification", role: "client", expect: { shown: true, convo_id: "c1", seq: 1, title: { $type: "string" }, body: { $type: "string" }, silent: { $type: "boolean" } } }, {}),
+            runner.run(
+                {
+                    kind: "expect_notification",
+                    role: "client",
+                    expect: {
+                        shown: true,
+                        convo_id: "c1",
+                        seq: 1,
+                        title: { $type: "string" },
+                        body: { $type: "string" },
+                        silent: { $type: "boolean" },
+                    },
+                },
+                {},
+            ),
         ).resolves.toBeDefined();
         await runner.run({ kind: "set_app_state", role: "client", app: "background" }, {});
         await runner.deliver(journalFrame(2, "text", { body: "working" }));
         await expect(
-            runner.run({ kind: "expect_notification", role: "client", expect: { shown: false, convo_id: "c1", seq: 2 } }, {}),
+            runner.run(
+                { kind: "expect_notification", role: "client", expect: { shown: false, convo_id: "c1", seq: 2 } },
+                {},
+            ),
         ).resolves.toBeDefined();
-        await expect(runner.run({ kind: "expect_model", role: "client", expect: { app: { $ref: "none" } } }, {})).rejects.toThrow();
+        await expect(
+            runner.run({ kind: "expect_model", role: "client", expect: { app: { $ref: "none" } } }, {}),
+        ).rejects.toThrow();
         await runner.close();
     });
 

@@ -208,7 +208,16 @@ export function createClientRunner({ base, now = () => Date.now() }: ClientRunne
 
     async function openConn(name: string, hello?: Record<string, unknown>): Promise<Conn> {
         const ws = new WebSocket(base.replace(/^http/, "ws") + "/ws");
-        const conn: Conn = { ws, frames: [], nextIdx: 0, closed: false, hello, queue: Promise.resolve(), maxSeq: 0, arrived: 0 };
+        const conn: Conn = {
+            ws,
+            frames: [],
+            nextIdx: 0,
+            closed: false,
+            hello,
+            queue: Promise.resolve(),
+            maxSeq: 0,
+            arrived: 0,
+        };
         ws.addEventListener("message", (event: MessageEvent) => {
             conn.arrived += 1;
             let raw: unknown;
@@ -217,9 +226,11 @@ export function createClientRunner({ base, now = () => Date.now() }: ClientRunne
             } catch {
                 return;
             }
-            conn.queue = conn.queue.then(async () => {
-                await deliver(raw, conn);
-            }).catch(() => undefined);
+            conn.queue = conn.queue
+                .then(async () => {
+                    await deliver(raw, conn);
+                })
+                .catch(() => undefined);
         });
         ws.addEventListener("close", (event: CloseEvent) => {
             conn.closed = true;
@@ -255,7 +266,10 @@ export function createClientRunner({ base, now = () => Date.now() }: ClientRunne
             options.body = resolve(step.body, bindings);
         }
         const call = api as unknown as {
-            request(path: string, options: Record<string, unknown>): Promise<{ status: number; headers: Headers; body: ArrayBuffer }>;
+            request(
+                path: string,
+                options: Record<string, unknown>,
+            ): Promise<{ status: number; headers: Headers; body: ArrayBuffer }>;
         };
         let status: number;
         let json: unknown = null;
@@ -280,7 +294,8 @@ export function createClientRunner({ base, now = () => Date.now() }: ClientRunne
             json = error.body ?? null;
             // The app's error type drops response headers but keeps the retry time it read from
             // a 429, so that is the only header an error response can show here.
-            if (error.retryAfter !== undefined) responseHeaders = new Headers({ "retry-after": String(error.retryAfter) });
+            if (error.retryAfter !== undefined)
+                responseHeaders = new Headers({ "retry-after": String(error.retryAfter) });
         }
         const expected = (step.expect as Record<string, unknown> | undefined) ?? {};
         const next = { ...bindings };
@@ -288,7 +303,10 @@ export function createClientRunner({ base, now = () => Date.now() }: ClientRunne
             throw new StepFailure(`expected status ${String(expected.status)}, got ${status}`);
         }
         if (expected.headers) {
-            if (!responseHeaders) throw new StepFailure("expect.headers on an error response: the app's request layer does not keep them");
+            if (!responseHeaders)
+                throw new StepFailure(
+                    "expect.headers on an error response: the app's request layer does not keep them",
+                );
             for (const [name, want] of Object.entries(expected.headers as Record<string, unknown>)) {
                 const result = match(want, responseHeaders.get(name), next, `headers.${name}`);
                 if (!result.ok) throw new StepFailure(result.reason);
@@ -329,7 +347,9 @@ export function createClientRunner({ base, now = () => Date.now() }: ClientRunne
         const started = Date.now();
         while (conn.nextIdx >= conn.frames.length) {
             if (Date.now() - started > 2000) {
-                throw new StepFailure(`timed out waiting for a frame (received so far: ${JSON.stringify(conn.frames.slice(conn.nextIdx))})`);
+                throw new StepFailure(
+                    `timed out waiting for a frame (received so far: ${JSON.stringify(conn.frames.slice(conn.nextIdx))})`,
+                );
             }
             await sleep(10);
         }
@@ -347,10 +367,15 @@ export function createClientRunner({ base, now = () => Date.now() }: ClientRunne
         const db = await ensureStore();
         const events: Record<string, Array<{ seq: number; type: string; sender: string }>> = {};
         for (const row of await db.conversations()) {
-            events[row.id] = (await db.events(row.id)).map((event) => ({ seq: event.seq, type: event.type, sender: event.sender }));
+            events[row.id] = (await db.events(row.id)).map((event) => ({
+                seq: event.seq,
+                type: event.type,
+                sender: event.sender,
+            }));
         }
         const toolStreams: Record<string, Record<string, unknown>> = {};
-        for (const [convoId, streams] of internals.toolStreams) toolStreams[convoId] = JSON.parse(JSON.stringify(streams));
+        for (const [convoId, streams] of internals.toolStreams)
+            toolStreams[convoId] = JSON.parse(JSON.stringify(streams));
         return {
             cursor: (await db.cursor()) ?? null,
             app: appState,
@@ -396,7 +421,9 @@ export function createClientRunner({ base, now = () => Date.now() }: ClientRunne
                 // `viewing` is what the app sends when a conversation is open on screen: the
                 // notifier asks the client which one that is, so the model follows the frame.
                 if (frame && frame.op === "viewing") {
-                    internals.patch({ selectedConversationId: typeof frame.convo_id === "string" ? frame.convo_id : undefined });
+                    internals.patch({
+                        selectedConversationId: typeof frame.convo_id === "string" ? frame.convo_id : undefined,
+                    });
                 }
                 conn.ws.send(JSON.stringify(frame));
                 break;
@@ -411,10 +438,15 @@ export function createClientRunner({ base, now = () => Date.now() }: ClientRunne
                 await sleep((step.ms as number | undefined) ?? 200);
                 await conn.queue;
                 // A frame the decoder dropped still arrived: it must not pass as silence.
-                if (conn.arrived !== arrivedBefore) throw new StepFailure(`expected no new frame, but ${conn.arrived - arrivedBefore} arrived (decoded or dropped)`);
+                if (conn.arrived !== arrivedBefore)
+                    throw new StepFailure(
+                        `expected no new frame, but ${conn.arrived - arrivedBefore} arrived (decoded or dropped)`,
+                    );
                 if (conn.closed) throw new StepFailure("ws_expect_none: the connection closed during the quiet window");
                 if (conn.nextIdx !== conn.frames.length) {
-                    throw new StepFailure(`expected no new frame, but got: ${JSON.stringify(conn.frames.slice(conn.nextIdx))}`);
+                    throw new StepFailure(
+                        `expected no new frame, but got: ${JSON.stringify(conn.frames.slice(conn.nextIdx))}`,
+                    );
                 }
                 break;
             }
@@ -423,7 +455,8 @@ export function createClientRunner({ base, now = () => Date.now() }: ClientRunne
                 if (!conn) throw new StepFailure("ws_expect_close: no such connection");
                 const started = Date.now();
                 while (!conn.closed) {
-                    if (Date.now() - started > 2000) throw new StepFailure("timed out waiting for the connection to close");
+                    if (Date.now() - started > 2000)
+                        throw new StepFailure("timed out waiting for the connection to close");
                     await sleep(10);
                 }
                 if (step.code !== undefined && conn.closeCode !== step.code) {
@@ -450,14 +483,20 @@ export function createClientRunner({ base, now = () => Date.now() }: ClientRunne
             }
             case "reconnect_from_cursor": {
                 const previous = conns[step.conn as string];
-                if (!previous?.hello) throw new StepFailure(`reconnect_from_cursor: '${String(step.conn)}' never sent a hello`);
-                if (!previous.closed) throw new StepFailure(`reconnect_from_cursor: '${String(step.conn)}' is still connected, disconnect it first`);
+                if (!previous?.hello)
+                    throw new StepFailure(`reconnect_from_cursor: '${String(step.conn)}' never sent a hello`);
+                if (!previous.closed)
+                    throw new StepFailure(
+                        `reconnect_from_cursor: '${String(step.conn)}' is still connected, disconnect it first`,
+                    );
                 const hello = { ...previous.hello };
                 if (step.cursor !== undefined) hello.cursor = resolve(step.cursor, bindings);
                 else {
                     // The client's own durable cursor, never behind what the earlier hello asked for.
                     const durable = database ? await database.cursor() : undefined;
-                    const asked = Number.isInteger(previous.hello.cursor) ? (previous.hello.cursor as number) : undefined;
+                    const asked = Number.isInteger(previous.hello.cursor)
+                        ? (previous.hello.cursor as number)
+                        : undefined;
                     const known = [durable, asked].filter((value): value is number => value !== undefined && value > 0);
                     hello.cursor = known.length > 0 ? Math.max(...known) : (previous.hello.cursor ?? null);
                 }
@@ -494,7 +533,8 @@ export function createClientRunner({ base, now = () => Date.now() }: ClientRunne
                 throw new StepFailure(`this runner cannot perform step kind '${step.kind}'`);
         }
         const added: Bindings = {};
-        for (const [key, value] of Object.entries(out)) if (!(key in bindings) || bindings[key] !== value) added[key] = value;
+        for (const [key, value] of Object.entries(out))
+            if (!(key in bindings) || bindings[key] !== value) added[key] = value;
         return { bindings: added, observed };
     }
 

@@ -55,7 +55,9 @@ function deepEqual(a: unknown, b: unknown): boolean {
         const right = b as Record<string, unknown>;
         const keys = Object.keys(left).sort();
         const other = Object.keys(right).sort();
-        return keys.length === other.length && keys.every((key, i) => key === other[i] && deepEqual(left[key], right[key]));
+        return (
+            keys.length === other.length && keys.every((key, i) => key === other[i] && deepEqual(left[key], right[key]))
+        );
     }
     return false;
 }
@@ -82,7 +84,8 @@ export function match(expected: unknown, actual: unknown, bindings: Bindings, at
             : { ok: false, reason: `${at}: expected $type '${String(expected.$type)}', got ${JSON.stringify(actual)}` };
     }
     if (Array.isArray(expected)) {
-        if (!Array.isArray(actual)) return { ok: false, reason: `${at}: expected an array, got ${JSON.stringify(actual)}` };
+        if (!Array.isArray(actual))
+            return { ok: false, reason: `${at}: expected an array, got ${JSON.stringify(actual)}` };
         if (expected.length !== actual.length) {
             return { ok: false, reason: `${at}: expected array length ${expected.length}, got ${actual.length}` };
         }
@@ -93,7 +96,8 @@ export function match(expected: unknown, actual: unknown, bindings: Bindings, at
         return { ok: true };
     }
     if (isPlainObject(expected)) {
-        if (!isPlainObject(actual)) return { ok: false, reason: `${at}: expected an object, got ${JSON.stringify(actual)}` };
+        if (!isPlainObject(actual))
+            return { ok: false, reason: `${at}: expected an object, got ${JSON.stringify(actual)}` };
         const expectedKeys = Object.keys(expected).sort();
         const actualKeys = Object.keys(actual).sort();
         if (expectedKeys.length !== actualKeys.length || expectedKeys.some((key, i) => key !== actualKeys[i])) {
