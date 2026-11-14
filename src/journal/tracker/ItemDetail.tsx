@@ -798,10 +798,13 @@ export function ItemDetail({
     // ambiguous-delivery replay (F1).
     // While the microphone is starting for this box, a send would post the text alone and leave the
     // note to follow as a comment of its own; the recording bar's stop-and-send is the one send then.
-    const send = async (): Promise<void> => {
+    const send = async (refocusAfter = false): Promise<void> => {
         const body = reply.trim();
         const files = staged;
         if ((!body && files.length === 0) || busy || voice.voiceState === "requesting") return;
+        // Only a send that actually starts may ask for the focus back; a keypress that sends nothing
+        // must not leave the flag set for some later, unrelated busy cycle.
+        if (refocusAfter) refocusReplyRef.current = true;
         setBusy(true);
         setReplyFailure(null);
         try {
@@ -1336,8 +1339,7 @@ export function ItemDetail({
                             onKeyDown={(event) => {
                                 if (isReplySendKey(event)) {
                                     event.preventDefault();
-                                    refocusReplyRef.current = true;
-                                    void send();
+                                    void send(true);
                                 }
                             }}
                         />
