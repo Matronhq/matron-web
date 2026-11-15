@@ -123,6 +123,70 @@ it("replaces an existing subscription with a different server key", async () => 
     expect(f.pushManager.subscribe).toHaveBeenCalledWith({ userVisibleOnly: true, applicationServerKey: keyBytes });
     expect(f.api.registerWebPush).toHaveBeenCalledWith(f.body);
 });
+function installingWorker(state = "installing") {
+    const listeners = new Set<() => void>();
+    return {
+        state,
+        addEventListener: (_type: "statechange", listener: () => void) => listeners.add(listener),
+        removeEventListener: (_type: "statechange", listener: () => void) => listeners.delete(listener),
+        become(next: string) {
+            this.state = next;
+            for (const listener of [...listeners]) listener();
+        },
+    };
+}
+it("waits for a first-visit worker to activate before subscribing", async () => {
+    const f = setup();
+    const worker = installingWorker();
+    f.register.mockResolvedValue({ pushManager: f.pushManager, active: null, installing: worker });
+    const done = f.registrar.sync(session, true);
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    expect(f.pushManager.subscribe).not.toHaveBeenCalled();
+    worker.become("installed");
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    expect(f.pushManager.subscribe).not.toHaveBeenCalled();
+    worker.become("activated");
+    await done;
+    expect(f.pushManager.subscribe).toHaveBeenCalledTimes(1);
+    expect(f.api.registerWebPush).toHaveBeenCalledWith(f.body);
+    expect(f.registrar.active(session)).toBe(true);
+    expect(f.registrar.lastError).toBeNull();
+});
+it("subscribes at once when a worker is already active", async () => {
+    const f = setup();
+    f.register.mockResolvedValue({ pushManager: f.pushManager, active: {}, installing: installingWorker() });
+    await f.registrar.sync(session, true);
+    expect(f.pushManager.subscribe).toHaveBeenCalledTimes(1);
+});
+it("records an error and does not subscribe when the worker fails to install, then recovers on the next sync", async () => {
+    const f = setup();
+    const worker = installingWorker();
+    f.register.mockResolvedValueOnce({ pushManager: f.pushManager, active: null, installing: worker });
+    const done = f.registrar.sync(session, true);
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    worker.become("redundant");
+    await done;
+    expect(f.pushManager.subscribe).not.toHaveBeenCalled();
+    expect(f.registrar.lastError).not.toBeNull();
+    await f.registrar.sync(session, true);
+    expect(f.pushManager.subscribe).toHaveBeenCalledTimes(1);
+    expect(f.registrar.active(session)).toBe(true);
+});
+it("stops reporting active when the old subscription was dropped and its replacement failed", async () => {
+    const f = setup();
+    await f.registrar.sync(session, true);
+    expect(f.registrar.active(session)).toBe(true);
+    const otherKey = Uint8Array.from([4, ...Array.from({ length: 64 }, (_, i) => 100 + i)]);
+    f.api.webPushVapidKey.mockResolvedValue({ public_key: Buffer.from(otherKey).toString("base64url") });
+    f.pushManager.getSubscription.mockResolvedValue(f.subscription);
+    f.pushManager.subscribe.mockRejectedValueOnce(new Error("subscribe failed"));
+    await f.registrar.sync(session, true);
+    expect(f.subscription.unsubscribe).toHaveBeenCalledTimes(1);
+    expect(f.registrar.active(session)).toBe(false);
+    // The journal registration is still removed when notifications are turned off.
+    await f.registrar.sync(session, false);
+    expect(f.api.registerWebPush).toHaveBeenLastCalledWith({ endpoint: null });
+});
 it("turning wanted off unregisters the endpoint and browser subscription", async () => {
     const f = setup();
     await f.registrar.sync(session, true);

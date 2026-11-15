@@ -14,6 +14,12 @@ export interface WebPushSubscriptionLike {
     toJSON(): { endpoint?: string; keys?: Record<string, string> };
     unsubscribe(): Promise<boolean>;
 }
+/** The part of a service worker the registrar watches while a first install finishes. */
+export interface WorkerLike {
+    state: string;
+    addEventListener(type: "statechange", listener: () => void): void;
+    removeEventListener(type: "statechange", listener: () => void): void;
+}
 export interface WebPushEnvironment {
     serviceWorker?: {
         /** The page's existing registration, if any: it may hold a subscription an earlier page made. */
@@ -24,6 +30,10 @@ export interface WebPushEnvironment {
             url: string,
             options: { scope: string },
         ): Promise<{
+            /** Set once a worker controls the registration; on a first visit it is still installing. */
+            active?: unknown;
+            installing?: WorkerLike | null;
+            waiting?: WorkerLike | null;
             pushManager: {
                 getSubscription(): Promise<WebPushSubscriptionLike | null>;
                 subscribe(options: {
@@ -72,6 +82,26 @@ function defaultEnvironment(): WebPushEnvironment {
     };
 }
 
+/**
+ * Resolves once the registration has an active worker. On a first visit `register()` returns while
+ * the worker is still installing, and `subscribe()` then fails with an InvalidStateError.
+ */
+async function untilActive(registration: { active?: unknown; installing?: WorkerLike | null; waiting?: WorkerLike | null }) {
+    if (registration.active) return;
+    const worker = registration.installing ?? registration.waiting;
+    if (!worker) return;
+    await new Promise<void>((resolve, reject) => {
+        const check = (): void => {
+            if (worker.state !== "activated" && worker.state !== "redundant") return;
+            worker.removeEventListener("statechange", check);
+            if (worker.state === "activated") resolve();
+            else reject(new Error("Service worker did not install"));
+        };
+        worker.addEventListener("statechange", check);
+        check();
+    });
+}
+
 function sessionKey(session: Session): string {
     return JSON.stringify([session.serverUrl, session.token]);
 }
@@ -103,7 +133,11 @@ export class WebPushRegistrar {
 
     /** Whether this page has registered a subscription for the session (the journal covers it). */
     public active(session: Session): boolean {
-        return this.posted.has(sessionKey(session));
+        // The registered endpoint must be the browser's live subscription: after the old one is
+        // dropped for a new key and the replacement fails, the journal still holds an endpoint the
+        // browser no longer delivers to.
+        const endpoint = this.posted.get(sessionKey(session));
+        return endpoint !== undefined && endpoint === this.subscription?.endpoint;
     }
 
     /** The browser's own subscription, which outlives a page: an earlier page may have made it. */
@@ -146,12 +180,14 @@ export class WebPushRegistrar {
             if (bytes.length !== 65 || bytes[0] !== 4) throw new Error("Invalid Web Push key");
             const workerUrl = env.scope === "/" ? "sw.js" : env.scope.replace(/\/*$/, "/") + "sw.js";
             const registration = await env.serviceWorker.register(workerUrl, { scope: env.scope });
+            await untilActive(registration);
             let subscription = await registration.pushManager.getSubscription();
             if (subscription) {
                 const old = subscription.options.applicationServerKey;
                 if (!old || old.byteLength !== bytes.length || !new Uint8Array(old).every((b, i) => b === bytes[i])) {
                     await subscription.unsubscribe();
                     subscription = null;
+                    this.subscription = null;
                 }
             }
             subscription ??= await registration.pushManager.subscribe({

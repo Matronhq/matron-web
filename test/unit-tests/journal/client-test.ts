@@ -1160,7 +1160,8 @@ describe("MatronJournalClient state handling", () => {
         resolveCursor(10);
         await ready;
 
-        expect(oldSend.mock.calls).toEqual([[{ op: "viewing", convo_id: null }]]);
+        // The replay lost its connection while it reloaded the views: nothing more goes out on either one.
+        expect(oldSend).not.toHaveBeenCalled();
         expect(newSend).not.toHaveBeenCalled();
     });
 });
@@ -5231,6 +5232,37 @@ describe("MatronJournalClient session guards", () => {
 
 describe("focused conversation reporting", () => {
     afterEach(() => jest.restoreAllMocks());
+
+    it("reports no chat while the tracker covers it, and the chat again when it closes", async () => {
+        localStorage.clear();
+        jest.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+        jest.spyOn(JournalDatabase, "open").mockResolvedValue(fakeDatabase() as unknown as JournalDatabase);
+        jest.spyOn(JournalConnection.prototype, "start").mockImplementation(() => undefined);
+        jest.spyOn(JournalApi.prototype, "messages").mockResolvedValue({ events: [] });
+        const send = jest.fn().mockReturnValue(true);
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        try {
+            await state.startSession(SESSION);
+            state.connection!.send = send;
+            await client.selectConversation("c1");
+            expect(send).toHaveBeenLastCalledWith({ op: "viewing", convo_id: "c1" });
+            client.openTrackerView({ view: "inbox" });
+            expect(send).toHaveBeenLastCalledWith({ op: "viewing", convo_id: null });
+            send.mockClear();
+            // A blur or focus while the tracker is open changes nothing.
+            window.dispatchEvent(new Event("blur"));
+            window.dispatchEvent(new Event("focus"));
+            expect(send).not.toHaveBeenCalled();
+            client.closeTrackerView();
+            expect(send).toHaveBeenLastCalledWith({ op: "viewing", convo_id: "c1" });
+            client.openTrackerView({ view: "inbox" });
+            await client.selectConversation("c1");
+            expect(send).toHaveBeenLastCalledWith({ op: "viewing", convo_id: "c1" });
+        } finally {
+            await client.logout();
+        }
+    });
 
     it("follows visibility, not focus, retries failed sends, replays after reconnect and disposes on logout", async () => {
         localStorage.clear();

@@ -2745,6 +2745,7 @@ export class MatronJournalClient {
         // user has since left.
         this.focusToken += 1;
         this.patch({ trackerView: next, ...(this.state.focusTarget ? { focusTarget: undefined } : {}) });
+        this.sendViewing();
     }
 
     // Memories view entry points: a name opens that memory's editor, "" opens the new-memory form,
@@ -2769,6 +2770,7 @@ export class MatronJournalClient {
         this.trackerMissionGen += 1;
         this.trackerProjectGen += 1;
         this.patch({ trackerView: undefined, trackerItem: null, trackerMission: null, trackerProject: null });
+        this.sendViewing();
     }
 
     // Deep-link / row-tap entry points: select the row (last-tap-wins) and switch to its view.
@@ -5959,7 +5961,8 @@ export class MatronJournalClient {
     }
 
     private sendViewing(selectedId = this.state.selectedConversationId ?? null): void {
-        const convoId = viewingConvoId(selectedId);
+        // The tracker covers the open chat's transcript: it is not being viewed.
+        const convoId = viewingConvoId(this.state.trackerView?.open ? null : selectedId);
         if (convoId !== this.lastViewing && this.connection?.send({ op: "viewing", convo_id: convoId })) {
             this.lastViewing = convoId;
         }
