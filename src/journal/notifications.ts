@@ -34,7 +34,7 @@ Please see LICENSE files in the repository root for full details.
 import { JournalApi, JournalApiError } from "./api";
 import { notificationTag, parseConvoHash } from "./push-shared";
 import { WebPushRegistrar } from "./web-push";
-import { isTabFocused, watchTabFocus } from "./viewing";
+import { isTabFocused, isTabVisible, watchTabFocus } from "./viewing";
 
 import type { LiveListener, MatronJournalClient } from "./client";
 import { effectiveUnread } from "./conversation-flags";
@@ -581,7 +581,10 @@ function defaultEnvironment(): NotifierEnvironment {
 }
 
 interface PeerView {
+    /** On screen and holding focus: only one document at a time. */
     focused: boolean;
+    /** On screen, focused or not: the journal counts such a tab as viewing its chat. */
+    visible: boolean;
     convoId: string | null;
 }
 
@@ -778,12 +781,13 @@ export class DesktopNotifier {
         }
         if (win) {
             const onFocusChange = (): void => {
-                // Only one document has focus: no other tab can have a conversation on screen.
-                if (this.ownView().focused) this.peers.clear();
+                // Only one document has focus: no other tab holds it.
+                if (this.ownView().focused) this.releasePeerFocus();
                 this.refresh();
                 this.announce();
             };
-            const onHide = (): void => this.post({ type: "view", tab: this.tabId, focused: false, convoId: null });
+            const onHide = (): void =>
+                this.post({ type: "view", tab: this.tabId, focused: false, visible: false, convoId: null });
             this.teardown.push(watchTabFocus(win, doc, onFocusChange));
             win.addEventListener("pagehide", onHide);
             this.teardown.push(() => {
@@ -811,7 +815,7 @@ export class DesktopNotifier {
         this.pushSession = undefined;
         this.sessionKey = undefined;
         this.lastConnection = undefined;
-        this.post({ type: "view", tab: this.tabId, focused: false, convoId: null });
+        this.post({ type: "view", tab: this.tabId, focused: false, visible: false, convoId: null });
         for (const stop of this.teardown.splice(0)) stop();
         this.channel?.close();
         this.channel = undefined;
@@ -991,12 +995,28 @@ export class DesktopNotifier {
             view === undefined ? NEEDS_ME.has(key) : shouldNotify(key, event.type, event.convo_id, view, now);
         if (!allowed) return;
         if (this.isOnScreen(event.convo_id)) return;
-        // With a push subscription registered, a tab that is not focused leaves the alert to the push
-        // (the journal sends it for an open socket too): both would sound, since a replacing
-        // notification re-alerts. A focused tab keeps its own, because the worker stays quiet for it.
+        // With a push subscription registered, the alert is left to the push when one will
+        // arrive (the journal sends it for an open socket too, and both would sound, since a
+        // replacing notification re-alerts). It will not arrive while a tab of this browser has
+        // focus (the worker stays quiet) or shows the conversation (the journal sees it viewed and
+        // sends none): then this tab, the only one that applied the event, alerts for itself.
         const session = this.client.getSnapshot().session;
-        if (session && !this.ownView().focused && this.env.webPush?.active?.(session)) return;
+        if (session && this.env.webPush?.active?.(session) && this.pushWillAlert(event.convo_id)) return;
         this.show(event, previous, cls);
+    }
+
+    /** Whether the journal's push for this conversation will show a notification. */
+    private pushWillAlert(convoId: string): boolean {
+        const own = this.ownView();
+        if (own.focused || (own.visible && own.convoId === convoId)) return false;
+        for (const peer of this.peers.values()) {
+            if (peer.focused || (peer.visible && peer.convoId === convoId)) return false;
+        }
+        return true;
+    }
+
+    private releasePeerFocus(): void {
+        for (const [tab, peer] of this.peers) this.peers.set(tab, { ...peer, focused: false });
     }
 
     private isOnScreen(convoId: string): boolean {
@@ -1039,15 +1059,16 @@ export class DesktopNotifier {
     private ownView(): PeerView {
         const doc = this.env.document;
         const focused = !!doc && isTabFocused(doc);
+        const visible = !!doc && isTabVisible(doc);
         const state = this.client.getSnapshot();
         const convoId = state.trackerView?.open ? null : (state.selectedConversationId ?? null);
-        return { focused, convoId };
+        return { focused, visible, convoId };
     }
 
     private announce(): void {
         if (!this.channel) return;
         const view = this.ownView();
-        const key = `${view.focused}|${view.convoId ?? ""}`;
+        const key = `${view.focused}|${view.visible}|${view.convoId ?? ""}`;
         if (key === this.lastAnnounced) return;
         this.lastAnnounced = key;
         this.post({ type: "view", tab: this.tabId, ...view });
@@ -1055,18 +1076,25 @@ export class DesktopNotifier {
 
     private onPeerMessage(data: unknown): void {
         if (!data || typeof data !== "object") return;
-        const message = data as { type?: unknown; tab?: unknown; focused?: unknown; convoId?: unknown };
+        const message = data as {
+            type?: unknown;
+            tab?: unknown;
+            focused?: unknown;
+            visible?: unknown;
+            convoId?: unknown;
+        };
         if (message.type === "query") {
             this.lastAnnounced = "";
             this.announce();
             return;
         }
         if (message.type !== "view" || typeof message.tab !== "string" || message.tab === this.tabId) return;
-        if (message.focused === true) {
-            // Only one document has focus: whichever tab had it before no longer does.
-            this.peers.clear();
+        const focused = message.focused === true;
+        if (focused) this.releasePeerFocus();
+        if (focused || message.visible === true) {
             this.peers.set(message.tab, {
-                focused: true,
+                focused,
+                visible: true,
                 convoId: typeof message.convoId === "string" ? message.convoId : null,
             });
         } else {

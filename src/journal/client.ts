@@ -5500,7 +5500,7 @@ export class MatronJournalClient {
                 if (current()) this.suspendLiveStreams();
             },
         });
-        this.stopWatchingFocus = watchTabFocus(window, document, () => this.sendViewing());
+        this.stopWatchingFocus = watchTabFocus(window, document, () => this.onTabViewChange());
         this.connection.start();
         // Purge expired live tool logs once the session is up, not before the first paint: it walks
         // every cached row, and the store holds every row this device has received, so awaiting it
@@ -5946,6 +5946,16 @@ export class MatronJournalClient {
         if (this.uploadConvos.size > 0) this.abortUploadsForChildConvos();
         if (selectedConversation) await this.selectConversation(selectedConversation.id, { clearUnread: false });
         else if (this.state.session) storeSelectedConversation(this.state.session, undefined);
+    }
+
+    /** The tab was shown, hidden, focused or blurred. Only showing and hiding change what is viewed. */
+    private onTabViewChange(): void {
+        const before = this.lastViewing;
+        this.sendViewing();
+        // A hidden tab stops receiving the open chat's live updates, so what they showed can no
+        // longer be trusted to end: the idle frame would not arrive. Showing the tab again re-views
+        // the chat, and the journal replays the tool output.
+        if (before && this.lastViewing === null) this.suspendLiveStreams();
     }
 
     private sendViewing(selectedId = this.state.selectedConversationId ?? null): void {

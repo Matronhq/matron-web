@@ -2,14 +2,15 @@ import { isTabFocused, viewingConvoId, watchTabFocus } from "../../../src/journa
 
 it.each([
     ["visible", true, "c1"],
-    ["visible", false, null],
+    ["visible", false, "c1"],
     ["hidden", true, null],
     ["hidden", false, null],
 ] as const)("reports viewing for visibility %s and focus %s", (visibilityState, focused, expected) => {
     const doc = { visibilityState, hasFocus: () => focused };
-    expect(isTabFocused(doc)).toBe(expected !== null);
+    expect(isTabFocused(doc)).toBe(visibilityState === "visible" && focused);
     expect(viewingConvoId("c1", doc)).toBe(expected);
     expect(viewingConvoId(undefined, doc)).toBeNull();
+    expect(viewingConvoId("", doc)).toBeNull();
 });
 
 it("watches focus, blur and visibility changes and removes every listener", () => {

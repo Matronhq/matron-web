@@ -169,7 +169,24 @@ it("shares the actual in-page notification tag with the worker contract", async 
     expect(f.shown[0].tag).toBe(notificationTag("c1"));
 });
 
-it("leaves a selected conversation's alert to push when the visible tab is unfocused", async () => {
+function promptEvent(convoId: string, seq: number): Parameters<NonNullable<LiveListener["journalEvent"]>>[0] {
+    return {
+        kind: "journal",
+        seq,
+        convo_id: convoId,
+        ts: 1000,
+        sender: "agent:1",
+        type: "prompt",
+        payload: { text: "Needs you" },
+    };
+}
+
+function emitPrompt(client: MatronJournalClient, convoId: string, seq: number): void {
+    const internals = client as unknown as { emitLive(call: (listener: LiveListener) => void): void };
+    internals.emitLive((listener) => listener.journalEvent?.(promptEvent(convoId, seq), undefined));
+}
+
+it("alerts for the open conversation of a visible but unfocused tab, which the journal does not push for", async () => {
     jest.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
     jest.spyOn(document, "hasFocus").mockReturnValue(false);
     const f = setup();
@@ -177,24 +194,47 @@ it("leaves a selected conversation's alert to push when the visible tab is unfoc
     f.state({ selectedConversationId: "c1" });
     await f.notifier.enable();
     await settle();
-    expect(viewingConvoId(f.client.getSnapshot().selectedConversationId, document)).toBeNull();
-    const internals = f.client as unknown as { emitLive(call: (listener: LiveListener) => void): void };
-    internals.emitLive((listener) =>
-        listener.journalEvent?.(
-            {
-                kind: "journal",
-                seq: 8,
-                convo_id: "c1",
-                ts: 1000,
-                sender: "agent:1",
-                type: "prompt",
-                payload: { text: "Needs you" },
-            },
-            undefined,
-        ),
-    );
+    // The page still reports the chat as viewed, so the journal sends no push for it.
+    expect(viewingConvoId(f.client.getSnapshot().selectedConversationId, document)).toBe("c1");
+    emitPrompt(f.client, "c1", 8);
+    expect(f.shown).toHaveLength(1);
+    expect(f.shown[0].tag).toBe(notificationTag("c1"));
+});
+
+it("leaves another conversation's alert to push when the visible tab is unfocused", async () => {
+    jest.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+    jest.spyOn(document, "hasFocus").mockReturnValue(false);
+    const f = setup();
+    f.webPush.active.mockReturnValue(true);
+    f.state({ selectedConversationId: "c1" });
+    await f.notifier.enable();
+    await settle();
+    emitPrompt(f.client, "c2", 9);
     expect(f.webPush.active).toHaveBeenCalledWith(session);
     expect(f.shown).toHaveLength(0);
+});
+
+it("leaves the open conversation's alert to push when the tab is hidden", async () => {
+    jest.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    jest.spyOn(document, "hasFocus").mockReturnValue(false);
+    const f = setup();
+    f.webPush.active.mockReturnValue(true);
+    f.state({ selectedConversationId: "c1" });
+    await f.notifier.enable();
+    await settle();
+    expect(viewingConvoId(f.client.getSnapshot().selectedConversationId, document)).toBeNull();
+    emitPrompt(f.client, "c1", 10);
+    expect(f.shown).toHaveLength(0);
+});
+
+it("alerts itself without a push subscription, hidden or not", async () => {
+    jest.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    const f = setup();
+    f.state({ selectedConversationId: "c1" });
+    await f.notifier.enable();
+    await settle();
+    emitPrompt(f.client, "c1", 11);
+    expect(f.shown).toHaveLength(1);
 });
 
 it("guards suspension only for an active subscription for the current session, and clears on detach", async () => {

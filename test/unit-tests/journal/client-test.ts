@@ -5232,7 +5232,7 @@ describe("MatronJournalClient session guards", () => {
 describe("focused conversation reporting", () => {
     afterEach(() => jest.restoreAllMocks());
 
-    it("updates on focus changes, retries failed sends, replays after reconnect and disposes on logout", async () => {
+    it("follows visibility, not focus, retries failed sends, replays after reconnect and disposes on logout", async () => {
         localStorage.clear();
         const focused = jest.spyOn(document, "hasFocus").mockReturnValue(true);
         const visibility = jest.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
@@ -5250,18 +5250,27 @@ describe("focused conversation reporting", () => {
             send.mockClear();
             window.dispatchEvent(new Event("focus"));
             expect(send).not.toHaveBeenCalled();
+            // Blur with the tab still visible (the address bar, another app beside it): still viewing.
             focused.mockReturnValue(false);
-            send.mockReturnValueOnce(false);
             window.dispatchEvent(new Event("blur"));
+            expect(send).not.toHaveBeenCalled();
+            // Hidden: a failed send is retried by the next change.
+            visibility.mockReturnValue("hidden");
+            send.mockReturnValueOnce(false);
+            document.dispatchEvent(new Event("visibilitychange"));
             document.dispatchEvent(new Event("visibilitychange"));
             expect(send.mock.calls).toEqual([[{ op: "viewing", convo_id: null }], [{ op: "viewing", convo_id: null }]]);
             send.mockClear();
             await state.handleReady();
             expect(send).toHaveBeenCalledWith({ op: "viewing", convo_id: null });
             send.mockClear();
+            // Shown again, still unfocused: viewing resumes without focus.
+            visibility.mockReturnValue("visible");
+            document.dispatchEvent(new Event("visibilitychange"));
+            expect(send).toHaveBeenLastCalledWith({ op: "viewing", convo_id: "c1" });
             focused.mockReturnValue(true);
             window.dispatchEvent(new Event("focus"));
-            expect(send).toHaveBeenCalledWith({ op: "viewing", convo_id: "c1" });
+            expect(send).toHaveBeenCalledTimes(1);
             visibility.mockReturnValue("hidden");
             document.dispatchEvent(new Event("visibilitychange"));
             expect(send).toHaveBeenLastCalledWith({ op: "viewing", convo_id: null });
@@ -5276,8 +5285,8 @@ describe("focused conversation reporting", () => {
             await client.selectConversation("c1");
             expect(nextSend).toHaveBeenCalledWith({ op: "viewing", convo_id: "c1" });
             nextSend.mockClear();
-            focused.mockReturnValue(false);
-            window.dispatchEvent(new Event("blur"));
+            visibility.mockReturnValue("hidden");
+            document.dispatchEvent(new Event("visibilitychange"));
             expect(nextSend.mock.calls).toEqual([[{ op: "viewing", convo_id: null }]]);
         } finally {
             await client.logout();
