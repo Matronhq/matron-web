@@ -6396,8 +6396,11 @@ export class MatronJournalClient {
             // New objects, so a view memoised on the stream re-renders.
             for (const [ref, stream] of Object.entries(streams)) streams[ref] = { ...stream, stale: true };
         }
+        // An activity indicator is cleared only by the frame that ends it, which a closed socket
+        // cannot deliver; drop it rather than leave "thinking" shown after the agent went idle.
+        this.activities.clear();
         const selectedId = this.state.selectedConversationId;
-        if (selectedId !== undefined && this.toolStreams.has(selectedId)) this.refreshEphemeralState(selectedId);
+        if (selectedId !== undefined) this.refreshEphemeralState(selectedId);
     }
 
     private refreshEphemeralState(conversationId: string): void {

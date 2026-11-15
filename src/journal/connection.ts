@@ -108,6 +108,8 @@ export class JournalConnection {
         document.removeEventListener("visibilitychange", this.onVisibility);
         this.clearHiddenTimer();
         this.suspended = false;
+        // Its remaining frames must not apply on a connection started later.
+        if (this.socket) this.abandonedSockets.add(this.socket);
         this.socket?.close(1000, "client stopped");
         this.socket = undefined;
         for (const [requestId, pending] of this.pendingRpc) {
@@ -267,7 +269,10 @@ export class JournalConnection {
         };
 
         socket.onclose = (event) => {
-            if (this.socket === socket) this.socket = undefined;
+            // A socket that was replaced (a suspended one whose close handshake finishes after the tab
+            // opened its successor) must not touch the current connection's state or retry.
+            if (this.socket !== socket) return;
+            this.socket = undefined;
             this.welcomed = false;
             if (this.stopped || this.suspended || this.replacingSnapshot) return;
             const reason = event.code === 1000 ? undefined : event.reason || "Connection interrupted";
@@ -439,7 +444,10 @@ export class JournalConnection {
         // Runs already queued on this socket must not apply and move the cursor past the rows that
         // just failed: those rows would never be replayed.
         this.abandonedSockets.add(socket);
-        this.callbacks.onState("offline", error instanceof Error ? error.message : "Sync failed");
+        // A socket that is no longer current reports nothing: its successor owns the state.
+        if (socket === this.socket) {
+            this.callbacks.onState("offline", error instanceof Error ? error.message : "Sync failed");
+        }
         socket.close();
     }
 

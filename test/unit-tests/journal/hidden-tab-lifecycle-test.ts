@@ -43,6 +43,8 @@ class FakeSocket {
     public readyState = 0;
     public sent: Array<Record<string, unknown>> = [];
     public closedWith?: { code?: number; reason?: string };
+    /** When set, close() starts the handshake only; finishClose() completes it later. */
+    public deferClose = false;
     public onopen: (() => void) | null = null;
     public onmessage: ((message: { data: string }) => void) | null = null;
     public onerror: (() => void) | null = null;
@@ -59,8 +61,17 @@ class FakeSocket {
     public close(code?: number, reason?: string): void {
         if (this.readyState === FakeSocket.CLOSED) return;
         this.closedWith = { code, reason };
+        if (this.deferClose) {
+            this.readyState = FakeSocket.CLOSING;
+            return;
+        }
+        this.finishClose();
+    }
+
+    /** The close handshake completes: the socket is closed and its close event fires. */
+    public finishClose(): void {
         this.readyState = FakeSocket.CLOSED;
-        this.onclose?.({ code: code ?? 1005, reason: reason ?? "" });
+        this.onclose?.({ code: this.closedWith?.code ?? 1005, reason: this.closedWith?.reason ?? "" });
     }
 
     public open(): void {
@@ -301,6 +312,86 @@ describe("hidden tab closes its socket", () => {
         await expect(reply).resolves.toEqual({ ok: false, origin: "relay", code: "not_connected" });
     });
 
+    describe("a close event from a replaced socket", () => {
+        async function suspendedWithSlowClose() {
+            const cb = callbacks();
+            const { connection, socket: old } = await online(cb);
+            old.deferClose = true;
+            setVisibility("hidden");
+            jest.advanceTimersByTime(HIDDEN_CLOSE_MS);
+            expect(old.readyState).toBe(FakeSocket.CLOSING);
+            setVisibility("visible");
+            expect(FakeSocket.instances).toHaveLength(2);
+            return { connection, cb, old, next: FakeSocket.instances[1] };
+        }
+
+        it("leaves a welcomed successor usable when it arrives late", async () => {
+            const { connection, cb, old, next } = await suspendedWithSlowClose();
+            next.open();
+            await settle();
+            next.receive(HELLO_OK);
+            await settle();
+            cb.onState.mockClear();
+            old.finishClose();
+            await settle();
+            jest.advanceTimersByTime(60_000);
+            await settle();
+            expect(cb.onState).not.toHaveBeenCalled();
+            expect(FakeSocket.instances).toHaveLength(2);
+            expect(connection.send({ op: "viewing", convo_id: "c1" })).toBe(true);
+            expect(next.sent.at(-1)).toMatchObject({ op: "viewing" });
+            connection.stop();
+        });
+
+        it("leaves a successor that is still connecting unharmed when it arrives early", async () => {
+            const { connection, cb, old, next } = await suspendedWithSlowClose();
+            cb.onState.mockClear();
+            old.finishClose();
+            await settle();
+            jest.advanceTimersByTime(60_000);
+            await settle();
+            expect(cb.onState).not.toHaveBeenCalled();
+            expect(FakeSocket.instances).toHaveLength(2);
+            next.open();
+            await settle();
+            next.receive(HELLO_OK);
+            await settle();
+            expect(cb.onState.mock.calls).toEqual([["online"]]);
+            expect(connection.send({ op: "viewing", convo_id: "c1" })).toBe(true);
+            connection.stop();
+        });
+
+        it("still reconnects when the current socket closes", async () => {
+            const { connection, old, next } = await suspendedWithSlowClose();
+            next.open();
+            await settle();
+            next.receive(HELLO_OK);
+            await settle();
+            old.finishClose();
+            next.close(1006, "lost");
+            await settle();
+            jest.advanceTimersByTime(60_000);
+            await settle();
+            expect(FakeSocket.instances.length).toBeGreaterThan(2);
+            connection.stop();
+        });
+
+        it("does not let a stopped connection's late frames welcome a restarted one", async () => {
+            const cb = callbacks();
+            const { connection, socket: first } = await online(cb);
+            first.deferClose = true;
+            connection.stop();
+            connection.start();
+            expect(FakeSocket.instances).toHaveLength(2);
+            cb.onReady.mockClear();
+            first.receive(HELLO_OK);
+            await settle();
+            expect(cb.onReady).not.toHaveBeenCalled();
+            expect(connection.send({ op: "viewing", convo_id: "c1" })).toBe(false);
+            connection.stop();
+        });
+    });
+
     it("stop() removes the visibility handling", async () => {
         const { connection, cb } = await online();
         connection.stop();
@@ -391,6 +482,20 @@ describe("tool output across a hidden tab", () => {
         expect(internals.toolStreams.get("c1")?.tu1.stale).toBe(true);
         internals.handleEphemeral(toolFrame({ event: "end" }));
         expect(internals.toolStreams.get("c1")?.tu1).toBeUndefined();
+    });
+
+    it("suspending drops the activity indicator the closed socket can no longer end", () => {
+        const client = new MatronJournalClient();
+        const internals = client as unknown as ClientInternals & {
+            activities: Map<string, unknown>;
+            state: { selectedConversationId?: string; activity?: unknown };
+        };
+        internals.state.selectedConversationId = "c1";
+        internals.handleEphemeral({ kind: "ephemeral", convo_id: "c1", activity: { state: "thinking" } });
+        expect(internals.state.activity).toMatchObject({ state: "thinking" });
+        internals.suspendLiveStreams?.();
+        expect(internals.activities.size).toBe(0);
+        expect(internals.state.activity).toBeUndefined();
     });
 
     it("shows 'live output no longer available' on a card that is no longer live, and not on a live one", async () => {
