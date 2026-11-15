@@ -22,8 +22,9 @@ import { createPortal } from "react-dom";
 import { AgentSpawnCard, type AgentSpawnDecision, isAnswerableAgentSpawn } from "../agent-spawn-card";
 import { JOURNAL_ATTACHMENTS_MAX, JOURNAL_BODY_MAX, bodyTooLongMessage } from "../api";
 import { type MatronJournalClient, type TrackerCommentOutcome, voiceNoteFile } from "../client";
+import { copyText } from "../clipboard";
 import { stopSpawnedSession } from "../coordinator-consent";
-import { ChevronLeftIcon, CloseIcon, KebabIcon, PlusCircleIcon, SendIcon } from "../icons";
+import { ChevronLeftIcon, ClipboardIcon, CloseIcon, KebabIcon, PlusCircleIcon, SendIcon } from "../icons";
 import { parseOwnTrackerUrl } from "../link-path";
 import { parseTrackerHref } from "../markdown";
 import { MediaViewer, MediaViewerContext, type MediaViewerContextValue } from "../media-viewer";
@@ -270,6 +271,40 @@ function CommentCard({
     // as the user's.
     const who = comment.author === "user" && !author ? "You" : author?.box || (author?.conversation ? null : "Agent");
     const convoId = author?.convoId;
+    const body = comment.body.trim();
+    const [copyLabel, setCopyLabel] = useState("Copy");
+    const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+    const mountedRef = useRef(true);
+    const copyOperationRef = useRef(0);
+
+    function clearCopyTimer(): void {
+        if (timerRef.current === undefined) return;
+        clearTimeout(timerRef.current);
+        timerRef.current = undefined;
+    }
+
+    useEffect(() => {
+        mountedRef.current = true;
+        return () => {
+            mountedRef.current = false;
+            clearCopyTimer();
+        };
+    }, []);
+
+    async function handleCopy(): Promise<void> {
+        if (!body) return;
+        const operation = ++copyOperationRef.current;
+        clearCopyTimer();
+        const copied = await copyText(body);
+        if (!mountedRef.current || operation !== copyOperationRef.current) return;
+        setCopyLabel(copied ? "Copied" : "Copy failed");
+        clearCopyTimer();
+        timerRef.current = setTimeout(() => {
+            setCopyLabel("Copy");
+            timerRef.current = undefined;
+        }, 1_500);
+    }
+
     return (
         <div className={`mj_TrackerComment mj_TrackerComment_${comment.author}`}>
             <div className="mj_TrackerComment_head">
@@ -286,6 +321,17 @@ function CommentCard({
                     </button>
                 ) : null}
                 <span className="mj_TrackerComment_time">{formatRelativeTime(comment.created_at)}</span>
+                {body ? (
+                    <button
+                        type="button"
+                        className="mj_TrackerComment_copy"
+                        aria-label="Copy comment"
+                        onClick={handleCopy}
+                    >
+                        <ClipboardIcon />
+                        {copyLabel}
+                    </button>
+                ) : null}
             </div>
             <InlineBody
                 client={client}
