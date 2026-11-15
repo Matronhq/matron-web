@@ -625,6 +625,7 @@ export class MatronJournalClient {
     private globalSearchAbort?: AbortController;
     private database?: JournalDatabase;
     private connection?: JournalConnection;
+    private suspendGuard?: () => boolean;
     // Read state: which timeline rows and tracker items were actually on screen, reported as
     // `seen` / `item_seen` over the socket. Separate from read_marker and the unread badge.
     public readonly seen = new SeenTracker({ send: (op) => this.connection?.send(op) ?? false });
@@ -820,6 +821,14 @@ export class MatronJournalClient {
 
     public get sessionGeneration(): number {
         return this.sessionGen;
+    }
+
+    /**
+     * Web push supplies a guard that returns true once a subscription is registered for the session.
+     * Without a guard, the socket is never closed while hidden.
+     */
+    public setSuspendGuard(guard: (() => boolean) | undefined): void {
+        this.suspendGuard = guard;
     }
 
     private allStorageHealthy(): boolean {
@@ -5458,6 +5467,7 @@ export class MatronJournalClient {
         const connectionGen = this.sessionGen;
         const current = (): boolean => this.sessionGen === connectionGen;
         this.connection = new JournalConnection(session.serverUrl, session.token, {
+            canSuspend: () => this.suspendGuard?.() ?? false,
             cursor: async () => (await this.database?.cursor()) ?? cursor ?? 0,
             archiveSince: () => readArchiveSince(session) ?? 0,
             onFrame: async (frame) => {
@@ -5477,6 +5487,9 @@ export class MatronJournalClient {
             },
             onState: (connection, error) => {
                 if (current()) this.patch({ connection, connectionError: error });
+            },
+            onSuspend: () => {
+                if (current()) this.suspendLiveStreams();
             },
         });
         this.connection.start();
@@ -5983,6 +5996,15 @@ export class MatronJournalClient {
             await this.refreshSelectedConversation(message.convoId, db, gen);
             if (!ownsReplay()) return;
         }
+        // Rows another tab stored while this one was suspended or offline are not replayed here: the
+        // cursor is the shared one. Reload what the views show from the store, not from the cursor.
+        await this.refreshConversations();
+        if (!ownsReplay()) return;
+        const viewedId = this.state.selectedConversationId;
+        if (viewedId) {
+            await this.refreshSelectedConversation(viewedId, db, gen);
+            if (!ownsReplay()) return;
+        }
         for (const message of kept) this.sendPendingMessage(message, connection);
         if (this.state.selectedConversationId) {
             connection.send({ op: "viewing", convo_id: this.state.selectedConversationId });
@@ -6358,6 +6380,8 @@ export class MatronJournalClient {
                 offset: payload.offset ?? 0,
                 headTruncated: false,
             };
+            // An offset-less chunk would continue across whatever the closed socket missed.
+            if (current.stale && payload.offset === undefined) return;
             const offset = payload.offset ?? current.offset;
             if (offset <= current.offset) {
                 const addition = trimUtf8Prefix(chunk, current.offset - offset);
@@ -6369,6 +6393,23 @@ export class MatronJournalClient {
             }
         }
         this.toolStreams.set(frame.convo_id, streams);
+    }
+
+    /**
+     * The tab's socket was closed while hidden, which ends the journal's live tool output for
+     * this device. Keep the text shown, mark it as no longer live, and let the snapshot the next
+     * connection's `viewing` draws replace it; never append to it.
+     */
+    private suspendLiveStreams(): void {
+        for (const streams of this.toolStreams.values()) {
+            // New objects, so a view memoised on the stream re-renders.
+            for (const [ref, stream] of Object.entries(streams)) streams[ref] = { ...stream, stale: true };
+        }
+        // An activity indicator is cleared only by the frame that ends it, which a closed socket
+        // cannot deliver; drop it rather than leave "thinking" shown after the agent went idle.
+        this.activities.clear();
+        const selectedId = this.state.selectedConversationId;
+        if (selectedId !== undefined) this.refreshEphemeralState(selectedId);
     }
 
     private refreshEphemeralState(conversationId: string): void {

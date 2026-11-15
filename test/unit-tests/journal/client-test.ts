@@ -1125,6 +1125,18 @@ describe("MatronJournalClient state handling", () => {
         expect(newSend).not.toHaveBeenCalled();
     });
 
+    it("reloads the conversation list and the open chat from the store when a connection resumes", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const database = fakeDatabase();
+        state.state = signedInState(client);
+        state.database = database;
+        state.connection = { send: jest.fn().mockReturnValue(true) };
+        await state.handleReady();
+        expect(database.conversations).toHaveBeenCalled();
+        expect(database.events).toHaveBeenCalledWith("c1");
+    });
+
     it("does not acknowledge a cursor after the replay connection changes", async () => {
         const client = new MatronJournalClient();
         const state = internals(client);
