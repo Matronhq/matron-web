@@ -392,6 +392,47 @@ describe("hidden tab closes its socket", () => {
         });
     });
 
+    describe("a snapshot replacement that fails", () => {
+        const SNAPSHOT_REQUIRED = { kind: "control", op: "snapshot_required", seq: 0 };
+
+        it("retries the connection", async () => {
+            const cb = callbacks();
+            cb.onSnapshotRequired.mockRejectedValueOnce(new Error("snapshot failed"));
+            const { connection, socket } = await online(cb);
+            socket.receive(SNAPSHOT_REQUIRED);
+            await settle();
+            jest.advanceTimersByTime(60_000);
+            await settle();
+            expect(FakeSocket.instances.length).toBeGreaterThan(1);
+            connection.stop();
+        });
+
+        it("retries when the tab was hidden and shown while the replacement was pending", async () => {
+            const cb = callbacks();
+            let fail!: (error: Error) => void;
+            cb.onSnapshotRequired.mockImplementationOnce(
+                () =>
+                    new Promise<void>((_resolve, reject) => {
+                        fail = reject;
+                    }),
+            );
+            const { connection, socket } = await online(cb);
+            socket.receive(SNAPSHOT_REQUIRED);
+            await settle();
+            setVisibility("hidden");
+            jest.advanceTimersByTime(HIDDEN_CLOSE_MS);
+            setVisibility("visible");
+            // The reopening is left to the replacement, which has not finished.
+            expect(FakeSocket.instances).toHaveLength(1);
+            fail(new Error("snapshot failed"));
+            await settle();
+            jest.advanceTimersByTime(60_000);
+            await settle();
+            expect(FakeSocket.instances.length).toBeGreaterThan(1);
+            connection.stop();
+        });
+    });
+
     it("stop() removes the visibility handling", async () => {
         const { connection, cb } = await online();
         connection.stop();

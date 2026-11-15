@@ -5996,6 +5996,15 @@ export class MatronJournalClient {
             await this.refreshSelectedConversation(message.convoId, db, gen);
             if (!ownsReplay()) return;
         }
+        // Rows another tab stored while this one was suspended or offline are not replayed here: the
+        // cursor is the shared one. Reload what the views show from the store, not from the cursor.
+        await this.refreshConversations();
+        if (!ownsReplay()) return;
+        const viewedId = this.state.selectedConversationId;
+        if (viewedId) {
+            await this.refreshSelectedConversation(viewedId, db, gen);
+            if (!ownsReplay()) return;
+        }
         for (const message of kept) this.sendPendingMessage(message, connection);
         if (this.state.selectedConversationId) {
             connection.send({ op: "viewing", convo_id: this.state.selectedConversationId });

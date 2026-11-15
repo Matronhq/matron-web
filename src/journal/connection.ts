@@ -404,12 +404,19 @@ export class JournalConnection {
         this.abandonedSockets.add(socket);
         this.replacingSnapshot = true;
         socket.close(1000, "replacing snapshot");
+        let failure: { error: unknown } | undefined;
         try {
             await this.callbacks.onSnapshotRequired();
+        } catch (error) {
+            failure = { error };
         } finally {
             this.replacingSnapshot = false;
         }
-        this.scheduleReconnect(0);
+        // The socket's close event returned early while the snapshot was being replaced, so this is
+        // the only retry: it must happen on failure too, and also when the tab was shown meanwhile
+        // (the visibility handler left the reopening to this path).
+        this.scheduleReconnect(failure ? undefined : 0);
+        if (failure) throw failure.error;
     }
 
     private async handleJournalBatch(frames: JournalEvent[], socket: WebSocket): Promise<void> {
