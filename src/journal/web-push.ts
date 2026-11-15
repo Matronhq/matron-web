@@ -86,7 +86,11 @@ function defaultEnvironment(): WebPushEnvironment {
  * Resolves once the registration has an active worker. On a first visit `register()` returns while
  * the worker is still installing, and `subscribe()` then fails with an InvalidStateError.
  */
-async function untilActive(registration: { active?: unknown; installing?: WorkerLike | null; waiting?: WorkerLike | null }) {
+async function untilActive(registration: {
+    active?: unknown;
+    installing?: WorkerLike | null;
+    waiting?: WorkerLike | null;
+}) {
     if (registration.active) return;
     const worker = registration.installing ?? registration.waiting;
     if (!worker) return;
