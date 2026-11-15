@@ -539,6 +539,46 @@ describe("tool output across a hidden tab", () => {
         expect(internals.state.activity).toBeUndefined();
     });
 
+    it("hiding the tab while its socket stays open marks the open chat's live output stale", () => {
+        const { internals } = liveClient();
+        const client = internals as unknown as {
+            lastViewing?: string | null;
+            activities: Map<string, unknown>;
+            onTabViewChange(): void;
+            connection?: { send(operation: unknown): boolean };
+            state: { selectedConversationId?: string };
+        };
+        client.state.selectedConversationId = "c1";
+        client.connection = { send: () => true };
+        client.lastViewing = "c1";
+        client.activities.set("c1", { state: "thinking" });
+        Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" });
+        try {
+            client.onTabViewChange();
+        } finally {
+            Object.defineProperty(document, "visibilityState", { configurable: true, get: () => visibility });
+        }
+        expect(client.lastViewing).toBeNull();
+        expect(client.activities.size).toBe(0);
+        expect(internals.toolStreams.get("c1")?.tu1).toMatchObject({ stale: true });
+    });
+
+    it("a blur that leaves the tab visible keeps live output live", () => {
+        const { internals } = liveClient();
+        const client = internals as unknown as {
+            lastViewing?: string | null;
+            onTabViewChange(): void;
+            connection?: { send(operation: unknown): boolean };
+            state: { selectedConversationId?: string };
+        };
+        client.state.selectedConversationId = "c1";
+        client.connection = { send: () => true };
+        client.lastViewing = "c1";
+        client.onTabViewChange();
+        expect(client.lastViewing).toBe("c1");
+        expect(internals.toolStreams.get("c1")?.tu1.stale).toBeUndefined();
+    });
+
     it("shows 'live output no longer available' on a card that is no longer live, and not on a live one", async () => {
         (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
         const container = document.createElement("div");

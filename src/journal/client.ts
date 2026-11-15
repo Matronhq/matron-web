@@ -21,6 +21,7 @@ import {
 import type { Contact, ContactInvite, InviteAskAnswer, InviteAskDecision, InviteOpened } from "./contacts";
 import { shareableInviteLink } from "./contact-link";
 import { JournalConnection } from "./connection";
+import { viewingConvoId, watchTabFocus } from "./viewing";
 import { effectiveUnread, makeIdSetStore, type IdSetStore } from "./conversation-flags";
 import { parseCoordinatorConsent, resetSessionStops, spawnConsentRowsIn } from "./coordinator-consent";
 import { JournalDatabase } from "./database";
@@ -625,6 +626,8 @@ export class MatronJournalClient {
     private globalSearchAbort?: AbortController;
     private database?: JournalDatabase;
     private connection?: JournalConnection;
+    private stopWatchingFocus?: () => void;
+    private lastViewing?: string | null;
     private suspendGuard?: () => boolean;
     // Read state: which timeline rows and tracker items were actually on screen, reported as
     // `seen` / `item_seen` over the socket. Separate from read_marker and the unread badge.
@@ -1024,6 +1027,8 @@ export class MatronJournalClient {
         this.pendingFiles.clear();
         this.transientAttachmentErrors.clear();
         this.seen.reset();
+        this.stopWatchingFocus?.();
+        this.stopWatchingFocus = undefined;
         this.connection?.stop();
         this.connection = undefined;
         if (this.storageListener) {
@@ -1423,7 +1428,7 @@ export class MatronJournalClient {
             await history;
             return;
         }
-        this.connection?.send({ op: "viewing", convo_id: conversationId });
+        this.sendViewing(conversationId);
 
         const conversation = this.state.conversations.find((candidate) => candidate.id === conversationId);
         if (conversation?.unread_count) this.scheduleRead(conversationId, conversation.last_seq, 0);
@@ -1435,7 +1440,7 @@ export class MatronJournalClient {
         // Find in chat belongs to the conversation being left: a search still in flight must not
         // reopen it, nor answer a bar opened there later.
         this.endChatSearch();
-        this.connection?.send({ op: "viewing", convo_id: null });
+        this.sendViewing(null);
         if (this.state.session) storeSelectedConversation(this.state.session, undefined);
         this.patch({ selectedConversationId: undefined, events: [], pendingMessages: [] });
     }
@@ -2740,6 +2745,7 @@ export class MatronJournalClient {
         // user has since left.
         this.focusToken += 1;
         this.patch({ trackerView: next, ...(this.state.focusTarget ? { focusTarget: undefined } : {}) });
+        this.sendViewing();
     }
 
     // Memories view entry points: a name opens that memory's editor, "" opens the new-memory form,
@@ -2764,6 +2770,7 @@ export class MatronJournalClient {
         this.trackerMissionGen += 1;
         this.trackerProjectGen += 1;
         this.patch({ trackerView: undefined, trackerItem: null, trackerMission: null, trackerProject: null });
+        this.sendViewing();
     }
 
     // Deep-link / row-tap entry points: select the row (last-tap-wins) and switch to its view.
@@ -5270,6 +5277,8 @@ export class MatronJournalClient {
         this.dismissedAttachments.clear();
         this.pendingFiles.clear();
         this.transientAttachmentErrors.clear();
+        this.stopWatchingFocus?.();
+        this.stopWatchingFocus = undefined;
         this.connection?.stop();
         this.database?.close();
         this.defaultsServer = undefined;
@@ -5466,6 +5475,7 @@ export class MatronJournalClient {
         // journal, and an unbound revoke would sign the new account out.
         const connectionGen = this.sessionGen;
         const current = (): boolean => this.sessionGen === connectionGen;
+        this.lastViewing = undefined;
         this.connection = new JournalConnection(session.serverUrl, session.token, {
             canSuspend: () => this.suspendGuard?.() ?? false,
             cursor: async () => (await this.database?.cursor()) ?? cursor ?? 0,
@@ -5492,6 +5502,7 @@ export class MatronJournalClient {
                 if (current()) this.suspendLiveStreams();
             },
         });
+        this.stopWatchingFocus = watchTabFocus(window, document, () => this.onTabViewChange());
         this.connection.start();
         // Purge expired live tool logs once the session is up, not before the first paint: it walks
         // every cached row, and the store holds every row this device has received, so awaiting it
@@ -5939,6 +5950,24 @@ export class MatronJournalClient {
         else if (this.state.session) storeSelectedConversation(this.state.session, undefined);
     }
 
+    /** The tab was shown, hidden, focused or blurred. Only showing and hiding change what is viewed. */
+    private onTabViewChange(): void {
+        const before = this.lastViewing;
+        this.sendViewing();
+        // A hidden tab stops receiving the open chat's live updates, so what they showed can no
+        // longer be trusted to end: the idle frame would not arrive. Showing the tab again re-views
+        // the chat, and the journal replays the tool output.
+        if (before && this.lastViewing === null) this.suspendLiveStreams();
+    }
+
+    private sendViewing(selectedId = this.state.selectedConversationId ?? null): void {
+        // The tracker covers the open chat's transcript: it is not being viewed.
+        const convoId = viewingConvoId(this.state.trackerView?.open ? null : selectedId);
+        if (convoId !== this.lastViewing && this.connection?.send({ op: "viewing", convo_id: convoId })) {
+            this.lastViewing = convoId;
+        }
+    }
+
     private async handleReady(hello?: JournalControlFrame): Promise<void> {
         // hello_ok carries the pin list on a journal with pins; its absence means an older journal.
         if (hello !== undefined) this.applyJournalPins(pinsFromContainer(hello));
@@ -6006,8 +6035,9 @@ export class MatronJournalClient {
             if (!ownsReplay()) return;
         }
         for (const message of kept) this.sendPendingMessage(message, connection);
+        this.lastViewing = undefined;
+        this.sendViewing();
         if (this.state.selectedConversationId) {
-            connection.send({ op: "viewing", convo_id: this.state.selectedConversationId });
             const conversation = this.selectedConversation();
             if (conversation?.unread_count) this.scheduleRead(conversation.id, conversation.last_seq, 0);
         }
