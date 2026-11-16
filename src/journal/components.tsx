@@ -191,6 +191,7 @@ import {
 } from "./markdown-preview";
 import { TrackerLinkInfoContext, type TrackerLinkInfo } from "./tracker-link-title";
 import { MediaBrowserSheet } from "./media-browser";
+import { foldReleasedActions, type ReleasedAction } from "./queued-release";
 import { paneCoversChat, SubChatPane, type SubChatRow, useChatArea } from "./subchat-pane";
 import { chatSidePane, subtaskDescription } from "./subtask";
 import { SubtaskLine } from "./subtask-link";
@@ -3984,7 +3985,7 @@ export function QueuedReleaseCard({
     client: MatronJournalClient;
     event: JournalEvent;
     isReadOnly?: boolean;
-    resolvedAction?: (itemId: string) => "send" | "cancel" | undefined;
+    resolvedAction?: (itemId: string) => ReleasedAction | undefined;
 }): React.ReactElement {
     const items = (Array.isArray(event.payload.items) ? event.payload.items : []).flatMap((item) => {
         if (typeof item !== "object" || item === null || Array.isArray(item)) return [];
@@ -4095,12 +4096,18 @@ export function QueuedReleaseCard({
                     })}
                 </div>
             )}
-            {resolution !== undefined && (
+            {resolution !== undefined && resolution !== "expired" && (
                 <div className="mj_PromptResolved">
                     <span className="mj_PromptGlyph mj_PromptGlyph_ok" aria-hidden="true">
                         <PromptCheckGlyph />
                     </span>
                     <span className="mj_Answered">{resolution === "send" ? "Sent" : "Cancelled"}</span>
+                </div>
+            )}
+            {resolution === "expired" && (
+                // The bridge dropped this queued message without sending it: no buttons, a muted final note.
+                <div className="mj_PromptResolved mj_PromptResolved_expired">
+                    <span className="mj_Answered mj_Expired">Expired, not sent</span>
                 </div>
             )}
         </div>
@@ -5400,7 +5407,7 @@ export function EventContent({
     coordinatorDecisions?: ReadonlyMap<string, CoordinatorDecision>;
     itemCards?: ItemCardFold;
     isReadOnly?: boolean;
-    resolvedAction?: (itemId: string) => "send" | "cancel" | undefined;
+    resolvedAction?: (itemId: string) => ReleasedAction | undefined;
 }): React.ReactElement | null {
     const answer = answeredPromptReplies.get(`${event.convo_id}:${event.seq}`);
     switch (event.type) {
@@ -5656,7 +5663,7 @@ function EventRow({
     coordinatorDecisions?: ReadonlyMap<string, CoordinatorDecision>;
     itemCards?: ItemCardFold;
     isReadOnly?: boolean;
-    resolvedAction: (itemId: string) => "send" | "cancel" | undefined;
+    resolvedAction: (itemId: string) => ReleasedAction | undefined;
     continuation?: boolean;
     lastInSection?: boolean;
     /** The conversation has another person in it: headers say which side wrote each message. */
@@ -6257,26 +6264,9 @@ function Timeline({
     const agentChatResolutions = useMemo(() => readAgentChatResolutions(state.events), [state.events]);
     // The Coordinator's answers to chat and spawn cards (`consent_decision`), for their badges.
     const coordinatorDecisions = useMemo(() => readCoordinatorDecisions(state.events), [state.events]);
-    const releasedActions = useMemo(() => {
-        const actions = new Map<string, "send" | "cancel">();
-        for (const event of state.events) {
-            if (
-                event.type !== "prompt_reply" ||
-                asString(event.payload.kind) !== "queued_release" ||
-                !Array.isArray(event.payload.released)
-            )
-                continue;
-            const action = asString(event.payload.action);
-            if (action !== "send" && action !== "cancel") continue;
-            for (const releasedId of event.payload.released) {
-                const itemId = asString(releasedId);
-                if (itemId) actions.set(itemId, action);
-            }
-        }
-        return actions;
-    }, [state.events]);
+    const releasedActions = useMemo(() => foldReleasedActions(state.events), [state.events]);
     const resolvedAction = useCallback(
-        (itemId: string): "send" | "cancel" | undefined => releasedActions.get(itemId),
+        (itemId: string): ReleasedAction | undefined => releasedActions.get(itemId),
         [releasedActions],
     );
     const scrollToBottom = useCallback((): void => {
@@ -7778,7 +7768,7 @@ function subChatTranscript(events: JournalEvent[], client: MatronJournalClient):
     const permissionRequestSeqs = new Set<number>();
     const answeredPromptReplies = new Map<string, { choice?: string }>();
     const spawnOutcomes = new Map<string, EventPayload>();
-    const releasedActions = new Map<string, "send" | "cancel">();
+    const releasedActions = foldReleasedActions(events);
     for (const event of events) {
         if (event.type === "permission_request") permissionRequestSeqs.add(event.seq);
         else if (event.type === "prompt") {
@@ -7790,17 +7780,6 @@ function subChatTranscript(events: JournalEvent[], client: MatronJournalClient):
                 const choice = asString(event.payload.choice, asString(event.payload.label)) || undefined;
                 answeredPromptReplies.set(`${event.convo_id}:${targetSeq}`, { choice });
             }
-            const action = asString(event.payload.action);
-            if (
-                asString(event.payload.kind) === "queued_release" &&
-                Array.isArray(event.payload.released) &&
-                (action === "send" || action === "cancel")
-            ) {
-                for (const releasedId of event.payload.released) {
-                    const itemId = asString(releasedId);
-                    if (itemId) releasedActions.set(itemId, action);
-                }
-            }
         } else if (event.type === "spawn_outcome" && typeof event.payload.request_id === "string") {
             spawnOutcomes.set(event.payload.request_id, event.payload);
         }
@@ -7808,7 +7787,7 @@ function subChatTranscript(events: JournalEvent[], client: MatronJournalClient):
     const itemCards = foldItemCards(events);
     const agentChatResolutions = readAgentChatResolutions(events);
     const coordinatorDecisions = readCoordinatorDecisions(events);
-    const resolvedAction = (itemId: string): "send" | "cancel" | undefined => releasedActions.get(itemId);
+    const resolvedAction = (itemId: string): ReleasedAction | undefined => releasedActions.get(itemId);
     return events
         .filter(
             (event) =>

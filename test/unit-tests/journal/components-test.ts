@@ -1131,6 +1131,43 @@ describe("markdown render-site integration", () => {
         expect(strayCard?.querySelector(".mj_Answered")).toBeNull();
         expect(strayCard?.querySelector("button")?.textContent).toBe("Send");
     });
+
+    it("shows an expired queued message as final, and never lets expiry override a real decision", async () => {
+        const queuedPrompt = (seq: number, id: string): JournalEvent => ({
+            ...textEvent(seq, "unused"),
+            type: "prompt",
+            payload: {
+                kind: "queued_release",
+                items: [{ id, text: `Message ${id}` }],
+                actions: [{ id: "send", label: "Send", intent: "primary" }],
+            },
+        });
+        const release = (seq: number, action: string, id: string): JournalEvent => ({
+            ...textEvent(seq, "unused"),
+            type: "prompt_reply",
+            payload: { kind: "queued_release", action, released: [id] },
+        });
+        const expiredPrompt = queuedPrompt(120, "pr_expired::0");
+        const sentPrompt = queuedPrompt(121, "pr_sent::0");
+
+        rendered = await renderClient(
+            signedInClient({
+                events: [
+                    expiredPrompt,
+                    sentPrompt,
+                    release(122, "expired", "pr_expired::0"),
+                    release(123, "send", "pr_sent::0"),
+                    release(124, "expired", "pr_sent::0"),
+                ],
+            }),
+        );
+
+        const expiredCard = rendered.container.querySelector(`[data-event-id="${expiredPrompt.seq}"]`);
+        expect(expiredCard?.querySelector(".mj_Answered")?.textContent).toBe("Expired, not sent");
+        expect(expiredCard?.querySelector("button")).toBeNull();
+        const sentCard = rendered.container.querySelector(`[data-event-id="${sentPrompt.seq}"]`);
+        expect(sentCard?.querySelector(".mj_Answered")?.textContent).toBe("Sent");
+    });
 });
 
 describe("isQueuedReleaseReply (queue-prompt provenance suppression)", () => {
