@@ -574,15 +574,19 @@ export class JournalDatabase {
     public async reconcilePersistedOwnMessages(): Promise<string[]> {
         const transaction = this.database.transaction(["events", "outbox"], "readwrite");
         const outbox = transaction.objectStore("outbox");
-        const [events, pendingMessages] = await Promise.all([
-            requestResult(transaction.objectStore("events").getAll()) as Promise<JournalEvent[]>,
-            requestResult(outbox.getAll()) as Promise<PendingMessage[]>,
-        ]);
-        const candidates = pendingMessages.filter(
-            (message) => message.attachState === "sending" || message.errorKind === "send_failed",
-        );
+        const pendingMessages = (await requestResult(outbox.getAll())) as PendingMessage[];
         const removed: string[] = [];
-        for (const pending of candidates) {
+        // A pending message only matches an event of its own conversation, so read just those
+        // conversations through the byConversation index rather than the whole events store.
+        const byConversation = transaction.objectStore("events").index("byConversation");
+        const eventsByConvo = new Map<string, JournalEvent[]>();
+        for (const pending of pendingMessages) {
+            if (pending.attachState !== "sending" && pending.errorKind !== "send_failed") continue;
+            let events = eventsByConvo.get(pending.convoId);
+            if (!events) {
+                events = (await requestResult(byConversation.getAll(pending.convoId))) as JournalEvent[];
+                eventsByConvo.set(pending.convoId, events);
+            }
             if (!events.some((event) => matchesOwnPendingMessage(event, pending, this.ownSender))) continue;
             outbox.delete(pending.localId);
             removed.push(pending.localId);
