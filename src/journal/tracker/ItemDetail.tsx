@@ -763,6 +763,8 @@ export function ItemDetail({
     const spawnRequestId = spawnConsentRequestId(item);
     const originSeq = conversations.find((conversation) => conversation.id === item.origin_convo_id)?.last_seq;
     const spawnRows = useSpawnConsentRows(client, item.origin_convo_id, spawnRequestId, originSeq);
+    // The full card, not the placeholder, is on the page: the body would repeat it.
+    const spawnCardDrawn = !!(spawnRequestId && spawnRows?.request);
     const answerSpawn = async (decision: AgentSpawnDecision, signal?: AbortSignal): Promise<void> => {
         if (spawnRequestId) await client.answerSpawnConsent(item.num, spawnRequestId, decision, signal);
     };
@@ -1212,15 +1214,19 @@ export function ItemDetail({
                 ) : null}
 
                 {/* The item's body attachments ride with the body: placed inline where it refers to
-                    them, the rest after it. */}
-                <InlineBody
-                    client={client}
-                    body={item.body}
-                    attachments={item.attachments ?? []}
-                    label={`item-${item.num}`}
-                    onTrackerLink={onTrackerLink}
-                    proseClassName="mj_TrackerProse mj_TrackerItemBody"
-                />
+                    them, the rest after it. A consent item's body is the journal's plain-text copy of
+                    the request, for places that cannot draw the card; once the card itself is drawn
+                    the body would show the same request twice, so it is left out. */}
+                {spawnCardDrawn ? null : (
+                    <InlineBody
+                        client={client}
+                        body={item.body}
+                        attachments={item.attachments ?? []}
+                        label={`item-${item.num}`}
+                        onTrackerLink={onTrackerLink}
+                        proseClassName="mj_TrackerProse mj_TrackerItemBody"
+                    />
+                )}
 
                 <ItemActions
                     actions={offeredActions}
