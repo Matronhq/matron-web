@@ -4107,6 +4107,7 @@ export function QueuedReleaseCard({
             {resolution === "expired" && (
                 // The bridge dropped this queued message without sending it: no buttons, a muted final note.
                 <div className="mj_PromptResolved mj_PromptResolved_expired">
+                    <span className="mj_PromptGlyph" aria-hidden="true" />
                     <span className="mj_Answered mj_Expired">Expired, not sent</span>
                 </div>
             )}
