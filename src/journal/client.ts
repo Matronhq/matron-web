@@ -5233,15 +5233,21 @@ export class MatronJournalClient {
             this.trackerMissionsRefetchTimer = undefined;
             const detail = this.trackerMissionRefetchPending;
             this.trackerMissionRefetchPending = false;
-            if (!this.state.trackerView?.open) return;
+            // Nothing while closed. The missions list stays fresh on every tab (the rail's Projects badge
+            // reads it), but the Memories tab shows no project or mission page, so the projects and the
+            // selected project and mission are skipped there (see TrackerPane's priming effect for the
+            // same reasoning).
+            const view = this.state.trackerView;
+            if (!view?.open) return;
             if (this.state.missions) void this.loadMissions();
+            if (view.view === "memories") return;
             // Projects roll up their missions (protocol: refresh on any mission marker).
             if (this.state.projects) void this.loadProjects();
-            const selectedProject = this.state.trackerView.selectedProjectId;
+            const selectedProject = view.selectedProjectId;
             if (selectedProject != null && this.state.trackerProject?.project.num === selectedProject) {
                 void this.loadProject(selectedProject);
             }
-            const selected = this.state.trackerView.selectedMissionId;
+            const selected = view.selectedMissionId;
             if (detail && selected != null && this.state.trackerMission?.mission?.num === selected) {
                 void this.loadMission(selected);
             }
