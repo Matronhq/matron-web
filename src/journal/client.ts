@@ -715,18 +715,10 @@ export class MatronJournalClient {
     private settingsConfirmed: UserSettings | undefined;
     // Per setting: bumped by every pick and every journal value for that key, so a failed save only
     // puts back a key nothing newer has touched (a frame without the key leaves it alone).
-    private settingsKeyGen: Record<keyof UserSettings, number> = {
-        notices: 0,
-        auto_archive_days: 0,
-        auto_approve_coordinator_spawns: 0,
-    };
+    private settingsKeyGen = zeroSettingGens();
     // Per setting: bumped by every journal value from a frame, hello or GET, so a PATCH answer that
     // was sent before one does not overwrite it as the confirmed value.
-    private settingsHeardGen: Record<keyof UserSettings, number> = {
-        notices: 0,
-        auto_archive_days: 0,
-        auto_approve_coordinator_spawns: 0,
-    };
+    private settingsHeardGen = zeroSettingGens();
     // Journal archive writes per conversation: the state the user last chose, and whether a POST
     // is in flight. One POST at a time per conversation, always for the latest choice.
     private archiveWanted = new Map<string, boolean>();
@@ -3199,12 +3191,8 @@ export class MatronJournalClient {
         return this.patchUserSettings({ auto_archive_days: days });
     }
 
-    /** PATCH /settings {auto_approve_coordinator_spawns}. Same optimistic shape as the notices switch. */
-    public async setAutoApproveCoordinatorSpawnsSetting(enabled: boolean): Promise<boolean> {
-        return this.patchUserSettings({ auto_approve_coordinator_spawns: enabled });
-    }
-
-    private async patchUserSettings(change: Partial<UserSettings>): Promise<boolean> {
+    /** PATCH /settings with any subset of the settings, optimistically (rolled back if it fails). */
+    public async patchUserSettings(change: Partial<UserSettings>): Promise<boolean> {
         const api = this.api;
         const previous = this.state.userSettings;
         if (!api || !previous) return false;
@@ -3215,7 +3203,7 @@ export class MatronJournalClient {
             "auto_archive_days" in change
                 ? "autoArchiveError"
                 : "auto_approve_coordinator_spawns" in change
-                  ? "autoApproveSpawnsError"
+                  ? "spawnApprovalError"
                   : "userSettingsError";
         this.patch({ userSettings: { ...previous, ...change }, [errorKey]: undefined });
         let heard = { ...this.settingsHeardGen };
@@ -6933,6 +6921,13 @@ function sortsAfter(row: TrackerItem, mark: TrackerItem): boolean {
 function inDoneOrder(rows: TrackerItem[]): TrackerItem[] {
     return [...rows].sort((a, b) => (sortsAfter(a, b) ? 1 : sortsAfter(b, a) ? -1 : 0));
 }
+
+/** A fresh per-setting generation counter set. */
+const zeroSettingGens = (): Record<keyof UserSettings, number> => ({
+    notices: 0,
+    auto_archive_days: 0,
+    auto_approve_coordinator_spawns: 0,
+});
 
 /** The label of a notice's one-tap answer; the journal closes the notice when it is tapped. */
 const SEEN_ACTION = "Seen";

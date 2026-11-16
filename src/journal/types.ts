@@ -867,7 +867,7 @@ export interface ClientState {
     /** The last failed save of the auto-archive setting (shown in Settings → Archive). */
     autoArchiveError?: string;
     /** The last failed save of the Coordinator spawn auto-approval setting. */
-    autoApproveSpawnsError?: string;
+    spawnApprovalError?: string;
     /** Settings → Coordinator: whether the Coordinator may answer chat and spawn asks (`consent`
      *  on GET /coordinator). `enabled` undefined = not known yet, or a journal without the switch. */
     coordinatorConsent?: { enabled?: boolean; error?: string };

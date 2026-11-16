@@ -356,6 +356,11 @@ function CoordinatorSettings({
     const state = useSyncExternalStore(client.subscribe, () => client.getSnapshot().coordinatorConsent);
     const convoId = useSyncExternalStore(client.subscribe, () => client.getSnapshot().coordinatorConvoId);
     const conversations = useSyncExternalStore(client.subscribe, () => client.getSnapshot().conversations);
+    const autoSpawns = useSyncExternalStore(
+        client.subscribe,
+        () => client.getSnapshot().userSettings,
+    )?.auto_approve_coordinator_spawns;
+    const autoSpawnsError = useSyncExternalStore(client.subscribe, () => client.getSnapshot().spawnApprovalError);
     const [saveError, setSaveError] = useState<string>();
 
     useEffect(() => void client.loadCoordinatorConsent(), [client]);
@@ -441,6 +446,23 @@ function CoordinatorSettings({
                         />
                     </div>
                 )}
+                {enabled !== undefined && autoSpawns !== undefined && (
+                    <div className="mj_SettingsSheet_row mj_SettingsSheet_switchRow">
+                        <span id="mj-settings-auto-spawns">Auto-approve spawns I ask for</span>
+                        <button
+                            type="button"
+                            role="switch"
+                            className="mj_SettingsSheet_switch"
+                            data-setting="auto_approve_coordinator_spawns"
+                            disabled={!enabled}
+                            aria-checked={autoSpawns}
+                            aria-labelledby="mj-settings-auto-spawns"
+                            onClick={() =>
+                                void client.patchUserSettings({ auto_approve_coordinator_spawns: !autoSpawns })
+                            }
+                        />
+                    </div>
+                )}
                 {onOpenRoutines && (
                     <div className="mj_SettingsSheet_row">
                         <span>Routines</span>
@@ -458,6 +480,11 @@ function CoordinatorSettings({
             {state?.error ? (
                 <p className="mj_SettingsSheet_error" role="alert">
                     Couldn't save: {state.error}
+                </p>
+            ) : null}
+            {autoSpawnsError ? (
+                <p className="mj_SettingsSheet_error" role="alert">
+                    Couldn't save: {autoSpawnsError}
                 </p>
             ) : null}
             {saveError ? (
@@ -698,9 +725,6 @@ export function SettingsSheet({
     autoArchiveDays,
     autoArchiveError,
     onAutoArchiveChange,
-    autoApproveCoordinatorSpawns,
-    autoApproveSpawnsError,
-    onAutoApproveCoordinatorSpawnsChange,
     onLoadSettings,
     onNoticesChange,
     onChooseCoordinator,
@@ -720,12 +744,6 @@ export function SettingsSheet({
     /** The last failed save of the auto-archive setting. */
     autoArchiveError?: string;
     onAutoArchiveChange?: (days: number) => void;
-    /** Whether Coordinator-requested spawns on the user's own boxes start without a consent card;
-     *  undefined hides the switch (not known yet, or a journal without the setting). */
-    autoApproveCoordinatorSpawns?: boolean;
-    /** The last failed save of the spawn auto-approval setting. */
-    autoApproveSpawnsError?: string;
-    onAutoApproveCoordinatorSpawnsChange?: (enabled: boolean) => void;
     /** Fetch the settings (on open). */
     onLoadSettings?: () => void;
     onNoticesChange?: (notices: boolean) => void;
@@ -936,41 +954,6 @@ export function SettingsSheet({
                         {autoArchiveError ? (
                             <p className="mj_SettingsSheet_error" role="alert">
                                 Couldn't save: {autoArchiveError}
-                            </p>
-                        ) : null}
-                    </section>
-                ) : null}
-                {autoApproveCoordinatorSpawns !== undefined && onAutoApproveCoordinatorSpawnsChange ? (
-                    <section className="mj_SettingsSheet_group" aria-labelledby="mj-settings-spawns">
-                        <h3 id="mj-settings-spawns" className="mj_SettingsSheet_groupTitle">
-                            Sessions
-                        </h3>
-                        <div className="mj_SettingsSheet_rows">
-                            <div className="mj_SettingsSheet_row mj_SettingsSheet_switchRow">
-                                <span className="mj_SettingsSheet_switchText">
-                                    <span id="mj-settings-auto-approve-spawns">
-                                        Auto-approve spawns the Coordinator requests
-                                    </span>
-                                    <span id="mj-settings-auto-approve-spawns-help" className="mj_SettingsSheet_help">
-                                        When on, a session the Coordinator starts on one of your own online boxes starts
-                                        at once, without a consent card. Other requests still ask you.
-                                    </span>
-                                </span>
-                                <button
-                                    type="button"
-                                    role="switch"
-                                    className="mj_SettingsSheet_switch"
-                                    data-setting="auto_approve_coordinator_spawns"
-                                    aria-checked={autoApproveCoordinatorSpawns}
-                                    aria-labelledby="mj-settings-auto-approve-spawns"
-                                    aria-describedby="mj-settings-auto-approve-spawns-help"
-                                    onClick={() => onAutoApproveCoordinatorSpawnsChange(!autoApproveCoordinatorSpawns)}
-                                />
-                            </div>
-                        </div>
-                        {autoApproveSpawnsError ? (
-                            <p className="mj_SettingsSheet_error" role="alert">
-                                Couldn't save: {autoApproveSpawnsError}
                             </p>
                         ) : null}
                     </section>

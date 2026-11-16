@@ -199,6 +199,7 @@ describe("Settings sheet (Mac grouped form)", () => {
         type Api = {
             settings: jest.Mock;
             patchSettings: jest.Mock;
+            coordinator: jest.Mock;
             twoFactorStatus: jest.Mock;
             accountEmail: jest.Mock;
         };
@@ -393,19 +394,16 @@ describe("Settings sheet (Mac grouped form)", () => {
         describe("Coordinator spawn auto-approval", () => {
             const spawnToggle = (): HTMLButtonElement | null =>
                 sheet()?.querySelector('button[data-setting="auto_approve_coordinator_spawns"]') ?? null;
+            const consent = (on: boolean): jest.Mock => jest.fn().mockResolvedValue({ convo_id: "c9", consent: on });
+            const reported = (): jest.Mock =>
+                jest.fn().mockResolvedValue({ notices: true, auto_approve_coordinator_spawns: false });
 
-            it("shows the switch off, and saves both directions with the exact setting key", async () => {
+            it("shows the switch off in the Coordinator group, and saves both directions with the exact key", async () => {
                 const patchSettings = jest.fn().mockImplementation(async (patch) => ({ notices: true, ...patch }));
-                await openSettings(
-                    withApi({
-                        settings: jest
-                            .fn()
-                            .mockResolvedValue({ notices: true, auto_approve_coordinator_spawns: false }),
-                        patchSettings,
-                    }),
-                );
+                await openSettings(withApi({ settings: reported(), coordinator: consent(true), patchSettings }));
                 expect(spawnToggle()?.getAttribute("aria-checked")).toBe("false");
-                expect(sheet()!.textContent).toContain("Auto-approve spawns the Coordinator requests");
+                expect(spawnToggle()?.closest("section")?.textContent).toContain("Coordinator");
+                expect(sheet()!.textContent).toContain("Auto-approve spawns");
                 await act(async () => spawnToggle()!.click());
                 expect(patchSettings).toHaveBeenLastCalledWith({ auto_approve_coordinator_spawns: true });
                 expect(spawnToggle()?.getAttribute("aria-checked")).toBe("true");
@@ -414,12 +412,16 @@ describe("Settings sheet (Mac grouped form)", () => {
                 expect(spawnToggle()?.getAttribute("aria-checked")).toBe("false");
             });
 
+            it("is disabled while the Coordinator may not approve chats and spawns", async () => {
+                await openSettings(withApi({ settings: reported(), coordinator: consent(false) }));
+                expect(spawnToggle()?.disabled).toBe(true);
+            });
+
             it("rolls back a failed save and says so", async () => {
                 await openSettings(
                     withApi({
-                        settings: jest
-                            .fn()
-                            .mockResolvedValue({ notices: true, auto_approve_coordinator_spawns: false }),
+                        settings: reported(),
+                        coordinator: consent(true),
                         patchSettings: jest.fn().mockRejectedValue(new Error("offline")),
                     }),
                 );
@@ -429,7 +431,9 @@ describe("Settings sheet (Mac grouped form)", () => {
             });
 
             it("is hidden when the journal does not report the setting", async () => {
-                await openSettings(withApi({ settings: jest.fn().mockResolvedValue({ notices: true }) }));
+                await openSettings(
+                    withApi({ settings: jest.fn().mockResolvedValue({ notices: true }), coordinator: consent(true) }),
+                );
                 expect(spawnToggle()).toBeNull();
                 expect(sheet()!.textContent).not.toContain("Auto-approve spawns");
             });
