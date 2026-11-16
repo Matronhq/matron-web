@@ -1683,18 +1683,27 @@ export class MatronJournalClient {
     public async loadOlderHistory(opts?: { suppressNotFound?: boolean }): Promise<void> {
         const conversationId = this.state.selectedConversationId;
         if (!conversationId || !this.database || !this.api || this.state.loadingHistory) return;
+        // Use only the session captured here: a sign-out and sign-in can land during any await below,
+        // and the old page must not be written into the new session's database or state.
+        const database = this.database;
+        const api = this.api;
+        const gen = this.sessionGen;
+        const ownsLoad = (): boolean => this.sessionGen === gen && this.database === database && this.api === api;
         const history = this.history.get(conversationId) ?? { initialized: false, hasMore: true };
         if (history.initialized && !history.hasMore) return;
 
         this.patch({ loadingHistory: true });
         try {
-            const response = await this.api.messages(
+            const response = await api.messages(
                 conversationId,
                 history.initialized ? history.oldestSeq : undefined,
                 HISTORY_PAGE_SIZE,
             );
-            await this.database.putHistory(response.events);
-            await this.reconcilePersistedOwnMessages(this.database);
+            if (!ownsLoad()) return;
+            await database.putHistory(response.events);
+            if (!ownsLoad()) return;
+            await this.reconcilePersistedOwnMessages(database);
+            if (!ownsLoad()) return;
             const minimum = response.events.reduce<number | undefined>(
                 (current, event) => (current === undefined ? event.seq : Math.min(current, event.seq)),
                 history.oldestSeq,
@@ -1708,9 +1717,11 @@ export class MatronJournalClient {
                 hasMore: emptyInitialPageWithKnownHistory || response.events.length === HISTORY_PAGE_SIZE,
             });
             if (this.state.selectedConversationId === conversationId)
-                await this.refreshSelectedConversation(conversationId);
+                await this.refreshSelectedConversation(conversationId, database, gen);
+            if (!ownsLoad()) return;
             this.clearHistoryError();
         } catch (error) {
+            if (!ownsLoad()) return;
             if (
                 opts?.suppressNotFound &&
                 error instanceof JournalApiError &&
@@ -1724,7 +1735,7 @@ export class MatronJournalClient {
             this.historyError = error instanceof Error ? error.message : "Could not load message history";
             this.patch({ connectionError: this.historyError });
         } finally {
-            if (this.state.selectedConversationId === conversationId) {
+            if (ownsLoad() && this.state.selectedConversationId === conversationId) {
                 this.patch({
                     loadingHistory: false,
                     hasOlderHistory: this.history.get(conversationId)?.hasMore ?? false,
@@ -5870,7 +5881,15 @@ export class MatronJournalClient {
     }
 
     private async replaceSnapshot(): Promise<void> {
-        if (!this.api || !this.database) return;
+        // Capture the session this replace belongs to and use only the captured refs. A sign-out and
+        // sign-in (another account, or the same one again) can land during any await below; without
+        // the guard the old snapshot would be written into the new session's database and state.
+        // Mirrors handleReady's ownsReplay.
+        const gen = this.sessionGen;
+        const db = this.database;
+        const api = this.api;
+        if (!api || !db) return;
+        const owns = (): boolean => this.sessionGen === gen && this.database === db;
         const previousSelection = this.state.selectedConversationId;
         this.resetTransientSyncState();
         this.patch({
@@ -5885,10 +5904,14 @@ export class MatronJournalClient {
             textStreams: {},
             toolStreams: {},
         });
-        const snapshot = await this.api.snapshot();
-        await this.database.replaceWithSnapshot(snapshot);
-        await this.reconcilePersistedOwnMessages(this.database);
-        const conversations = keepUnchangedConversations(this.state.conversations, await this.database.conversations());
+        const snapshot = await api.snapshot();
+        if (!owns()) return;
+        await db.replaceWithSnapshot(snapshot);
+        if (!owns()) return;
+        await this.reconcilePersistedOwnMessages(db);
+        if (!owns()) return;
+        const conversations = keepUnchangedConversations(this.state.conversations, await db.conversations());
+        if (!owns()) return;
         let { archivedIds, pinnedIds, favoriteIds, unreadOverrideIds, collapsedSubagentParentIds } = this.state;
         const session = this.state.session;
         if (session) {
