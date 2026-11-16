@@ -574,18 +574,27 @@ export class JournalDatabase {
     public async reconcilePersistedOwnMessages(): Promise<string[]> {
         const transaction = this.database.transaction(["events", "outbox"], "readwrite");
         const outbox = transaction.objectStore("outbox");
-        const [events, pendingMessages] = await Promise.all([
-            requestResult(transaction.objectStore("events").getAll()) as Promise<JournalEvent[]>,
-            requestResult(outbox.getAll()) as Promise<PendingMessage[]>,
-        ]);
+        const pendingMessages = (await requestResult(outbox.getAll())) as PendingMessage[];
         const candidates = pendingMessages.filter(
             (message) => message.attachState === "sending" || message.errorKind === "send_failed",
         );
         const removed: string[] = [];
-        for (const pending of candidates) {
-            if (!events.some((event) => matchesOwnPendingMessage(event, pending, this.ownSender))) continue;
-            outbox.delete(pending.localId);
-            removed.push(pending.localId);
+        // A pending message only matches an event of its own conversation, so read just those
+        // conversations through the byConversation index rather than the whole events store (every
+        // row this device has received) on each history page and snapshot. Nothing to read when the
+        // outbox has no candidates.
+        if (candidates.length > 0) {
+            const byConversation = transaction.objectStore("events").index("byConversation");
+            const eventsByConvo = new Map<string, JournalEvent[]>();
+            for (const convoId of new Set(candidates.map((message) => message.convoId))) {
+                eventsByConvo.set(convoId, (await requestResult(byConversation.getAll(convoId))) as JournalEvent[]);
+            }
+            for (const pending of candidates) {
+                const events = eventsByConvo.get(pending.convoId) ?? [];
+                if (!events.some((event) => matchesOwnPendingMessage(event, pending, this.ownSender))) continue;
+                outbox.delete(pending.localId);
+                removed.push(pending.localId);
+            }
         }
         await transactionDone(transaction);
         return removed;
