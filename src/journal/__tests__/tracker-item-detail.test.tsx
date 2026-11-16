@@ -1475,15 +1475,36 @@ describe("ItemDetail spawn consent", () => {
         expect(button(container, "Deny")).toBeDefined();
     });
 
-    it("sits between the links and the body", async () => {
+    it("sits between the links and the body while the card has not arrived", async () => {
         const client = fakeClient();
-        client.spawnConsentRows.mockResolvedValue(rows());
+        client.spawnConsentRows.mockResolvedValue(rows({ request: null }));
         const { container } = await render(client, consentItem({ body: "Box rules allow it." }));
 
         const order = Array.from(
             container.querySelectorAll(".mj_TrackerLinks, .mj_TrackerConsent, .mj_TrackerItemBody"),
         ).map((node) => node.className);
         expect(order).toEqual(["mj_TrackerLinks", "mj_TrackerConsent", expect.stringContaining("mj_TrackerItemBody")]);
+    });
+
+    it("leaves out the body that repeats the request once the card is drawn", async () => {
+        const client = fakeClient();
+        client.spawnConsentRows.mockResolvedValue(rows());
+        const { container } = await render(
+            client,
+            consentItem({ body: "**box-b** asks to start a new agent session on **box-a**." }),
+        );
+
+        expect(container.querySelector(".mj_TrackerConsent .mj_PromptCard_spawn")).not.toBeNull();
+        expect(container.querySelector(".mj_TrackerItemBody")).toBeNull();
+        expect(container.textContent).not.toContain("asks to start a new agent session");
+    });
+
+    it("keeps the body under a read-only card that shows no task", async () => {
+        const client = fakeClient();
+        client.spawnConsentRows.mockResolvedValue(rows({ request: spawnCard({ task: "" }) }));
+        const { container } = await render(client, consentItem({ body: "The task, as text." }));
+
+        expect(container.querySelector(".mj_TrackerItemBody")?.textContent).toContain("The task, as text.");
     });
 
     it("approves through the client's consent answer for this item", async () => {
