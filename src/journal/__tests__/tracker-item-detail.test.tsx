@@ -1499,6 +1499,14 @@ describe("ItemDetail spawn consent", () => {
         expect(container.textContent).not.toContain("asks to start a new agent session");
     });
 
+    it("keeps the body under a read-only card that shows no task", async () => {
+        const client = fakeClient();
+        client.spawnConsentRows.mockResolvedValue(rows({ request: spawnCard({ task: "" }) }));
+        const { container } = await render(client, consentItem({ body: "The task, as text." }));
+
+        expect(container.querySelector(".mj_TrackerItemBody")?.textContent).toContain("The task, as text.");
+    });
+
     it("approves through the client's consent answer for this item", async () => {
         const client = fakeClient();
         client.spawnConsentRows.mockResolvedValue(rows());

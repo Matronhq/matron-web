@@ -763,8 +763,13 @@ export function ItemDetail({
     const spawnRequestId = spawnConsentRequestId(item);
     const originSeq = conversations.find((conversation) => conversation.id === item.origin_convo_id)?.last_seq;
     const spawnRows = useSpawnConsentRows(client, item.origin_convo_id, spawnRequestId, originSeq);
-    // The full card, not the placeholder, is on the page: the body would repeat it.
-    const spawnCardDrawn = !!(spawnRequestId && spawnRows?.request);
+    // The full card, task and all, is on the page: the body would repeat it. A read-only card (no
+    // task) or a body with attachments keeps the body.
+    const spawnCardDrawn =
+        !!spawnRequestId &&
+        !!spawnRows?.request &&
+        isAnswerableAgentSpawn(spawnRows.request.payload) &&
+        (item.attachments ?? []).length === 0;
     const answerSpawn = async (decision: AgentSpawnDecision, signal?: AbortSignal): Promise<void> => {
         if (spawnRequestId) await client.answerSpawnConsent(item.num, spawnRequestId, decision, signal);
     };
