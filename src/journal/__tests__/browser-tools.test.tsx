@@ -8,7 +8,7 @@ Please see LICENSE files in the repository root for full details.
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
-import { browserToolsState } from "../browser-tools";
+import { browserRestartCommand, browserToolsState } from "../browser-tools";
 import { archiveStore, favoriteStore, MatronJournalClient, pinnedStore, unreadStore } from "../client";
 import { MatronApp } from "../components";
 import type { ClientState, Conversation, JournalEvent, Session } from "../types";
@@ -153,6 +153,14 @@ describe("browserToolsState (read from the bridge's replies)", () => {
     });
 });
 
+describe("browserRestartCommand", () => {
+    it("adds browser to the extras already on, skipping odd names", () => {
+        expect(browserRestartCommand(undefined)).toBe("/restart --browser");
+        expect(browserRestartCommand([])).toBe("/restart --browser");
+        expect(browserRestartCommand(["circleci", "browser", "bad name", "--x"])).toBe("/restart --browser --circleci");
+    });
+});
+
 describe("Enable browser tools in the session menu", () => {
     let container: HTMLDivElement;
     let root: Root;
@@ -231,6 +239,15 @@ describe("Enable browser tools in the session menu", () => {
         await act(async () => item().click());
         expect(send).toHaveBeenCalledWith("/restart --browser", "c1");
         expect(container.querySelector(".mj_ConversationMenu")).toBeNull();
+    });
+
+    it("keeps the session's other opt-in extras when it adds browser tools", async () => {
+        const instance = client([op("hi")], {}, ["circleci", "share"]);
+        const send = jest.spyOn(instance, "sendMessage").mockResolvedValue(true);
+        await act(async () => root.render(<MatronApp client={instance} />));
+        await openMenu();
+        await act(async () => item().click());
+        expect(send).toHaveBeenCalledWith("/restart --browser --circleci --share", "c1");
     });
 
     it("disables the row while the restart is queued or under way", async () => {

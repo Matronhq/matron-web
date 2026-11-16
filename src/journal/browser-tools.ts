@@ -25,7 +25,15 @@ import { type JournalEvent } from "./types";
 
 export type BrowserToolsState = "unknown" | "idle" | "queued" | "restarting" | "on";
 
-export const BROWSER_RESTART_COMMAND = "/restart --browser";
+/**
+ * The command that adds browser tools. A session restart replaces its opt-in extras with the
+ * flags it is given, so the extras the session already has (from the status frame) are sent
+ * along as flags too, or they would be dropped.
+ */
+export function browserRestartCommand(extras: readonly string[] | undefined): string {
+    const kept = (extras ?? []).filter((name) => name !== "browser" && /^[a-z0-9][a-z0-9-]*$/i.test(name));
+    return ["/restart", "--browser", ...kept.map((name) => `--${name}`)].join(" ");
+}
 
 const asString = (value: unknown): string => (typeof value === "string" ? value : "");
 

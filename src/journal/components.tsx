@@ -190,7 +190,7 @@ import {
     useMarkdownPreviewPanel,
 } from "./markdown-preview";
 import { TrackerLinkInfoContext, type TrackerLinkInfo } from "./tracker-link-title";
-import { BROWSER_RESTART_COMMAND, browserToolsState } from "./browser-tools";
+import { browserRestartCommand, browserToolsState } from "./browser-tools";
 import { MediaBrowserSheet } from "./media-browser";
 import { paneCoversChat, SubChatPane, type SubChatRow, useChatArea } from "./subchat-pane";
 import { chatSidePane, subtaskDescription } from "./subtask";
@@ -3411,7 +3411,13 @@ function HeaderOverflowMenu({
                             aria-disabled={browserState !== "idle" || undefined}
                             onClick={() => {
                                 if (browserState === "idle")
-                                    act(() => void client.sendMessage(BROWSER_RESTART_COMMAND, id));
+                                    act(
+                                        () =>
+                                            void client.sendMessage(
+                                                browserRestartCommand(state.sessionStatus?.extras),
+                                                id,
+                                            ),
+                                    );
                             }}
                         >
                             <Icon>
