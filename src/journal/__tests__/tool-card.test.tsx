@@ -11,6 +11,7 @@ import { TextEncoder as NodeTextEncoder } from "node:util";
 
 import { favoriteStore, MatronJournalClient, pinnedStore, unreadStore } from "../client";
 import { MatronApp } from "../components";
+import { setPlainToolCards } from "../step-phrases";
 import type { ClientState, Conversation, JournalEvent, Session } from "../types";
 
 jest.mock("../../../res/matron-logo-simple.svg", () => "matron-logo.svg");
@@ -103,7 +104,20 @@ describe("tool card summary", () => {
         expect(card.querySelector(".mj_ToolCard_meta")?.textContent).toMatch(/^exit 0 · \d/);
     });
 
+    it("shows the command as typed while Plain tool cards is off, the default", async () => {
+        const card = await render({ command: "npm test", exit_code: 0, snippet: "ok" });
+        expect(card.querySelector("summary .mj_ToolCard_cmd")?.textContent).toBe("npm");
+        expect(card.querySelector("summary .mj_ToolCard_args")?.textContent?.trim()).toBe("test");
+    });
+
+    it("keeps a mixed command as typed even with Plain tool cards on", async () => {
+        setPlainToolCards(true);
+        const card = await render({ command: "git status && rm -rf build", exit_code: 0, snippet: "" });
+        expect(card.querySelector("summary .mj_ToolCard_cmd")?.textContent).toBe("git");
+    });
+
     it("reads a recognised command as a plain sentence and keeps the exact command available", async () => {
+        setPlainToolCards(true);
         const card = await render({ command: "cd /srv/app && npm test -- --watch=false", exit_code: 0, snippet: "ok" });
         const summary = card.querySelector("summary")!;
         expect(summary.querySelector(".mj_ToolCard_cmd")?.textContent).toBe("Ran the tests");

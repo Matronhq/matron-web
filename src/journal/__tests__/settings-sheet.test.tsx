@@ -13,6 +13,7 @@ import { JournalApiError } from "../api";
 import { favoriteStore, MatronJournalClient, pinnedStore, unreadStore } from "../client";
 import { MatronApp } from "../components";
 import { getSnapshot, setTheme } from "../theme";
+import { plainToolCards } from "../step-phrases";
 import type { ClientState, Conversation, DeviceDTO, ServerFrame, Session, UserDefaults } from "../types";
 
 jest.mock("../../../res/matron-logo-simple.svg", () => "matron-logo.svg");
@@ -118,6 +119,18 @@ describe("Settings sheet (Mac grouped form)", () => {
         expect(option("dark").getAttribute("aria-pressed")).toBe("true");
         await act(async () => option("system").click());
         expect(getSnapshot()).toBeNull();
+    });
+
+    it("turns Plain tool cards on and off, starting off", async () => {
+        await openSettings();
+        const toggle = (): HTMLButtonElement =>
+            sheet()!.querySelector<HTMLButtonElement>('button[data-setting="plain-tool-cards"]')!;
+        expect(toggle().getAttribute("aria-checked")).toBe("false");
+        await act(async () => toggle().click());
+        expect(toggle().getAttribute("aria-checked")).toBe("true");
+        expect(plainToolCards()).toBe(true);
+        await act(async () => toggle().click());
+        expect(plainToolCards()).toBe(false);
     });
 
     it("signs out from the sheet and closes on Escape", async () => {

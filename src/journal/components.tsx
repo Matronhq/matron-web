@@ -194,7 +194,7 @@ import { MediaBrowserSheet } from "./media-browser";
 import { paneCoversChat, SubChatPane, type SubChatRow, useChatArea } from "./subchat-pane";
 import { chatSidePane, subtaskDescription } from "./subtask";
 import { SubtaskLine } from "./subtask-link";
-import { describeStep } from "./step-phrases";
+import { describeCommand, plainToolCards, subscribePlainToolCards } from "./step-phrases";
 import {
     buildMediaCorpus,
     isRenderableInViewer,
@@ -4652,13 +4652,13 @@ function ToolOutput({ client, event }: { client: MatronJournalClient; event: Jou
     const exitCode = typeof payload.exit_code === "number" ? payload.exit_code : undefined;
     const failed = payload.denied === true || (exitCode !== undefined && exitCode !== 0);
     const expired = payload.expired === true;
-    // A recognised command reads as a plain sentence ("Ran the tests"); the exact command stays in
-    // the tooltip and the opened card. An unrecognised one keeps the Mac ToolCallCard form: the
-    // command's first token bold, its arguments smaller and grey, one line.
-    const plain = asString(payload.command).trim() ? describeStep({ tool: "Bash", input: { command } }) : undefined;
-    const sentence = plain && !plain.fallback ? plain.past : undefined;
+    // With "Plain tool cards" on, a recognised, harmless command reads as a sentence ("Ran the
+    // tests"); the exact command stays in the tooltip and the opened card. Anything else keeps the
+    // Mac ToolCallCard form: the command's first token bold, its arguments smaller and grey.
+    const plainOn = useSyncExternalStore(subscribePlainToolCards, plainToolCards);
+    const sentence = plainOn && payload.command ? describeCommand(command) : null;
     const [commandName, ...commandRest] =
-        sentence !== undefined ? [sentence] : command === "Tool output" ? [command] : command.split(/\s+/);
+        sentence !== null ? [sentence] : command === "Tool output" ? [command] : command.split(/\s+/);
     const commandArgs = commandRest.join(" ");
     const outcome =
         payload.denied === true ? "denied" : exitCode !== undefined ? `exit ${exitCode}` : failed ? "failed" : "done";

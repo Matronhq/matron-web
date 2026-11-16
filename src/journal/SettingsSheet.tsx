@@ -54,6 +54,7 @@ import {
 } from "./notifications";
 import { displayTitle } from "./SessionTag";
 import { getSnapshot, setTheme, subscribe, type ThemePref } from "./theme";
+import { plainToolCards, setPlainToolCards, subscribePlainToolCards } from "./step-phrases";
 import type { BoxDefaults, BoxDefaultsState, DefaultsState, Session, UserDefaultKey } from "./types";
 import { AUTO_ARCHIVE_CHOICES, autoArchiveLabel } from "./server-archive";
 
@@ -755,6 +756,7 @@ export function SettingsSheet({
     onClose: () => void;
 }): React.ReactElement {
     const preference = useSyncExternalStore(subscribe, getSnapshot);
+    const plainTools = useSyncExternalStore(subscribePlainToolCards, plainToolCards);
     const sheetRef = useRef<HTMLDivElement>(null);
     // The latest onClose without re-running the focus effect when a caller passes a new function.
     const onCloseRef = useRef(onClose);
@@ -874,6 +876,24 @@ export function SettingsSheet({
                                 {option.label}
                             </button>
                         ))}
+                    </div>
+                    <div className="mj_SettingsSheet_row mj_SettingsSheet_switchRow">
+                        <span className="mj_SettingsSheet_switchText">
+                            <span id="mj-settings-plain-tool-cards">Plain tool cards</span>
+                            <span id="mj-settings-plain-tool-cards-help" className="mj_SettingsSheet_help">
+                                Describe simple commands in words, like “Ran the tests”. Anything else shows as typed.
+                            </span>
+                        </span>
+                        <button
+                            type="button"
+                            role="switch"
+                            className="mj_SettingsSheet_switch"
+                            data-setting="plain-tool-cards"
+                            aria-checked={plainTools}
+                            aria-labelledby="mj-settings-plain-tool-cards"
+                            aria-describedby="mj-settings-plain-tool-cards-help"
+                            onClick={() => setPlainToolCards(!plainTools)}
+                        />
                     </div>
                 </section>
                 <SecuritySettings client={client} onPasswordChanged={() => setDevicesRevision((n) => n + 1)} />
