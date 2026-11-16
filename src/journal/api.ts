@@ -282,6 +282,14 @@ function parseBoxDisk(raw: unknown): BoxStatus["disk"] | undefined {
     return { free_bytes: raw.free_bytes, total_bytes: raw.total_bytes };
 }
 
+function parseBoxVitals(raw: unknown): BoxStatus["vitals"] | undefined {
+    if (!isObject(raw)) return undefined;
+    const { cpu_pct: cpu, ram_pct: ram, sampled_at_ms: at } = raw;
+    if (typeof cpu !== "number" || typeof ram !== "number" || typeof at !== "number") return undefined;
+    if (!(cpu >= 0 && cpu <= 100 && ram >= 0 && ram <= 100 && Number.isFinite(at))) return undefined;
+    return { cpu_pct: cpu, ram_pct: ram, sampled_at_ms: at };
+}
+
 function parseBoxAccount(raw: unknown): BoxStatus["account"] | undefined {
     if (!isObject(raw) || typeof raw.email !== "string" || !raw.email) return undefined;
     return { email: raw.email };
@@ -297,12 +305,14 @@ export function parseBoxStatus(raw: unknown): BoxStatus | undefined {
     const limits = parseBoxLimits(raw.limits);
     const disk = parseBoxDisk(raw.disk);
     const account = parseBoxAccount(raw.account);
+    const vitals = parseBoxVitals(raw.vitals);
     return {
         reported_at: raw.reported_at,
         ...(activity ? { activity } : {}),
         ...(limits ? { limits } : {}),
         ...(disk ? { disk } : {}),
         ...(account ? { account } : {}),
+        ...(vitals ? { vitals } : {}),
     };
 }
 

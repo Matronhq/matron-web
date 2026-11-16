@@ -2886,6 +2886,7 @@ function useMinuteClock(now?: number): number {
 export function buildUsageMeters(
     status: SessionStatus | undefined,
     limits: SessionStatus["limits"] | undefined,
+    boxVitals?: SessionStatus["vitals"],
 ): NonNullable<SessionStatus["limits"]> {
     const meters: NonNullable<SessionStatus["limits"]> = [];
     // Synthetic ctx meter carries id "context" (drives short tag / rank / a11y name) plus
@@ -2905,8 +2906,14 @@ export function buildUsageMeters(
     // the shared staleness muting expires an idle conversation's replayed reading. Absent
     // `status.vitals` → no host meters, no crash (graceful degradation). Non-finite readings
     // are skipped individually so a partial vitals object still renders what it can.
-    if (status?.vitals) {
-        const { cpu_pct, ram_pct, sampled_at_ms } = status.vitals;
+    // The box's own report (box_status) is preferred; a session's `status.vitals` is the
+    // fallback for a box that reports none, and wins only when it is newer.
+    const vitals =
+        boxVitals && !(status?.vitals && status.vitals.sampled_at_ms > boxVitals.sampled_at_ms)
+            ? boxVitals
+            : status?.vitals;
+    if (vitals) {
+        const { cpu_pct, ram_pct, sampled_at_ms } = vitals;
         if (Number.isFinite(cpu_pct)) {
             meters.push({ id: "host_cpu", label: "host CPU", percent: cpu_pct, sampled_at_ms });
         }
@@ -3675,6 +3682,12 @@ export function MissionChip({
     );
 }
 
+// The host vitals last reported by the box that runs this conversation.
+function boxVitalsOf(state: ClientState, conversation: { agent_device_id?: number | null } | undefined) {
+    const id = conversation?.agent_device_id;
+    return id == null ? undefined : state.boxStatuses[id]?.vitals;
+}
+
 function ChatHeader({
     client,
     state,
@@ -3691,7 +3704,7 @@ function ChatHeader({
     const status = state.sessionStatus;
     const runState = conversation?.session_state;
     const limits = status?.limits?.filter((limit) => limit.label.trim());
-    const meters = buildUsageMeters(status, limits);
+    const meters = buildUsageMeters(status, limits, boxVitalsOf(state, conversation));
     const shortModel = status?.model ? shortModelName(status.model) : undefined;
     const browserTools = status?.extras?.includes("browser");
     const browserToolsIndicator = (label?: string): React.ReactNode =>
@@ -3906,7 +3919,7 @@ function SubChatHeader({
     const selected = client.selectedConversation();
     const status = state.sessionStatus;
     const limits = status?.limits?.filter((limit) => limit.label.trim());
-    const meters = buildUsageMeters(status, limits);
+    const meters = buildUsageMeters(status, limits, boxVitalsOf(state, selected));
     const runState = selected?.session_state;
     const running = runState === "running";
     const shortModel = status?.model ? shortModelName(status.model) : undefined;

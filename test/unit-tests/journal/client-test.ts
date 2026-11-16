@@ -4033,6 +4033,24 @@ describe("box status", () => {
         expect(client.getSnapshot().boxStatuses[10]).toEqual(newer);
     });
 
+    it("merges a vitals-only box_status into the stored row instead of replacing it", async () => {
+        const client = boxClient([{ ...AGENT, status: STATUS }]);
+        await client.listAgents();
+        const vitals = { cpu_pct: 41, ram_pct: 63, sampled_at_ms: REPORTED_AT + 10_000 };
+
+        await internals(client).handleFrame({
+            kind: "box_status",
+            device_id: 10,
+            reported_at: REPORTED_AT + 10_000,
+            vitals,
+        } as unknown as ServerFrame);
+
+        expect(client.getSnapshot().boxStatuses[10]).toEqual({
+            ...STATUS,
+            reported_at: REPORTED_AT + 10_000,
+            vitals,
+        });
+    });
     it("clears box statuses on logout", async () => {
         const client = boxClient([{ ...AGENT, status: STATUS }]);
         await client.listAgents();
