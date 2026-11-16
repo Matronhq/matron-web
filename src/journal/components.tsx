@@ -190,6 +190,7 @@ import {
     useMarkdownPreviewPanel,
 } from "./markdown-preview";
 import { TrackerLinkInfoContext, type TrackerLinkInfo } from "./tracker-link-title";
+import { browserRestartCommand, browserToolsState } from "./browser-tools";
 import { MediaBrowserSheet } from "./media-browser";
 import { paneCoversChat, SubChatPane, type SubChatRow, useChatArea } from "./subchat-pane";
 import { chatSidePane, subtaskDescription } from "./subtask";
@@ -3326,6 +3327,15 @@ function HeaderOverflowMenu({
     const isFavorite = state.favoriteIds.has(id);
     const isArchived = state.archivedIds.has(id);
     const isUnread = effectiveUnread(conversation, state.unreadOverrideIds);
+    // "Enable browser tools" restarts the session with the extra. Shown only while it is off or a
+    // request is in flight, and never on a bridge that reports no extras. A Codex session gets
+    // the bridge's own refusal reply.
+    const browserState = browserToolsState(
+        state.events,
+        conversation.session_state === "running",
+        state.sessionStatus?.extras,
+    );
+    const showBrowserRow = browserState === "idle" || browserState === "queued" || browserState === "restarting";
     const act = (run: () => void): void => {
         const opener = openerRef.current;
         close();
@@ -3393,6 +3403,35 @@ function HeaderOverflowMenu({
                     }}
                 >
                     {extras?.(act)}
+                    {showBrowserRow && (
+                        <button
+                            className="mj_ConversationMenu_item"
+                            type="button"
+                            role="menuitem"
+                            aria-disabled={browserState !== "idle" || undefined}
+                            onClick={() => {
+                                if (browserState === "idle")
+                                    act(
+                                        () =>
+                                            void client.sendMessage(
+                                                browserRestartCommand(state.sessionStatus?.extras),
+                                                id,
+                                            ),
+                                    );
+                            }}
+                        >
+                            <Icon>
+                                <circle cx="12" cy="12" r="9" />
+                                <ellipse cx="12" cy="12" rx="4" ry="9" />
+                                <path d="M3 12h18" />
+                            </Icon>
+                            {browserState === "idle"
+                                ? "Enable browser tools"
+                                : browserState === "queued"
+                                  ? "Browser tools: restarting after this step"
+                                  : "Browser tools: restarting…"}
+                        </button>
+                    )}
                     {state.journalPins ? (
                         journalPinned ? (
                             <>
