@@ -356,6 +356,11 @@ function CoordinatorSettings({
     const state = useSyncExternalStore(client.subscribe, () => client.getSnapshot().coordinatorConsent);
     const convoId = useSyncExternalStore(client.subscribe, () => client.getSnapshot().coordinatorConvoId);
     const conversations = useSyncExternalStore(client.subscribe, () => client.getSnapshot().conversations);
+    const autoSpawns = useSyncExternalStore(
+        client.subscribe,
+        () => client.getSnapshot().userSettings,
+    )?.auto_approve_coordinator_spawns;
+    const autoSpawnsError = useSyncExternalStore(client.subscribe, () => client.getSnapshot().spawnApprovalError);
     const [saveError, setSaveError] = useState<string>();
 
     useEffect(() => void client.loadCoordinatorConsent(), [client]);
@@ -441,6 +446,23 @@ function CoordinatorSettings({
                         />
                     </div>
                 )}
+                {enabled !== undefined && autoSpawns !== undefined && (
+                    <div className="mj_SettingsSheet_row mj_SettingsSheet_switchRow">
+                        <span id="mj-settings-auto-spawns">Auto-approve spawns I ask for</span>
+                        <button
+                            type="button"
+                            role="switch"
+                            className="mj_SettingsSheet_switch"
+                            data-setting="auto_approve_coordinator_spawns"
+                            disabled={!enabled}
+                            aria-checked={autoSpawns}
+                            aria-labelledby="mj-settings-auto-spawns"
+                            onClick={() =>
+                                void client.patchUserSettings({ auto_approve_coordinator_spawns: !autoSpawns })
+                            }
+                        />
+                    </div>
+                )}
                 {onOpenRoutines && (
                     <div className="mj_SettingsSheet_row">
                         <span>Routines</span>
@@ -458,6 +480,11 @@ function CoordinatorSettings({
             {state?.error ? (
                 <p className="mj_SettingsSheet_error" role="alert">
                     Couldn't save: {state.error}
+                </p>
+            ) : null}
+            {autoSpawnsError ? (
+                <p className="mj_SettingsSheet_error" role="alert">
+                    Couldn't save: {autoSpawnsError}
                 </p>
             ) : null}
             {saveError ? (
