@@ -26,6 +26,21 @@ describe("hidingReplacedComments", () => {
         expect(hidingReplacedComments([original, other]).map((c) => c.id)).toEqual(["cm_1", "cm_3"]);
     });
 
+    it("keeps another person's reply even when a replaces names it", () => {
+        const contributors = trackerComment({ id: "cm_c", contributor: { name: "bob", via: "user" } });
+        const handedOver = trackerComment({ id: "cm_h", attribution: "bob" });
+        const naming = [
+            trackerComment({ id: "cm_7", replaces: "cm_c" }),
+            trackerComment({ id: "cm_6", replaces: "cm_h" }),
+        ];
+        expect(hidingReplacedComments([contributors, handedOver, ...naming]).map((c) => c.id)).toEqual([
+            "cm_c",
+            "cm_h",
+            "cm_7",
+            "cm_6",
+        ]);
+    });
+
     it("only ever leaves out the user's own plain replies", () => {
         const agents = trackerComment({ id: "cm_a", author: "agent", body: "Noted" });
         const status = trackerComment({ id: "cm_s", kind: "status", body: "" });

@@ -18,7 +18,11 @@ export function hidingReplacedComments(comments: readonly TrackerComment[]): Tra
         if (comment.replaces) replaced.add(comment.replaces);
     }
     if (replaced.size === 0) return [...comments];
-    return comments.filter(
-        (comment) => !(comment.author === "user" && comment.kind === "comment" && replaced.has(comment.id)),
-    );
+    return comments.filter((comment) => !(isOwnPlainReply(comment) && replaced.has(comment.id)));
+}
+
+/** The user's own reply: not a status line, and not written by another person (a contributor, or a
+ *  comment copied in by a hand-over), even though those also carry `author: "user"`. */
+function isOwnPlainReply(comment: TrackerComment): boolean {
+    return comment.author === "user" && comment.kind === "comment" && !comment.contributor && !comment.attribution;
 }
