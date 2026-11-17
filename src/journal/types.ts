@@ -1230,6 +1230,10 @@ export interface TrackerComment {
     /** Who wrote it, in words, when that is not this log's own user or agents: "bob" or "bob's
      *  agent" on a contributor's comment and on every comment copied in by a hand-over. */
     attribution?: string;
+    /** The id of the user's own reply this one is the edited version of: that reply was cancelled
+     *  before it reached the agent and this one sent in its place, so the thread shows this reply
+     *  alone. Absent on every other comment. */
+    replaces?: string;
 }
 
 /** `POST /items/:id/comments` body. `action` + `reply_to` is a tap on a comment's button. */

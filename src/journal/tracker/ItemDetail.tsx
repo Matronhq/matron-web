@@ -62,6 +62,7 @@ import { CommentBubbleGlyph, MissionGlyph, TrackerGlyph } from "./glyphs";
 import { useHandoverCaption } from "./handover";
 import { type CommentAuthor, commentAuthor, itemMission, itemMissionText, itemOriginLabel } from "./item-context";
 import { buildTrackerMediaCorpus, InlineBody } from "./ItemAttachments";
+import { hidingReplacedComments } from "./replaced-comments";
 import { useWorkingLabel, WorkingIndicator } from "./working";
 
 /** Answers one of a comment's buttons; resolves once the tap is sent (or has failed). */
@@ -698,6 +699,10 @@ export function ItemDetail({
         if (ids.length > 0) attemptedRef.current = [...attemptedRef.current, { body, ids }];
     };
 
+    // The thread as shown: a reply the user cancelled and then sent again edited is left out, so the
+    // edit stands alone in its place.
+    const thread = useMemo(() => hidingReplacedComments(comments), [comments]);
+
     // Read state: an open item counts as seen, with its comments up to the newest one rendered, and
     // is reported again whenever a newer comment renders.
     const newestCommentAt = comments.reduce((newest, comment) => Math.max(newest, comment.created_at), 0);
@@ -1075,7 +1080,7 @@ export function ItemDetail({
     // tracker image opens it at that image.
     const [viewerMediaId, setViewerMediaId] = useState<string>();
     const viewerOpenerRef = useRef<HTMLElement | null>(null);
-    const mediaCorpus = useMemo(() => buildTrackerMediaCorpus(item, comments), [item, comments]);
+    const mediaCorpus = useMemo(() => buildTrackerMediaCorpus(item, thread), [item, thread]);
     const mediaViewerValue = useMemo<MediaViewerContextValue>(
         () => ({
             openViewer: (mediaId, opener) => {
@@ -1259,9 +1264,9 @@ export function ItemDetail({
                     onTap={(label) => void tapItemAction(label)}
                 />
 
-                {comments.length > 0 ? (
+                {thread.length > 0 ? (
                     <div className="mj_TrackerThread">
-                        {comments.map((comment) => (
+                        {thread.map((comment) => (
                             <CommentRow
                                 key={comment.id}
                                 client={client}
