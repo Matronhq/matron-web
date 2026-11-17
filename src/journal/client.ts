@@ -1104,13 +1104,15 @@ export class MatronJournalClient {
     }
 
     // A live report replaces the stored row for that box wholesale — the blocks the frame
-    // omits are gone, not kept (only `box_status` itself carries the full picture).
+    // omits are gone, not kept — except a vitals-only report, which only refreshes `vitals`.
     private handleBoxStatus(frame: JournalBoxStatusFrame): void {
         const deviceId: unknown = frame.device_id;
         if (typeof deviceId !== "number" || !Number.isFinite(deviceId)) return;
         const status = parseBoxStatus(frame);
         if (!status) return;
-        this.patch({ boxStatuses: { ...this.state.boxStatuses, [deviceId]: status } });
+        const kept = this.state.boxStatuses[deviceId];
+        const next = status.vitals && Object.keys(status).length === 2 && kept ? { ...kept, ...status } : status;
+        this.patch({ boxStatuses: { ...this.state.boxStatuses, [deviceId]: next } });
     }
 
     public async recentFolders(agentDeviceId: number): Promise<RecentFolder[]> {

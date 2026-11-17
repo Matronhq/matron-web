@@ -227,6 +227,17 @@ describe("buildUsageMeters host vitals", () => {
         expect(meters.some((m) => m.id === "host_cpu" || m.id === "host_ram")).toBe(false);
     });
 
+    it("prefers the box's own vitals, and falls back to status.vitals when the box has none or older ones", () => {
+        const box = { cpu_pct: 80, ram_pct: 40, sampled_at_ms: sampledAt };
+        const session = { cpu_pct: 10, ram_pct: 20, sampled_at_ms: sampledAt };
+        const cpu = (status: Parameters<typeof buildUsageMeters>[0], vitals?: typeof box) =>
+            buildUsageMeters(status, undefined, vitals).find((m) => m.id === "host_cpu")?.percent;
+        expect(cpu({ vitals: session }, box)).toBe(80);
+        expect(cpu({ vitals: session }, undefined)).toBe(10);
+        expect(cpu(undefined, box)).toBe(80);
+        expect(cpu({ vitals: { ...session, sampled_at_ms: sampledAt + 1 } }, box)).toBe(10);
+    });
+
     it("skips a non-finite vital reading individually", () => {
         const meters = buildUsageMeters(
             { vitals: { cpu_pct: Number.NaN, ram_pct: 55, sampled_at_ms: sampledAt } },

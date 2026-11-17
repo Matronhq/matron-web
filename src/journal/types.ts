@@ -120,6 +120,8 @@ export interface BoxStatus {
     account?: {
         email: string;
     };
+    // Host CPU/RAM, refreshed by small vitals-only reports between full ones.
+    vitals?: { cpu_pct: number; ram_pct: number; sampled_at_ms: number };
 }
 
 export interface DeviceDTO {
@@ -471,6 +473,7 @@ export interface JournalBoxStatusFrame {
     limits?: unknown;
     disk?: unknown;
     account?: unknown;
+    vitals?: unknown;
 }
 
 export interface JournalDeviceMetaFrame {
