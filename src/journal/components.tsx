@@ -7346,6 +7346,7 @@ function Composer({
                                     className="mj_ComposerInput_input"
                                     ref={textareaRef}
                                     rows={1}
+                                    enterKeyHint="send"
                                     value={body}
                                     onBlur={flushDraft}
                                     onChange={(event) => {
