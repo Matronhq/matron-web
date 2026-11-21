@@ -98,14 +98,20 @@ describe("composer shell (Mac layout)", () => {
         expect(hint?.textContent).toContain("/ commands · shift+enter for newline");
     });
 
-    it("shows the send glyph only while there is text", async () => {
-        await render(signedInClient());
-        expect(sendButton()).toBeNull();
+    it("keeps the send glyph disabled until there is text to send", async () => {
+        const client = signedInClient();
+        const send = jest.spyOn(client, "sendMessage").mockResolvedValue(true);
+        await render(client);
+        expect(sendButton()!.disabled).toBe(true);
+        expect(sendButton()!.dataset.empty).toBe("true");
+        await act(async () => sendButton()!.click());
+        expect(send).not.toHaveBeenCalled();
         await act(async () => type(textarea(), "hi"));
-        expect(sendButton()).not.toBeNull();
+        expect(sendButton()!.disabled).toBe(false);
+        expect(sendButton()!.dataset.empty).toBe("false");
         expect(sendButton()!.classList.contains("mj_ComposerSend")).toBe(true);
         await act(async () => type(textarea(), "   "));
-        expect(sendButton()).toBeNull();
+        expect(sendButton()!.disabled).toBe(true);
     });
 
     it("keeps attach and mic outside the field, as siblings of it", async () => {
@@ -122,7 +128,7 @@ describe("composer shell (Mac layout)", () => {
         expect(field.contains(mic)).toBe(false);
     });
 
-    it("returns focus to the textarea after sending with the button (the button unmounts)", async () => {
+    it("returns focus to the textarea after sending with the button", async () => {
         const client = signedInClient();
         jest.spyOn(client, "sendMessage").mockResolvedValue(true);
         await render(client);
@@ -131,7 +137,7 @@ describe("composer shell (Mac layout)", () => {
         await act(async () => {
             sendButton()!.click();
         });
-        expect(sendButton()).toBeNull();
+        expect(sendButton()!.disabled).toBe(true);
         expect(document.activeElement).toBe(textarea());
     });
 

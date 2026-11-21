@@ -7180,7 +7180,7 @@ function Composer({
         reloadDraft(cid);
         if (draftUnchanged && convoIdRef.current === cid) {
             setBody("");
-            // The send glyph unmounts once the body is empty; keep focus in the composer.
+            // Keep focus in the composer after a send clears its text.
             textarea.current?.focus();
             setDismissed(null);
         }
@@ -7220,6 +7220,7 @@ function Composer({
         node.setSelectionRange(node.value.length, node.value.length);
     }, [body]);
     const tray = convoId ? (state.composerAttachments[convoId] ?? []) : [];
+    const hasContent = Boolean(body.trim()) || tray.length > 0;
     // A send already uploading, or a file that can never upload, holds the send until it's done or removed.
     const trayHeld = tray.some((item) => item.unsendable || item.state === "queued" || item.state === "uploading");
     // With files in the tray the text leaves with them, as one turn: it rides on the first file.
@@ -7346,6 +7347,7 @@ function Composer({
                                     className="mj_ComposerInput_input"
                                     ref={textareaRef}
                                     rows={1}
+                                    enterKeyHint="send"
                                     value={body}
                                     onBlur={flushDraft}
                                     onChange={(event) => {
@@ -7446,19 +7448,16 @@ function Composer({
                             </div>
                         </div>
                         <VoiceMicButton recorder={voice} className="mj_ComposerControl mj_ComposerMic" />
-                        {/* Mac: the send glyph (arrow.up.circle.fill) appears only once there is
-                            something to send — text, or a file in the tray. */}
-                        {(body.trim() || tray.length > 0) && (
-                            <button
-                                className="mj_ComposerSend"
-                                type="button"
-                                disabled={trayHeld || voiceState === "requesting"}
-                                onClick={() => void send()}
-                                aria-label="Send message"
-                            >
-                                <ArrowUpCircleIcon />
-                            </button>
-                        )}
+                        <button
+                            className="mj_ComposerSend"
+                            type="button"
+                            data-empty={!hasContent}
+                            disabled={!hasContent || trayHeld || voiceState === "requesting"}
+                            onClick={() => void send()}
+                            aria-label="Send message"
+                        >
+                            <ArrowUpCircleIcon />
+                        </button>
                     </div>
                 )}
                 {/* The old hint row's instructions, kept for assistive tech only (the Mac shows none). */}

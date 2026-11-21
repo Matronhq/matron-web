@@ -1353,6 +1353,14 @@ button {
     font: 400 13px/18px var(--mj-font-family-ui);
 }
 
+/* Keep touch-screen text large enough to focus without Safari zooming the page. */
+@media (max-width: 700px), (pointer: coarse) {
+    .mj_ComposerInput_input {
+        font-size: 16px;
+        line-height: 22px;
+    }
+}
+
 /* v5: focus is carried ENTIRELY by the shell border recolor
    (.mj_ComposerField:focus-within → accent). No ring on the textarea — text
    inputs match :focus-visible on every focus (click included), so a ring there shows
@@ -1407,6 +1415,26 @@ button {
 .mj_ComposerSend svg {
     width: 22px;
     height: 22px;
+}
+
+.mj_ComposerSend[data-empty="true"] {
+    display: none;
+}
+
+/* Keep Send discoverable on phones, with less space around the trailing controls. */
+@media (max-width: 700px), (pointer: coarse) {
+    .mj_ComposerRow {
+        gap: 2px;
+    }
+
+    .mj_ComposerMic,
+    .mj_ComposerSend {
+        width: 28px;
+    }
+
+    .mj_ComposerSend[data-empty="true"] {
+        display: inline-flex;
+    }
 }
 
 .mj_ComposerSend:hover {
