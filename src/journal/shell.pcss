@@ -1417,6 +1417,26 @@ button {
     height: 22px;
 }
 
+.mj_ComposerSend[data-empty="true"] {
+    display: none;
+}
+
+/* Keep Send discoverable on phones, with less space around the trailing controls. */
+@media (max-width: 700px), (pointer: coarse) {
+    .mj_ComposerRow {
+        gap: 2px;
+    }
+
+    .mj_ComposerMic,
+    .mj_ComposerSend {
+        width: 28px;
+    }
+
+    .mj_ComposerSend[data-empty="true"] {
+        display: inline-flex;
+    }
+}
+
 .mj_ComposerSend:hover {
     background: var(--mj-state-hover);
 }

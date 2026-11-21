@@ -2042,18 +2042,19 @@ describe("composer sends", () => {
         jest.restoreAllMocks();
     });
 
-    test("send glyph appears only with text and sends when clicked (Mac composer)", async () => {
+    test("send glyph is disabled when empty and sends text when clicked", async () => {
         const client = signedInClient();
         const send = jest.spyOn(client, "sendMessage").mockResolvedValue(true);
         const result = await renderComposerApp(["c1"], client);
         rendered = result;
 
         const sendButton = () => result.container.querySelector<HTMLButtonElement>(".mj_ComposerSend");
-        // Absent while the composer is empty (the Mac shows nothing to press).
-        expect(sendButton()).toBeNull();
+        expect(sendButton()!.disabled).toBe(true);
+        await act(async () => sendButton()!.click());
+        expect(send).not.toHaveBeenCalled();
 
         await typeInComposer(result.container, "hi");
-        expect(sendButton()).not.toBeNull();
+        expect(sendButton()!.disabled).toBe(false);
 
         await act(async () => sendButton()!.click());
         expect(send).toHaveBeenCalledTimes(1);
