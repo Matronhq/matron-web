@@ -1975,6 +1975,25 @@ describe("ItemDetail multi-select questions", () => {
         expect(client.commentItem.mock.calls[0][1]).toEqual({ selected: ["Unit", "Visual"], reply_to: "ic_q" });
     });
 
+    it("shows the sent answer, not unsent ticks, once the item closes", async () => {
+        const client = fakeClient();
+        const answered = followUp({ chosen_action: "Unit", chosen_actions: ["Unit"] });
+        const { container, root } = await mount(detail(client, question({ actions: [] }), [answered]));
+        await tick(boxes(container.querySelector(".mj_TrackerComment")!)[1]);
+        await act(async () =>
+            root.render(
+                detail(client, question({ actions: [], state: "closed", resolution: "answered", awaiting: null }), [
+                    answered,
+                ]),
+            ),
+        );
+        expect(boxes(container.querySelector(".mj_TrackerComment")!).map((box) => box.checked)).toEqual([
+            true,
+            false,
+            false,
+        ]);
+    });
+
     it("keeps a follow-up's ticks as a record on a closed item, with no Send", async () => {
         const client = fakeClient();
         const { container } = await mount(

@@ -78,7 +78,7 @@ type SendSelection = (comment: TrackerComment, selected: string[]) => Promise<vo
  * send again, and the journal keeps the latest answer. Send waits for at least one tick and for a
  * selection that differs from the latest answer, just as re-tapping a chosen one-tap button does
  * nothing. `readOnly` keeps the rows as the record of what was offered and chosen (a closed item)
- * with no Send. The owner remounts it (a `key` on the answer) when the latest answer changes, so a
+ * with no Send: they show the latest answer, never ticks the user changed but did not send. The owner remounts it (a `key` on the answer) when the latest answer changes, so a
  * refetched answer resets the ticks.
  */
 function MultiSelectActions({
@@ -120,7 +120,7 @@ function MultiSelectActions({
                         <input
                             type="checkbox"
                             className="mj_TrackerCheck_box"
-                            checked={ticked.has(label)}
+                            checked={readOnly ? isChosen : ticked.has(label)}
                             disabled={disabled || readOnly}
                             onChange={() => toggle(label)}
                         />
