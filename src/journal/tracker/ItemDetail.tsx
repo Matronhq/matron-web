@@ -48,8 +48,11 @@ import {
     chosenLabels,
     formatRelativeTime,
     humanizeSize,
+    approvalKeyNote,
+    APPROVE_ON_DEVICE,
     isConsentItem,
     itemStatusText,
+    needsApprovalKey,
     kindLabel,
     needsUser,
     offeredItemActions,
@@ -152,12 +155,14 @@ function MultiSelectActions({
  * `actions` and nothing is drawn.
  */
 function CommentActions({
+    item,
     comment,
     disabled,
     readOnly,
     onTap,
     onSendSelection,
 }: {
+    item: Pick<TrackerItem, "step_up" | "consent">;
     comment: TrackerComment;
     disabled: boolean;
     readOnly: boolean;
@@ -180,24 +185,32 @@ function CommentActions({
         );
     }
     const inert = disabled || readOnly;
+    const gated = actions.filter((label) => needsApprovalKey(item, label, comment));
     return (
-        <div className="mj_TrackerActions" role="group" aria-label="Quick replies">
-            {actions.map((label) => {
-                const chosen = comment.chosen_action === label;
-                return (
-                    <button
-                        key={label}
-                        type="button"
-                        className={`mj_TrackerAction${chosen ? " mj_TrackerAction_chosen" : ""}`}
-                        aria-pressed={chosen}
-                        disabled={inert}
-                        onClick={() => void onTap(comment, label)}
-                    >
-                        {label}
-                    </button>
-                );
-            })}
-        </div>
+        <>
+            <div className="mj_TrackerActions" role="group" aria-label="Quick replies">
+                {actions.map((label) => {
+                    const chosen = comment.chosen_action === label;
+                    const keyed = gated.includes(label);
+                    return (
+                        <button
+                            key={label}
+                            type="button"
+                            className={`mj_TrackerAction${chosen ? " mj_TrackerAction_chosen" : ""}`}
+                            aria-pressed={chosen}
+                            disabled={inert || keyed}
+                            title={keyed ? APPROVE_ON_DEVICE : undefined}
+                            onClick={() => void onTap(comment, label)}
+                        >
+                            {label}
+                        </button>
+                    );
+                })}
+            </div>
+            {gated.length > 0 && !readOnly ? (
+                <p className="mj_TrackerActions_keyNote">{approvalKeyNote(gated.length === actions.length)}</p>
+            ) : null}
+        </>
     );
 }
 
@@ -208,35 +221,47 @@ function CommentActions({
  * item has a write in flight, since a tap racing a close would reopen the item it closes.
  */
 function ItemActions({
+    item,
     actions,
     chosen,
     disabled,
     onTap,
 }: {
+    item: Pick<TrackerItem, "step_up" | "consent">;
     actions: string[];
     chosen: string | null;
     disabled: boolean;
     onTap: (label: string) => void;
 }): React.ReactElement | null {
     if (actions.length === 0) return null;
+    // A button that needs the approval key cannot be answered from this app: it stays visible, so
+    // the user sees what is asked, but only the iPhone and Mac apps can sign the tap.
+    const gated = actions.filter((label) => needsApprovalKey(item, label));
     return (
-        <div className="mj_TrackerActions mj_TrackerItemActions" role="group" aria-label="Quick replies">
-            {actions.map((label) => {
-                const isChosen = label === chosen;
-                return (
-                    <button
-                        key={label}
-                        type="button"
-                        className={`mj_TrackerAction${isChosen ? " mj_TrackerAction_chosen" : ""}`}
-                        aria-pressed={isChosen}
-                        disabled={disabled}
-                        onClick={isChosen ? undefined : () => onTap(label)}
-                    >
-                        {label}
-                    </button>
-                );
-            })}
-        </div>
+        <>
+            <div className="mj_TrackerActions mj_TrackerItemActions" role="group" aria-label="Quick replies">
+                {actions.map((label) => {
+                    const isChosen = label === chosen;
+                    const keyed = gated.includes(label);
+                    return (
+                        <button
+                            key={label}
+                            type="button"
+                            className={`mj_TrackerAction${isChosen ? " mj_TrackerAction_chosen" : ""}`}
+                            aria-pressed={isChosen}
+                            disabled={disabled || keyed}
+                            title={keyed ? APPROVE_ON_DEVICE : undefined}
+                            onClick={isChosen ? undefined : () => onTap(label)}
+                        >
+                            {label}
+                        </button>
+                    );
+                })}
+            </div>
+            {gated.length > 0 ? (
+                <p className="mj_TrackerActions_keyNote">{approvalKeyNote(gated.length === actions.length)}</p>
+            ) : null}
+        </>
     );
 }
 
@@ -345,6 +370,7 @@ function SpawnConsentCard({
  */
 function CommentCard({
     client,
+    item,
     comment,
     author,
     onOpenConvo,
@@ -355,6 +381,8 @@ function CommentCard({
     onSendSelection,
 }: {
     client: MatronJournalClient;
+    /** The item the comment is on: its step-up mark covers the comment's buttons too. */
+    item: Pick<TrackerItem, "step_up" | "consent">;
     comment: TrackerComment;
     author: CommentAuthor | null;
     onOpenConvo: (convoId: string) => void;
@@ -440,6 +468,7 @@ function CommentCard({
                 onTrackerLink={onTrackerLink}
             />
             <CommentActions
+                item={item}
                 comment={comment}
                 disabled={actionsDisabled}
                 readOnly={actionsReadOnly}
@@ -457,6 +486,7 @@ function CommentCard({
  */
 function CommentRow({
     client,
+    item,
     comment,
     author,
     onOpenConvo,
@@ -467,6 +497,8 @@ function CommentRow({
     onSendSelection,
 }: {
     client: MatronJournalClient;
+    /** The item the comment is on: its step-up mark covers the comment's buttons too. */
+    item: Pick<TrackerItem, "step_up" | "consent">;
     comment: TrackerComment;
     author: CommentAuthor | null;
     onOpenConvo: (convoId: string) => void;
@@ -479,6 +511,7 @@ function CommentRow({
     const card = (
         <CommentCard
             client={client}
+            item={item}
             comment={comment}
             author={author}
             onOpenConvo={onOpenConvo}
@@ -1404,6 +1437,7 @@ export function ItemDetail({
                     />
                 ) : (
                     <ItemActions
+                        item={item}
                         actions={offeredActions}
                         chosen={chosenAction}
                         disabled={busy}
@@ -1417,6 +1451,7 @@ export function ItemDetail({
                             <CommentRow
                                 key={comment.id}
                                 client={client}
+                                item={item}
                                 comment={comment}
                                 author={commentAuthor(comment, conversations, agents)}
                                 onOpenConvo={openConvo}
