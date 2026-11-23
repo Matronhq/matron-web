@@ -107,6 +107,7 @@ export function AgentSpawnCard({
     outcome,
     coordinatorDecision,
     isReadOnly = false,
+    answersElsewhere = false,
     settled = false,
     onAnswer = noopAgentSpawnAnswer,
     onOpen = noopAgentSpawnOpen,
@@ -117,6 +118,9 @@ export function AgentSpawnCard({
     /** The Coordinator's answer to this card, when it gave one. */
     coordinatorDecision?: CoordinatorDecision;
     isReadOnly?: boolean;
+    /** The ask is answered somewhere else on the page (a step-up ask's item buttons): no Approve
+     *  or Deny here, but everything else the live card shows. */
+    answersElsewhere?: boolean;
     /**
      * The ask has stopped waiting for an answer although no `spawn_outcome` is here yet: the
      * consent item the journal filed for it is closed. The journal closes that item the moment the
@@ -295,7 +299,7 @@ export function AgentSpawnCard({
             )}
             {/* A read-only card (sub-chat transcript viewer) never shows live Approve/Deny — it
                 mirrors PromptCard's own isReadOnly gate (§ Task-1-review scope A). */}
-            {!isReadOnly && !pseudoResolved && (
+            {!isReadOnly && !answersElsewhere && !pseudoResolved && (
                 <div className="mj_PromptOptions">
                     <button type="button" disabled={pending} onClick={() => handleAnswer("deny")}>
                         Deny

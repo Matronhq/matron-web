@@ -271,6 +271,42 @@ describe("Spawn requests aimed at a protected box", () => {
         expect(button(container, ".mj_TrackerItemActions button", "Decline")!.disabled).toBe(false);
     });
 
+    it("does not call a step-up ask declined on its item already answered or expired", async () => {
+        const client = fakeClient();
+        (client.spawnConsentRows as jest.Mock).mockResolvedValue({ request: spawnEvent, outcome: null });
+        const { container } = await mount(
+            <ItemDetail
+                item={{
+                    ...spawnItem(),
+                    state: "closed",
+                    awaiting: null,
+                    resolution: "decided",
+                    chosen_action: "Decline",
+                }}
+                comments={[]}
+                client={client as unknown as MatronJournalClient}
+                onBack={jest.fn()}
+            />,
+        );
+        expect(container.querySelector(".mj_TrackerConsent .mj_SpawnTask")).not.toBeNull();
+        expect(container.textContent).not.toContain("Already answered or expired");
+    });
+
+    it("keeps the card's own controls other than Approve and Deny", async () => {
+        const started = { outcome: "started", room_id: "", child_convo_id: "c9" };
+        const { container } = await mount(
+            <AgentSpawnCard
+                event={spawnEvent}
+                outcome={started}
+                coordinatorDecision={{ kind: "spawn", approved: true, reason: "routine", askId: "sp_1" } as never}
+                answersElsewhere
+                onStopSession={jest.fn()}
+            />,
+        );
+        expect(container.querySelector(".mj_PromptOptions")).toBeNull();
+        expect([...container.querySelectorAll("button")].some((b) => /Stop/.test(b.textContent ?? ""))).toBe(true);
+    });
+
     it("on the conversation's card, a refusal for want of the key says where to approve and keeps Deny", async () => {
         const onAnswer = jest
             .fn()

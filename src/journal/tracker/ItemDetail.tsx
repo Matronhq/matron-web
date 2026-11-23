@@ -322,7 +322,7 @@ function SpawnConsentCard({
 }): React.ReactElement {
     const { request, outcome, coordinatorDecision } = rows;
     if (request) {
-        const answerable = answersHere && isAnswerableAgentSpawn(request.payload);
+        const answerable = isAnswerableAgentSpawn(request.payload);
         return (
             <div className="mj_TrackerConsent">
                 <AgentSpawnCard
@@ -330,8 +330,11 @@ function SpawnConsentCard({
                     outcome={outcome}
                     coordinatorDecision={coordinatorDecision}
                     isReadOnly={!answerable}
-                    settled={closed}
-                    onAnswer={answerable ? onAnswer : undefined}
+                    answersElsewhere={!answersHere}
+                    // Answered on the item's buttons, the card never saw the tap: until its outcome
+                    // arrives it must not read as answered elsewhere or expired.
+                    settled={answersHere ? closed : false}
+                    onAnswer={answerable && answersHere ? onAnswer : undefined}
                     onOpen={onOpenRoom}
                     onStopSession={onStopSession}
                 />
