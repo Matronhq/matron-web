@@ -305,6 +305,7 @@ function SpawnConsentCard({
     rows,
     closed,
     answersBelow,
+    answersHere = true,
     onAnswer,
     onOpenRoom,
     onStopSession,
@@ -313,13 +314,15 @@ function SpawnConsentCard({
     closed: boolean;
     /** The item carries its own Approve and Decline, drawn under its body. */
     answersBelow: boolean;
+    /** False when the ask is answered only on the item's own buttons (a step-up ask). */
+    answersHere?: boolean;
     onAnswer: (decision: AgentSpawnDecision, signal?: AbortSignal) => Promise<void>;
     onOpenRoom: (roomId: string) => void;
     onStopSession: (convoId: string) => void;
 }): React.ReactElement {
     const { request, outcome, coordinatorDecision } = rows;
     if (request) {
-        const answerable = isAnswerableAgentSpawn(request.payload);
+        const answerable = answersHere && isAnswerableAgentSpawn(request.payload);
         return (
             <div className="mj_TrackerConsent">
                 <AgentSpawnCard
@@ -1176,8 +1179,12 @@ export function ItemDetail({
     // A spawn item whose answerable card is drawn above answers on the card's own buttons; the
     // item's Approve and Decline (the same answer on the journal) would only repeat them. Until the
     // card read finishes neither is offered, so a button cannot appear and then vanish under a tap.
+    // A step-up spawn ask (one aimed at a protected box) is answered on the item's own buttons,
+    // whose Approve says to use the iPhone or Mac and whose Decline works here; its card is shown
+    // read-only.
     const cardAnswers =
         !!spawnRequestId &&
+        item.step_up !== true &&
         (spawnRows === undefined || (!!spawnRows.request && isAnswerableAgentSpawn(spawnRows.request.payload)));
     const offeredActions = cardAnswers ? [] : offeredItemActions(item);
     const [sendingAction, setSendingAction] = useState<{ itemId: string; label: string } | null>(null);
@@ -1403,6 +1410,7 @@ export function ItemDetail({
                 {spawnRequestId && spawnRows ? (
                     <SpawnConsentCard
                         answersBelow={offeredActions.length > 0}
+                        answersHere={item.step_up !== true}
                         rows={spawnRows}
                         closed={item.state === "closed"}
                         onAnswer={answerSpawn}

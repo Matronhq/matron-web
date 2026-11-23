@@ -16,8 +16,9 @@ import { JournalApiError } from "../api";
 import { commentFailureMessage, type MatronJournalClient } from "../client";
 import { ItemDetail } from "../tracker/ItemDetail";
 import { ItemRow } from "../tracker/ItemRow";
+import { AgentSpawnCard } from "../agent-spawn-card";
 import { APPROVE_ON_DEVICE, needsApprovalKey } from "../tracker/format";
-import type { TrackerItem } from "../types";
+import type { JournalEvent, TrackerItem } from "../types";
 import { fakeSeen, trackerComment, trackerItem } from "./tracker-fixtures";
 
 async function mount(element: React.ReactElement): Promise<{ container: HTMLDivElement; root: Root }> {
@@ -210,5 +211,83 @@ describe("Buttons that need the approval key", () => {
         expect(commentFailureMessage(invalid)).toBe(
             "Your approval didn't check out. Approve it again on your iPhone or Mac.",
         );
+    });
+});
+
+describe("Spawn requests aimed at a protected box", () => {
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    afterEach(() => {
+        document.body.innerHTML = "";
+    });
+
+    const spawnEvent: JournalEvent = {
+        seq: 40,
+        convo_id: "c1",
+        ts: 1700000000000,
+        sender: "agent:box-b",
+        type: "permission_request",
+        payload: {
+            kind: "agent_spawn",
+            request_id: "sp_1",
+            from_name: "box-b",
+            target_name: "box-a",
+            workdir: "/srv/app",
+            task: "Run the suite and fix flakes",
+        },
+    } as JournalEvent;
+    const spawnItem = (): TrackerItem =>
+        trackerItem({
+            num: 31,
+            kind: "question",
+            title: "Start a session on box-a?",
+            labels: ["consent"],
+            links: [{ url: "matron://consent/spawn/sp_1", title: "Spawn request" }],
+            actions: ["Approve", "Decline"],
+            awaiting: "user",
+            consent: "spawn",
+            step_up: true,
+            subject: { op: "spawn", box: "box-a" },
+        });
+
+    it("shows the card read-only on the item and answers on the item's own buttons", async () => {
+        const client = fakeClient();
+        (client.spawnConsentRows as jest.Mock).mockResolvedValue({ request: spawnEvent, outcome: null });
+        const { container } = await mount(
+            <ItemDetail
+                item={spawnItem()}
+                comments={[]}
+                client={client as unknown as MatronJournalClient}
+                onBack={jest.fn()}
+            />,
+        );
+        expect(container.querySelector(".mj_TrackerConsent .mj_SpawnTask")?.textContent).toBe(
+            "Run the suite and fix flakes",
+        );
+        expect(container.querySelectorAll(".mj_TrackerConsent button")).toHaveLength(0);
+        expect(button(container, ".mj_TrackerItemActions button", "Approve")!.disabled).toBe(true);
+        expect(button(container, ".mj_TrackerItemActions button", "Decline")!.disabled).toBe(false);
+    });
+
+    it("on the conversation's card, a refusal for want of the key says where to approve and keeps Deny", async () => {
+        const onAnswer = jest
+            .fn()
+            .mockRejectedValueOnce(
+                new JournalApiError("needs key", 403, "approval_required", undefined, { error: "approval_required" }),
+            )
+            .mockResolvedValue(undefined);
+        const { container } = await mount(<AgentSpawnCard event={spawnEvent} outcome={null} onAnswer={onAnswer} />);
+        await act(async () => button(container, ".mj_PromptOptions button", "Approve")!.click());
+        expect(container.textContent).toContain(
+            "Approving needs your approval key. Approve on your iPhone or Mac, or decline here.",
+        );
+        expect(container.textContent).not.toContain("tap to retry");
+        expect(button(container, ".mj_PromptOptions button", "Approve")!.disabled).toBe(true);
+        const deny = button(container, ".mj_PromptOptions button", "Deny")!;
+        expect(deny.disabled).toBe(false);
+        await act(async () => deny.click());
+        expect(onAnswer).toHaveBeenLastCalledWith("deny", expect.anything());
     });
 });
